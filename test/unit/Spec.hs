@@ -29,7 +29,7 @@ import Data.ByteString.Short qualified as ShortByteString
 import Data.Char (isHexDigit, isSpace, isUpper)
 import Data.Either (fromRight, isLeft, isRight)
 import Data.IORef qualified as IORef
-import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sort, tails)
+import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sort, sortOn, tails)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
@@ -120,7 +120,7 @@ import Infernix.CLI
     runtimeConfigRestorePlan,
     writeGeneratedPursContracts,
   )
-import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reclaimHarnessClusterSlotAt, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderHelmValues, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withHarnessClusterSlotAt, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
+import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterFleetEngineDeployments, clusterWorkloadArchitectureForHostArchitecture, finalPhaseDeployments, fleetSlotLabelKey, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reclaimHarnessClusterSlotAt, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderFleetMachineContracts, renderHelmValues, renderKindConfig, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withHarnessClusterSlotAt, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
 import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
 import Infernix.Cluster.Command qualified as ClusterCommand
 import Infernix.Cluster.Discover
@@ -179,6 +179,7 @@ import Infernix.DemoConfig
     renderGeneratedDemoConfigPayload,
     validateDemoConfigFile,
   )
+import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
 import Infernix.DemoConfig.Properties qualified as DemoConfigProperties
 import Infernix.DescriptorSpace
   ( descriptorSpaceBoundLimit,
@@ -192,8 +193,10 @@ import Infernix.DhallSchema
     dhallSchemaName,
     renderDhallSchema,
   )
+import Infernix.DhallSchema.Enums qualified as Enums
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
+import Infernix.EngineRouting (engineMemberClaimTopicForMode, enginePoolTopicForMode)
 import Infernix.Engines.AppleSilicon
   ( ensureAppleSiliconRuntimeReady,
     manifestAdapterId,
@@ -262,6 +265,7 @@ import Infernix.Lint.Plan
     sprintBackwardEdgeViolations,
     statusVocabularyViolations,
   )
+import Infernix.MachineContract qualified as MachineContract
 import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
@@ -308,8 +312,12 @@ import Infernix.Runtime.Pulsar
     daemonTopicCapabilityTopic,
     domainResultToProto,
     drainTopic,
+    engineMemberClaimReacquisitionWindowSeconds,
+    engineMemberClaimRefusal,
+    engineMemberClaimRetryDelayMicros,
     inferenceRequestProducerNameForFields,
     inferenceRequestSequenceIdForFields,
+    isEngineMemberClaimConflict,
     isMultiFileModelRepoUrl,
     isPackageBackedNativeModel,
     isRetryablePulsarWebSocketClientFailure,
@@ -331,6 +339,7 @@ import Infernix.Runtime.Pulsar
     validateDemoClientMessageCatalog,
     validateModelBootstrapRequest,
   )
+import Infernix.Runtime.Pulsar qualified as Pulsar
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (..),
@@ -2743,8 +2752,8 @@ main = do
     )
     "the registry exposes the Darwin build-memory evidence run only through its closed opt-in command"
   assert
-    ( not (commandRequiresConfiguredStartup (InitCommand (Just AppleSilicon) (Just True) True False))
-        && not (commandRequiresConfiguredStartup (TestInitCommand (Just AppleSilicon) (Just True)))
+    ( not (commandRequiresConfiguredStartup (InitCommand (Just AppleSilicon) (Just True) Nothing True False))
+        && not (commandRequiresConfiguredStartup (TestInitCommand (Just AppleSilicon) (Just True) Nothing))
         && not (commandRequiresConfiguredStartup ShowRootHelp)
         && commandRequiresConfiguredStartup TestUnitCommand
     )
@@ -2758,16 +2767,22 @@ main = do
     "the registry exposes both Darwin-only Apple materializer cohort modes through fixed internal commands"
   assert
     ( parseCommand ["internal", "materialize-substrate", "linux-cpu", "--demo-ui", "false"]
-        == Right (InternalMaterializeSubstrateCommand LinuxCpu False False)
+        == Right (InternalMaterializeSubstrateCommand LinuxCpu Nothing False False)
     )
     "the structured command registry parses explicit substrate materialization commands"
   assert
     ( parseCommand ["internal", "materialize-substrate", "linux-cpu", "--empty-models"]
-        == Right (InternalMaterializeSubstrateCommand LinuxCpu True True)
+        == Right (InternalMaterializeSubstrateCommand LinuxCpu Nothing True True)
         && parseCommand ["internal", "materialize-substrate", "linux-gpu", "--demo-ui", "false", "--empty-models"]
-          == Right (InternalMaterializeSubstrateCommand LinuxGpu False True)
+          == Right (InternalMaterializeSubstrateCommand LinuxGpu Nothing False True)
     )
     "Sprint 8.5: the registry parses the image-baked --empty-models substrate materialization"
+  assert
+    ( parseCommand ["internal", "materialize-substrate", "linux-cpu", "--demo-ui", "true", "--engine-machines", "2"]
+        == Right (InternalMaterializeSubstrateCommand LinuxCpu (Just 2) True False)
+        && isLeft (parseCommand ["internal", "materialize-substrate", "linux-cpu", "--engine-machines", "0"])
+    )
+    "Sprint 8.12: the lane-facing generator takes the fleet size, and a fleet of zero is not a parse"
   assert
     (parseCommand ["internal", "materialize-linux-native-engines"] == Right InternalMaterializeLinuxNativeEnginesCommand)
     "the structured command registry parses Linux native engine materialization"
@@ -3506,7 +3521,7 @@ main = do
       let legacyRegistryNamespace = repoRoot paths </> ".build" </> "kind" </> "registry" </> "localhost:30001"
       createDirectoryIfMissing True legacyRegistryNamespace
       writeFile (legacyRegistryNamespace </> "hosts.toml") "legacy helper registry\n"
-      _ <- writeGeneratedKindConfig paths LinuxCpu 30090 30002 30080
+      _ <- writeGeneratedKindConfig paths LinuxCpu singleEngineMachine 30090 30002 30080
       legacyRegistryNamespaceExists <- doesDirectoryExist legacyRegistryNamespace
       legacyRegistryHostsContents <- readFile (legacyRegistryNamespace </> "hosts.toml")
       assert
@@ -3528,7 +3543,7 @@ main = do
       let outerFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot (unitTestRoot </> "outer-container" </> "build")
       outerPaths <- discoverPathsWithHostManifest (Just outerFixture)
       ensureRepoLayout outerPaths
-      generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu 30090 30002 30080
+      generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu singleEngineMachine 30090 30002 30080
       generatedLinuxGpuKindConfig <- readFile generatedLinuxGpuKindConfigPath
       let expectedHostKindMount = "hostPath: " <> realRepoRoot </> ".build/test-unit/.data/kind/linux-gpu"
           expectedHostRegistryMount = "hostPath: " <> realRepoRoot </> ".build/kind/linux-gpu/registry"
@@ -3587,9 +3602,9 @@ main = do
       -- is pinned the same way: over every supported mode, against the text
       -- that deploys.
       linuxCpuGeneratedKindConfig <-
-        readFile =<< writeGeneratedKindConfig outerPaths LinuxCpu 30090 30002 30080
+        readFile =<< writeGeneratedKindConfig outerPaths LinuxCpu singleEngineMachine 30090 30002 30080
       appleGeneratedKindConfig <-
-        readFile =<< writeGeneratedKindConfig outerPaths AppleSilicon 30090 30002 30080
+        readFile =<< writeGeneratedKindConfig outerPaths AppleSilicon singleEngineMachine 30090 30002 30080
       let generatedWorkerCount configText =
             length (filter (("- role: worker" ==) . dropWhile (== ' ')) (lines configText))
       mapM_
@@ -3610,7 +3625,7 @@ main = do
       createDirectoryIfMissing True (buildRoot paths)
       BS.writeFile
         demoConfigPath
-        (renderGeneratedDemoConfigPayload paths LinuxCpu True Coordinator linuxCpuUnitInferenceMemoryBudget)
+        (renderGeneratedDemoConfigPayload paths LinuxCpu singleEngineMachine True linuxCpuUnitInferenceMemoryBudget)
       generatedDemoPlan <-
         decodeCompiledRuntimePlanFile demoConfigPath
           >>= expectDecodedCompiledPlan "rendered linux demo config"
@@ -3619,7 +3634,6 @@ main = do
               paths
               LinuxCpu
               True
-              Coordinator
               linuxCpuUnitInferenceMemoryBudget
           demoConfig = generatedDemoConfig
       Lazy.writeFile demoConfigPath (encodeDemoConfig demoConfig)
@@ -3701,7 +3715,6 @@ main = do
       let decodedConfig = demoConfig
       assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
-      assert (activeDaemonRole decodedConfig == Coordinator) "demo-config decode preserves the active daemon role"
       assert (daemonConfigLocation (coordinatorDaemon decodedConfig) == "cluster-pod") "demo-config decode preserves cluster daemon metadata"
       assert (daemonConfigRole (webappDaemon decodedConfig) == Webapp) "demo-config decode preserves webapp daemon metadata"
       assert (not (null (engineDaemons decodedConfig))) "linux demo-config decode preserves engine daemon metadata"
@@ -3760,7 +3773,6 @@ main = do
               (fail "expected linux-cpu demo config to include at least one model")
               (pure . modelId)
               (listToMaybe (models decodedConfig))
-          let firstPoolId = enginePoolId firstPool
           assertDemoConfigDecodeFails
             unitTestRoot
             "duplicate-pool-id"
@@ -3768,82 +3780,90 @@ main = do
             decodedConfig {enginePools = firstPool : firstPool : secondPool : remainingPools}
           assertDemoConfigDecodeFails
             unitTestRoot
-            "duplicate-member-id"
-            "DuplicateMemberId"
-            decodedConfig {engineMembers = firstMember : firstMember : remainingMembers}
-          assertDemoConfigDecodeFails
-            unitTestRoot
             "invalid-pool-id"
             "InvalidPoolId"
             decodedConfig {enginePools = firstPool {enginePoolId = "persistent://bad/topic"} : secondPool : remainingPools}
           assertDemoConfigDecodeFails
             unitTestRoot
-            "unknown-model-id"
-            "DanglingPoolModel"
-            decodedConfig {enginePools = firstPool {enginePoolModelIds = "missing-model" : enginePoolModelIds firstPool} : secondPool : remainingPools}
-          assertDemoConfigDecodeFails
-            unitTestRoot
-            "unknown-member-id"
-            "DanglingPoolMember"
-            decodedConfig {enginePools = firstPool {enginePoolMemberIds = ["missing-member"]} : secondPool : remainingPools}
-          assertDemoConfigDecodeFails
-            unitTestRoot
             "failover-pool"
             "InvalidPoolSubscription"
             decodedConfig {enginePools = firstPool {enginePoolSubscriptionType = ConsumerFailover} : secondPool : remainingPools}
-          assertDemoConfigDecodeFails
+          -- Phase 8 Sprint 8.11: five disagreement classes that used to have
+          -- their own rejection are now unrepresentable on the wire, so the
+          -- assertion is that the round trip /succeeds/ and produces the
+          -- agreeing shape. A pool carries its own model descriptors, so a
+          -- model id no catalog defines has nowhere to be written; members are
+          -- inverted out of the pool graph, so a dangling member, a one-sided
+          -- link in either direction, and a member serving no pool cannot be
+          -- written either.
+          assertDemoConfigWireCannotExpress
             unitTestRoot
-            "empty-member-responsibility"
-            "EmptyMemberPools"
-            decodedConfig {engineMembers = firstMember {engineMemberPoolIds = []} : remainingMembers}
-          assertDemoConfigDecodeFails
+            "dangling-pool-model"
+            decodedConfig {enginePools = firstPool {enginePoolModelIds = "missing-model" : enginePoolModelIds firstPool} : secondPool : remainingPools}
+            ( \roundTripped ->
+                all
+                  (all (`elem` map modelId (models roundTripped)) . enginePoolModelIds)
+                  (enginePools roundTripped)
+            )
+            "every pool model id names a model the round-tripped catalog defines"
+          assertDemoConfigWireCannotExpress
             unitTestRoot
-            "one-sided-pool-link"
-            "PoolMemberLinkMissing"
-            decodedConfig {engineMembers = firstMember {engineMemberPoolIds = filter (/= firstPoolId) (engineMemberPoolIds firstMember)} : remainingMembers}
-          assertDemoConfigDecodeFails
+            "dangling-pool-member"
+            decodedConfig {enginePools = firstPool {enginePoolMemberIds = ["missing-member"]} : secondPool : remainingPools}
+            ( \roundTripped ->
+                all
+                  (all (`elem` map engineMemberId (engineMembers roundTripped)) . enginePoolMemberIds)
+                  (enginePools roundTripped)
+            )
+            "every pool member id names a member the round-tripped graph defines"
+          assertDemoConfigWireCannotExpress
             unitTestRoot
             "one-sided-member-link"
-            "MemberPoolLinkMissing"
-            decodedConfig
-              { enginePools = firstPool {enginePoolMemberIds = ["linux-cpu-engine-secondary"]} : secondPool : remainingPools,
-                engineMembers =
-                  firstMember
-                    : firstMember
-                      { engineMemberId = "linux-cpu-engine-secondary",
-                        engineMemberPoolIds = [firstPoolId]
-                      }
-                    : remainingMembers
-              }
+            decodedConfig {engineMembers = firstMember {engineMemberPoolIds = []} : remainingMembers}
+            ( \roundTripped ->
+                and
+                  [ enginePoolId pool `elem` engineMemberPoolIds member
+                  | pool <- enginePools roundTripped,
+                    member <- engineMembers roundTripped,
+                    engineMemberId member `elem` enginePoolMemberIds pool
+                  ]
+                  && and
+                    [ engineMemberId member `elem` enginePoolMemberIds pool
+                    | member <- engineMembers roundTripped,
+                      pool <- enginePools roundTripped,
+                      enginePoolId pool `elem` engineMemberPoolIds member
+                    ]
+            )
+            "the pool/member link round-trips bidirectionally in both directions"
+          assertDemoConfigWireCannotExpress
+            unitTestRoot
+            "duplicate-member-id"
+            decodedConfig {engineMembers = firstMember : firstMember : remainingMembers}
+            ( \roundTripped ->
+                let memberIds = map engineMemberId (engineMembers roundTripped)
+                 in memberIds == nub memberIds
+            )
+            "the round-tripped member set has no duplicate identity"
           assertDemoConfigDecodeFails
             unitTestRoot
             "ambiguous-model-pool"
             "MultiplyPlacedModel"
             decodedConfig {enginePools = firstPool : secondPool {enginePoolModelIds = firstModelId : enginePoolModelIds secondPool} : remainingPools}
-          case find ((> 1) . length . enginePoolModelIds) (enginePools decodedConfig) of
-            Just multiModelPool ->
-              case enginePoolModelIds multiModelPool of
-                removedModelId : _ ->
-                  let removeModel pool =
-                        if enginePoolId pool == enginePoolId multiModelPool
-                          then pool {enginePoolModelIds = filter (/= removedModelId) (enginePoolModelIds pool)}
-                          else pool
-                   in assertDemoConfigDecodeFails
-                        unitTestRoot
-                        "unroutable-model"
-                        "UnplacedModel"
-                        decodedConfig {enginePools = map removeModel (enginePools decodedConfig)}
-                [] ->
-                  fail "expected selected multi-model engine pool to include model ids"
-            Nothing ->
-              fail "expected at least one multi-model engine pool for unroutable-model validation"
+          -- The catalog is the pool graph, so an unplaced model has no wire
+          -- representation at all: a model exists because a pool declares it.
+          assert
+            ( all
+                (\model -> any ((modelId model `elem`) . enginePoolModelIds) (enginePools decodedConfig))
+                (models decodedConfig)
+            )
+            "every model in the decoded catalog is owned by the pool that declared it"
         _ ->
           fail "expected linux-cpu demo config to include at least two pools and one member"
       assertClusterConfig unitTestRoot demoConfigPath
       let appleConfigPath = buildRoot paths </> "apple-host-demo-config-test.dhall"
       BS.writeFile
         appleConfigPath
-        (renderGeneratedDemoConfigPayload paths AppleSilicon True Engine appleUnitInferenceMemoryBudget)
+        (renderGeneratedDemoConfigPayload paths AppleSilicon singleEngineMachine True appleUnitInferenceMemoryBudget)
       generatedApplePlan <-
         decodeCompiledRuntimePlanFile appleConfigPath
           >>= expectDecodedCompiledPlan "rendered apple demo config"
@@ -3852,7 +3872,6 @@ main = do
               paths
               AppleSilicon
               True
-              Engine
               appleUnitInferenceMemoryBudget
           decodedAppleConfig = generatedAppleConfig
       Lazy.writeFile appleConfigPath (encodeDemoConfig decodedAppleConfig)
@@ -3865,10 +3884,13 @@ main = do
               []
               ExecutionPlan.compiledDaemonRequestTopics
               (ExecutionPlan.lookupCompiledEngineDaemon "apple-host-default" compiledApplePlan)
-      assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
       assert (enginePools decodedAppleConfig == enginePoolsForMode AppleSilicon) "apple host demo-config preserves engine pools"
+      -- Phase 8 Sprint 8.11: the catalog is the pool graph, so the compiled
+      -- model order is pool order rather than catalog order. Compare the sets.
       assert
-        (ExecutionPlan.compiledPlanConfiguredModels generatedApplePlan == catalogForMode AppleSilicon)
+        ( sortOn modelId (ExecutionPlan.compiledPlanConfiguredModels generatedApplePlan)
+            == sortOn modelId (catalogForMode AppleSilicon)
+        )
         "the rendered Apple config compiles with every generated catalog model"
       assertExecutionPlanWireAndQuantityProperties unitTestRoot demoConfig appleHostConfig
       DemoConfigProperties.runDemoConfigParserProperties paths
@@ -4865,6 +4887,8 @@ main = do
         "compiled native placement retains the closed MLX engine binding"
 
       ExecutionPlanProperties.runExecutableLaunchBoundaryProperties paths
+      runMachineContractAssertions unitTestRoot
+      runFleetMemberIdentityAssertions unitTestRoot
       runAppleCohortRegressionAssertions (repoRoot paths)
       runElfLoaderClosureAssertions
       runElfSealedRunAuditAssertions (repoRoot paths)
@@ -4950,11 +4974,12 @@ main = do
               "infernix-manual"
               []
               AppleSilicon
+              []
               (generatedKubeconfigPath paths)
               (Config.generatedDemoConfigPath paths)
               (Config.publishedConfigMapCatalogPath paths)
               (Config.publishedConfigMapManifestPath paths)
-              "/opt/build/infernix-substrate.dhall"
+              "/opt/build/infernix.dhall"
               resultNow
           hostClusterStatePath = runtimeRoot paths </> "cluster-state.state"
           hostSecretsManifestPath = runtimeRoot paths </> "secrets" </> "InfernixSecrets.dhall"
@@ -4969,7 +4994,11 @@ main = do
             == Just
               WorkerModelCacheConfig
                 { workerModelCacheRoot = Text.pack (modelCacheRoot paths),
-                  workerModelCacheQuotaBytes = 34359738368,
+                  -- Phase 8 Sprint 8.11: the host quota is the machine
+                  -- contract's, and this fixture's paths carry no manifest, so
+                  -- the shared default the machine contract is generated from
+                  -- is what the host worker sees.
+                  workerModelCacheQuotaBytes = fromInteger defaultModelCacheQuotaBytes,
                   workerMinioEndpoint = "http://127.0.0.1:30011",
                   workerMinioModelsBucket = "infernix-models",
                   workerMinioDemoArtifactsBucket = "infernix-demo-objects",
@@ -5010,6 +5039,7 @@ main = do
               storageClass = "standard",
               claims = [],
               clusterRuntimeMode = LinuxCpu,
+              clusterEngineMemberIds = [],
               kubeconfigPath = Config.generatedKubeconfigPath linuxCpuOuterPaths,
               generatedDemoConfigPath = Config.generatedDemoConfigPath linuxCpuOuterPaths,
               publishedDemoConfigPath = Config.publishedConfigMapCatalogPath linuxCpuOuterPaths,
@@ -5017,8 +5047,8 @@ main = do
               mountedDemoConfigPath = "/var/infernix/demo/infernix-substrate.dhall",
               updatedAt = linuxCpuFinalNow
             }
-        linuxCpuFinalValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" FinalPhase
-        linuxCpuPulsarReadyValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" PulsarReadyPhase
+        linuxCpuFinalValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" [] FinalPhase
+        linuxCpuPulsarReadyValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" [] PulsarReadyPhase
         expectedKeycloakExternalBaseUrl =
           "  externalBaseUrl: http://"
             <> kindControlPlaneNodeName linuxCpuOuterPaths LinuxCpu
@@ -5128,6 +5158,7 @@ main = do
               storageClass = "standard",
               claims = [],
               clusterRuntimeMode = LinuxGpu,
+              clusterEngineMemberIds = [],
               kubeconfigPath = Config.generatedKubeconfigPath linuxGpuOuterPaths,
               generatedDemoConfigPath = Config.generatedDemoConfigPath linuxGpuOuterPaths,
               publishedDemoConfigPath = Config.publishedConfigMapCatalogPath linuxGpuOuterPaths,
@@ -5141,6 +5172,7 @@ main = do
             OuterContainer
             linuxGpuFinalState
             "{}"
+            []
             FinalPhase
         expectedLinuxGpuEngineResources =
           unlines
@@ -5151,7 +5183,11 @@ main = do
               "    limits:",
               "      cpu: \"2\"",
               "      memory: " <> show (linuxGpuEnginePodMemoryLimitMib `div` 1024) <> "Gi",
-              "  perEngine:"
+              -- Sprint 8.12: the fleet block follows the engine resources, so
+              -- the fixture keeps pinning where the resource block ends rather
+              -- than pinning it against whatever happens to come next.
+              "  fleet:",
+              "    enabled: false"
             ]
     assert
       (expectedLinuxGpuEngineResources `isInfixOf` linuxGpuFinalValues)
@@ -5641,7 +5677,8 @@ main = do
             helmDataRoot = "/tmp/infernix-mst/.data/helm/data",
             resultsRoot = "/tmp/infernix-mst/.data/results",
             modelCacheRoot = "/tmp/infernix-mst/.data/model-cache",
-            pathsHostConfig = Nothing
+            pathsHostConfig = Nothing,
+            pathsHostConfigPath = Nothing
           }
   failClosedResult <-
     try (Subprocess.clusterSubprocessEnv pathsWithoutManifest) ::
@@ -10695,6 +10732,7 @@ main = do
             storageClass = "infernix-manual",
             claims = [],
             clusterRuntimeMode = LinuxCpu,
+            clusterEngineMemberIds = [],
             kubeconfigPath = "/tmp/kube",
             generatedDemoConfigPath = "/tmp/gen",
             publishedDemoConfigPath = "/tmp/pub",
@@ -12590,6 +12628,7 @@ main = do
           { clusterLifecycle = ClusterReady,
             clusterOwner = HarnessOwned,
             clusterRuntimeMode = AppleSilicon,
+            clusterEngineMemberIds = [],
             claims = []
           }
   createDirectoryIfMissing True snapshotPausedRoot
@@ -14542,6 +14581,465 @@ assert False message = fail message
 -- found on live hardware and that no machine-independent gate could reach. They
 -- exist so a regression fails here rather than only during an Apple
 -- materialization run.
+-- | Phase 8 Sprint 8.11 — the checks that hold the system contract and the
+-- machine contract together.
+--
+-- Three layers, and they buy different things. The pin and the served-pool
+-- resolution are local: they prove this machine's manifest matches this
+-- machine's copy of the contract, and neither can see another machine's copy.
+-- The registered contract digest is the only one that could ever detect a fleet
+-- disagreement, and at one engine machine it is proved the way a second machine
+-- would prove it — by classifying a registered value that disagrees.
+-- | Phase 8 Sprint 8.12 — the fleet contract: member identity, the workload
+-- shape it implies, and the broker-side claim that bounds it.
+--
+-- What these assertions can and cannot decide is worth stating, because the
+-- sprint's whole point is that a fleet property is not provable at one machine.
+-- Everything here is about the /generated/ artefacts — the contract, the Kind
+-- topology, the Helm overlay, the per-machine manifests, the claim topic, and
+-- the refusal text — all of which are decidable from one process. That two
+-- machines actually refuse each other at the broker is the cohort's to show.
+runFleetMemberIdentityAssertions :: FilePath -> IO ()
+runFleetMemberIdentityAssertions root = do
+  paths <- discoverPaths
+  twoMachines <-
+    either (ioError . userError) pure (engineMachineCountForMode LinuxCpu 2)
+
+  -- 1. The fleet dimension multiplies members and nothing else.
+  let singlePools = enginePoolsForFleet LinuxCpu singleEngineMachine
+      fleetPools = enginePoolsForFleet LinuxCpu twoMachines
+      singleMembers = engineMembersForFleet LinuxCpu singleEngineMachine
+      fleetMembers = engineMembersForFleet LinuxCpu twoMachines
+  assert
+    (singlePools == enginePoolsForMode LinuxCpu && singleMembers == engineMembersForMode LinuxCpu)
+    "Sprint 8.12: a one-machine fleet generates exactly the single-machine pool graph"
+  assert
+    (length fleetMembers == 2 * length singleMembers)
+    "Sprint 8.12: a two-machine fleet declares two members per single-machine member"
+  assert
+    (length (nub (map engineMemberId fleetMembers)) == length fleetMembers)
+    "Sprint 8.12: fleet member identities are distinct"
+  assert
+    ( map enginePoolId fleetPools == map enginePoolId singlePools
+        && map enginePoolModelIds fleetPools == map enginePoolModelIds singlePools
+        && map enginePoolSubscriptionType fleetPools == map enginePoolSubscriptionType singlePools
+    )
+    "Sprint 8.12: the fleet dimension leaves pool identity, models, and subscription type alone"
+  assert
+    (all (\pool -> length (enginePoolMemberIds pool) == 2) fleetPools)
+    "Sprint 8.12: every pool of a two-machine fleet names both machines, so both serve the same Shared topic"
+
+  -- 2. The declared member ids are what a later reader recovers the fleet size
+  --    from, because publication regenerates the payload rather than copying it.
+  assert
+    (engineMachineCountFromMemberIds (map engineMemberId fleetMembers) == twoMachines)
+    "Sprint 8.12: the fleet size is recoverable from the declared member ids"
+  assert
+    (engineMachineCountFromMemberIds (map engineMemberId singleMembers) == singleEngineMachine)
+    "Sprint 8.12: an unsuffixed member list reads as one machine"
+  assert
+    (engineMachineCountFromMemberIds [] == singleEngineMachine)
+    "Sprint 8.12: an empty member list reads as one machine rather than as no machine"
+
+  -- 3. The mode-scoped refusals.
+  assert
+    (isLeft (engineMachineCountForMode LinuxGpu 2))
+    "Sprint 8.12: linux-gpu refuses a fleet above one machine rather than renaming its engine images"
+  case engineMachineCountForMode LinuxGpu 2 of
+    Left refusal ->
+      assert
+        (isInfixOf "--engine-machines 1" refusal && isInfixOf "framework engine image" refusal)
+        "Sprint 8.12: the linux-gpu fleet refusal says what to do and why"
+    Right _ -> assert False "Sprint 8.12: linux-gpu fleet refusal is reachable"
+  assert
+    (isLeft (engineMachineCountForMode LinuxCpu 0))
+    "Sprint 8.12: a fleet of zero machines is refused at generation"
+
+  -- 4. The claim topic is per identity, and it is not a pool topic.
+  let claimTopicOne = engineMemberClaimTopicForMode LinuxCpu "linux-cpu-engine-m1"
+      claimTopicTwo = engineMemberClaimTopicForMode LinuxCpu "linux-cpu-engine-m2"
+      samplePoolTopic =
+        enginePoolTopicForMode LinuxCpu (maybe "pool" enginePoolId (listToMaybe fleetPools)) "some-model"
+  assert
+    (claimTopicOne /= claimTopicTwo)
+    "Sprint 8.12: each machine claims its own topic"
+  assert
+    (claimTopicOne /= samplePoolTopic && not (Text.isInfixOf "inference.batch." claimTopicOne))
+    "Sprint 8.12: the claim topic is separate from the Shared pool topic it would otherwise exclude the fleet from"
+
+  -- 5. The refusal a second machine gets.
+  let claimRefusal =
+        engineMemberClaimRefusal
+          "linux-cpu-engine-m1"
+          claimTopicOne
+          (Just "linux-cpu-engine-m1@other-host:4242")
+  assert
+    ( isInfixOf "linux-cpu-engine-m1" claimRefusal
+        && isInfixOf (Text.unpack claimTopicOne) claimRefusal
+        && isInfixOf "other-host:4242" claimRefusal
+    )
+    "Sprint 8.12: the claim refusal names the identity, the claim topic, and the incumbent"
+  assert
+    ("the broker refused the claim but reported no consumer" `isInfixOf` engineMemberClaimRefusal "m" "t" Nothing)
+    "Sprint 8.12: an incumbent that lapsed between the refusal and the lookup is reported as unknown, not as absent"
+
+  -- 6. What counts as the broker refusing a second holder, and what does not.
+  assert
+    (isEngineMemberClaimConflict (toException (userError "handshake failed: 409 Conflict")))
+    "Sprint 8.12: a 409 is read as a held claim"
+  assert
+    (isEngineMemberClaimConflict (toException (userError "Consumer Busy")))
+    "Sprint 8.12: a consumer-busy response is read as a held claim"
+  assert
+    (not (isEngineMemberClaimConflict (toException (userError "Network.Socket.connect: connection refused"))))
+    "Sprint 8.12: a transport failure is not read as a held claim"
+  assert
+    ( engineMemberClaimReacquisitionWindowSeconds >= 30
+        && engineMemberClaimRetryDelayMicros > 0
+    )
+    "Sprint 8.12: the reacquisition window is wall-clock and covers the broker's keep-alive interval, so a restart is not an outage"
+
+  -- 7. The Kind topology follows the contract's fleet.
+  let kindConfigFor machineCount =
+        renderKindConfig
+          paths
+          LinuxCpu
+          machineCount
+          30090
+          30002
+          30080
+          (root </> "kind")
+          (root </> "registry")
+          False
+      singleKind = kindConfigFor singleEngineMachine
+      fleetKind = kindConfigFor twoMachines
+      workerCountIn rendered = length (filter (isInfixOf "- role: worker") (lines rendered))
+  assert
+    (workerCountIn singleKind == 1)
+    "Sprint 8.12: the single-machine Kind topology still has exactly one worker"
+  assert
+    (workerCountIn fleetKind == 2)
+    "Sprint 8.12: a two-machine fleet gets one Kind worker per machine"
+  assert
+    ( isInfixOf (fleetSlotLabelKey <> "=1") fleetKind
+        && isInfixOf (fleetSlotLabelKey <> "=2") fleetKind
+    )
+    "Sprint 8.12: each fleet worker carries its own slot label for its machine's nodeSelector"
+  assert
+    ((fleetSlotLabelKey <> "=1") `isInfixOf` singleKind)
+    "Sprint 8.12: the single-worker topology carries the same slot label, so the two shapes differ only in size"
+
+  -- 8. The per-machine contracts: one member each, one shared pin.
+  let declaredFleetMemberIds = map engineMemberId fleetMembers
+      fleetSystemContract =
+        unitGeneratedDemoConfig paths LinuxCpu True linuxCpuUnitInferenceMemoryBudget
+      fleetDigest = MachineContract.digestSystemContract fleetSystemContract
+  machineContracts <- renderFleetMachineContracts paths fleetDigest declaredFleetMemberIds
+  assert
+    (map fst machineContracts == [1, 2])
+    "Sprint 8.12: a two-machine fleet renders a machine contract per slot"
+  assert
+    ( and
+        [ Text.unpack memberIdValue `isInfixOf` contractBody
+        | ((_, contractBody), memberIdValue) <- zip machineContracts declaredFleetMemberIds
+        ]
+    )
+    "Sprint 8.12: each machine contract names its own member identity"
+  assert
+    ( and
+        [ not (Text.unpack otherMemberId `isInfixOf` contractBody)
+        | ((slot, contractBody), _) <- zip machineContracts declaredFleetMemberIds,
+          (otherSlot, otherMemberId) <- zip [1 ..] declaredFleetMemberIds,
+          slot /= otherSlot
+        ]
+    )
+    "Sprint 8.12: a machine contract names exactly one member, so a pod cannot adopt another machine's identity from its own manifest"
+  assert
+    ( all
+        (isInfixOf (Text.unpack (MachineContract.systemContractDigestText fleetDigest)) . snd)
+        machineContracts
+    )
+    "Sprint 8.12: every machine of a fleet is pinned to the same system contract"
+  fleetContractsForOneMachine <-
+    renderFleetMachineContracts paths fleetDigest (fleetMemberIdsForOneMachine paths)
+  assert
+    (null fleetContractsForOneMachine)
+    "Sprint 8.12: a one-machine deployment renders no per-machine contract; its pod reads the baked manifest"
+
+  -- 9. The generated Helm overlay.
+  fleetNow <- getCurrentTime
+  let fleetState =
+        ClusterState
+          { clusterLifecycle = ClusterReady,
+            clusterOwner = OperatorOwned,
+            edgePort = 30090,
+            harborPort = 30002,
+            routes = [RouteInfo "/" "demo web UI"],
+            storageClass = "standard",
+            claims = [],
+            clusterRuntimeMode = LinuxCpu,
+            clusterEngineMemberIds = declaredFleetMemberIds,
+            kubeconfigPath = Config.generatedKubeconfigPath paths,
+            generatedDemoConfigPath = Config.generatedDemoConfigPath paths,
+            publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths,
+            publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath paths,
+            mountedDemoConfigPath = "/opt/build/infernix.dhall",
+            updatedAt = fleetNow
+          }
+      singleMachineState = fleetState {clusterEngineMemberIds = map engineMemberId singleMembers}
+      fleetValues = renderHelmValues paths OuterContainer fleetState "{}" machineContracts FinalPhase
+      singleValues = renderHelmValues paths OuterContainer singleMachineState "{}" [] FinalPhase
+  assert
+    ("  fleet:\n    enabled: true" `isInfixOf` fleetValues)
+    "Sprint 8.12: the generated overlay turns the fleet lane on when the contract declares more than one machine"
+  assert
+    ( "    replicaCount: 1" `isInfixOf` fleetValues
+        && "    replicaCount: 0"
+          `isInfixOf` renderHelmValues paths OuterContainer fleetState "{}" machineContracts PulsarReadyPhase
+    )
+    "Sprint 8.12: a fleet machine's engine is phase-gated exactly as the shared engine is, so no engine is asked for before Pulsar is up"
+  assert
+    ("  fleet:\n    enabled: false" `isInfixOf` singleValues)
+    "Sprint 8.12: the deployed single-machine topology keeps the fleet lane off"
+  assert
+    ( and
+        [ ("name: " <> show (Text.unpack memberIdValue)) `isInfixOf` fleetValues
+        | memberIdValue <- declaredFleetMemberIds
+        ]
+    )
+    "Sprint 8.12: each fleet machine's declared identity reaches its Deployment as a compiled constant"
+  assert
+    ("engine:\n  replicaCount: 0" `isInfixOf` fleetValues)
+    "Sprint 8.12: a fleet renders no shared engine workload, so the shared replica count names nothing"
+  assert
+    ("engine:\n  replicaCount: 1" `isInfixOf` singleValues)
+    "Sprint 8.12: the single-machine overlay is unchanged"
+  assert
+    (isInfixOf "    m1.dhall: |" fleetValues && isInfixOf "    m2.dhall: |" fleetValues)
+    "Sprint 8.12: each machine's contract is embedded in the overlay as a string the chart only nindents"
+
+  -- 10. The rollout wait list and the scale targets name the machines.
+  assert
+    (clusterFleetEngineDeployments fleetState == ["deployment/infernix-engine-m1", "deployment/infernix-engine-m2"])
+    "Sprint 8.12: a fleet deploys one engine workload per machine"
+  assert
+    (null (clusterFleetEngineDeployments singleMachineState))
+    "Sprint 8.12: a single-machine deployment keeps the shared engine workload"
+  assert
+    ( notElem "deployment/infernix-engine" (finalPhaseDeployments fleetState)
+        && all (`elem` finalPhaseDeployments fleetState) (clusterFleetEngineDeployments fleetState)
+    )
+    "Sprint 8.12: the rollout wait list names the machines that exist rather than a workload that does not"
+  assert
+    ("deployment/infernix-engine" `elem` finalPhaseDeployments singleMachineState)
+    "Sprint 8.12: the single-machine rollout wait list is unchanged"
+  putStrLn "Sprint 8.12 fleet member-identity assertions passed"
+  where
+    fleetMemberIdsForOneMachine _paths = []
+
+runMachineContractAssertions :: FilePath -> IO ()
+runMachineContractAssertions root = do
+  paths <- discoverPaths
+  let appleSystemContract =
+        unitGeneratedDemoConfig paths AppleSilicon True appleUnitInferenceMemoryBudget
+      linuxSystemContract =
+        unitGeneratedDemoConfig paths LinuxCpu True linuxCpuUnitInferenceMemoryBudget
+      contractRoot = root </> "machine-contract"
+      systemContractPath = contractRoot </> "infernix.dhall"
+      foreignContractPath = contractRoot </> "foreign-infernix.dhall"
+      pinnedDigest = MachineContract.digestSystemContract appleSystemContract
+      foreignDigest = MachineContract.digestSystemContract linuxSystemContract
+      declaredNode =
+        HostConfig.MachineNode
+          { HostConfig.machineRole = Enums.daemonRoleToDhall Engine,
+            HostConfig.machineMembers = ["apple-host-default"],
+            HostConfig.machineModelCacheQuotaBytes = fromInteger defaultModelCacheQuotaBytes,
+            HostConfig.machineSystemContractDigest =
+              MachineContract.systemContractDigestText pinnedDigest
+          }
+      appleManifest =
+        HostConfig.defaultAppleHostNativeHostConfig
+          (Text.pack contractRoot)
+          (Text.pack contractRoot)
+      pinnedManifest = appleManifest {HostConfig.hostMachine = HostConfig.DeclaredMachine declaredNode}
+      imageManifest = appleManifest {HostConfig.hostMachine = HostConfig.ImageDefaultMachine}
+  createDirectoryIfMissing True contractRoot
+  Lazy.writeFile systemContractPath (encodeDemoConfig appleSystemContract)
+  Lazy.writeFile foreignContractPath (encodeDemoConfig linuxSystemContract)
+  -- The digest follows the contract a payload describes, not the payload's
+  -- bytes: a written file and the value it was rendered from digest alike.
+  observedDigest <- MachineContract.digestSystemContractFile systemContractPath
+  assert
+    (observedDigest == pinnedDigest)
+    "the system-contract digest of a written file equals the digest of the value it renders"
+  -- The live cohort's defect, pinned: one deployment holds the same contract as
+  -- more than one payload — the operator's file names its own absolute
+  -- `generatedPath`, the published cluster mirror is rendered for the pods that
+  -- mount it — and those payloads must digest alike or the machines refuse each
+  -- other over a disagreement that does not exist.
+  let publishedMirror =
+        appleSystemContract
+          { generatedPath = "/opt/build/published-mirror.dhall",
+            mountedPath = "/opt/build/infernix.dhall",
+            configMapName = "infernix-demo-config-mirror",
+            demoUiEnabled = not (demoUiEnabled appleSystemContract)
+          }
+  assert
+    (MachineContract.digestSystemContract publishedMirror == pinnedDigest)
+    "two payloads of one contract that differ only in machine-local fields digest alike"
+  assert
+    ( MachineContract.digestSystemContract
+        appleSystemContract
+          { enginePools =
+              case enginePools appleSystemContract of
+                pool : remaining -> pool {enginePoolMemberIds = ["someone-else"]} : remaining
+                [] -> []
+          }
+        /= pinnedDigest
+    )
+    "a changed pool member moves the contract digest"
+  assert
+    ( "sha256:"
+        `Text.isPrefixOf` MachineContract.systemContractDigestText pinnedDigest
+    )
+    "the system-contract digest is a prefixed sha256 hex value"
+  assert
+    (MachineContract.classifyMachinePin pinnedManifest pinnedDigest == MachineContract.MachinePinAgrees)
+    "a machine contract paired with the system contract it was generated against agrees"
+  assert
+    ( MachineContract.classifyMachinePin pinnedManifest foreignDigest
+        == MachineContract.MachinePinDisagrees
+          (MachineContract.systemContractDigestText pinnedDigest)
+          (MachineContract.systemContractDigestText foreignDigest)
+    )
+    "a machine contract paired with a foreign system contract fails the pin and names both digests"
+  assert
+    (MachineContract.classifyMachinePin imageManifest pinnedDigest == MachineContract.MachinePinUndeclared)
+    "the image-default manifest pins nothing, which is absence rather than disagreement"
+  foreignPairResult <-
+    try (MachineContract.requireMachineContractPair pinnedManifest foreignContractPath) ::
+      IO (Either IOError ())
+  assert
+    (either (isInfixOf "pinned to a different system contract" . show) (const False) foreignPairResult)
+    "pairing a machine contract with a foreign system contract on disk is refused by name"
+  matchingPairResult <-
+    try (MachineContract.requireMachineContractPair pinnedManifest systemContractPath) ::
+      IO (Either IOError ())
+  assert
+    (either (const False) (const True) matchingPairResult)
+    "pairing a machine contract with its own system contract is accepted"
+  imageDaemonResult <-
+    try (void (MachineContract.requireDeclaredMachine imageManifest)) ::
+      IO (Either IOError ())
+  assert
+    (either (isInfixOf "declares no machine contract" . show) (const False) imageDaemonResult)
+    "a daemon started against the image-default manifest is refused by name"
+  -- Identity is declared, not discovered.
+  assert
+    (MachineContract.resolveMachineMemberId declaredNode Nothing == Right "apple-host-default")
+    "one declared member identity needs no selection"
+  assert
+    ( either
+        (isInfixOf "is not declared by this machine contract")
+        (const False)
+        (MachineContract.resolveMachineMemberId declaredNode (Just "someone-elses-member"))
+    )
+    "an engine name outside the declared identities is refused rather than adopted"
+  let multiMemberNode = declaredNode {HostConfig.machineMembers = ["native", "transformers"]}
+  assert
+    ( either
+        (isInfixOf "pass `--engine-name`")
+        (const False)
+        (MachineContract.resolveMachineMemberId multiMemberNode Nothing)
+    )
+    "more than one declared identity and no engine name is a refusal, not a default"
+  assert
+    (MachineContract.resolveMachineMemberId multiMemberNode (Just "transformers") == Right "transformers")
+    "an engine name naming one of the declared identities resolves to it"
+  assert
+    ( either
+        (isInfixOf "declares no engine member identity")
+        (const False)
+        (MachineContract.resolveMachineMemberId declaredNode {HostConfig.machineMembers = []} Nothing)
+    )
+    "a machine contract declaring no identity is refused rather than defaulted"
+  -- The broker-registered digest: three states, and absence is not
+  -- disagreement.
+  let registeredBody digestValue =
+        LazyChar8.pack ("{\"contractDigest\":\"" <> Text.unpack digestValue <> "\"}")
+      unpinnedBody = LazyChar8.pack "{\"someOtherProperty\":\"value\"}"
+  assert
+    ( Pulsar.classifyRegisteredContractDigest
+        pinnedDigest
+        (registeredBody (MachineContract.systemContractDigestText pinnedDigest))
+        == Pulsar.RegisteredDigestAgrees
+    )
+    "a registered digest equal to this daemon's contract digest agrees"
+  assert
+    ( Pulsar.classifyRegisteredContractDigest pinnedDigest unpinnedBody
+        == Pulsar.RegisteredDigestAbsent
+    )
+    "a topic carrying no contract digest reports absence, not disagreement"
+  assert
+    ( Pulsar.classifyRegisteredContractDigest
+        pinnedDigest
+        (registeredBody (MachineContract.systemContractDigestText foreignDigest))
+        == Pulsar.RegisteredDigestDisagrees (MachineContract.systemContractDigestText foreignDigest)
+    )
+    "a registered digest that disagrees is classified as a disagreement and carries the incumbent value"
+  -- The registrar/verifier split: a deliberate contract change must not be an
+  -- outage. The registered digest is durable broker state that outlives a
+  -- cluster, so a check that only ever refuses would freeze the fleet's contract
+  -- at whatever was registered first.
+  assert
+    ( Pulsar.contractDigestAuthorityForRole Coordinator == Pulsar.RegistersContractDigest
+        && Pulsar.contractDigestAuthorityForRole Engine == Pulsar.VerifiesContractDigest
+        && Pulsar.contractDigestAuthorityForRole Webapp == Pulsar.VerifiesContractDigest
+    )
+    "the coordinator registers the fleet's contract digest and every other role verifies it"
+  let refusal =
+        Pulsar.registeredContractDigestRefusal
+          "persistent://infernix/demo/inference.request.apple-silicon"
+          (MachineContract.systemContractDigestText foreignDigest)
+          (MachineContract.systemContractDigestText pinnedDigest)
+  assert
+    ( isInfixOf "refuses to start" refusal
+        && isInfixOf (Text.unpack (MachineContract.systemContractDigestText foreignDigest)) refusal
+        && isInfixOf (Text.unpack (MachineContract.systemContractDigestText pinnedDigest)) refusal
+    )
+    "the disagreement refusal names the registered incumbent and this daemon's digest"
+  -- The generated pair round-trips: render, decode, re-render, byte-compare.
+  -- This is what makes the pin meaningful — a renderer and a decoder that
+  -- disagree would give one contract two digests depending on which side
+  -- computed it.
+  let roundTripPath = contractRoot </> "round-trip.dhall"
+  mapM_
+    ( \(runtimeModeValue, budget) -> do
+        let firstRender = renderGeneratedDemoConfigPayload paths runtimeModeValue singleEngineMachine True budget
+        BS.writeFile roundTripPath firstRender
+        decodedConfig <- decodeDemoConfigFile roundTripPath
+        let secondRender = Lazy.toStrict (encodeDemoConfig decodedConfig)
+        assert
+          (firstRender == secondRender)
+          ( "the generated system contract for "
+              <> Text.unpack (runtimeModeId runtimeModeValue)
+              <> " re-renders byte-identically after a decode"
+          )
+        roundTrippedDigest <- MachineContract.digestSystemContractFile roundTripPath
+        assert
+          ( roundTrippedDigest
+              == MachineContract.digestSystemContract
+                (unitGeneratedDemoConfig paths runtimeModeValue True budget)
+          )
+          ( "the content pin is stable across the decode/re-render round trip for "
+              <> Text.unpack (runtimeModeId runtimeModeValue)
+          )
+    )
+    [ (AppleSilicon, appleUnitInferenceMemoryBudget),
+      (LinuxCpu, linuxCpuUnitInferenceMemoryBudget)
+    ]
+  putStrLn "Sprint 8.11 machine-contract assertions passed"
+
 runAppleCohortRegressionAssertions :: FilePath -> IO ()
 runAppleCohortRegressionAssertions repoRootPath = do
   runDyldAuditRegressionAssertions
@@ -14895,6 +15393,55 @@ assertJsonEncodingContains label value needle = do
     (needle `Text.isInfixOf` encoded)
     (label <> ": expected encoded JSON to contain " <> Text.unpack needle <> ", encoded=" <> Text.unpack encoded)
 
+-- | Phase 8 Sprint 8.11 — assert that a disagreement has no wire
+-- representation.
+--
+-- The mutated config is rendered and decoded like any generated payload. The
+-- round trip must /succeed/, and the decoded result must satisfy the invariant
+-- the mutation tried to break: the wire could not carry the disagreement, so
+-- there is nothing left to reject.
+-- | Phase 8 Sprint 8.11 — the two in-cluster daemon records are derived, so a
+-- generated payload always describes them the one way the runtime mode implies.
+assertDerivedClusterDaemonMetadata :: FilePath -> DemoConfig -> IO ()
+assertDerivedClusterDaemonMetadata root demoConfig = do
+  let configPath = root </> "derived-cluster-daemon-metadata.dhall"
+  Lazy.writeFile
+    configPath
+    ( encodeDemoConfig
+        demoConfig
+          { coordinatorDaemon =
+              (coordinatorDaemon demoConfig)
+                { daemonConfigRole = Webapp,
+                  daemonConfigMemberId = Just "not-a-member",
+                  daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
+                }
+          }
+    )
+  roundTripped <- decodeDemoConfigFile configPath
+  assert
+    ( daemonConfigRole (coordinatorDaemon roundTripped) == Coordinator
+        && isNothing (daemonConfigMemberId (coordinatorDaemon roundTripped))
+        && daemonConfigPulsarConnectionMode (coordinatorDaemon roundTripped) == ConfiguredTransport
+        && daemonConfigLocation (coordinatorDaemon roundTripped) == "cluster-pod"
+    )
+    "the coordinator daemon round-trips as the derived record, whatever the in-memory config said"
+  assert
+    (daemonConfigRole (webappDaemon roundTripped) == Webapp)
+    "the webapp daemon round-trips as the derived record"
+
+assertDemoConfigWireCannotExpress ::
+  FilePath ->
+  FilePath ->
+  DemoConfig ->
+  (DemoConfig -> Bool) ->
+  String ->
+  IO ()
+assertDemoConfigWireCannotExpress root label demoConfig invariant description = do
+  let configPath = root </> ("wire-cannot-express-" <> label <> ".dhall")
+  Lazy.writeFile configPath (encodeDemoConfig demoConfig)
+  roundTripped <- decodeDemoConfigFile configPath
+  assert (invariant roundTripped) description
+
 assertDemoConfigDecodeFails :: FilePath -> FilePath -> String -> DemoConfig -> IO ()
 assertDemoConfigDecodeFails root label expectedMessageFragment demoConfig = do
   let configPath = root </> ("invalid-demo-config-" <> label <> ".dhall")
@@ -14956,11 +15503,6 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
             "runtimeMode = < AppleSilicon | LinuxCpu | LinuxGpu >.LinuxCpu",
             "runtimeMode = \"linux-cpu\"",
             "text-tagged `runtimeMode` field"
-          ),
-          ( "legacy-text-daemon-role",
-            "daemonRole = < Coordinator | Engine | Webapp >.Coordinator",
-            "daemonRole = \"cluster\"",
-            "text-tagged `daemonRole` field"
           )
         ]
   mapM_
@@ -15028,6 +15570,24 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
           ( "retired-partition-headroom",
             ", headroomMib = 6144\n",
             "host-partition `headroomMib` term, which only ever held the binary's own minimum"
+          ),
+          -- Phase 8 Sprint 8.11: the fields that moved to the machine contract
+          -- or became derivable when the catalog moved inside its pool.
+          ( "retired-daemon-role",
+            ", daemonRole = < Coordinator | Engine | Webapp >.Coordinator\n",
+            "generated `daemonRole` field, which now lives in the machine contract's `machine` block"
+          ),
+          ( "retired-coordinator-record",
+            ", coordinator = { role = < Coordinator | Engine | Webapp >.Coordinator }\n",
+            "generated `coordinator` record, now derived from the runtime mode"
+          ),
+          ( "retired-webapp-record",
+            ", webapp = { role = < Coordinator | Engine | Webapp >.Webapp }\n",
+            "generated `webapp` record, now derived from the runtime mode"
+          ),
+          ( "retired-engine-members",
+            ", engineMembers = ([] : List Text)\n",
+            "generated `engineMembers` list, now inverted out of the pool graph"
           )
         ]
   assert
@@ -15314,10 +15874,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   let modelIdValue = modelId model
       poolIdValue = enginePoolId pool
       memberIdValue = engineMemberId member
-      missingModelId = "unit-missing-model"
       missingEngineId = "unit-missing-engine"
-      missingPoolId = "unit-missing-pool"
-      missingMemberId = "unit-missing-member"
       duplicateModel =
         model
           { matrixRowId = matrixRowId model <> "-duplicate"
@@ -15371,7 +15928,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
         executionPlanConfigForRuntime
           LinuxCpu
           (podBudget PodRam ClusterEnginePodMemoryLimit 65536)
-          (singleAppleConfig {models = [linuxCpuGpuModel]})
+          (withCatalog singleAppleConfig [linuxCpuGpuModel])
       linuxGpuModel =
         model
           { runtimeMode = LinuxGpu,
@@ -15382,12 +15939,12 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
         executionPlanConfigForRuntime
           LinuxGpu
           (podBudget PodRam ClusterEnginePodMemoryLimit 65536)
-          (singleAppleConfig {models = [linuxGpuModel]})
+          (withCatalog singleAppleConfig [linuxGpuModel])
       linuxGpuWithVramBudget =
         executionPlanConfigForRuntime
           LinuxGpu
           (podBudget GpuVram LinuxGpuVramBudget 65536)
-          (singleAppleConfig {models = [linuxGpuModel]})
+          (withCatalog singleAppleConfig [linuxGpuModel])
       invalidIdentifiers =
         [ ("path", "path/segment"),
           ("whitespace", "has whitespace"),
@@ -15426,15 +15983,25 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "unknown-selected-engine"
     (ExecutionPlan.UnknownSelectedEngine modelIdValue "arbitrary-engine")
-    (singleAppleConfig {models = [model {selectedEngine = "arbitrary-engine"}]})
+    (withCatalog singleAppleConfig [model {selectedEngine = "arbitrary-engine"}])
   assertExecutionPlanError
     root
     "cross-runtime-selected-engine"
     (ExecutionPlan.UnknownSelectedEngine modelIdValue "vLLM")
-    (singleAppleConfig {models = [model {selectedEngine = "vLLM"}]})
-  assertExecutionPlanError root "empty-model-catalog" ExecutionPlan.EmptyModelCatalog (singleAppleConfig {models = []})
+    (withCatalog singleAppleConfig [model {selectedEngine = "vLLM"}])
+  assertExecutionPlanError root "empty-model-catalog" ExecutionPlan.EmptyModelCatalog (withCatalog singleAppleConfig [])
   assertExecutionPlanError root "empty-pool-catalog" ExecutionPlan.EmptyPoolCatalog (singleAppleConfig {enginePools = []})
-  assertExecutionPlanError root "empty-member-catalog" ExecutionPlan.EmptyMemberCatalog (singleAppleConfig {engineMembers = []})
+  -- Phase 8 Sprint 8.11: an empty member catalog is expressible only by
+  -- emptying every pool's member list, which the pool-side check reports first.
+  assertExecutionPlanError
+    root
+    "empty-member-catalog"
+    ExecutionPlan.EmptyMemberCatalog
+    ( singleAppleConfig
+        { enginePools = map (\poolValue -> poolValue {enginePoolMemberIds = []}) (enginePools singleAppleConfig),
+          engineMembers = []
+        }
+    )
   assertExecutionPlanError root "blank-models-bucket" ExecutionPlan.BlankModelsBucket (singleAppleConfig {modelsBucket = " "})
   assertExecutionPlanError
     root
@@ -15466,54 +16033,12 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "blank-mounted-path"
     ExecutionPlan.BlankMountedPath
     (singleAppleConfig {mountedPath = " "})
-  assertExecutionPlanError
-    root
-    "invalid-active-daemon-role"
-    ExecutionPlan.InvalidActiveDaemonRole
-    -- Phase 8 Sprint 8.10: the engine daemons are derived and always declare
-    -- the engine role, so an undeclared active role is now expressible only
-    -- through the two daemons that still declare theirs.
-    ( singleAppleConfig
-        { activeDaemonRole = Webapp,
-          webappDaemon = (webappDaemon singleAppleConfig) {daemonConfigRole = Coordinator}
-        }
-    )
-  assertExecutionPlanError
-    root
-    "daemon-role-mismatch"
-    (ExecutionPlan.DaemonRoleMismatch "coordinator" Coordinator Webapp)
-    ( singleAppleConfig
-        { coordinatorDaemon =
-            (coordinatorDaemon singleAppleConfig)
-              { daemonConfigRole = Webapp
-              }
-        }
-    )
-  assertExecutionPlanError
-    root
-    "daemon-member-mismatch"
-    (ExecutionPlan.DaemonMemberMismatch "coordinator" Nothing (Just memberIdValue))
-    ( singleAppleConfig
-        { coordinatorDaemon =
-            (coordinatorDaemon singleAppleConfig)
-              { daemonConfigMemberId = Just memberIdValue
-              }
-        }
-    )
-  assertExecutionPlanError
-    root
-    "daemon-connection-mode-mismatch"
-    (ExecutionPlan.DaemonConnectionModeMismatch "coordinator" ConfiguredTransport PublicationEdgeAutoDiscovery)
-    -- Phase 8 Sprint 8.10: the engine daemons are derived, so the connection
-    -- mode is only declared — and therefore only mismatchable — on the two
-    -- in-cluster daemons.
-    ( singleAppleConfig
-        { coordinatorDaemon =
-            (coordinatorDaemon singleAppleConfig)
-              { daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
-              }
-        }
-    )
+  -- Phase 8 Sprint 8.11: the two in-cluster daemon records left the wire —
+  -- both run in a pod, both use the configured transport, and neither carries a
+  -- member id — so a declared daemon that disagrees with the derivation has no
+  -- wire representation at all. The plan compiler keeps the three mismatch
+  -- checks for the in-memory configs it also validates.
+  assertDerivedClusterDaemonMetadata root singleAppleConfig
   assertExecutionPlanError
     root
     "invalid-model-descriptor"
@@ -15523,12 +16048,12 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "unenforceable-model-memory-footprint"
     (ExecutionPlan.UnenforceableModelMemoryFootprint modelIdValue (toInteger unenforceableFootprintMib))
-    (singleAppleConfig {models = [model {modelRamFootprint = unenforceableFootprint}]})
+    (withCatalog singleAppleConfig [model {modelRamFootprint = unenforceableFootprint}])
   assertExecutionPlanError
     root
     "duplicate-model-id"
     (ExecutionPlan.DuplicateModelId modelIdValue)
-    (singleAppleConfig {models = [model, duplicateModel]})
+    (withCatalog singleAppleConfig [model, duplicateModel])
   assertExecutionPlanError
     root
     "duplicate-matrix-row-id"
@@ -15543,11 +16068,11 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "duplicate-pool-id"
     (ExecutionPlan.DuplicatePoolId poolIdValue)
     (singleAppleConfig {enginePools = [pool, pool]})
-  assertExecutionPlanError
-    root
-    "duplicate-member-id"
-    (ExecutionPlan.DuplicateMemberId memberIdValue)
-    (singleAppleConfig {engineMembers = [member, member]})
+  -- Phase 8 Sprint 8.11: a duplicate member identity has no wire
+  -- representation — members are inverted out of the pool graph, so the same id
+  -- named twice is one member. The plan compiler keeps the check for the
+  -- in-memory configs it also validates; the wire half is asserted positively in
+  -- the generated-config round trip above.
   assertExecutionPlanError
     root
     "bootstrap-engine-route-topic-family-collision"
@@ -15574,7 +16099,9 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "duplicate-pool-model-reference"
     (ExecutionPlan.DuplicatePoolModelReference poolIdValue modelIdValue)
-    (singleAppleConfig {enginePools = [pool {enginePoolModelIds = [modelIdValue, modelIdValue]}]})
+    -- Phase 8 Sprint 8.11: a pool holds descriptors, so a repeated reference is
+    -- the same descriptor written twice under one pool.
+    (withCatalog singleAppleConfig [model, model])
   assertExecutionPlanError
     root
     "duplicate-pool-member-reference"
@@ -15584,7 +16111,9 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "duplicate-member-pool-reference"
     (ExecutionPlan.DuplicateMemberPoolReference memberIdValue poolIdValue)
-    (singleAppleConfig {engineMembers = [member {engineMemberPoolIds = [poolIdValue, poolIdValue]}]})
+    -- Phase 8 Sprint 8.11: a member's pools are the pools that name it, so a
+    -- repeated pool reference is one pool id written twice in the pool list.
+    (singleAppleConfig {enginePools = [pool, pool]})
   assertExecutionPlanError
     root
     "duplicate-request-field"
@@ -15599,7 +16128,11 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "invalid-member-id"
     (ExecutionPlan.InvalidMemberId "unit/bad-member")
-    (singleAppleConfig {engineMembers = [member {engineMemberId = "unit/bad-member"}]})
+    ( singleAppleConfig
+        { enginePools = [pool {enginePoolMemberIds = ["unit/bad-member"]}],
+          engineMembers = [member {engineMemberId = "unit/bad-member"}]
+        }
+    )
   assertExecutionPlanError
     root
     "empty-pool-models"
@@ -15612,49 +16145,24 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = []}]})
   assertExecutionPlanError
     root
-    "empty-member-pools"
-    (ExecutionPlan.EmptyMemberPools memberIdValue)
-    (singleAppleConfig {engineMembers = [member {engineMemberPoolIds = []}]})
-  assertExecutionPlanError
-    root
     "unknown-selected-engine"
     (ExecutionPlan.UnknownSelectedEngine modelIdValue missingEngineId)
-    (singleAppleConfig {models = [model {selectedEngine = missingEngineId}]})
+    (withCatalog singleAppleConfig [model {selectedEngine = missingEngineId}])
   assertExecutionPlanError
     root
     "unsupported-linux-cpu-gpu-requirement"
     (ExecutionPlan.UnsupportedGpuRequirement modelIdValue LinuxCpu)
     linuxCpuGpuConfig
-  assertExecutionPlanError
-    root
-    "dangling-pool-model"
-    (ExecutionPlan.DanglingPoolModel poolIdValue missingModelId)
-    (singleAppleConfig {enginePools = [pool {enginePoolModelIds = [modelIdValue, missingModelId]}]})
-  assertExecutionPlanError
-    root
-    "dangling-pool-member"
-    (ExecutionPlan.DanglingPoolMember poolIdValue missingMemberId)
-    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = [memberIdValue, missingMemberId]}]})
-  assertExecutionPlanError
-    root
-    "dangling-member-pool"
-    (ExecutionPlan.DanglingMemberPool memberIdValue missingPoolId)
-    (singleAppleConfig {engineMembers = [member {engineMemberPoolIds = [poolIdValue, missingPoolId]}]})
-  assertExecutionPlanError
-    root
-    "pool-member-link-missing"
-    (ExecutionPlan.PoolMemberLinkMissing poolIdValue memberIdValue)
-    (singleAppleConfig {engineMembers = [member {engineMemberPoolIds = []}]})
-  assertExecutionPlanError
-    root
-    "member-pool-link-missing"
-    (ExecutionPlan.MemberPoolLinkMissing memberIdValue poolIdValue)
-    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = []}]})
-  assertExecutionPlanError
-    root
-    "unplaced-model"
-    (ExecutionPlan.UnplacedModel modelIdValue)
-    (singleAppleConfig {enginePools = [pool {enginePoolModelIds = []}]})
+  -- Phase 8 Sprint 8.11: eight graph-disagreement fixtures were retired here
+  -- rather than re-pointed, because the generated wire can no longer express
+  -- what they asserted — a dangling pool model, a dangling pool member, a
+  -- dangling member pool, a one-sided link in either direction, a member that
+  -- serves no pool, a model no pool places, and a model whose pool names no
+  -- eligible member. A pool carries its own model
+  -- descriptors and members are inverted out of the pool graph, so each of those
+  -- states has no representation to write. The plan compiler keeps every check
+  -- (it validates any 'DemoConfig', and the wire is one of its inputs); the wire
+  -- half is asserted positively against the generated round trip instead.
   assertExecutionPlanError
     root
     "multiply-placed-model"
@@ -15680,11 +16188,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   -- place. The surviving wire-level property — that quantities render as
   -- `Natural` literals with no `+` sign prefix — is asserted at the
   -- materialization boundary.
-  assertExecutionPlanError
-    root
-    "model-without-eligible-member"
-    (ExecutionPlan.ModelWithoutEligibleMember modelIdValue)
-    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = [missingMemberId]}]})
   assertExecutionPlanError
     root
     "apple-pod-budget-mismatch"
@@ -15726,7 +16229,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   -- execution-plan-internal suite; what this fixture pins is that the compiler
   -- places the model and predicts its rejection.
   let allOversizedConfig =
-        singleAppleConfig {models = [model {modelRamFootprint = oversizedFootprint}]}
+        withCatalog singleAppleConfig [model {modelRamFootprint = oversizedFootprint}]
   allOversizedPlan <-
     expectCompiledExecutionPlan root "no-admissible-placement" allOversizedConfig
   assert
@@ -15826,7 +16329,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
       linuxGpuSingleResourceBudget = podBudget GpuVram LinuxGpuVramBudget 65536
   BS.writeFile
     linuxGpuSingleResourcePath
-    (renderGeneratedDemoConfigPayload paths LinuxGpu False Engine linuxGpuSingleResourceBudget)
+    (renderGeneratedDemoConfigPayload paths LinuxGpu singleEngineMachine False linuxGpuSingleResourceBudget)
   linuxGpuSingleResourceResult <- decodeCompiledRuntimePlanFile linuxGpuSingleResourcePath
   case linuxGpuSingleResourceResult of
     Right _ ->
@@ -15850,7 +16353,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
           (podLimitFor GpuVram LinuxGpuVramBudget 4096)
   BS.writeFile
     linuxGpuConfigPath
-    (renderGeneratedDemoConfigPayload paths LinuxGpu False Engine linuxGpuDualCatalogBudget)
+    (renderGeneratedDemoConfigPayload paths LinuxGpu singleEngineMachine False linuxGpuDualCatalogBudget)
   linuxGpuPlan <-
     either
       (\errors -> fail ("Linux GPU catalog failed to compile under the dual budget: " <> show (NonEmpty.toList errors)))
@@ -15974,6 +16477,22 @@ engineBindingSelectionError configError =
     ExecutionPlan.UnknownSelectedEngine _ _ -> True
     _ -> False
 
+-- | Phase 8 Sprint 8.11: a pool owns its models on the wire, so a fixture that
+-- changes the catalog has to move the pool with it. Assigning the whole catalog
+-- to the first pool is what these single-pool fixtures always meant; before this
+-- sprint the two lists were independent and a fixture could leave them
+-- disagreeing without noticing.
+withCatalog :: DemoConfig -> [ModelDescriptor] -> DemoConfig
+withCatalog demoConfig catalog =
+  case enginePools demoConfig of
+    [] -> demoConfig {models = catalog}
+    firstPool : remainingPools ->
+      demoConfig
+        { models = catalog,
+          enginePools =
+            firstPool {enginePoolModelIds = map modelId catalog} : remainingPools
+        }
+
 assertExecutionPlanIdentifierCoverage ::
   FilePath ->
   DemoConfig ->
@@ -15990,22 +16509,28 @@ assertExecutionPlanIdentifierCoverage root demoConfig model _binding pool member
           root
           ("invalid-model-id-" <> label)
           (ExecutionPlan.InvalidModelId invalidIdentifier)
-          (demoConfig {models = [model {modelId = invalidIdentifier}]})
+          (withCatalog demoConfig [model {modelId = invalidIdentifier}])
         assertExecutionPlanError
           root
           ("invalid-matrix-row-id-" <> label)
           (ExecutionPlan.InvalidMatrixRowId invalidIdentifier)
-          (demoConfig {models = [model {matrixRowId = invalidIdentifier}]})
+          (withCatalog demoConfig [model {matrixRowId = invalidIdentifier}])
         assertExecutionPlanError
           root
           ("invalid-pool-id-" <> label)
           (ExecutionPlan.InvalidPoolId invalidIdentifier)
           (demoConfig {enginePools = [pool {enginePoolId = invalidIdentifier}]})
+        -- Phase 8 Sprint 8.11: a member exists because a pool names it, so an
+        -- invalid member identity is written on the pool.
         assertExecutionPlanError
           root
           ("invalid-member-id-" <> label)
           (ExecutionPlan.InvalidMemberId invalidIdentifier)
-          (demoConfig {engineMembers = [member {engineMemberId = invalidIdentifier}]})
+          ( demoConfig
+              { enginePools = [pool {enginePoolMemberIds = [invalidIdentifier]}],
+                engineMembers = [member {engineMemberId = invalidIdentifier}]
+              }
+          )
     )
 
 assertDerivedRouteTopicCollision ::
@@ -16150,7 +16675,6 @@ executionPlanConfigErrorTag configError =
     ExecutionPlan.BlankConfigMapName -> "BlankConfigMapName"
     ExecutionPlan.BlankGeneratedPath -> "BlankGeneratedPath"
     ExecutionPlan.BlankMountedPath -> "BlankMountedPath"
-    ExecutionPlan.InvalidActiveDaemonRole -> "InvalidActiveDaemonRole"
     ExecutionPlan.DaemonRoleMismatch {} -> "DaemonRoleMismatch"
     ExecutionPlan.DaemonMemberMismatch {} -> "DaemonMemberMismatch"
     ExecutionPlan.DaemonConnectionModeMismatch {} -> "DaemonConnectionModeMismatch"
@@ -16197,9 +16721,13 @@ assertCompiledExecutionPlanAccounting demoConfig compiledPlan = do
       placedIds = map modelId placedModels
       configuredCounts = MapStrict.fromListWith (+) [(modelIdValue, 1 :: Int) | modelIdValue <- configuredIds]
       placedCounts = MapStrict.fromListWith (+) [(modelIdValue, 1 :: Int) | modelIdValue <- placedIds]
+  -- Phase 8 Sprint 8.11: the catalog is the pool graph, so the compiled order
+  -- is pool order rather than the order the in-memory config happened to list.
+  -- What must not change is the set: every configured model is compiled, and
+  -- nothing else is.
   assert
-    (configuredModels == models demoConfig)
-    "compiled execution plan retains the exact configured model order"
+    (sortOn modelId configuredModels == sortOn modelId (models demoConfig))
+    "compiled execution plan retains exactly the configured model set"
   -- Phase 4 Sprint 4.34: placement is exhaustive over the configured catalog,
   -- because admission — the only thing that used to remove a model here — has
   -- moved to the machine that will execute.
@@ -16406,8 +16934,7 @@ singleModelExecutionPlanConfig compiledPlan demoConfig = do
       routeTopic = ExecutionPlan.engineRouteTopic route
   pure
     demoConfig
-      { activeDaemonRole = Engine,
-        engineDaemons =
+      { engineDaemons =
           [ daemon
               { daemonConfigRole = Engine,
                 daemonConfigMemberId = Just memberIdValue,
@@ -17750,7 +18277,7 @@ assertLinuxHostBatchForwarding paths = do
   let planPath = buildRoot paths </> "filesystem-forwarding-plan.dhall"
   BS.writeFile
     planPath
-    (renderGeneratedDemoConfigPayload paths LinuxCpu True Coordinator linuxCpuUnitInferenceMemoryBudget)
+    (renderGeneratedDemoConfigPayload paths LinuxCpu singleEngineMachine True linuxCpuUnitInferenceMemoryBudget)
   compiledPlan <-
     decodeCompiledRuntimePlanFile planPath
       >>= expectDecodedCompiledPlan "filesystem-forwarding execution plan"
@@ -18022,17 +18549,15 @@ unitGeneratedDemoConfig ::
   Paths ->
   RuntimeMode ->
   Bool ->
-  DaemonRole ->
   InferenceMemoryBudget ->
   DemoConfig
-unitGeneratedDemoConfig paths mode demoEnabled daemonRole budget =
+unitGeneratedDemoConfig paths mode demoEnabled budget =
   DemoConfig
     { configRuntimeMode = mode,
       configMapName = "infernix-demo-config",
       generatedPath = Config.generatedDemoConfigPath paths,
       mountedPath = Config.watchedDemoConfigPath,
       demoUiEnabled = demoEnabled,
-      activeDaemonRole = daemonRole,
       coordinatorDaemon =
         unitDaemonConfig
           Coordinator
@@ -18165,19 +18690,24 @@ generatedWireUnionAlternatives =
     "AppleSilicon",
     "LinuxCpu",
     "LinuxGpu",
-    -- daemonRole (top level and the two in-cluster daemon records)
-    "Coordinator",
-    "Engine",
-    "Webapp",
     -- engine-pool subscription
     "Shared",
     "Exclusive",
     "Failover",
-    -- pulsarConnectionMode
-    "ConfiguredTransport",
-    "PublicationEdgeAutoDiscovery",
     -- request-shape fieldType
     "TextField"
+  ]
+
+-- | Phase 8 Sprint 8.11: the machine contract's union alternatives. The role
+-- alternatives moved here from the system contract, because a role is a fact
+-- about one box rather than about the platform every box shares.
+machineContractUnionAlternatives :: [Text.Text]
+machineContractUnionAlternatives =
+  [ "ImageDefault",
+    "Machine",
+    "Coordinator",
+    "Engine",
+    "Webapp"
   ]
 
 -- | Phase 8 Sprint 8.10: every field that was a second copy of a fact the binary
@@ -18189,6 +18719,14 @@ retiredGeneratedWireFields =
   [ "request_topics",
     "result_topic",
     "engineDaemons",
+    -- Phase 8 Sprint 8.11: the role moved to the machine contract, the two
+    -- in-cluster daemon records became derivable, and the member list is
+    -- inverted out of the pool graph.
+    "daemonRole",
+    "coordinator",
+    "webapp",
+    "engineMembers",
+    "pulsarConnectionMode",
     "runtimeLane",
     "maxInflightPerMember",
     "headroomMib",
@@ -18276,6 +18814,19 @@ assertDhallSchemaReflection =
         )
         (dhallSchemaRequiredFields schema)
       case schema of
+        HostSchema ->
+          -- Phase 8 Sprint 8.11: the machine contract is a union, so a manifest
+          -- that declares a machine always carries its pin. Assert the
+          -- alternatives are reflected rather than merely rendered.
+          mapM_
+            ( \alternativeName ->
+                assert
+                  (alternativeName `Text.isInfixOf` rendered)
+                  ( "host schema reflects the machine-contract alternative "
+                      <> Text.unpack alternativeName
+                  )
+            )
+            machineContractUnionAlternatives
         SubstrateSchema -> do
           assert
             ( "HostEnforced" `Text.isInfixOf` rendered
@@ -18327,8 +18878,8 @@ assertDhallSchemaReflection =
                         ( renderGeneratedDemoConfigPayload
                             schemaPaths
                             budgetMode
+                            singleEngineMachine
                             False
-                            Engine
                             budget
                         )
                 mapM_
@@ -18357,6 +18908,9 @@ dhallSchemaRequiredFields schema =
       [ "hostExecutionContext",
         "toolPaths",
         "filesystem",
+        "machine",
+        "modelCacheQuotaBytes",
+        "systemContractDigest",
         "controlPlaneContext"
       ]
     ClusterSchema ->
@@ -18372,10 +18926,11 @@ dhallSchemaRequiredFields schema =
       ]
     SubstrateSchema ->
       [ "runtimeMode",
-        "coordinator",
         "enginePools",
-        "engineMembers",
-        "models"
+        "members",
+        "subscription",
+        "models",
+        "inferenceMemoryBudget"
       ]
 
 assertUniqueModelIds :: RuntimeMode -> IO ()
@@ -19005,7 +19560,8 @@ assertHostConfig repoRootPath testRoot = do
             helmDataRoot = testRoot </> ".data" </> "helm" </> "data",
             resultsRoot = testRoot </> ".data" </> "results",
             modelCacheRoot = testRoot </> ".data" </> "model-cache",
-            pathsHostConfig = Just linuxConfig
+            pathsHostConfig = Just linuxConfig,
+            pathsHostConfigPath = Nothing
           }
   assert
     (HostConfig.hostExecutionContext appleConfig == HostConfig.AppleHostNative)
@@ -21419,7 +21975,8 @@ runWriterEffectParentSwapAssertions testRoot = do
             resultsRoot = testRoot </> ".data" </> "results",
             modelCacheRoot = testRoot </> ".data" </> "model-cache",
             pathsHostConfig =
-              Just (HostConfig.defaultLinuxOuterContainerHostConfig "/root")
+              Just (HostConfig.defaultLinuxOuterContainerHostConfig "/root"),
+            pathsHostConfigPath = Nothing
           }
       enginesRoot = dataRoot swapPaths </> "engines"
   removePathForcibly testRoot

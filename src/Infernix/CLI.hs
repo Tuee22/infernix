@@ -71,6 +71,7 @@ import Infernix.DemoConfig
     materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
     renderModelListing,
+    restampMachineContractPin,
   )
 import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
 import Infernix.DescriptorSpace (establishBoundedDescriptorSpace, requireBoundedDescriptorSpace)
@@ -96,8 +97,13 @@ import Infernix.Lint.Docs (runDocsLint)
 import Infernix.Lint.Files (runFilesLint)
 import Infernix.Lint.Plan (runPlanLint)
 import Infernix.Lint.Proto (runProtoLint)
-import Infernix.Models (expectedDaemonLocationForRuntime, expectedInferenceDispatchModeForRuntime, expectedInferenceExecutorLocationForRuntime)
-import Infernix.ProjectInit (runProjectInit, runTestInit)
+import Infernix.Models
+  ( engineMachineCountFromMemberIds,
+    expectedDaemonLocationForRuntime,
+    expectedInferenceDispatchModeForRuntime,
+    expectedInferenceExecutorLocationForRuntime,
+  )
+import Infernix.ProjectInit (resolveDeclaredEngineMachines, runProjectInit, runTestInit)
 import Infernix.Python
   ( ensurePoetryExecutable,
     ensurePoetryProjectReady,
@@ -114,6 +120,7 @@ import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Types
   ( CacheManifest (..),
     DemoConfig (..),
+    EngineMember (engineMemberId),
     InferenceRequest (..),
     InferenceResult (..),
     PersistentClaim (..),
@@ -221,12 +228,13 @@ dispatch command =
   case command of
     ShowRootHelp -> putStrLn helpText
     ShowTopicHelp topic -> putStrLn (topicHelpText topic)
-    InitCommand maybeRuntimeMode maybeDemoUi force ifMissing -> do
+    InitCommand maybeRuntimeMode maybeDemoUi maybeEngineMachines force ifMissing -> do
       paths <- discoverPathsWithHostManifest Nothing
       withRuntimeConfigWriteAccessAt
         paths
-        (runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing)
-    TestInitCommand maybeRuntimeMode maybeDemoUi -> runTestInit maybeRuntimeMode maybeDemoUi
+        (runProjectInit maybeRuntimeMode maybeDemoUi maybeEngineMachines force ifMissing)
+    TestInitCommand maybeRuntimeMode maybeDemoUi maybeEngineMachines ->
+      runTestInit maybeRuntimeMode maybeDemoUi maybeEngineMachines
     ServiceCommand maybeRole maybeEngineName maybeConfigPath -> runService Nothing maybeRole (Text.pack <$> maybeEngineName) maybeConfigPath
     ClusterUpCommand -> clusterUp Nothing
     ClusterDownCommand -> clusterDown Nothing
@@ -280,15 +288,26 @@ dispatch command =
       mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
     InternalPublishChartImagesCommand renderedChartPath outputPath ->
       PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions (\_ -> pure ()) renderedChartPath outputPath
-    InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue emptyModels ->
+    InternalMaterializeSubstrateCommand runtimeMode maybeEngineMachines demoUiEnabledValue emptyModels ->
       withRuntimeConfigWriteAccess $ do
         paths <- discoverPaths
         ensureRepoLayout paths
+        machineCount <- resolveDeclaredEngineMachines runtimeMode maybeEngineMachines
+        -- Phase 8 Sprint 8.11 — the manifest is written first and the substrate
+        -- materialization stamps this machine's contract into it. The retired
+        -- order rewrote the manifest afterwards from pure defaults, which
+        -- silently replaced the machine block with the image default and left
+        -- the pair unpinned.
+        hostManifestPath <- materializeHostManifestFile paths
         materializedPath <-
           if emptyModels
             then materializeEmptyModelsDemoConfigFile paths runtimeMode demoUiEnabledValue
-            else materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
-        hostManifestPath <- materializeHostManifestFile paths
+            else
+              materializeGeneratedDemoConfigFile
+                paths
+                runtimeMode
+                machineCount
+                demoUiEnabledValue
         -- Phase 1 Sprint 1.21 — the launcher image builds this repository
         -- image-locally, so the image needs the same derived build ceiling an
         -- operator's `infernix init` writes. It is derived from the manifest
@@ -361,7 +380,7 @@ validateCommandExecutionContext command = do
         TestIntegrationCommand -> testRuntimeMode
         TestE2ECommand -> testRuntimeMode
         TestAllCommand -> testRuntimeMode
-        InternalMaterializeSubstrateCommand runtimeMode _ _ -> pure (Just runtimeMode)
+        InternalMaterializeSubstrateCommand runtimeMode _ _ _ -> pure (Just runtimeMode)
         InternalGeneratePursContractsCommand _ -> activeRuntimeMode
         _ -> pure Nothing
     activeRuntimeMode = Just <$> ensureActiveSubstrateFile
@@ -374,7 +393,7 @@ validateCommandExecutionContext command = do
         else activeRuntimeMode
 
 -- | Phase 1 Sprint 1.11 — discover the active substrate by reading the
--- staged @infernix-substrate.dhall@ file under the launcher build root.
+-- generated @infernix.dhall@ system contract.
 -- The supported contract has no env-var fallback: on the Linux outer-
 -- container path the launcher image bakes the substrate file at image
 -- build time (the Dockerfile invokes @infernix internal
@@ -496,13 +515,26 @@ withTestHarnessConfig action = do
               materializeGeneratedDemoConfigFile
                 paths
                 (configRuntimeMode testDemoConfig)
+                -- Phase 8 Sprint 8.12: the run's system contract carries the
+                -- fleet the operator initialized the test config with. Reading
+                -- it back out of the declared member ids is what keeps a
+                -- two-machine harness run from regenerating itself as a
+                -- one-machine one.
+                (engineMachineCountFromMemberIds (map engineMemberId (engineMembers testDemoConfig)))
                 (demoUiEnabled testDemoConfig)
             pure ()
         restore action
       )
       `finallyPreservingPrimary` completeHarnessConfigTransaction
         paths
-        (restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig)
+        ( do
+            restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig
+            -- Phase 8 Sprint 8.11: the run generated its own system contract and
+            -- re-pinned this machine to it. Putting the operator's contract back
+            -- without re-pointing the pin would leave the operator holding a
+            -- machine contract that names a file the harness deleted.
+            restampMachineContractPin paths
+        )
 
 -- | Restore the pre-run @./infernix.dhall@ after a harness run: remove the
 -- harness-generated file (and any per-variant rewrite), then move the backup

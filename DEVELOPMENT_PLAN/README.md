@@ -30,20 +30,28 @@ receipts: it owns no code-side work, and both lanes exercised its generated brow
 unit suite, and routed Playwright matrix.
 
 Phase 6 then closed every sprint but 6.44 on its own shared cohort against frozen source
-`cc18db6c…`, and Phase 7 closed on the same receipts. Phase 8 is now the first execution gate.
+`cc18db6c…`, and Phase 7 closed on the same receipts. Phase 8 Sprints 8.11 and 8.12 — the
+system/machine contract split, then fleet member identity and the broker-side member claim — both
+closed on 2026-08-18. Sprint 8.12's blocker dissolved rather than being waited out: its "fleet
+validation topology" turned out to be a `linux-cpu` multi-worker Kind cluster the lifecycle
+generates from the system contract's own `--engine-machines` count, not a second physical machine.
+It closed on a live two-machine fleet — both machines serving work off one `Shared` pool topic, a
+second machine on the first's identity refused at the broker by name, a restart reacquiring its own
+slot, and a machine holding a contract the registrar had moved away from refusing to start — plus a
+paired single-machine run reproducing the deployed topology unchanged
+([Wave AB](cohort-validation-waves.md)).
 
-**What remains, and why.** Three of the four open items are hardware-blocked rather than open code
-work, and none can be discharged on an Apple host:
+**What remains, and why.** Every open item is a `linux-gpu` cohort gate on a CUDA-capable Linux host
+this cohort does not have. None is open code work.
 
 | Open item | Blocker |
 |-----------|---------|
 | Phase 6 Sprint 6.44 | the CUDA Linux cohort (`./bootstrap/linux-gpu.sh test`); Section Q forbids substituting the other accelerator |
 | Phase 8 Sprints 8.9, 8.10 | consume that same `linux-gpu` wave |
-| Phase 8 Sprint 8.12 | a fleet validation topology of more than one engine machine |
-| Phase 8 Sprint 8.11 | none — `Planned` and implementable at one engine machine |
 
-Sprint 8.11 is therefore the only open work a single-host cohort can complete. Historical wave evidence
-remains source-scoped and does not substitute for a current owning-phase gate.
+Historical wave evidence remains source-scoped and does not substitute for a current owning-phase
+gate.
+
 ## Document Index
 
 | Document | Purpose |
@@ -99,12 +107,14 @@ contract.
 ## Current Repo Assessment
 
 Phases 0 through 5 and Phase 7 are `Done` with no open sprint, and Phase 6 has one open sprint held by
-a hardware blocker. [Wave Y](cohort-validation-waves.md) owns Phases
+a hardware blocker. Phase 8 has two, Sprints 8.9 and 8.10, both waiting on that same `linux-gpu`
+wave; its Sprints 8.11 and 8.12 closed on 2026-08-18, the latter on a live two-machine `linux-cpu`
+fleet. [Wave Y](cohort-validation-waves.md) owns Phases
 1 and 2's completed Apple and paired `linux-cpu` attestation, the current-source Linux leg also closes
 Phase 3's single-node topology observation, and the 2026-08-17 frozen-identity cohort in that same wave
-closes Phase 4 and, on the same receipts, Phase 5. Phase 6 is the first open execution gate;
-Phases 7 through 9 remain blocked in strict numerical order, each retaining the implementation and
-evidence state its own phase document records.
+closes Phase 4 and, on the same receipts, Phase 5. Phase 6 is the first open execution gate; Phase 7
+and Phase 9 are `Done`, each naming the `linux-gpu` wave as the open dependency it closed ahead of
+under Section C.
 
 The repository implements the explicit-init runtime-config architecture, the baked Linux
 outer-container launcher, the single-instance platform services, the Gateway-owned routed edge, the
@@ -141,7 +151,7 @@ host-role Apple configs include the routed Pulsar connection details and the hos
 membership.
 Cluster publication mirrors the cluster-role payload locally under
 `./.data/runtime/configmaps/infernix-demo-config/` and mounts it inside cluster workloads at the
-compatibility path `/opt/build/infernix-substrate.dhall`, while Apple host daemons read repo-root
+path `/opt/build/infernix.dhall`, while Apple host daemons read repo-root
 `./infernix.dhall`. The file is a typed Dhall record decoded in-process by the `dhall` Haskell
 library, and its schema is reflected from the substrate decoder type
 (`infernix internal dhall-schema substrate`) rather than from any tracked schema file.
@@ -293,8 +303,8 @@ construction, `nvkind`, or NVIDIA scheduling.
 | 5 | Done | Every sprint is closed and no code-side work is open. Its cohort evidence is reproduced by Phase 4's frozen-identity closure in [Wave Y](cohort-validation-waves.md): both lanes built the generated browser contracts, ran the web unit suite at 83/83, and passed the routed Playwright matrix 16/16. |
 | 6 | Active | Every sprint is `Done` except Sprint 6.44. Sprints 6.37, 6.43, 6.45, 6.46, 6.47, 6.48, and 6.49 closed together on 2026-08-17 against one frozen source identity validated on `apple-silicon` plus `linux-cpu`, recorded in [Wave Y](cohort-validation-waves.md); that identity added Sprint 6.46's last reopened deliverable, the point-of-use bound observation on the production spawn path. Sprint 6.44 is code-side closed and holds a **supported-lane validation blocker**: its `linux-gpu` behavioral cohort needs a CUDA-capable Linux host, which Section Q forbids substituting the other accelerator for. |
 | 7 | Done | Every sprint is closed and no code-side work is open. Sprint 7.29's evidence reopen is discharged by the 2026-08-17 Apple plus paired `linux-cpu` cohort in [Wave Y](cohort-validation-waves.md). It names one open dependency per Section C: Phase 6 Sprint 6.44's `linux-gpu` cohort, a hardware blocker rather than work in this phase. |
-| 8 | Active | Phase 7 closed, so strict numerical execution reaches this phase. Sprint 8.11 (system and machine contracts) is `Planned`, carries no blocker, and is the only open work here that a single engine machine can complete. Sprints 8.9 and 8.10 are code-side closed and consume Phase 6 Sprint 6.44's `linux-gpu` wave, so they share that hardware blocker. Sprint 8.12 is `Blocked` on a fleet validation topology of more than one engine machine, and adopts the broker-side member claim re-homed from Phase 4 Sprint 4.34. Sprints 8.1–8.8 are closed. |
-| 9 | Blocked | Blocked by Phase 8. Its own implementation state is `Done` and its evidence reopen is discharged by the 2026-08-17 cohort in [Wave Y](cohort-validation-waves.md); no code-side work is open and no defect is known. It stays `Blocked` by strict numerical order because Phase 8 Sprint 8.11 is open code work rather than an external blocker. |
+| 8 | Active | Sprint 8.11 (system and machine contracts) closed on 2026-08-18: the system contract carries the substrate mode and the pool graph with each pool's own model descriptors, the machine contract carries this box's role, member identities, cache quota, and the content digest of the contract it was generated against, and the digest is registered in the Pulsar topic's own properties by the coordinator, with a fail-closed check at daemon start for every verifying role. It also adopted and closed the deployment-mirror filename ledger row. Sprints 8.9 and 8.10 are code-side closed and consume Phase 6 Sprint 6.44's `linux-gpu` wave, so they share that hardware blocker. Sprint 8.12 is `Blocked` on a fleet validation topology of more than one engine machine, and adopts the broker-side member claim re-homed from Phase 4 Sprint 4.34. Sprints 8.1–8.8 are closed. |
+| 9 | Blocked | Blocked by Phase 8. Its own implementation state is `Done` and its evidence reopen is discharged by the 2026-08-17 cohort in [Wave Y](cohort-validation-waves.md); no code-side work is open and no defect is known. Since Sprint 8.11 closed, every remaining Phase 8 item is a named hardware blocker rather than open code work, so this phase's own gate is a `linux-gpu` wave and a fleet validation topology it does not own. |
 
 ## Canonical Outcome
 
@@ -354,7 +364,7 @@ The supported platform now closes around these rules:
 - the operator runtime config lives at repo-root `./infernix.dhall` on every supported execution
   context; cluster deployment derives a payload through `ConfigMap/infernix-demo-config` whenever
   the active topology has cluster-resident consumers and mounts it at the compatibility path
-  `/opt/build/infernix-substrate.dhall`
+  `/opt/build/infernix.dhall`
 - each daemon reads its runtime-config `.dhall` at startup; automatic file-watching or reload is
   not part of the supported contract
 - `infernix init --demo-ui false` can disable the demo surface; omitting that flag keeps the

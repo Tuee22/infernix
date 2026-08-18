@@ -24,8 +24,7 @@ import Infernix.DemoConfig.Internal
   )
 import Infernix.Models (encodeDemoConfig)
 import Infernix.Types
-  ( DaemonRole (Coordinator, Engine),
-    DemoConfig (..),
+  ( DemoConfig (..),
     HostMemoryPartition,
     InferenceMemoryBudget (HostEnforcedBudget, SubstrateEnforcedBudget),
     InferenceMemoryResource (PodRam),
@@ -33,6 +32,7 @@ import Infernix.Types
     PodMemoryLimitSource (..),
     RuntimeMode (AppleSilicon, LinuxCpu),
     hostPartitionForCapacity,
+    singleEngineMachine,
   )
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
@@ -130,7 +130,7 @@ runDemoConfigParserProperties paths = do
   createDirectoryIfMissing True propertyRoot
   ByteString.writeFile
     linuxConfigPath
-    (renderGeneratedDemoConfigPayload paths LinuxCpu True Coordinator linuxBudget)
+    (renderGeneratedDemoConfigPayload paths LinuxCpu singleEngineMachine True linuxBudget)
   linuxConfig <- decodeDemoConfigFile linuxConfigPath
   assert
     (configRuntimeMode linuxConfig == LinuxCpu && not (null (models linuxConfig)))
@@ -150,7 +150,7 @@ runDemoConfigParserProperties paths = do
     "the private bootstrap parser accepts an explicitly empty image catalog"
   ByteString.writeFile
     appleConfigPath
-    (renderGeneratedDemoConfigPayload paths AppleSilicon True Engine appleBudget)
+    (renderGeneratedDemoConfigPayload paths AppleSilicon singleEngineMachine True appleBudget)
   appleConfig <- decodeDemoConfigFile appleConfigPath
   mapM_
     ( \(label, capacityMib) ->

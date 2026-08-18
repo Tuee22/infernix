@@ -16,6 +16,10 @@ module Infernix.Types
     parseEngineAdapterType,
     EngineBinding (..),
     EngineMember (..),
+    EngineMachineCount,
+    engineMachineCount,
+    engineMachineCountValue,
+    singleEngineMachine,
     EnginePool (..),
     ErrorResponse (..),
     InferenceError (..),
@@ -95,6 +99,7 @@ module Infernix.Types
     clusterDaemonLocation,
     engineMemberLocationForMode,
     defaultMaxInflightPerMember,
+    defaultModelCacheQuotaBytes,
     runtimeModeId,
   )
 where
@@ -247,6 +252,17 @@ engineMemberLocationForMode runtimeModeValue = case runtimeModeValue of
 -- that may only ever hold one value is a field with nothing to say.
 defaultMaxInflightPerMember :: Int
 defaultMaxInflightPerMember = 1
+
+-- | Phase 8 Sprint 8.11 — the model-cache quota a machine contract declares.
+--
+-- One constant, one concept. Before this sprint the cluster engine's generated
+-- wiring said 64 GiB and the Apple host worker carried its own 32 GiB literal
+-- for the same cache, and nothing made the two agree because nothing connected
+-- them: they were two independent numbers describing one thing. The quota is now
+-- a machine fact, generated into the machine contract from this default, and the
+-- cluster engine wiring is generated from the same value.
+defaultModelCacheQuotaBytes :: Integer
+defaultModelCacheQuotaBytes = 68719476736
 
 parseRuntimeLane :: Text -> Maybe RuntimeLane
 parseRuntimeLane rawValue = case Text.toLower rawValue of
@@ -449,6 +465,16 @@ data ClusterState = ClusterState
     storageClass :: Text,
     claims :: [PersistentClaim],
     clusterRuntimeMode :: RuntimeMode,
+    -- | Phase 8 Sprint 8.12 — the engine member identities this cluster
+    -- deploys, in declared order.
+    --
+    -- The fleet is cluster state because it is a property of what was brought
+    -- up, not of what a renderer would generate now: the rollout wait list, the
+    -- scale targets, and the generated Helm overlay all have to name the same
+    -- machines the Kind topology was created for. A pre-fleet state document
+    -- decodes to the empty list, which reads as "one engine machine, named the
+    -- way it always was" — the deployed single-node topology.
+    clusterEngineMemberIds :: [Text],
     kubeconfigPath :: FilePath,
     generatedDemoConfigPath :: FilePath,
     publishedDemoConfigPath :: FilePath,
@@ -520,6 +546,7 @@ instance ToJSON ClusterState where
         "storageClass" .= storageClass state,
         "claims" .= claims state,
         "clusterRuntimeMode" .= clusterRuntimeMode state,
+        "clusterEngineMemberIds" .= clusterEngineMemberIds state,
         "kubeconfigPath" .= kubeconfigPath state,
         "generatedDemoConfigPath" .= generatedDemoConfigPath state,
         "publishedDemoConfigPath" .= publishedDemoConfigPath state,
@@ -542,6 +569,10 @@ instance FromJSON ClusterState where
       <*> value .: "storageClass"
       <*> value .: "claims"
       <*> value .: "clusterRuntimeMode"
+      -- A pre-fleet document names no members; the single-machine deployment is
+      -- the safe reading, and it is also the only one the rest of the state
+      -- describes.
+      <*> value .:? "clusterEngineMemberIds" .!= []
       <*> value .: "kubeconfigPath"
       <*> value .: "generatedDemoConfigPath"
       <*> value .: "publishedDemoConfigPath"
@@ -604,7 +635,6 @@ data DemoConfig = DemoConfig
     generatedPath :: FilePath,
     mountedPath :: FilePath,
     demoUiEnabled :: Bool,
-    activeDaemonRole :: DaemonRole,
     -- | Coordinator role metadata. On Linux substrates this drives the
     -- in-cluster @infernix-coordinator@ Deployment; on Apple silicon
     -- it drives the in-cluster Pulsar coordination role too.
@@ -1310,6 +1340,35 @@ instance FromJSON EngineMember where
       <*> value .: "location"
       <*> value .: "pools"
 
+-- | Phase 8 Sprint 8.12 — how many engine machines the generated system
+-- contract declares.
+--
+-- A fleet is a count of /machines/, never a replica count: each machine runs
+-- exactly one engine process, holds its own model cache, and admits work
+-- against its own observed capacity. The constructor is hidden so a count can
+-- only arrive through 'engineMachineCount', which rejects zero and negative
+-- values — a contract declaring no engine machine has no member for any pool
+-- to name, and the daemon that reads it would refuse to start anyway. Refusing
+-- at generation names the defect where an operator can still fix it.
+newtype EngineMachineCount = EngineMachineCount Int
+  deriving (Eq, Ord, Read, Show)
+
+engineMachineCount :: Int -> Either String EngineMachineCount
+engineMachineCount requested
+  | requested >= 1 = Right (EngineMachineCount requested)
+  | otherwise =
+      Left
+        ( "engine machine count must be at least 1; got "
+            <> show requested
+        )
+
+engineMachineCountValue :: EngineMachineCount -> Int
+engineMachineCountValue (EngineMachineCount value) = value
+
+-- | The deployed platform's topology: one engine machine.
+singleEngineMachine :: EngineMachineCount
+singleEngineMachine = EngineMachineCount 1
+
 -- | Phase 8 Sprint 8.9 — how an engine binding's adapter is executed.
 --
 -- Like 'PodMemoryLimitSource' this was raw 'Text' end to end: no parser, no
@@ -1666,7 +1725,6 @@ instance ToJSON DemoConfig where
         "generatedPath" .= generatedPath demoConfig,
         "mountedPath" .= mountedPath demoConfig,
         "demo_ui" .= demoUiEnabled demoConfig,
-        "daemonRole" .= activeDaemonRole demoConfig,
         "coordinator" .= coordinatorDaemon demoConfig,
         "webapp" .= webappDaemon demoConfig,
         "engineDaemons" .= engineDaemons demoConfig,
@@ -1686,7 +1744,6 @@ instance FromJSON DemoConfig where
     runtimeModeValue <- value .: "runtimeMode"
     requestTopicValues <- value .: "request_topics"
     resultTopicValue <- value .: "result_topic"
-    daemonRoleValue <- value .:? "daemonRole" .!= defaultDaemonRole runtimeModeValue
     -- Phase 7 Sprint 7.7 renamed the JSON keys from
     -- @clusterDaemon@ / @hostDaemon@ to @coordinator@ / @engine@.
     -- Both names parse during the transition window.
@@ -1730,7 +1787,6 @@ instance FromJSON DemoConfig where
       <*> value .: "generatedPath"
       <*> value .: "mountedPath"
       <*> value .: "demo_ui"
-      <*> pure daemonRoleValue
       <*> pure coordinatorDaemonValue
       <*> pure webappDaemonValue
       <*> pure engineDaemonValues
@@ -1785,11 +1841,6 @@ defaultModelsBucket = "infernix-models"
 defaultModelBootstrapTopic :: Text
 defaultModelBootstrapTopic =
   "persistent://infernix/system/model.bootstrap.request"
-
-defaultDaemonRole :: RuntimeMode -> DaemonRole
-defaultDaemonRole runtimeMode = case runtimeMode of
-  AppleSilicon -> Engine
-  _ -> Coordinator
 
 defaultCoordinatorDaemonConfig :: RuntimeMode -> [Text] -> Text -> DaemonConfig
 defaultCoordinatorDaemonConfig _runtimeMode requestTopicValues resultTopicValue =

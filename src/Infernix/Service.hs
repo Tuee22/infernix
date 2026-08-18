@@ -18,8 +18,13 @@ import Infernix.Config
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.ExecutionPlan
   ( CompiledRuntimePlan,
-    compiledPlanActiveDaemonRole,
     compiledPlanRuntimeMode,
+  )
+import Infernix.HostConfig (MachineNode, machineNodeRole)
+import Infernix.MachineContract
+  ( requireDeclaredMachine,
+    requireMachineContractPair,
+    resolveMachineMemberId,
   )
 import Infernix.Runtime.Daemon (runProductionDaemon)
 import Infernix.Substrate (decodeCompiledRuntimePlanFile)
@@ -48,14 +53,21 @@ import System.Posix.Process (getProcessID)
 -- @INFERNIX_DAEMON_ROLE@ env var. The chart-driven coordinator and
 -- engine and webapp Deployments pass @--role coordinator@,
 -- @--role engine@, and @--role webapp@ through @args@; host-native
--- flows omit the flag and fall back to the active substrate dhall's
--- @daemonRole@ field. The optional
+-- flows omit the flag and fall back to this machine's contract. The optional
 -- explicit config path supports targeted host-side validation without
 -- rewriting the active generated substrate file.
+--
+-- Phase 8 Sprint 8.11: the machine contract is required here, and the generated
+-- pair on disk is checked before any role is chosen. The pair check is local —
+-- it proves this machine's manifest and this machine's system contract were
+-- generated together — while the operational payload a daemon actually consumes
+-- (which in a pod is the mounted publication) is covered by the contract digest
+-- registered in the broker's topic properties.
 runService :: Maybe RuntimeMode -> Maybe DaemonRole -> Maybe Text.Text -> Maybe FilePath -> IO ()
 runService maybeRuntimeMode maybeDaemonRole maybeEngineName maybeDemoConfigPath = do
   paths <- discoverPaths
   ensureRepoLayout paths
+  machineNode <- requireServiceMachineContract paths
   maybeClusterConfig <- tryLoadClusterConfig
   let selectedDemoConfigPath = serviceDemoConfigPath paths maybeClusterConfig maybeDemoConfigPath
   compiledPlanResult <- decodeCompiledRuntimePlanFile selectedDemoConfigPath
@@ -66,8 +78,12 @@ runService maybeRuntimeMode maybeDaemonRole maybeEngineName maybeDemoConfigPath 
           (userError ("generated substrate execution plan did not compile: " <> show errors))
       Right plan -> pure plan
   runtimeMode <- resolveServiceRuntimeMode maybeRuntimeMode compiledPlan
-  let daemonRole = resolveServiceDaemonRole maybeDaemonRole compiledPlan
+  let daemonRole = resolveServiceDaemonRole maybeDaemonRole machineNode
   ensureServiceRuntimeSupported paths runtimeMode daemonRole
+  -- Identity is resolved before any preparation: a daemon that cannot say which
+  -- member it is must refuse before it provisions a runtime or takes the engine
+  -- lock, not after.
+  resolvedEngineName <- resolveServiceEngineName daemonRole machineNode maybeEngineName
   whenAppleRuntimeReady paths runtimeMode daemonRole
   -- Phase 7 Sprint 7.23: Apple host engine singleton ownership is broker
   -- owned through the Pulsar batch-topic subscription. The local lock remains
@@ -76,7 +92,7 @@ runService maybeRuntimeMode maybeDaemonRole maybeEngineName maybeDemoConfigPath 
   acquireEngineLockIfEngineRole paths runtimeMode daemonRole
   case daemonRole of
     Webapp -> runWebappRole paths runtimeMode maybeClusterConfig selectedDemoConfigPath
-    _ -> runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath daemonRole maybeEngineName
+    _ -> runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath daemonRole resolvedEngineName
 
 -- | Phase 4 Sprint 4.13: best-effort load of the cluster manifest
 -- mounted at the supported path. Cluster-resident pods have this
@@ -121,13 +137,55 @@ resolveServiceRuntimeMode maybeRuntimeMode compiledPlan =
 -- | Phase 4 Sprint 4.13: typed CLI override replaces the previous
 -- @lookupEnv "INFERNIX_DAEMON_ROLE"@ + 'String' parsing path. The
 -- parser is now in 'Infernix.CommandRegistry'; this function just
--- threads the parsed value, falling back to the substrate dhall's
--- 'activeDaemonRole' when no override is supplied.
-resolveServiceDaemonRole :: Maybe DaemonRole -> CompiledRuntimePlan -> DaemonRole
-resolveServiceDaemonRole maybeDaemonRoleOverride compiledPlan =
+-- threads the parsed value.
+--
+-- Phase 8 Sprint 8.11: the fallback is this machine's contract rather than the
+-- system contract. A role is a fact about the box a process runs on, not about
+-- the platform every box shares — the split Deployments prove it, since three
+-- roles run from one system contract and name themselves with @--role@.
+resolveServiceDaemonRole :: Maybe DaemonRole -> MachineNode -> DaemonRole
+resolveServiceDaemonRole maybeDaemonRoleOverride machineNode =
   case maybeDaemonRoleOverride of
-    Nothing -> compiledPlanActiveDaemonRole compiledPlan
+    Nothing -> machineNodeRole machineNode
     Just daemonRole -> daemonRole
+
+-- | Which declared member identity an engine process is.
+--
+-- Phase 8 Sprint 8.11: the machine contract is the source of engine identity,
+-- so @--engine-name@ selects among the identities this machine declares rather
+-- than among every member the platform compiles. The plan lookup downstream
+-- still has to find that member in the pool graph, so a declared identity no
+-- pool serves is a refusal too.
+resolveServiceEngineName ::
+  DaemonRole ->
+  MachineNode ->
+  Maybe Text.Text ->
+  IO (Maybe Text.Text)
+resolveServiceEngineName daemonRole machineNode requestedEngineName =
+  case daemonRole of
+    Engine ->
+      case resolveMachineMemberId machineNode requestedEngineName of
+        Right memberIdValue -> pure (Just memberIdValue)
+        Left refusal -> ioError (userError refusal)
+    Coordinator -> pure requestedEngineName
+    Webapp -> pure requestedEngineName
+
+-- | Require a declared machine contract, and require it to be paired with the
+-- generated system contract sitting next to it.
+requireServiceMachineContract :: Paths -> IO MachineNode
+requireServiceMachineContract paths =
+  case pathsHostConfig paths of
+    Nothing ->
+      ioError
+        ( userError
+            ( "host manifest missing at "
+                <> hostConfigPath paths
+                <> "; run `infernix init` to create ./infernix.dhall and ./infernix-host.dhall"
+            )
+        )
+    Just hostConfig -> do
+      requireMachineContractPair hostConfig (runtimeConfigPath paths)
+      requireDeclaredMachine hostConfig
 
 ensureServiceRuntimeSupported :: Paths -> RuntimeMode -> DaemonRole -> IO ()
 ensureServiceRuntimeSupported paths runtimeMode daemonRole =

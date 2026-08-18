@@ -43,6 +43,7 @@ import Infernix.ExecutionPlan
     executableModelEngine,
     executableModelId,
   )
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models (resultFamilyForDescriptor)
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Upload qualified as ObjectUpload
@@ -1236,6 +1237,14 @@ workerModelCacheConfigFromCluster clusterConfig secretsConfig = do
         workerMinioSecretKey = Secrets.minioSecretKey minioCreds
       }
 
+-- | Phase 8 Sprint 8.11: the host cache quota comes from this machine's
+-- contract.
+--
+-- The retired form carried its own 32 GiB literal here while the generated
+-- cluster wiring carried 64 GiB for the same cache, and nothing connected the
+-- two numbers, so they were free to disagree and did. The quota is a machine
+-- fact: the machine contract declares it, and both the cluster wiring and this
+-- host path are generated from one default.
 loadHostWorkerModelCacheConfig :: Paths -> RuntimeMode -> IO (Maybe WorkerModelCacheConfig)
 loadHostWorkerModelCacheConfig paths runtimeMode = do
   maybeState <- loadWorkerClusterState paths runtimeMode
@@ -1248,7 +1257,7 @@ loadHostWorkerModelCacheConfig paths runtimeMode = do
         ( Just
             WorkerModelCacheConfig
               { workerModelCacheRoot = Text.pack (modelCacheRoot paths),
-                workerModelCacheQuotaBytes = 34359738368,
+                workerModelCacheQuotaBytes = hostModelCacheQuotaBytes paths,
                 workerMinioEndpoint = "http://127.0.0.1:30011",
                 workerMinioModelsBucket = "infernix-models",
                 workerMinioDemoArtifactsBucket = "infernix-demo-objects",
@@ -1257,6 +1266,17 @@ loadHostWorkerModelCacheConfig paths runtimeMode = do
                 workerMinioSecretKey = Secrets.minioSecretKey minioCreds
               }
         )
+
+-- | The model-cache quota this machine declares, falling back to the shared
+-- default when no machine contract has been stamped yet. The fallback is the
+-- same constant the machine contract is generated from, so the two can only
+-- agree.
+hostModelCacheQuotaBytes :: Paths -> Word64
+hostModelCacheQuotaBytes paths =
+  case HostConfig.hostMachine <$> pathsHostConfig paths of
+    Just (HostConfig.DeclaredMachine node) ->
+      fromIntegral (HostConfig.machineModelCacheQuotaBytes node)
+    _ -> fromInteger defaultModelCacheQuotaBytes
 
 -- | Sprint 2.14: read the recorded cluster state through the fail-closed
 -- versioned aeson codec. A present-but-undecodable state file is a loud

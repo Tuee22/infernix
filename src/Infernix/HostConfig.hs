@@ -17,6 +17,10 @@ module Infernix.HostConfig
     HostFilesystem (..),
     HostMemoryFacts (..),
     unmeasuredHostMemoryFacts,
+    HostMachineContract (..),
+    MachineNode (..),
+    machineNodeRole,
+    imageDefaultMachineContract,
     HostExecutionContext (..),
     DhallRetryPolicy (..),
     DhallBoundedRetry (..),
@@ -40,11 +44,19 @@ where
 import Control.Exception (SomeException, displayException, try)
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (toLower)
+import Data.List qualified
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Dhall qualified
 import GHC.Generics (Generic)
+import Infernix.DhallSchema.Enums
+  ( DhallDaemonRole,
+    daemonRoleFromDhall,
+    daemonRoleUnionType,
+    renderDaemonRole,
+  )
 import Infernix.DhallSchema.Reflection (renderDecoderExpected)
+import Infernix.Types (DaemonRole)
 import Numeric.Natural (Natural)
 import System.Info qualified
 
@@ -138,6 +150,86 @@ unmeasuredHostMemoryFacts =
     { hostPhysicalMemoryMib = 0,
       hostEffectiveMemoryMib = 0
     }
+
+-- | Phase 8 Sprint 8.11 — the machine half of the configuration contract.
+--
+-- The system contract (@./infernix.dhall@) describes what the platform runs and
+-- is identical on every machine; this describes /one box/. The two states are a
+-- union rather than a record of optional fields, because a machine contract
+-- without a pinned system contract is exactly the state this sprint exists to
+-- make unrepresentable:
+--
+-- * 'ImageDefaultMachine' is the manifest baked into the Linux launcher image at
+--   @\/opt\/infernix\/dhall\/InfernixHost.dhall@. It is byte identical in every
+--   image and therefore describes no machine at all: it exists so path
+--   discovery can classify the execution context before any machine contract is
+--   generated. A daemon started against it is refused by name.
+-- * 'DeclaredMachine' is a real machine contract, written by @infernix init@ (or
+--   by the substrate materializer that regenerates the pair). It always carries
+--   the digest of the system contract it was generated against, so the pin
+--   cannot be omitted.
+data HostMachineContract
+  = ImageDefaultMachine
+  | DeclaredMachine MachineNode
+  deriving (Eq, Show, Generic)
+
+instance Dhall.FromDhall HostMachineContract where
+  autoWith _ = Dhall.genericAutoWith machineContractInterpretOptions
+
+-- | One box's declared position in the platform.
+--
+-- 'machineMembers' is the set of engine member identities this machine may
+-- adopt, and it is declared rather than discovered: a daemon that cannot resolve
+-- exactly one of them refuses to start instead of inventing a default. Most
+-- runtime modes compile exactly one member, so the identity needs no selection
+-- at all; @linux-gpu@ compiles one member per framework engine image and
+-- @infernix service --engine-name@ names which of the declared identities this
+-- process is.
+--
+-- The pools this machine serves are /derived/ from those members against the
+-- pinned system contract's pool set rather than declared a second time here: a
+-- pool names its members, so a declared pool list could only ever disagree with
+-- the pool graph it duplicates.
+data MachineNode = MachineNode
+  { machineRole :: DhallDaemonRole,
+    machineMembers :: [Text],
+    machineModelCacheQuotaBytes :: Natural,
+    machineSystemContractDigest :: Text
+  }
+  deriving (Eq, Show, Generic)
+
+instance Dhall.FromDhall MachineNode where
+  autoWith _ = Dhall.genericAutoWith machineContractInterpretOptions
+
+machineContractInterpretOptions :: Dhall.InterpretOptions
+machineContractInterpretOptions =
+  Dhall.defaultInterpretOptions
+    { Dhall.fieldModifier = machineFieldName,
+      Dhall.constructorModifier = machineConstructorName
+    }
+
+machineFieldName :: Text -> Text
+machineFieldName rawFieldName =
+  maybe rawFieldName lowerInitial (Text.stripPrefix "machine" rawFieldName)
+
+-- | The wire alternatives are @ImageDefault@ and @Machine@; the Haskell
+-- constructors carry a suffix so they read unambiguously at their call sites.
+machineConstructorName :: Text -> Text
+machineConstructorName rawConstructorName =
+  case rawConstructorName of
+    "ImageDefaultMachine" -> "ImageDefault"
+    "DeclaredMachine" -> "Machine"
+    other -> other
+
+-- | The manifest state the Linux launcher image bakes. See 'HostMachineContract'.
+imageDefaultMachineContract :: HostMachineContract
+imageDefaultMachineContract = ImageDefaultMachine
+
+-- | The domain role this machine declares. The record field holds the wire
+-- mirror so the manifest decoder stays generically derived; every consumer works
+-- in the domain vocabulary.
+machineNodeRole :: MachineNode -> DaemonRole
+machineNodeRole = daemonRoleFromDhall . machineRole
 
 -- | Filesystem conventions the supported flow assumes.
 data HostFilesystem = HostFilesystem
@@ -246,6 +338,7 @@ data HostConfig = HostConfig
     hostToolPaths :: HostToolPaths,
     hostFilesystem :: HostFilesystem,
     hostMemory :: HostMemoryFacts,
+    hostMachine :: HostMachineContract,
     hostCommandPolicies :: DhallCommandPolicies,
     hostPlaywrightHost :: Text,
     hostControlPlaneContext :: Text
@@ -280,6 +373,7 @@ hostFieldName rawFieldName =
     Just "ToolPaths" -> "toolPaths"
     Just "Filesystem" -> "filesystem"
     Just "Memory" -> "memory"
+    Just "Machine" -> "machine"
     Just "CommandPolicies" -> "commandPolicies"
     Just "PlaywrightHost" -> "playwrightHost"
     Just "ControlPlaneContext" -> "controlPlaneContext"
@@ -431,6 +525,11 @@ retiredHostManifestMarkers =
   [ ( "memory =",
       "measured `memory` record (`physicalMemoryMib` / `effectiveMemoryMib`) "
         <> "that the bounded host build ceiling is derived from"
+    ),
+    ( "machine =",
+      "`machine` contract (Phase 8 Sprint 8.11) that names this box's role, "
+        <> "member identities, model-cache quota, and the content digest of the "
+        <> "system contract it was generated against"
     )
   ]
 
@@ -509,12 +608,53 @@ renderHostConfig hostConfig =
             <> "\n  , effectiveMemoryMib = "
             <> show hostEffectiveMemoryMib
             <> "\n  }",
+          ", machine = " <> renderHostMachineContract hostMachine,
           ", commandPolicies =",
           renderDhallCommandPolicies hostCommandPolicies,
           ", playwrightHost = " <> showT hostPlaywrightHost,
           ", controlPlaneContext = " <> showT hostControlPlaneContext,
           "}"
         ]
+
+-- | The single rendered spelling of the machine-contract union. Both arms
+-- select from this one value, so the type annotation cannot drift from the
+-- value it annotates.
+hostMachineContractUnionType :: String
+hostMachineContractUnionType =
+  "< ImageDefault | Machine : "
+    <> machineNodeRecordType
+    <> " >"
+
+machineNodeRecordType :: String
+machineNodeRecordType =
+  "{ role : "
+    <> daemonRoleUnionType
+    <> ", members : List Text, modelCacheQuotaBytes : Natural, systemContractDigest : Text }"
+
+renderHostMachineContract :: HostMachineContract -> String
+renderHostMachineContract machineContract =
+  case machineContract of
+    ImageDefaultMachine -> hostMachineContractUnionType <> ".ImageDefault"
+    DeclaredMachine node ->
+      hostMachineContractUnionType
+        <> ".Machine { role = "
+        <> renderDaemonRole (daemonRoleFromDhall (machineRole node))
+        <> ", members = "
+        <> renderTextList (machineMembers node)
+        <> ", modelCacheQuotaBytes = "
+        <> show (machineModelCacheQuotaBytes node)
+        <> ", systemContractDigest = "
+        <> dhallTextLiteral (machineSystemContractDigest node)
+        <> " }"
+
+renderTextList :: [Text] -> String
+renderTextList values =
+  case values of
+    [] -> "([] : List Text)"
+    _ -> "[ " <> Data.List.intercalate ", " (map dhallTextLiteral values) <> " ]"
+
+dhallTextLiteral :: Text -> String
+dhallTextLiteral value = "\"" <> Text.unpack value <> "\""
 
 renderDhallCommandPolicies :: DhallCommandPolicies -> String
 renderDhallCommandPolicies policies =
@@ -666,6 +806,7 @@ defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
             hostKindRoot = "/workspace/.data/runtime/kind"
           },
       hostMemory = unmeasuredHostMemoryFacts,
+      hostMachine = imageDefaultMachineContract,
       hostCommandPolicies = defaultDhallCommandPolicies,
       hostPlaywrightHost = "127.0.0.1",
       hostControlPlaneContext = "outer-container"
@@ -733,6 +874,7 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostKindRoot = repoRoot <> "/.data/runtime/kind"
           },
       hostMemory = unmeasuredHostMemoryFacts,
+      hostMachine = imageDefaultMachineContract,
       hostCommandPolicies = defaultDhallCommandPolicies,
       hostPlaywrightHost = "host.docker.internal",
       hostControlPlaneContext = "host-native"

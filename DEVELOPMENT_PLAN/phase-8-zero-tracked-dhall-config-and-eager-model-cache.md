@@ -1,26 +1,27 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Active — Phase 7 closed on 2026-08-17, so strict numerical execution reaches this phase.
-Its three open sprints split cleanly by what blocks them. Sprint 8.11 is `Planned`, carries no blocker,
-and is implementable on a single engine machine — it is the only open work in this phase that current
-hardware can complete. Sprints 8.9 and 8.10 are code-side closed and hold a **supported-lane
-validation blocker**: both consume Phase 6 Sprint 6.44's `linux-gpu` plus `linux-cpu` wave, which needs
-a CUDA-capable Linux host. Sprint 8.12 holds a different blocker again — a fleet validation topology of
-more than one engine machine — which no single-host cohort can supply.
+**Status**: Active — Sprints 8.11 and 8.12 both closed on 2026-08-18. 8.12 dissolved the last
+blocker a single engine machine could not reach rather than waiting it out: the fleet validation
+topology is a `linux-cpu` multi-worker Kind cluster the lifecycle generates from the system
+contract's own machine count, not a second physical host, and it closed on a live two-machine fleet
+plus the paired single-machine run. The two sprints still open — 8.9 and 8.10 — are code-side closed
+and hold a **supported-lane validation blocker**: both consume Phase 6 Sprint 6.44's `linux-gpu` plus
+`linux-cpu` wave, which needs a CUDA-capable Linux host this cohort does not have.
+
 **Historical implementation state (superseded by the header above).** Active. Sprint 8.9 and Sprint 8.10 are both
 validation-only, sharing the `linux-gpu` plus `linux-cpu` rebuild. Sprint 8.10 (delete the derivable
 wire fields) is code-side closed: Phase 4 Sprint 4.34's admission move discharged its blocker, and
 the reflected substrate schema went from 110 lines to 54 with every retired field absent rather than
-merely rejected. Sprint 8.11 is now `Planned` and carries no blocker. Executing 8.10 established
+merely rejected. Executing 8.10 established
 that the machine contract it specifies — "the existing host manifest plus a `node` block" — has no
 home on the Linux lanes, where a pod's only host manifest is the one baked identically into every
-image, and where nothing yet makes two machines different members. That finding stands, but it is a
-statement about a fleet of more than one engine machine, and treating it as a blocker on 8.11 had
-made that sprint depend on demonstrating something Phase 3 Sprint 3.16's single-node platform
-decision makes undemonstrable — the plan contradicting itself rather than a real design gap. The two
+image, and where nothing yet makes two machines different members. That finding stands, and Sprint
+8.12 is where it is discharged: the fleet's pods no longer read the baked manifest at all. Treating
+it as a blocker on 8.11 had made that sprint depend on demonstrating something Phase 3 Sprint 3.16's
+single-node platform decision makes undemonstrable — the plan contradicting itself rather than a real
+design gap. The two
 topologies are now separated: 3.16 governs what the platform deploys, a fleet lane is a validation
-topology, and the work that genuinely needs more than one engine machine is Sprint 8.12, which names
-that lane as its blocker and adopts Phase 4 Sprint 4.34's broker-side member claim. Sprint 8.9
+topology, and the work that genuinely needs more than one engine machine is Sprint 8.12. Sprint 8.9
 (proper-union generated execution-plan schema migration) is code-side closed:
 the budget wire carries the third `DualEnforced` union arm Phase 6 Sprint 6.44's dual RAM/VRAM
 capability needed, the renderer emits one shared union type whose agreement with the reflected
@@ -28,6 +29,7 @@ decoder is asserted, a retired flat payload fails with a targeted migration diag
 regenerating command, and the dead `legacyDhall` decoder residue is removed. Its behavioral evidence
 is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus `linux-cpu` wave rather than a wave of its
 own, per its own validation rule. Sprints 8.1–8.8 are closed.
+
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Adopt the `~/hostbootstrap` Dhall doctrine — no version-controlled `.dhall`, the
@@ -71,6 +73,14 @@ types, reflected on demand.
   encode → decode
 - `infernix internal dhall-schema host|cluster|secrets|substrate` remains the only way to obtain a
   schema; nothing reads a schema from disk
+
+**The retry bound did not mean what it said, and the fleet lane is what showed it.** The window was
+first written as 30 attempts with a 2 s pause — nominally a minute. On the live lane the broker took
+roughly fifteen seconds to answer each refused subscribe, so the real window was over eight minutes:
+a bound whose length was set by broker latency rather than by the number it was documented with. It
+is now a measured wall-clock deadline, because the thing it is sized against — the broker's session
+timeout — is itself wall-clock. Nothing about the mechanism changed; what changed is that the number
+in the doctrine is now the number the code enforces.
 
 ### Validation
 
@@ -680,11 +690,12 @@ None code-side. The cohort rebuild is the residual named above.
 
 ---
 
-## Sprint 8.11: System And Machine Contracts [Planned]
+## Sprint 8.11: System And Machine Contracts [Done]
 
-**Status**: Planned — dependencies satisfied. Sprint 8.10 is discharged, and the design question
-that previously blocked this sprint is resolved by scoping rather than by a new mechanism. The
-resolution is recorded below because it also removes a contradiction the plan was carrying.
+**Status**: Done — implemented and validated on the machine-independent gate set plus the Apple
+accelerator lane's schema, pin, identity, and round-trip proofs. The three layers this sprint owns
+are built and proved at one engine machine; what genuinely needs a second machine is
+[Sprint 8.12](#sprint-812-fleet-member-identity-and-broker-side-claim-blocked).
 
 **The contradiction this sprint was blocked by, and its resolution.** The earlier blocker read: the
 machine contract has no home on the Linux lanes, because the only host manifest a pod can see is the
@@ -701,19 +712,9 @@ this sprint because the plan had conflated two different topologies:
   order to be exercised at all.
 
 Conflating them made this sprint unresolvable by construction: it was blocked on demonstrating a
-property that the platform's own topology decision makes undemonstrable, and no amount of design
-work inside this sprint could have discharged that. Separating them dissolves it. Sprint 3.16
-governs what the platform *deploys*; a fleet lane is a *validation topology*, and needing one is not
-a proposal to re-replicate the deployed platform.
-
-With that separation, this sprint's scope is exactly what one engine machine can carry and prove,
-and it is buildable now. The system/machine contract split, the pool record, the content pin, and
-the broker-registered digest are all well defined at one member, and the digest check is provable
-against a deliberately doctored digest rather than against a second machine. What genuinely needs
-more than one engine machine — per-node identity, the baked-manifest collision, the workload-shape
-change, and the broker-side member claim — is **not** descoped into silence: it is
-[Sprint 8.12](#sprint-812-fleet-member-identity-and-broker-side-claim-blocked), which names the
-validation topology as its blocker.
+property that the platform's own topology decision makes undemonstrable. Separating them dissolves
+it. Sprint 3.16 governs what the platform *deploys*; a fleet lane is a *validation topology*, and
+needing one is not a proposal to re-replicate the deployed platform.
 
 **Be exact about what one member buys.** At one engine machine the machine contract is well defined
 because machine and cluster coincide, not because the placement problem was solved. The baked
@@ -723,7 +724,10 @@ as having established a per-machine surface for a fleet.
 
 **Blocked by**: nothing.
 **Implementation**: `src/Infernix/Substrate/Internal.hs`, `src/Infernix/HostConfig.hs`,
-`src/Infernix/ProjectInit.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/`
+`src/Infernix/MachineContract.hs`, `src/Infernix/DhallSchema/Enums.hs`,
+`src/Infernix/DemoConfig/Internal.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`,
+`src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/ClusterConfig.hs`,
+`src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/values.yaml`, `docker/Dockerfile`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`,
 `documents/engineering/host_tools_manifest.md`, `documents/engineering/cluster_config_manifest.md`
 
@@ -732,80 +736,180 @@ as having established a per-machine surface for a fleet.
 Split the wire into a system contract every machine holds identically and a machine contract that
 describes one box, and make a fleet-wide disagreement detectable at the only place the fleet meets.
 
-Pools become a record rather than a list so a machine selects one by field access: a pool the system
-contract does not define is a decode-time type error, not a subscription to a topic nobody publishes
-to. The machine contract pins the system contract it was generated against by content hash, so a
-machine cannot be paired with a contract it has never seen. Both files stay binary-generated and
-untracked, so the pin is over generated text and the zero-version-controlled-`.dhall` rule is
-untouched.
+A machine selects what it serves out of the system contract rather than restating it: a pool the
+pinned contract does not define is a fail-closed refusal naming the defined ids, not a subscription
+to a topic nobody publishes to. The machine contract pins the system contract it was generated
+against by content hash, so a machine cannot be paired with a contract it has never seen. Both files
+stay binary-generated and untracked, so the pin is over generated text and the
+zero-version-controlled-`.dhall` rule is untouched.
 
 Be precise about what those two layers buy: both are **local**. They prove this machine's file
 matches this machine's copy of the contract; neither can see another machine's copy. A design that
 stops there has replaced several silent disagreement axes with one — a real reduction in blast
 radius and no improvement in detectability. The third layer is the one that closes it: the contract
-digest is registered in the Pulsar per-topic schema properties, and a daemon whose digest disagrees
+digest is registered in the Pulsar topic's own properties, and a daemon whose digest disagrees
 with the registered value refuses to start. The broker is the only place N machines meet, so that is
 where the check has to live.
 
 At one engine machine that third layer cannot yet *detect* a fleet disagreement, because there is no
-second machine to disagree. It can still be built and proven: the registration, the reread, and the
-fail-closed refusal are one mechanism, and a doctored registered value exercises the refusal exactly
-as a disagreeing second machine would. Building it here means Sprint 8.12 adds machines to a check
-that already exists rather than adding the check and the machines at once.
+second machine to disagree. It is built and proved instead: the registration, the reread, and the
+fail-closed refusal are one mechanism, and a registered value that disagrees exercises the refusal
+exactly as a disagreeing second machine would. Building it here means Sprint 8.12 adds machines to a
+check that already exists rather than adding the check and the machines at once.
 
 ### Deliverables
 
-- the system contract: substrate mode plus the pool record whose values are model descriptors
-- the machine contract: the existing host manifest plus a `node` block naming this box's role,
-  required member id, served pools, and model-cache quota — which also resolves the standing
-  disagreement between the hard-coded host-path cache quota and the cluster default. At one member
-  the required member id is the compiled member for the runtime mode, which keeps identity
-  *declared* rather than discovered, as the doctrine requires
-- the content pin, and the regeneration coupling it implies: a system-contract change moves the
-  hash, so every machine contract is regenerated
-- the contract digest registered in the topic schema properties, with a fail-closed check at daemon
-  start
+- **the system contract** (`./infernix.dhall`): substrate mode plus the pool graph, each pool
+  carrying the model descriptors it owns. The role, the two in-cluster daemon records, the member
+  list, and the top-level model catalog all left the wire
+- **the machine contract** (the `machine` block of `./infernix-host.dhall`): this box's default
+  role, the engine member identities it may adopt, its model-cache quota, and the digest of the
+  system contract it was generated against. It is a union — `ImageDefault` for the byte-identical
+  manifest the launcher image bakes, `Machine` for a real machine contract — so a machine contract
+  without a pin is unrepresentable, and a daemon started against the image default is refused by
+  name. The quota resolves the standing disagreement between the hard-coded 32 GiB host-path cache
+  quota and the 64 GiB cluster default: both are now generated from one constant
+- **the content pin, and the regeneration coupling it implies**: the digest covers a canonical
+  projection of the contract — substrate mode, topic names, object bucket, and the pool graph with
+  each pool's subscription, members, and models — so a contract change moves the hash, and the same
+  materialization that writes the system contract re-stamps the machine contract beside it. The test
+  harness owns `./infernix.dhall` for a run and re-points the pin at the operator's contract when it
+  restores it, including on crash recovery
+- **the contract digest registered in the topic's own properties**, with a fail-closed check at
+  daemon start. Absence is not disagreement: a topic registered by a binary that predates the pin is
+  registered rather than refused. The coordinator registers — including over a value it disagrees
+  with, which is what a deliberate contract change is — and every other role verifies
 - the existing ledger row for the deployment-mirror filename consolidation is **adopted and closed**
-  by this sprint rather than duplicated, and the two documented mount paths collapse to one
+  by this sprint, and the two documented mount paths collapse to one name
+
+**Two deliverables closed differently than they were specified, and the reasons are the sprint's
+own findings.**
+
+*Pools are a list keyed by an `id` field, not a Dhall record keyed by pool name.* Pool ids are
+derived from the active substrate's model catalog, so the field set differs per runtime mode, and
+the substrate schema is reflected from the decoder type — which is this sprint's own first
+validation step. A record whose fields vary per mode is not reflectable at all, and the map encoding
+that is (`List { mapKey, mapValue }`) is the same list with a renamed key field and buys no
+additional check. So the promised "a pool the system contract does not define is a decode-time type
+error" is delivered as a fail-closed refusal naming the defined pool ids, and the pin is what makes
+that equivalent in practice: the pair was generated together, so the pool set a machine resolves
+against is the one it was generated with. What the nesting *does* buy is structural: five
+disagreement classes — a pool naming a model the catalog does not define, a pool naming a member
+that does not exist, a member serving no pool, and a one-sided pool/member link in either direction
+— now have no representation to write.
+
+*The node block declares members, not served pools.* A pool names its members, so a declared pool
+list would be a second copy of the pool graph — exactly the shape Sprint 8.10 deleted from this wire.
+Served pools are derived by intersecting the declared members with the pinned graph, and a machine
+whose members no pool names is refused rather than started with an empty subscription set. The
+member field is a list rather than a single id because `linux-gpu` compiles one member per framework
+engine image; one declared identity needs no selection, and more than one requires `--engine-name`
+to name one of them.
 
 ### Validation
 
-- `infernix internal dhall-schema substrate` and `... host` diffed before and after
-- a machine contract paired with a foreign system contract fails the pin
-- a daemon whose registered schema-property digest is doctored to disagree refuses to start. This is
-  the mechanism proof and it needs one machine; the *fleet* proof — two machines disagreeing in
-  earnest — is Sprint 8.12's, and this sprint claims only the former
-- round-trip: `infernix init` → decode → re-render → byte-compare
+- `infernix internal dhall-schema substrate` and `... host` diffed before and after: the substrate
+  schema loses `daemonRole`, both daemon records, `engineMembers`, and the top-level `models` list,
+  and gains the descriptors inside each pool; the host schema gains the `machine` union
+- a machine contract paired with a foreign system contract fails the pin, naming both digests, and
+  a machine contract paired with its own is accepted
+- a daemon whose registered schema-property digest disagrees refuses to start, and the refusal names
+  the registered incumbent and this daemon's digest. This is the mechanism proof and it needs one
+  machine; the *fleet* proof — two machines disagreeing in earnest — is Sprint 8.12's, and this
+  sprint claims only the former. Absence is classified separately from disagreement
+- identity is declared: one member resolves with no flag, more than one without `--engine-name` is a
+  refusal rather than a default, and a name outside the declared set is refused
+- round-trip: render → decode → re-render → byte-compare, on both the `apple-silicon` and
+  `linux-cpu` payloads, with the digest stable across the round trip
+- `infernix init` on the Apple lane writes a pair whose pin the daemon accepts, and a live
+  `infernix service` run against a foreign contract, an image-default manifest, and an undeclared
+  engine identity is refused by name in each case
+- the Apple cluster lane brings up the platform, publishes the deployment mirror under the
+  consolidated `infernix.dhall` name, stages the catalog from the mounted contract, starts the
+  coordinator as the digest registrar and the Apple host engine as a verifier that agrees with it,
+  and passes cluster-state reload, demo-config load, and the routed probes. It stops at the first
+  native-engine model on a host whose `materialize-metal-engines` artifacts were never built — a
+  documented prerequisite outside this sprint
+- machine-independent gate set: `cabal build all`, `cabal run infernix-unit`,
+  `cabal run infernix-haskell-style`, `infernix lint files/docs/chart/proto/plan`, `infernix docs
+  check`, the web unit suite (83/83), and `poetry run check-code`
+
+### The defect the cluster lane found
+
+The first cluster run refused itself. The Apple host engine loaded the operator's repo-root system
+contract while the coordinator had registered the digest of the *published* mirror, and the two
+payloads differ in fields no machine has to agree on — the mirror names its own path, and it is
+rendered for the pods that mount it. A byte digest therefore made one contract into two, and the
+host engine refused to start against its own deployment, retrying the refusal in a loop.
+
+Both halves are fixed and both are pinned by tests. The digest is now taken over a canonical
+projection of the facts a fleet must agree on rather than over file bytes, so two payloads of one
+contract digest alike and a changed pool member still moves the hash. And a digest disagreement is
+now its own exception type that leaves the registration retry loop the way an asynchronous exception
+does: it is a decision, not a transient broker condition, and retrying it produced an unbounded loop
+that reprinted the same refusal forever without ever letting the daemon die.
+
+The next cluster run found the deeper half of the same mistake, and then a third. The registered digest is **durable
+broker state that outlives a cluster** — the retained-state replay carries Pulsar's own storage
+across a teardown — so a check that only ever refuses does not fail closed, it *freezes*: the first
+deliberate contract change would make every daemon refuse forever against a value nothing could
+update, which is what a coordinator crash-looping against a previous run's digest actually
+demonstrated. The authority is now split. The coordinator is the deployment's router and its
+publication is the event that changes what the fleet runs, so it registers, including over a value
+it disagrees with; every other role verifies and refuses on disagreement. The cost is stated rather
+than hidden: two coordinators holding different contracts no longer detect each other. The deployed
+topology has one, and the fleet case that needs more is Sprint 8.12's.
+
+### Surfaces this sprint leaves standing, and why
+
+Neither is remaining work in this sprint's scope; both are recorded so the closure is not read as
+claiming more than it did.
+
+The plan compiler keeps the graph checks the generated wire can no longer trigger. It validates any
+`DemoConfig`, and the wire is one of its inputs rather than the only one. The eight unit fixtures
+that drove those checks through the wire were retired rather than re-pointed, and the wire half is
+asserted positively instead — the round trip must *succeed* and produce the agreeing shape.
+
+The in-memory `DemoConfig` record still hands every role every field, with the retired wire fields
+now derived. Splitting the decoded value by role is a consumer-side refactor across routing, launch,
+publication, and presentation, so it is carried as its own row in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under a successor sprint.
 
 ### Remaining Work
 
-Everything — the sprint is not started. It carries no blocker: the design question that formerly
-stood here is answered above by separating the deployed platform topology from a fleet validation
-topology, and everything remaining is buildable and provable at one engine machine.
+None.
 
 ---
 
-## Sprint 8.12: Fleet Member Identity And Broker-Side Claim [Blocked]
+## Sprint 8.12: Fleet Member Identity And Broker-Side Claim [Done]
 
-**Status**: Blocked — this is the part of the fleet contract that one engine machine cannot express
-or prove, split out of Sprint 8.11 so that sprint is not blocked on a topology the platform does not
-deploy. It also **adopts** the broker-side member claim that Phase 4 Sprint 4.34 could not finish,
-because that claim needs an operator-declared machine identity and Sprint 8.11's machine contract is
-where such an identity first exists. Adoption keeps the dependency forward: Phase 4 hands work to
-Phase 8 and does not wait on it.
+**Status**: Done — implemented, green on the machine-independent gate set, and validated on a live
+two-machine `linux-cpu` fleet plus the paired single-machine run. The blocker this sprint carried
+dissolved rather than being waited out: the fleet validation topology is a multi-worker Kind cluster
+the lifecycle generates from the system contract's own machine count, not a second physical host.
 
-**Blocked by**: a fleet validation topology carrying more than one engine machine. This is a
-prerequisite of the *proof*, not of the design, and it is a validation topology rather than a change
-to the deployed platform — Phase 3 Sprint 3.16's single-node platform decision stands untouched. The
-cheapest honest form is a dedicated multi-worker Kind topology used only by this sprint's lane;
-two physical hosts is the other. Either way it is cluster and lifecycle work, so it belongs to
-[Wave AB](cohort-validation-waves.md) rather than to a machine-independent gate.
+**Code-side closure**: complete. `cabal build all --enable-tests` under `-Wall -Werror`,
+`infernix-unit` (including this sprint's `runFleetMemberIdentityAssertions`), `infernix-compile-fail`,
+`infernix-execution-plan-internal`, `infernix-capped-engine-observer`, `infernix-apple-materializer`,
+`infernix-haskell-style` (`haskell-style-check: ok`), `infernix-cabal-format`, the web unit suite
+(83/83), and `lint files|chart|proto|docs|plan` plus `docs check` all pass.
 
-**Implementation**: `src/Infernix/EngineRouting.hs`, `src/Infernix/Runtime/Daemon.hs`,
-`src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Models.hs`, `chart/templates/`,
-`src/Infernix/Cluster.hs`
+**Cohort gate**: closed. The `linux-cpu` fleet lane brought up two engine machines on one pool
+topic and both served work; the second machine adopting the first's identity was refused at the
+broker by name; a restart reacquired its own slot; a machine holding a contract the registrar had
+moved away from refused to start naming both digests; and the paired single-machine run reproduced
+the deployed topology unchanged. Recorded in [Wave AB](cohort-validation-waves.md).
+
+**Blocked by**: nothing.
+
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`,
+`src/Infernix/DemoConfig/Internal.hs`, `src/Infernix/ProjectInit.hs`,
+`src/Infernix/CommandRegistry.hs`, `src/Infernix/CLI.hs`, `src/Infernix/EngineRouting.hs`,
+`src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/Cluster.hs`,
+`chart/values.yaml`, `chart/templates/deployment-engine.yaml`,
+`chart/templates/configmap-machine-contracts.yaml`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/daemon_topology.md`,
-`documents/architecture/configuration_doctrine.md`
+`documents/architecture/configuration_doctrine.md`, `documents/reference/cli_reference.md`
 
 ### Objective
 
@@ -814,42 +918,176 @@ machine's identity a refusal rather than a silent double-admission.
 
 ### Deliverables
 
-- **the workload shape decision, made against a lane that can show the difference.** The engine is a
-  replica-count `Deployment` today, and one-engine-per-machine is carried by
-  `repoEngineReplicaCount = 1` plus the `overReplicatedRoles` unit guard. The two candidate shapes
-  are a `DaemonSet` — which makes one engine per node true by construction and retires the guard —
-  and generated per-node `Deployment`s with `nodeSelector` and a baked `--engine-name`, which keeps
-  member ids declared compiled constants at the cost of a `Pending` failure mode Sprint 3.16
-  explicitly rejected for anti-affinity. Neither is chosen here, because choosing without a lane
-  that can show the difference is how the retired anti-affinity was chosen
-- **per-machine identity that neither collides nor churns.** The baked
-  `/opt/infernix/dhall/InfernixHost.dhall` is byte identical in every pod, so it collides rather than
-  discriminates the moment there are two; pod name and pod UID churn on every reschedule, and a
-  churning identity fences out the machine's own legitimate restart. Sprint 6.45's finding is the
-  governing precedent
-- **the broker-side member claim, adopted from Phase 4 Sprint 4.34.** The engine claims its member
-  identity against the broker before it consumes any pool topic, and the second claimant is refused.
-  A host-local lock cannot do this: `engineLockPath` is `runtimeRoot </> "engine.lock"`, which is
-  repo-local, so it excludes neither a second checkout on one host nor a second machine
-- **a bounded reacquisition window before the refusal.** Pulsar does not release an exclusive slot
-  the instant a TCP connection drops, so a crash-restart inside the broker's session timeout is
-  indistinguishable from a second machine unless the claim waits. Refusing without that window
-  converts every engine restart into an outage
-- **the fleet half of Sprint 8.11's digest check**: two machines whose registered contract digests
-  disagree, with the later one refusing to start
+- **the workload shape decision, made against a lane that can show the difference**
+- **per-machine identity that neither collides nor churns**
+- **the broker-side member claim**, adopted from Phase 4 Sprint 4.34
+- **a bounded reacquisition window before the refusal**
+- **the fleet half of Sprint 8.11's digest check**
+
+### Landed Implementation
+
+**1. The fleet is a count of machines in the system contract, and nothing else.** `infernix init`
+and `infernix test init` take `--engine-machines N`; the generated pool graph's member list is the
+single-machine graph with each member expanded to `N` ids (`<member>-m1 … -mN`), and every other
+property of a pool — its identity, its models, its subscription type, its per-member inflight bound
+— is generated once and left alone. Writing the fleet as a rewrite of the single-machine graph
+rather than as a second generator is deliberate: two generators that must agree on everything except
+the member list is the permanent illegal-state shape Sprint 8.10 deleted from the wire. `N = 1`
+reproduces the pre-sprint contract exactly, so the deployed single-node platform is byte-unchanged
+and no existing machine contract is invalidated by the dimension merely existing.
+
+`linux-gpu` above one machine is a **named refusal at generation**, and that is a scope decision
+rather than a defect. Its member set is already per-framework-image — a python pool's member id *is*
+its pool id, and the generated per-engine Deployments are named from those ids — so a fleet
+dimension there renames every engine image as well as adding machines. That is a second, independent
+change whose only honest proof is the CUDA Linux cohort, which this sprint's lane is not.
+
+**2. The workload shape: generated per-machine `Deployment`s, not a `DaemonSet`.** The decision is
+forced by this repository's own doctrine rather than by preference, which is why it could be made
+without the lane having to arbitrate taste. A `DaemonSet` makes one pod per node true by
+construction, but every pod of a DaemonSet is identical, so a pod can only learn which machine it is
+from the downward API — an `env:` block, which the no-environment-variables doctrine forbids in
+infernix-owned templates — or from a Kubernetes API read, which makes identity *discovered* and so
+contradicts the fail-closed member-identity rule. A DaemonSet and a declared identity are not
+expressible together here. Generated per-machine Deployments carry `--engine-name` as a compiled
+constant and mount their own machine contract; identity stays declared.
+
+The `Pending` failure mode Sprint 3.16 rejected for the engine pod anti-affinity is a different
+thing from the `nodeSelector` these Deployments carry, and the difference is the whole reason the
+selector is acceptable. Anti-affinity expressed the one-engine-per-machine **correctness rule** as a
+constraint the scheduler could leave unsatisfied. Here that rule is carried by the broker-side claim
+instead, and the selector only places a declared machine on the node that *is* that machine: a slot
+whose node is gone leaves that machine's engine `Pending`, which is the honest rendering of a machine
+being down rather than a silently unsatisfied invariant.
+
+Deployment names are keyed on the machine's **slot** (`infernix-engine-m1`), not on its member id: a
+Deployment name has to leave room for the ReplicaSet and pod suffixes Kubernetes appends, and a
+member id is operator-facing text of unbounded length. The identity travels in the machine contract
+and in `--engine-name`, where its length costs nothing.
+
+**3. Per-machine identity: one contract per machine, generated by the binary.** The baked
+`/opt/infernix/dhall/InfernixHost.dhall` is byte identical in every image, so with more than one
+engine machine it collides rather than discriminates — the same finding Sprint 6.45 recorded for the
+baked `hostRepoRoot`. `cluster up` therefore renders one machine contract per fleet member from this
+deployment's own host manifest with the machine block replaced by a contract naming **exactly one**
+member, publishes them in a binary-rendered `infernix-machine-contracts` ConfigMap (Helm only
+`nindent`s the strings, as it does for `cluster.dhall`), and mounts each machine's own contract at
+`/workspace/infernix-host.dhall` — the path manifest discovery already prefers over the baked
+default. Identity does not churn, because the slot and the member id are compiled constants in the
+generated overlay rather than a pod name or UID.
+
+**4. The broker-side member claim.** Each engine member has a derived claim topic
+(`persistent://infernix/demo/fleet.member-claim.<mode>.<member>`), and holding the only **exclusive**
+subscription on it *is* the claim. The topic carries no messages. It needs a topic of its own rather
+than a subscription on a pool topic because a pool topic is consumed `Shared` by every member of the
+pool: an exclusive claim taken there would exclude the fleet rather than one identity. A refused
+second claimant reads the topic's stats to name the incumbent and refuses with the identity, the
+claim topic, and the incumbent's consumer name and address. Losing the claim later is fatal by
+design — a machine that can no longer prove it is the only holder of its identity must not keep
+consuming, because continuing is exactly the double-admission the claim exists to prevent.
+
+**5. A bounded reacquisition window.** Pulsar does not release an exclusive slot the instant a TCP
+session drops: the WebSocket proxy holds the consumer for the life of its session. Inside that
+window a crash-restart of the incumbent and a genuinely second machine are the same observation, so
+a claim that refused immediately would convert every engine restart into an outage. The claim
+retries until a **wall-clock** deadline 90 s out, which covers the broker's 30 s keep-alive interval
+with margin. Waiting does not make the two cases distinguishable — nothing at this layer can — it
+makes the common one survivable and leaves the refusal for the case that is still true after the
+incumbent's session could have gone. That is stated plainly rather than dressed up as detection.
+
+**6. The fleet half of the digest check** needs no new code: Sprint 8.11 built the registration, the
+reread, and the fail-closed refusal, and this sprint supplies the second machine that makes a real
+disagreement possible.
+
+### What this sprint does not claim
+
+The claim bounds **one identity to one live claimant at a time**. It does not bound how many
+machines a fleet has, it cannot tell a restarting incumbent from an impostor inside the
+reacquisition window, and it depends on the broker being the fleet's single meeting point — a second
+Pulsar cluster would partition the claim exactly as it would partition the digest. The claim is also
+a startup-ordering bracket on the WebSocket lane rather than a constructor precondition of an engine
+capability: the filesystem topic-spool lane has no broker to claim against, so making a held claim
+required to *build* a capability would have made that lane unrepresentable instead of making the
+fleet safe.
+
+### Four defects, three found by construction and one by the live fleet
+
+**A fleet pod would have refused itself over an artefact of its image.** The machine contract a
+publication writes is pinned to the contract that publication produced, while every image also
+carries the baked, empty-model contract at the canonical repo-root path — so `requireMachineContractPair`
+compared a real pin against an unrelated file and refused the pod. The fix is not to weaken the pin
+but to give the pod a genuine pair: the published system contract is now mounted at
+`/workspace/infernix.dhall` as well as at its mount path, so the pod's local pair check and the
+broker's registered digest agree about the same contract. Found before the cohort ran, by following
+what the pod would actually read.
+
+**A fleet machine's engine was not phase-gated, and the release timed out on it.** The shared engine
+workload's replica count is held at zero until the phase that brings Pulsar up, because an engine
+consumes Pulsar topics and would otherwise sit un-ready inside its own phase's rollout wait. The
+first fleet Deployments carried a literal `replicas: 1`, so both machines started at the
+Harbor-final phase, never became ready, and `helm upgrade` failed with `context deadline exceeded` —
+a timeout that reads as an infrastructure problem and is in fact a gating one. The two counts now
+come from one function, so the shared workload and a fleet machine cannot drift on when an engine
+may start, and the unit suite pins that a pre-final phase asks for zero.
+
+**The claim cannot be the first thing an engine does.** Taken before namespace and topic
+reconciliation, the claim would wait on a topic nothing had created yet on a cold cluster. It now
+runs after that reconcile and after the contract-digest check — so a machine that disagrees with the
+fleet's registered contract refuses *before* claiming an identity inside that fleet — and still
+before the readiness sentinel and every pool subscription, which is the ordering that matters.
 
 ### Validation
 
-- the fleet lane brings up two engine machines on one pool topic and both serve work
-- a second machine started with the first machine's member identity is refused at the broker, and
-  the refusal names the incumbent
-- an engine restart within the broker session timeout reacquires its own slot rather than being
-  refused
-- two machines carrying disagreeing contract digests: the later refuses to start
+- generated fleet contract: `N` distinct members, every pool naming all of them on one `Shared`
+  topic, and `N = 1` byte-identical to the single-machine graph — **passing** (unit)
+- the fleet size is recoverable from the declared member ids, because publication regenerates the
+  payload rather than copying it — **passing** (unit)
+- `linux-gpu` above one machine, and a fleet of zero machines, are named refusals — **passing** (unit)
+- the claim topic is per identity and is not a pool topic; the refusal names the identity, the claim
+  topic, and the incumbent; a lapsed incumbent is reported as unknown rather than as absent; a 409
+  and a consumer-busy response are read as a held claim and a transport failure is not; the
+  reacquisition window covers the broker keep-alive — **passing** (unit)
+- the Kind topology grows one worker per machine, each carrying its own slot label, and the
+  single-worker topology carries the same label so the two shapes differ only in size — **passing**
+  (unit)
+- each machine contract names exactly one member and none names another machine's, all pinned to one
+  system contract; a one-machine deployment renders none — **passing** (unit)
+- the generated overlay turns the fleet on, carries each identity as a compiled constant, renders no
+  shared engine workload, embeds each machine's contract as a string, and leaves the single-machine
+  overlay unchanged; the rollout wait list and the browser preparation name the machines that exist
+  — **passing** (unit)
+- **the fleet lane brings up two engine machines on one pool topic and both serve work** —
+  **passing**. Two Kind workers carrying `infernix.fleet/slot=1` and `=2`; `infernix-engine-m1` and
+  `infernix-engine-m2` each `1/1` on a *different* node; each machine resolving its own declared
+  identity (`linux-cpu-engine-m1` / `-m2`) out of a mounted machine contract that names exactly one
+  member; both subscribed to the same twelve pool topics; all 12 configured models staged and
+  `cluster up` exit 0. Four routed inference roundtrips against `llm-tinyllama-gguf` returned real
+  llama.cpp output, and the broker's own `Shared` subscription stats moved from `msgOut=0, 0` to
+  `msgOut=2, 2` across its two consumers — the split attributed by the broker rather than inferred
+  from a log
+- **a second machine started with the first machine's member identity is refused at the broker, and
+  the refusal names the incumbent** — **passing**. A second replica of `infernix-engine-m1` held its
+  window open, then died with `EngineMemberClaimRefused` naming the identity, the claim topic, and
+  the incumbent `linux-cpu-engine-m1@b43033b0ebc7043e-1 at /10.244.1.49:48758`. It never became
+  ready and never consumed. The broker's view of each claim topic is one `Exclusive` subscription
+  with exactly one consumer, named for the member that holds it
+- **an engine restart within the broker session timeout reacquires its own slot rather than being
+  refused** — **passing**. Deleting the `infernix-engine-m2` pod produced a replacement that logged
+  the wait for its own lapsing session and then rolled out successfully
+- **two machines carrying disagreeing contract digests: the later refuses to start** — **passing**.
+  With the fleet registered at `sha256:891e6bb9…`, the coordinator was given a contract whose pool
+  graph names a different model; as registrar it re-registered `sha256:c02c1c64…`, and the engine
+  machine still holding the fleet's original contract refused to start with
+  `ContractDigestDisagreement` naming both digests. Restoring the registrar's contract let that
+  machine roll out again
+- **a `linux-cpu` single-machine run proving the deployed topology is unchanged** — **passing**. One
+  Kind worker, the shared `infernix-engine` Deployment `1/1` and no per-machine ones, the unsuffixed
+  `linux-cpu-engine` identity, one routed roundtrip with real output, and a clean teardown leaving
+  the cluster absent
 
 ### Remaining Work
 
-Everything. The sprint is not started and is blocked on the fleet validation topology named above.
+None — the fleet lane and its paired single-machine run closed on 2026-08-18 under [Wave AB](cohort-validation-waves.md).
 
 ---
 

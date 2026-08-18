@@ -106,8 +106,8 @@ existence and nothing to check in.
 
 | Config | Haskell owner | Created by | Consumed by |
 |---|---|---|---|
-| **system contract `infernix.dhall`** (substrate mode; the pool record whose values are model descriptors) — byte-identical on every machine in the fleet | `Infernix.Substrate` / `Infernix.Models` encoders; defaults in `Infernix.ProjectInit` | `infernix init` (operator) or the test harness (per run) | all service roles preflight through `decodeCompiledRuntimePlanFile`; hidden presentation/generation consumers may project `DemoConfig` |
-| **machine contract `infernix-host.dhall`** (tool paths, host context, filesystem, command policies, and the `node` block: role, member id, served pools, model-cache quota) — per machine | `Infernix.HostConfig` | `infernix init` | host CLI tool resolution and every role's own identity, capacity, and served-model set |
+| **system contract `infernix.dhall`** (substrate mode; the pool graph, each pool carrying the model descriptors it owns) — byte-identical on every machine in the fleet | `Infernix.Substrate` / `Infernix.Models` encoders; defaults in `Infernix.ProjectInit` | `infernix init` (operator) or the test harness (per run) | all service roles preflight through `decodeCompiledRuntimePlanFile`; hidden presentation/generation consumers may project `DemoConfig` |
+| **machine contract `infernix-host.dhall`** (tool paths, host context, filesystem, command policies, and the `machine` block: role, member identities, model-cache quota, and the pinned system-contract digest) — per machine | `Infernix.HostConfig` | `infernix init` | host CLI tool resolution and every role's own identity, capacity, and served-model set |
 | **cluster config `cluster.dhall`** (in-cluster wiring) | `Infernix.ClusterConfig` (`defaultClusterConfig`) | the binary at `cluster up`, injected into Helm as an `nindent`'d string | pods via `decodeClusterConfigFile` |
 | **secrets `InfernixSecrets.dhall`** (paths to secret files, never values) | `Infernix.SecretsConfig` | the binary (host) / `cluster up` (cluster), injected into Helm as a string | secret-path resolution |
 
@@ -120,17 +120,80 @@ opportunity to disagree, and a disagreement about a topic string is silent — t
 somewhere nobody reads, and no component errors.
 
 The rule is the same one that shapes the memory-budget union: **carry exactly
-one representative of each fact and derive the rest.** A machine does not restate a topic; it does
-not spell a pool id as free text; it selects a pool out of the system contract by field access, so a
-typo is a Dhall type error rather than a dead subscription. What a machine authors is only what is
-true of that machine: which role it runs, which member it is, which pools it serves, and how much
-disk its cache may use.
+one representative of each fact and derive the rest.** A machine does not restate a topic and does
+not restate the pool graph. What a machine authors is only what is true of that machine: which role
+it runs, which member identities it may adopt, and how much disk its cache may use. The pools it
+serves are *derived* — a pool names its members, so the machine's served set is the pools of the
+pinned contract that name one of its members, and a machine whose members no pool names is refused
+rather than started with an empty subscription set.
+
+A model belongs to exactly one pool, and the wire says so structurally: a pool carries its own model
+descriptors, so there is no second list for it to disagree with. Five disagreement classes that
+previously had their own rejection — a pool naming a model the catalog does not define, a pool
+naming a member that does not exist, a member serving no pool, and a one-sided pool/member link in
+either direction — have no representation to write at all.
+
+The pool graph is a `List` of pools keyed by an `id` field rather than a Dhall record keyed by pool
+name, and the reason is worth stating rather than leaving to inference: pool ids are derived from
+the active substrate's model catalog, so the field set differs per runtime mode, and the substrate
+schema is *reflected from the decoder type* (`infernix internal dhall-schema substrate`). A record
+whose fields vary per mode is not reflectable, and the map encoding that is — a list of
+`{ mapKey, mapValue }` — is the same list with a renamed key field and buys no additional check. So
+a machine does not get a Dhall type error for naming an undefined pool; it gets a fail-closed
+refusal that names the pool ids the pinned contract defines. The pin below is what makes that
+equivalent in practice: the pair was generated together, so the pool set the machine resolves
+against is the one it was generated with.
 
 The machine contract pins the system contract it was generated against by content hash, so a machine
 cannot be paired with a contract it has never seen. The operational consequence is worth stating
 plainly: **when the system contract changes, every machine contract is regenerated**, because the
-hash moves. Both files remain binary-generated and untracked — the pin is over generated text, not
-over a checked-in schema, so the zero-version-controlled-`.dhall` rule is untouched.
+hash moves. That coupling is the generator's, not the operator's: the same materialization that
+writes the system contract re-stamps the machine contract next to it. Both files remain
+binary-generated and untracked — the pin is over generated configuration, not over a checked-in
+schema, so the zero-version-controlled-`.dhall` rule is untouched.
+
+**The digest covers the contract, not one machine's copy of it.** One deployment legitimately holds
+the same contract as more than one payload: the operator's repo-root file names its own absolute
+`generatedPath`, and the published cluster mirror is rendered for the pods that mount it. So the
+digest is taken over a canonical projection of the facts a fleet must agree on — the substrate mode,
+the topic names, the object bucket, and the pool graph with each pool's subscription, members, and
+models — with every list sorted. What is deliberately outside it is everything a machine may
+legitimately hold differently: file paths, the ConfigMap name, the demo-UI flag, and the inference
+memory budget, which is per-machine by construction. Hashing the file bytes instead is not a
+theoretical mistake: it made the Apple host engine and the cluster coordinator refuse each other on
+a deployment where nothing disagreed.
+
+**Be exact about what the pin buys.** It is *local*: it proves this machine's manifest matches this
+machine's copy of the contract, and it cannot see another machine's copy. That is a real reduction
+in blast radius — several silent disagreement axes collapse into one — and it is not detection
+across a fleet. The check that could detect a fleet disagreement is the third layer: the contract
+digest is registered in the Pulsar topic's own properties, and a daemon whose digest disagrees
+with the registered value refuses to start, naming both values. The broker is the only place N
+machines meet, so that is where the check has to live. It lives in the *topic's* properties rather
+than its schema's because a Pulsar schema is keyed by its type and data: re-posting one `BYTES`
+schema with different properties is deduplicated into the existing version, so a registrar's
+overwrite silently does nothing and a verifier stays pinned to whatever was registered first — across
+cluster teardowns, because retained-state replay carries the broker's own storage. Topic properties
+are a mutable map, which is what a fact that moves with the fleet's contract needs. Absence is not disagreement: a topic whose
+registered schema carries no digest was created by a binary that predates the pin, so the digest is
+registered rather than refused.
+
+**One role registers; the rest verify.** The coordinator is the deployment's router, and its
+publication is the event that changes what the fleet runs, so it writes the registered digest —
+including over a value it disagrees with, because that is exactly what a deliberate contract change
+looks like. Every other role verifies, and a verifier that disagrees refuses to start. Without that
+split the check is not fail-closed, it is *frozen*: the registered digest is durable broker state
+that outlives a cluster, so the first contract change would make every daemon refuse forever against
+a value nothing could update. What the split gives up is precise: two coordinators holding different
+contracts no longer detect each other, because each would register its own. The deployed topology
+has one coordinator, and the fleet case that needs more is owned by the fleet sprint.
+
+The machine contract is a union, not a record of optional fields, because a machine contract without
+a pin is exactly the state this doctrine exists to make unrepresentable. `ImageDefault` is the
+manifest baked into the Linux launcher image — byte identical in every image, and therefore a
+description of no machine at all; it exists so path discovery can classify the execution context
+before any machine contract is generated, and a daemon started against it is refused by name.
+`Machine` always carries its role, its member identities, its quota, and its pin.
 
 Defaults live in exactly one place — `Infernix.ProjectInit` (the single `init`-and-harness defaults
 owner) — so `infernix init` and the test harness share them (DRY). `infernix internal dhall-schema
@@ -174,14 +237,13 @@ against the alternatives the reflected decoder expects, and a payload written by
 generator fails with a diagnostic that names the invalid shape and tells the operator to
 regenerate it with `infernix init` (or `infernix test init`) instead of surfacing a bare structural
 Dhall type error. Every
-enum-like field is a Dhall union rather than `Text` refined after decode — `runtimeMode`,
-`daemonRole`, `pulsarConnectionMode`, engine-pool `subscription`, model `runtimeLane`, request-shape
-`fieldType`, engine-binding `adapterType`, and the `resource` and `source` fields inside the
-substrate limit record — every quantity is `Natural` rather than `Integer`, and the never-read
-`edgePort` placeholder is absent from the language. The targeted compatibility
-diagnostic covers each invalid text spelling, which matters most for `daemonRole`: its three legacy
-aliases (`frontend`, `cluster`, `host`) are values a union cannot express, so a stale payload
-carrying one has no other diagnosis. See
+enum-like field is a Dhall union rather than `Text` refined after decode — `runtimeMode` and
+engine-pool `subscription` on the system contract, `role` and the machine-contract state itself on
+the machine contract, plus request-shape `fieldType` — every quantity is `Natural` rather than
+`Integer`, and the never-read `edgePort` placeholder is absent from the language. The targeted
+compatibility diagnostic covers each invalid text spelling and each retired field, including the
+ones this doctrine's contract split moved or derived away: `daemonRole`, the `coordinator` and
+`webapp` records, and the `engineMembers` list. See
 [typed_execution_plan.md](typed_execution_plan.md) for the full field inventory and the two
 mechanical traps the round-trip caught.
 
@@ -240,11 +302,33 @@ input the bounded host build ceiling is derived from
 ([bounded_host_memory.md](bounded_host_memory.md)), which owns what that ceiling covers and what
 admits it.
 
-It additionally carries the **`node` block** — this machine's role, its member id, the pools it
-serves, and its model-cache quota — plus a pinned projection of the system contract. That makes it
-the machine contract: the one file that differs between two boxes in the same fleet. The member id
-is required and has no default, because a daemon that cannot say which member it is must refuse to
-start rather than adopt one.
+It additionally carries the **`machine` block** — this machine's role, the engine member identities
+it may adopt, its model-cache quota, and the content digest of the system contract it was generated
+against. That makes it the machine contract: the one file that differs between two boxes in the same
+fleet. Identity is declared and has no default, because a daemon that cannot say which member it is
+must refuse to start rather than adopt one; one declared identity needs no selection, and more than
+one (the `linux-gpu` shape, one member per framework engine image) requires `--engine-name` to name
+one of them. The model-cache quota lives here because it is a machine fact: before it did, the
+generated cluster wiring said 64 GiB and the Apple host worker carried its own 32 GiB literal for the
+same cache, with nothing connecting the two numbers.
+
+The `role` here is the box's default, not a lock: three roles run from one system contract on the
+cluster lane, and `infernix service --role` names which one a process is. What the machine contract
+removes is the role's former home on the *system* contract, where a per-box fact had no business
+being.
+
+**On a fleet the machine contract is generated per machine, not baked.** The manifest baked into the
+Linux launcher image is byte identical in every image, so with more than one engine machine it
+collides rather than discriminates. `cluster up` therefore renders one machine contract per fleet
+member — the same host manifest with a machine block naming **exactly one** member — publishes them
+in a binary-rendered ConfigMap, and mounts each machine's own contract at the repo-root manifest
+path. The published system contract is mounted at the repo-root contract path alongside it, so a
+fleet pod holds a real generated *pair* and its local pin check and the broker's registered digest
+are talking about the same contract. The fleet size itself is declared where the pool graph lives:
+`infernix init --engine-machines N` (and `infernix test init --engine-machines N`) expands each
+member into `N`, and `N = 1` is the deployed platform's contract unchanged. The placement and
+claim mechanisms that make those identities distinct in practice are owned by
+[daemon_topology.md](daemon_topology.md).
 
 Written by `infernix init`; the binary decodes it at startup into a `HostConfig` record. See
 [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md). The retained Apple

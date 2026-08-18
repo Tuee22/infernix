@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.EngineRouting
-  ( engineMemberRequestTopics,
+  ( engineMemberClaimTopicForMode,
+    engineMemberRequestTopics,
     engineMemberPinnedTopicForMode,
     enginePoolTopicForMode,
     requestTopicsForMode,
@@ -50,6 +51,24 @@ engineMemberPinnedTopicForMode runtimeMode memberId modelIdValue =
     <> topicSegment memberId
     <> ".model."
     <> topicSegment modelIdValue
+
+-- | Phase 8 Sprint 8.12 — the topic one engine member's identity is claimed on.
+--
+-- The claim needs a topic of its own rather than a subscription on a pool
+-- topic, because a pool topic is consumed @Shared@ by every member of the pool:
+-- an exclusive claim taken there would exclude the fleet rather than one
+-- identity. This topic carries no messages at all. What it carries is one
+-- exclusive subscription per member identity, and the broker's refusal to grant
+-- a second one is the whole mechanism — the broker is the only place N machines
+-- meet, so it is the only place a second machine adopting the first machine's
+-- identity is observable.
+engineMemberClaimTopicForMode :: RuntimeMode -> Text -> Text
+engineMemberClaimTopicForMode runtimeMode memberIdValue =
+  defaultPulsarTopicPrefix
+    <> "fleet.member-claim."
+    <> runtimeModeId runtimeMode
+    <> "."
+    <> topicSegment memberIdValue
 
 -- | The coordinator request topic and the shared result topic are functions of
 -- the runtime mode alone.

@@ -9,8 +9,8 @@ module Infernix.DemoConfig.Internal
     materializeBuildMemoryCeilingFile,
     materializeHostManifestFile,
     materializeHostSecrets,
+    restampMachineContractPin,
     observeAppleHostMemoryPartition,
-    renderGeneratedDemoConfig,
     renderGeneratedDemoConfigPayload,
     renderModelListing,
     resolveInferenceMemoryBudget,
@@ -22,28 +22,32 @@ module Infernix.DemoConfig.Internal
 where
 
 import Control.Exception (IOException, SomeException, bracketOnError, catch, try)
+import Control.Monad (filterM)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Char (isSpace)
 import Data.List (intercalate, nub)
+import Data.Maybe (listToMaybe)
 import Data.Text qualified as Text
 import Infernix.BuildMemory qualified as BuildMemory
 import Infernix.Config (Paths)
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig.Colima (observeActiveColimaPledgeMib)
+import Infernix.DhallSchema.Enums (daemonRoleToDhall)
 import Infernix.EngineRouting (engineMemberRequestTopics)
 import Infernix.HostConfig (HostConfig)
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostMemory qualified as HostMemory
 import Infernix.HostTools qualified as HostTools
+import Infernix.MachineContract (digestSystemContract, systemContractDigestText)
 import Infernix.Models
   ( appleFallbackInferenceRamBudgetMib,
     catalogForMode,
     encodeDemoConfig,
     engineBindingsForMode,
-    engineMembersForMode,
-    enginePoolsForMode,
+    engineMembersForFleet,
+    enginePoolsForFleet,
     linuxEngineInferenceRamBudgetMib,
     linuxEngineInferenceVramBudgetMib,
     linuxGpuEngineInferenceRamBudgetMib,
@@ -53,7 +57,7 @@ import Infernix.Models
 import Infernix.Substrate (demoConfigGeneratedBannerLine)
 import Infernix.Substrate.Internal (decodeSubstrateConfigFile)
 import Infernix.Types
-import System.Directory (createDirectoryIfMissing, removeFile, renameFile)
+import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, openBinaryTempFile)
 import System.Posix.User (getEffectiveUserID, getUserEntryForID, homeDirectory)
@@ -94,13 +98,117 @@ validateDemoConfigFile filePath = do
   _ <- decodeDemoConfigFile filePath
   pure ()
 
-materializeGeneratedDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
-materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue = do
+materializeGeneratedDemoConfigFile ::
+  Paths -> RuntimeMode -> EngineMachineCount -> Bool -> IO FilePath
+materializeGeneratedDemoConfigFile paths runtimeMode machineCount demoUiEnabledValue = do
   budget <- resolveInferenceMemoryBudget paths runtimeMode
   let filePath = Config.generatedDemoConfigPath paths
-      payload = renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue budget
-  writeProjectConfigFile filePath payload
+      systemContract =
+        generatedDemoConfig
+          paths
+          runtimeMode
+          machineCount
+          demoUiEnabledValue
+          (catalogForMode runtimeMode)
+          budget
+  writeProjectConfigFile filePath (encodeGeneratedDemoConfig systemContract)
+  stampMachineContract paths runtimeMode machineCount systemContract
   pure filePath
+
+-- | Which manifest a machine contract is stamped into.
+--
+-- Manifest discovery prefers the repo-root file over the image-baked default, so
+-- the stamp has to follow the same precedence or it writes a machine contract
+-- into a file nothing will read. The launcher image is exactly that case: its
+-- substrate materialization writes a repo-root manifest and then generates the
+-- contract pair, so a stamp aimed at the path this process happened to decode at
+-- startup would land on the baked default while the daemon read the unpinned
+-- repo-root one. A process with neither manifest materializes the repo-root one
+-- first, measuring the host rather than writing an unmeasured manifest.
+resolveStampTargetManifest :: Paths -> IO FilePath
+resolveStampTargetManifest paths =
+  maybe (materializeHostManifestFile paths) pure =<< existingMachineContractManifest paths
+
+-- | The manifest a machine contract belongs in, when one already exists.
+--
+-- The repo-root manifest wins over the image-baked default because manifest
+-- /discovery/ prefers it: stamping the other one would write a machine contract
+-- into a file nothing reads.
+existingMachineContractManifest :: Paths -> IO (Maybe FilePath)
+existingMachineContractManifest paths = do
+  let candidates = [Config.hostConfigPath paths, Config.activeHostConfigPath paths]
+  presentCandidates <- filterM doesFileExist candidates
+  pure (listToMaybe presentCandidates)
+
+-- | Phase 8 Sprint 8.11 — re-point an existing machine contract at the system
+-- contract now on disk.
+--
+-- The test harness owns @./infernix.dhall@ for the length of a run and then puts
+-- the operator's file back. Only the pin moves here: the role, the member
+-- identities, and the quota are this machine's, and the harness never changed
+-- them. A manifest that declares no machine, or a run that left no system
+-- contract behind, is a no-op — the next generation stamps a whole contract.
+restampMachineContractPin :: Paths -> IO ()
+restampMachineContractPin paths = do
+  let systemContractPath = Config.generatedDemoConfigPath paths
+  maybeManifestPath <- existingMachineContractManifest paths
+  systemContractExists <- doesFileExist systemContractPath
+  case (maybeManifestPath, systemContractExists) of
+    (Just manifestPath, True) -> restampManifest manifestPath systemContractPath
+    _ -> pure ()
+
+restampManifest :: FilePath -> FilePath -> IO ()
+restampManifest manifestPath systemContractPath = do
+  hostConfig <- HostConfig.decodeHostConfigFile manifestPath
+  case HostConfig.hostMachine hostConfig of
+    HostConfig.ImageDefaultMachine -> pure ()
+    HostConfig.DeclaredMachine node -> do
+      systemContract <- decodeSubstrateConfigFile systemContractPath
+      let repinned =
+            node
+              { HostConfig.machineSystemContractDigest =
+                  systemContractDigestText (digestSystemContract systemContract)
+              }
+      writeProjectConfigFile
+        manifestPath
+        ( LazyByteString.toStrict
+            ( HostConfig.encodeHostConfig
+                hostConfig {HostConfig.hostMachine = HostConfig.DeclaredMachine repinned}
+            )
+        )
+
+-- | Phase 8 Sprint 8.11 — write this machine's contract against the system
+-- contract just generated.
+--
+-- This is the regeneration coupling the content pin implies: the digest is over
+-- the generated system-contract text, so any change to that text moves the hash
+-- and the machine contract has to be rewritten with it. Generating the pair
+-- together is what makes the pin a property of the generator rather than an
+-- invariant an operator has to maintain.
+--
+-- The target follows manifest-discovery precedence rather than the path this
+-- process happened to decode at startup; see 'resolveStampTargetManifest'.
+stampMachineContract :: Paths -> RuntimeMode -> EngineMachineCount -> DemoConfig -> IO ()
+stampMachineContract paths runtimeMode machineCount systemContract = do
+  manifestPath <- resolveStampTargetManifest paths
+  hostConfig <- HostConfig.decodeHostConfigFile manifestPath
+  let node =
+        HostConfig.MachineNode
+          { HostConfig.machineRole =
+              daemonRoleToDhall (defaultDaemonRoleForMaterializedFile paths runtimeMode),
+            HostConfig.machineMembers =
+              map engineMemberId (engineMembersForFleet runtimeMode machineCount),
+            HostConfig.machineModelCacheQuotaBytes = fromInteger defaultModelCacheQuotaBytes,
+            HostConfig.machineSystemContractDigest =
+              systemContractDigestText (digestSystemContract systemContract)
+          }
+  writeProjectConfigFile
+    manifestPath
+    ( LazyByteString.toStrict
+        ( HostConfig.encodeHostConfig
+            hostConfig {HostConfig.hostMachine = HostConfig.DeclaredMachine node}
+        )
+    )
 
 -- | Phase 8: the single atomic writer shared by `infernix init`,
 -- `infernix test init`, and the substrate/host materializers. Writes the
@@ -234,44 +342,74 @@ ignoreIo action = action `catch` ignoreIOException
 ignoreIOException :: IOException -> IO ()
 ignoreIOException _ = pure ()
 
-renderGeneratedDemoConfig :: Paths -> RuntimeMode -> Bool -> InferenceMemoryBudget -> ByteString.ByteString
-renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue =
-  renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue (defaultDaemonRoleForMaterializedFile paths runtimeMode)
-
-renderGeneratedDemoConfigPayload :: Paths -> RuntimeMode -> Bool -> DaemonRole -> InferenceMemoryBudget -> ByteString.ByteString
-renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole =
-  renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue daemonRole (catalogForMode runtimeMode)
+renderGeneratedDemoConfigPayload ::
+  Paths ->
+  RuntimeMode ->
+  EngineMachineCount ->
+  Bool ->
+  InferenceMemoryBudget ->
+  ByteString.ByteString
+renderGeneratedDemoConfigPayload paths runtimeMode machineCount demoUiEnabledValue =
+  renderGeneratedDemoConfigPayloadWithModels
+    paths
+    runtimeMode
+    machineCount
+    demoUiEnabledValue
+    (catalogForMode runtimeMode)
 
 -- | Phase 8 Sprint 8.5: render a substrate payload with an explicit model set.
 -- @cluster up@ publication and @infernix init@ / the test harness use the full
 -- demo catalog ('catalogForMode'); the image-baked config passes @[]@ so
 -- @docker run --rm@ never stages weights and the ConfigMap-mounted config is the
 -- source of truth at deploy.
-renderGeneratedDemoConfigPayloadWithModels :: Paths -> RuntimeMode -> Bool -> DaemonRole -> [ModelDescriptor] -> InferenceMemoryBudget -> ByteString.ByteString
-renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue daemonRole modelSet budget =
-  LazyByteString.toStrict
-    ( encodeDemoConfig
-        DemoConfig
-          { configRuntimeMode = runtimeMode,
-            configMapName = "infernix-demo-config",
-            generatedPath = Config.generatedDemoConfigPath paths,
-            mountedPath = Config.watchedDemoConfigPath,
-            demoUiEnabled = demoUiEnabledValue,
-            activeDaemonRole = daemonRole,
-            coordinatorDaemon = coordinatorDaemonConfig runtimeMode,
-            webappDaemon = webappDaemonConfig runtimeMode,
-            engineDaemons = engineDaemonConfigs runtimeMode,
-            enginePools = enginePoolsForMode runtimeMode,
-            engineMembers = engineMembersForMode runtimeMode,
-            requestTopics = requestTopicsForMode runtimeMode,
-            resultTopic = resultTopicForMode runtimeMode,
-            modelsBucket = defaultModelsBucket,
-            modelBootstrapTopic = defaultModelBootstrapTopic,
-            engines = engineBindingsForMode runtimeMode,
-            models = modelSet,
-            inferenceMemoryBudget = budget
-          }
-    )
+renderGeneratedDemoConfigPayloadWithModels ::
+  Paths ->
+  RuntimeMode ->
+  EngineMachineCount ->
+  Bool ->
+  [ModelDescriptor] ->
+  InferenceMemoryBudget ->
+  ByteString.ByteString
+renderGeneratedDemoConfigPayloadWithModels paths runtimeMode machineCount demoUiEnabledValue modelSet budget =
+  encodeGeneratedDemoConfig
+    (generatedDemoConfig paths runtimeMode machineCount demoUiEnabledValue modelSet budget)
+
+encodeGeneratedDemoConfig :: DemoConfig -> ByteString.ByteString
+encodeGeneratedDemoConfig = LazyByteString.toStrict . encodeDemoConfig
+
+-- | The system contract a materialization writes, as a value.
+--
+-- The value rather than its rendering is what the machine contract is pinned
+-- against, so the pin follows the contract the payload describes rather than
+-- the bytes one machine's copy happens to have.
+generatedDemoConfig ::
+  Paths ->
+  RuntimeMode ->
+  EngineMachineCount ->
+  Bool ->
+  [ModelDescriptor] ->
+  InferenceMemoryBudget ->
+  DemoConfig
+generatedDemoConfig paths runtimeMode machineCount demoUiEnabledValue modelSet budget =
+  DemoConfig
+    { configRuntimeMode = runtimeMode,
+      configMapName = "infernix-demo-config",
+      generatedPath = Config.generatedDemoConfigPath paths,
+      mountedPath = Config.watchedDemoConfigPath,
+      demoUiEnabled = demoUiEnabledValue,
+      coordinatorDaemon = coordinatorDaemonConfig runtimeMode,
+      webappDaemon = webappDaemonConfig runtimeMode,
+      engineDaemons = engineDaemonConfigs runtimeMode machineCount,
+      enginePools = enginePoolsForFleet runtimeMode machineCount,
+      engineMembers = engineMembersForFleet runtimeMode machineCount,
+      requestTopics = requestTopicsForMode runtimeMode,
+      resultTopic = resultTopicForMode runtimeMode,
+      modelsBucket = defaultModelsBucket,
+      modelBootstrapTopic = defaultModelBootstrapTopic,
+      engines = engineBindingsForMode runtimeMode,
+      models = modelSet,
+      inferenceMemoryBudget = budget
+    }
 
 -- | Phase 8 Sprint 8.5: materialize the image-baked substrate config with an
 -- empty model set. Used by the Dockerfile so a bare @docker run --rm@ image
@@ -281,15 +419,10 @@ materializeEmptyModelsDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FileP
 materializeEmptyModelsDemoConfigFile paths runtimeMode demoUiEnabledValue = do
   budget <- resolveInferenceMemoryBudget paths runtimeMode
   let filePath = Config.generatedDemoConfigPath paths
-      payload =
-        renderGeneratedDemoConfigPayloadWithModels
-          paths
-          runtimeMode
-          demoUiEnabledValue
-          (defaultDaemonRoleForMaterializedFile paths runtimeMode)
-          []
-          budget
-  writeProjectConfigFile filePath payload
+      systemContract =
+        generatedDemoConfig paths runtimeMode singleEngineMachine demoUiEnabledValue [] budget
+  writeProjectConfigFile filePath (encodeGeneratedDemoConfig systemContract)
+  stampMachineContract paths runtimeMode singleEngineMachine systemContract
   pure filePath
 
 defaultDaemonRoleForMaterializedFile :: Paths -> RuntimeMode -> DaemonRole
@@ -474,12 +607,12 @@ webappDaemonConfig runtimeMode =
 -- @infernix-engine@ Deployment (location @cluster-pod@, Pulsar transport
 -- from the mounted cluster config). In every case the engine consumes
 -- the derived pool/model topics assigned to its stable member id.
-engineDaemonConfigs :: RuntimeMode -> [DaemonConfig]
-engineDaemonConfigs runtimeMode =
+engineDaemonConfigs :: RuntimeMode -> EngineMachineCount -> [DaemonConfig]
+engineDaemonConfigs runtimeMode machineCount =
   map (engineDaemonConfigForMember runtimeMode pools) members
   where
-    pools = enginePoolsForMode runtimeMode
-    members = engineMembersForMode runtimeMode
+    pools = enginePoolsForFleet runtimeMode machineCount
+    members = engineMembersForFleet runtimeMode machineCount
 
 engineDaemonConfigForMember :: RuntimeMode -> [EnginePool] -> EngineMember -> DaemonConfig
 engineDaemonConfigForMember runtimeMode pools member =
@@ -532,15 +665,13 @@ validateDemoConfig allowEmptyModels demoConfig
       Left "models must not be empty"
   | any invalidRequestShape (models demoConfig) =
       Left "every model must declare at least one request field"
-  | invalidActiveDaemonRole =
-      Left "active daemon role must match coordinator, webapp, or engine metadata"
   | daemonConfigRole (coordinatorDaemon demoConfig) /= Coordinator =
       Left "coordinator metadata must declare the coordinator role"
   | daemonConfigRole (webappDaemon demoConfig) /= Webapp =
       Left "webapp metadata must declare the webapp role"
-  | null (enginePools demoConfig) =
+  | null (enginePools demoConfig) && not allowEmptyModels =
       Left "enginePools must not be empty"
-  | null (engineMembers demoConfig) =
+  | null (engineMembers demoConfig) && not allowEmptyModels =
       Left "engineMembers must not be empty"
   | duplicatePoolIds /= [] =
       Left ("duplicate engine pool ids detected: " <> intercalate ", " duplicatePoolIds)
@@ -550,7 +681,7 @@ validateDemoConfig allowEmptyModels demoConfig
       Left ("invalid engine pool ids detected: " <> intercalate ", " invalidPoolIds)
   | invalidMemberIds /= [] =
       Left ("invalid engine member ids detected: " <> intercalate ", " invalidMemberIds)
-  | emptyPoolModelIds /= [] =
+  | emptyPoolModelIds /= [] && not bootstrapEmptyModels =
       Left ("engine pools must declare at least one model id: " <> intercalate ", " emptyPoolModelIds)
   | emptyPoolMemberIds /= [] =
       Left ("engine pools must declare at least one member id: " <> intercalate ", " emptyPoolMemberIds)
@@ -558,8 +689,6 @@ validateDemoConfig allowEmptyModels demoConfig
       Left ("engine members must declare at least one pool id: " <> intercalate ", " emptyMemberPoolIds)
   | ambiguousPoolModelIds /= [] =
       Left ("engine pool model ownership is ambiguous: " <> intercalate ", " ambiguousPoolModelIds)
-  | unknownPoolModelIds /= [] && not bootstrapEmptyModels =
-      Left ("engine pools reference unknown model ids: " <> intercalate ", " unknownPoolModelIds)
   | unknownPoolMemberIds /= [] =
       Left ("engine pools reference unknown member ids: " <> intercalate ", " unknownPoolMemberIds)
   | unknownMemberPoolIds /= [] =
@@ -586,12 +715,6 @@ validateDemoConfig allowEmptyModels demoConfig
         || any invalidField (requestShape model)
     invalidField requestField =
       any (Text.null . Text.strip) [name requestField, label requestField]
-    invalidActiveDaemonRole =
-      activeDaemonRole demoConfig
-        /= daemonConfigRole (coordinatorDaemon demoConfig)
-        && activeDaemonRole demoConfig
-          /= daemonConfigRole (webappDaemon demoConfig)
-        && all ((/= activeDaemonRole demoConfig) . daemonConfigRole) (engineDaemons demoConfig)
     missingEngineBindings =
       [ Text.unpack engineName
       | engineName <- nub (map selectedEngine (models demoConfig)),
@@ -634,13 +757,6 @@ validateDemoConfig allowEmptyModels demoConfig
         [ Text.unpack modelIdValue
         | pool <- enginePools demoConfig,
           modelIdValue <- enginePoolModelIds pool
-        ]
-    unknownPoolModelIds =
-      nub
-        [ Text.unpack modelIdValue
-        | pool <- enginePools demoConfig,
-          modelIdValue <- enginePoolModelIds pool,
-          modelIdValue `notElem` knownModelIds
         ]
     unknownPoolMemberIds =
       nub

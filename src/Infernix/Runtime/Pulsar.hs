@@ -35,6 +35,18 @@ module Infernix.Runtime.Pulsar
     validateModelBootstrapRequest,
     validateDemoClientMessageCatalog,
     ensureRegisteredSchemasForPlanWithRetry,
+    ContractDigestAuthority (..),
+    RegisteredDigestOutcome (..),
+    classifyRegisteredContractDigest,
+    contractDigestAuthorityForRole,
+    registeredContractDigestRefusal,
+    EngineMemberClaim,
+    engineMemberClaimId,
+    engineMemberClaimRefusal,
+    engineMemberClaimReacquisitionWindowSeconds,
+    engineMemberClaimRetryDelayMicros,
+    isEngineMemberClaimConflict,
+    withEngineMemberClaim,
     ensureSchemaMarkersForPlan,
     modelCacheBootstrapRetryableError,
     classifyDownloadStatus,
@@ -88,31 +100,37 @@ module Infernix.Runtime.Pulsar
 where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent (forkIO, killThread, threadDelay)
-import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
-import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
+import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay, throwTo)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, takeMVar)
+import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, toException, try)
 import Control.Monad (forM_, forever, unless, void, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Crypto.Random (getRandomBytes)
 import Data.Aeson
   ( FromJSON (parseJSON),
+    Object,
     ToJSON,
     Value,
+    decode,
     eitherDecode,
     eitherDecodeStrict',
     encode,
     object,
     withObject,
+    (.!=),
     (.:),
     (.:?),
     (.=),
   )
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.Types (parseMaybe)
 import Data.Bits (shiftL, (.&.))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
+import Data.Either (fromLeft, fromRight)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
 import Data.List (find, intercalate, sort)
@@ -126,7 +144,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
+import Data.Time (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
 import Data.Word (Word8)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
@@ -150,6 +168,7 @@ import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.Dispatch.ContextModelMap (ContextModelMap)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
+import Infernix.EngineRouting qualified as EngineRouting
 import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.ExecutionPlan
   ( CompiledDaemon,
@@ -181,6 +200,7 @@ import Infernix.ExecutionPlan
     unavailableModelReason,
   )
 import Infernix.HostConfig qualified as HostConfig
+import Infernix.MachineContract (SystemContractDigest, systemContractDigestText)
 import Infernix.Models (modelRequiresInputObject)
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
@@ -201,6 +221,7 @@ import Lens.Family2 (set, view)
 import Network.HTTP.Client
   ( Manager,
     RequestBody (RequestBodyLBS, RequestBodyStream),
+    Response,
     ResponseTimeout,
     brRead,
     defaultManagerSettings,
@@ -1824,21 +1845,25 @@ discoverAppleHostPulsarTransport paths = do
                   }
             )
 
-ensureRegisteredSchemasForPlan :: Paths -> PulsarTransport -> CompiledRuntimePlan -> IO ()
-ensureRegisteredSchemasForPlan paths transport compiledPlan =
+ensureRegisteredSchemasForPlan :: Paths -> PulsarTransport -> ContractDigestAuthority -> SystemContractDigest -> CompiledRuntimePlan -> IO ()
+ensureRegisteredSchemasForPlan paths transport authority contractDigest compiledPlan =
   ensureRegisteredSchemasForTopics
     paths
     transport
+    authority
+    contractDigest
     (requestLikeSchemaTopicsForPlan compiledPlan)
     (resultLikeSchemaTopicsForPlan compiledPlan)
 
 ensureRegisteredSchemasForTopics ::
   Paths ->
   PulsarTransport ->
+  ContractDigestAuthority ->
+  SystemContractDigest ->
   [Text.Text] ->
   [Text.Text] ->
   IO ()
-ensureRegisteredSchemasForTopics paths transport requestSchemaTopics resultSchemaTopics = do
+ensureRegisteredSchemasForTopics paths transport authority contractDigest requestSchemaTopics resultSchemaTopics = do
   ensureSchemaMarkersForTopics paths (uniqueTexts (requestSchemaTopics <> resultSchemaTopics))
   adminBaseUrl <- requirePulsarAdminBaseUrl transport
   manager <- newManager defaultManagerSettings
@@ -1846,6 +1871,8 @@ ensureRegisteredSchemasForTopics paths transport requestSchemaTopics resultSchem
     ensureRemoteSchema manager adminBaseUrl topicValue "infernix.runtime.InferenceRequest"
   forM_ resultSchemaTopics $ \topicValue ->
     ensureRemoteSchema manager adminBaseUrl topicValue "infernix.runtime.InferenceResult"
+  forM_ (uniqueTexts (requestSchemaTopics <> resultSchemaTopics)) $
+    ensureRegisteredContractDigest manager adminBaseUrl authority contractDigest
 
 schemaTopicsForPlan :: CompiledRuntimePlan -> [Text.Text]
 schemaTopicsForPlan compiledPlan =
@@ -1894,27 +1921,35 @@ uniqueTexts = go []
       | value `elem` seen = go seen rest
       | otherwise = go (value : seen) rest
 
-ensureRegisteredSchemasForPlanWithRetry :: Paths -> PulsarTransport -> CompiledRuntimePlan -> IO ()
-ensureRegisteredSchemasForPlanWithRetry paths transport compiledPlan =
+ensureRegisteredSchemasForPlanWithRetry :: Paths -> PulsarTransport -> ContractDigestAuthority -> SystemContractDigest -> CompiledRuntimePlan -> IO ()
+ensureRegisteredSchemasForPlanWithRetry paths transport authority contractDigest compiledPlan =
   retry (1 :: Int)
   where
     retry attempt = do
-      registrationResult <- try @SomeException (ensureRegisteredSchemasForPlan paths transport compiledPlan)
+      registrationResult <- try @SomeException (ensureRegisteredSchemasForPlan paths transport authority contractDigest compiledPlan)
       case registrationResult of
         Right _ -> pure ()
         Left err ->
           case fromException err :: Maybe SomeAsyncException of
             Just asyncErr -> throwIO asyncErr
-            Nothing -> do
-              hPutStrLn
-                stderr
-                ( "pulsar plan schema registration attempt "
-                    <> show attempt
-                    <> " failed:\n"
-                    <> displayException err
-                )
-              threadDelay 1000000
-              retry (attempt + 1)
+            Nothing ->
+              -- Phase 8 Sprint 8.11: a contract-digest disagreement is a
+              -- decision, not a transient broker condition. Retrying it turns
+              -- one refusal into an unbounded loop that reprints the same
+              -- refusal forever and never lets the daemon die, so it leaves the
+              -- loop the way an asynchronous exception does.
+              case fromException err :: Maybe ContractDigestDisagreement of
+                Just disagreement -> throwIO disagreement
+                Nothing -> do
+                  hPutStrLn
+                    stderr
+                    ( "pulsar plan schema registration attempt "
+                        <> show attempt
+                        <> " failed:\n"
+                        <> displayException err
+                    )
+                  threadDelay 1000000
+                  retry (attempt + 1)
 
 -- | Phase 7 Sprint 7.7 + 7.5: reconcile the supported Pulsar tenants,
 -- namespaces, and the @model.bootstrap.request@ topic on every daemon
@@ -2425,6 +2460,447 @@ ensureRemoteSchema manager adminBaseUrl topicValue messageTypeName = do
                   <> lazyBodyToString (responseBody createResponse)
               )
           )
+
+-- | Phase 8 Sprint 8.11 — the fleet's contract digest, held on the topic itself.
+--
+-- The digest lives in the topic's own /properties/ rather than in its schema
+-- properties, and the reason is a defect the cluster lane found rather than a
+-- preference. A Pulsar schema is keyed by its type and data, so re-posting the
+-- same @BYTES@ schema with different properties is deduplicated into the
+-- existing version: the registrar's overwrite silently did nothing, and a
+-- verifier stayed pinned to whatever value was registered first — across cluster
+-- teardowns, because retained-state replay carries the broker's own storage.
+-- Topic properties are a mutable key/value map on the topic, which is what a
+-- fact that changes with the fleet's contract needs.
+ensureRegisteredContractDigest ::
+  Manager ->
+  String ->
+  ContractDigestAuthority ->
+  SystemContractDigest ->
+  Text.Text ->
+  IO ()
+ensureRegisteredContractDigest manager adminBaseUrl authority contractDigest topicValue = do
+  topicRef <- requireTopicRef topicValue
+  let propertiesUrlValue = topicPropertiesUrl adminBaseUrl topicRef
+  readRequest <- parseRequest propertiesUrlValue
+  readResponse <- httpLbs readRequest manager
+  let registered =
+        case statusCode (responseStatus readResponse) of
+          200 -> classifyRegisteredContractDigest contractDigest (responseBody readResponse)
+          _ -> RegisteredDigestAbsent
+  case (registered, authority) of
+    (RegisteredDigestAgrees, _) -> pure ()
+    (RegisteredDigestAbsent, RegistersContractDigest) -> writeContractDigest propertiesUrlValue
+    (RegisteredDigestAbsent, VerifiesContractDigest) -> pure ()
+    (RegisteredDigestDisagrees _, RegistersContractDigest) -> writeContractDigest propertiesUrlValue
+    (RegisteredDigestDisagrees registeredDigest, VerifiesContractDigest) ->
+      throwIO
+        ( ContractDigestDisagreement
+            ( registeredContractDigestRefusal
+                topicValue
+                registeredDigest
+                (systemContractDigestText contractDigest)
+            )
+        )
+  where
+    writeContractDigest propertiesUrlValue = do
+      writeRequest <- parseRequest propertiesUrlValue
+      let payload =
+            encode
+              (object ["contractDigest" .= systemContractDigestText contractDigest])
+          putRequest =
+            writeRequest
+              { method = "PUT",
+                requestHeaders = [("Content-Type", "application/json")],
+                requestBody = RequestBodyLBS payload
+              }
+      writeResponse <- httpLbs putRequest manager
+      let code = statusCode (responseStatus writeResponse)
+      unless (code `elem` [200, 201, 204]) $
+        ioError
+          ( userError
+              ( "failed to register the contract digest on "
+                  <> Text.unpack topicValue
+                  <> " (status "
+                  <> show code
+                  <> "):\n"
+                  <> lazyBodyToString (responseBody writeResponse)
+              )
+          )
+
+topicPropertiesUrl :: String -> TopicRef -> String
+topicPropertiesUrl adminBaseUrl topicRef =
+  adminBaseUrl
+    <> "/persistent/"
+    <> Text.unpack (topicTenant topicRef)
+    <> "/"
+    <> Text.unpack (topicNamespace topicRef)
+    <> "/"
+    <> Text.unpack (topicName topicRef)
+    <> "/properties"
+
+-- | Phase 8 Sprint 8.12 — evidence that this process, and not another machine,
+-- holds this engine member identity.
+--
+-- The constructor is hidden, so a claim can only come from
+-- 'withEngineMemberClaim' having actually been granted an exclusive
+-- subscription by the broker. Be exact about the scope of the gate this buys:
+-- it is a startup-ordering bracket on the WebSocket lane, not a constructor
+-- precondition of an engine capability. The filesystem topic-spool lane has no
+-- broker to claim against at all, so making the claim a precondition of
+-- building an engine capability would have made that lane unrepresentable
+-- rather than making the fleet safe.
+newtype EngineMemberClaim = EngineMemberClaim Text.Text
+
+engineMemberClaimId :: EngineMemberClaim -> Text.Text
+engineMemberClaimId (EngineMemberClaim memberIdValue) = memberIdValue
+
+-- | A second machine adopting an identity this fleet has already granted.
+newtype EngineMemberClaimRefused = EngineMemberClaimRefused String
+
+instance Show EngineMemberClaimRefused where
+  show (EngineMemberClaimRefused refusal) = refusal
+
+instance Exception EngineMemberClaimRefused
+
+-- | The claim this process held was lost while it was still consuming.
+--
+-- This is fatal on purpose. A machine whose claim has lapsed can no longer
+-- prove it is the only holder of its identity, and the failure mode that makes
+-- the claim worth having — two machines admitting work against one machine's
+-- capacity — is exactly what continuing to consume would produce.
+newtype EngineMemberClaimLost = EngineMemberClaimLost String
+
+instance Show EngineMemberClaimLost where
+  show (EngineMemberClaimLost lost) = lost
+
+instance Exception EngineMemberClaimLost
+
+-- | How long a restarting machine waits for its own slot before refusing.
+--
+-- Pulsar does not release an exclusive slot the instant a TCP session drops:
+-- the WebSocket proxy holds the consumer for the life of its session and
+-- reclaims it when that session is torn down. Inside that window a
+-- crash-restart of the incumbent and a genuinely second machine are the same
+-- observation, so a claim that refused immediately would convert every engine
+-- restart into an outage. Waiting does not make the two distinguishable — it
+-- makes the common one survivable and leaves the refusal for the case that is
+-- still true after the incumbent's session could have gone.
+--
+-- The bound is wall-clock rather than a retry count, and that is a correction
+-- the fleet lane forced rather than a preference. A refused subscribe is not
+-- cheap: the proxy took roughly fifteen seconds to answer each one, so an
+-- attempt count of 30 with a two-second pause — nominally a minute — was
+-- really more than eight. A window that means what it says has to be measured,
+-- because the thing it is sized against is the broker's own session timeout.
+engineMemberClaimReacquisitionWindowSeconds :: Int
+engineMemberClaimReacquisitionWindowSeconds = 90
+
+engineMemberClaimRetryDelayMicros :: Int
+engineMemberClaimRetryDelayMicros = 2_000_000
+
+-- | Whether a WebSocket subscribe failure is the broker refusing a second
+-- exclusive holder, as opposed to a transport failure.
+--
+-- The token set is the one 'isFatalServiceConsumerError' already established
+-- for exclusive pinned-route subscriptions; the claim reuses it rather than
+-- inventing a second reading of the same broker response.
+isEngineMemberClaimConflict :: SomeException -> Bool
+isEngineMemberClaimConflict err =
+  any (`Text.isInfixOf` errorText) ["409", "conflict", "exclusive", "consumer busy"]
+  where
+    errorText = Text.toLower (Text.pack (displayException err))
+
+-- | The refusal a second machine gets, naming the incumbent it lost to.
+engineMemberClaimRefusal :: Text.Text -> Text.Text -> Maybe Text.Text -> String
+engineMemberClaimRefusal memberIdValue claimTopicValue maybeIncumbent =
+  unlines
+    [ "engine member identity " <> show (Text.unpack memberIdValue) <> " is already claimed",
+      "  claim topic: " <> Text.unpack claimTopicValue,
+      "  incumbent:   " <> maybe "unknown (the broker refused the claim but reported no consumer)" Text.unpack maybeIncumbent,
+      "One engine process per machine is a correctness rule: two machines holding"
+        <> " one identity each admit work against the same observed capacity and"
+        <> " neither can see the other. The claim is exclusive at the broker, which"
+        <> " is the only place the fleet's machines meet.",
+      "Give this machine its own member identity (`infernix init --engine-machines N`"
+        <> " declares N of them) or stop the incumbent before starting this machine."
+    ]
+
+-- | Hold this machine's engine member identity for the length of @action@.
+--
+-- The claim is a subscription rather than a message: the topic carries no
+-- payload, and holding the only exclusive subscription on it /is/ the claim.
+-- Acquisition happens before the daemon consumes any pool topic and before it
+-- writes its readiness sentinel, so a refused machine never appears ready and
+-- never takes a message it might answer twice.
+withEngineMemberClaim ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Text.Text ->
+  (EngineMemberClaim -> IO a) ->
+  IO a
+withEngineMemberClaim transport runtimeMode memberIdValue action = do
+  mainThreadId <- myThreadId
+  processLabel <- currentProcessLabel
+  reconcileStartupTopicListWithRetry transport [claimTopicValue]
+  claimDeadline <-
+    addUTCTime
+      (fromIntegral engineMemberClaimReacquisitionWindowSeconds)
+      <$> getCurrentTime
+  claimThreadId <- acquireClaim mainThreadId processLabel claimDeadline
+  putStrLn ("serviceEngineMemberClaim: " <> Text.unpack claimTopicValue)
+  action (EngineMemberClaim memberIdValue) `finally` killThread claimThreadId
+  where
+    claimTopicValue = EngineRouting.engineMemberClaimTopicForMode runtimeMode memberIdValue
+    subscriptionName = "infernix-member-claim-" <> Text.pack (sanitizeTopic claimTopicValue)
+    acquireClaim mainThreadId processLabel claimDeadline = do
+      claimOutcome <- newEmptyMVar
+      let consumerName = memberIdValue <> "@" <> processLabel
+      topicRef <- requireTopicRef claimTopicValue
+      let socketPath =
+            buildServiceConsumerSocketPath
+              (pulsarWebSocketBase transport)
+              topicRef
+              (Text.unpack subscriptionName)
+              (Text.unpack consumerName)
+              ConsumerExclusive
+      claimThreadId <- forkIO $ do
+        grantedRef <- newIORef False
+        sessionResult <-
+          try @SomeException
+            ( WebSockets.runClient
+                (pulsarWsHost (pulsarWebSocketBase transport))
+                (pulsarWsPort (pulsarWebSocketBase transport))
+                socketPath
+                ( \connection ->
+                    WebSockets.withPingThread connection 15 (pure ()) $ do
+                      writeIORef grantedRef True
+                      putMVar claimOutcome Nothing
+                      -- The claim topic never carries a message. Blocking on a
+                      -- receive is how the session is held open without a busy
+                      -- loop; anything that arrives is drained and ignored.
+                      forever (void (WebSockets.receiveDataMessage connection))
+                )
+            )
+        granted <- readIORef grantedRef
+        if granted
+          then
+            throwTo
+              mainThreadId
+              ( EngineMemberClaimLost
+                  ( "engine member claim on "
+                      <> Text.unpack claimTopicValue
+                      <> " was lost while this machine was consuming:\n"
+                      <> either displayException (const "the broker closed the claim session") sessionResult
+                  )
+              )
+          else
+            putMVar
+              claimOutcome
+              ( Just
+                  ( fromLeft
+                      (toException (userError "the broker closed the claim session before granting it"))
+                      sessionResult
+                  )
+              )
+      outcome <- takeMVar claimOutcome
+      withinWindow <- (< claimDeadline) <$> getCurrentTime
+      case outcome of
+        Nothing -> pure claimThreadId
+        Just err
+          | isEngineMemberClaimConflict err,
+            withinWindow -> do
+              hPutStrLn
+                stderr
+                ( "engine member claim on "
+                    <> Text.unpack claimTopicValue
+                    <> " is held; waiting up to "
+                    <> show engineMemberClaimReacquisitionWindowSeconds
+                    <> "s for the incumbent session to lapse"
+                )
+              threadDelay engineMemberClaimRetryDelayMicros
+              acquireClaim mainThreadId processLabel claimDeadline
+          | isEngineMemberClaimConflict err -> do
+              incumbent <- describeEngineMemberClaimIncumbent transport claimTopicValue subscriptionName
+              throwIO
+                ( EngineMemberClaimRefused
+                    (engineMemberClaimRefusal memberIdValue claimTopicValue incumbent)
+                )
+          | isRetryablePulsarWebSocketClientFailure err,
+            withinWindow -> do
+              threadDelay engineMemberClaimRetryDelayMicros
+              acquireClaim mainThreadId processLabel claimDeadline
+          | otherwise -> throwIO err
+
+-- | Who the broker says is holding a refused claim.
+--
+-- Best effort by construction: the answer is read after the refusal, so an
+-- incumbent that lapsed in between is reported as unknown rather than as
+-- nobody. That is why the refusal text renders 'Nothing' as "the broker refused
+-- the claim but reported no consumer" instead of as "no incumbent".
+describeEngineMemberClaimIncumbent ::
+  PulsarTransport -> Text.Text -> Text.Text -> IO (Maybe Text.Text)
+describeEngineMemberClaimIncumbent transport claimTopicValue subscriptionName = do
+  lookupResult <- try @SomeException $ do
+    adminBaseUrl <- requirePulsarAdminBaseUrl transport
+    manager <- newManager defaultManagerSettings
+    topicRef <- requireTopicRef claimTopicValue
+    statsRequest <-
+      parseRequest
+        ( adminBaseUrl
+            <> "/persistent/"
+            <> Text.unpack (topicTenant topicRef)
+            <> "/"
+            <> Text.unpack (topicNamespace topicRef)
+            <> "/"
+            <> Text.unpack (topicName topicRef)
+            <> "/stats"
+        )
+    statsResponse <- httpLbs statsRequest manager
+    pure (incumbentFromStatsResponse subscriptionName statsResponse)
+  pure (fromRight Nothing lookupResult)
+
+-- | Read an incumbent out of a topic-stats response, or nothing when the broker
+-- did not answer with one.
+incumbentFromStatsResponse ::
+  Text.Text -> Response Lazy.ByteString -> Maybe Text.Text
+incumbentFromStatsResponse subscriptionName statsResponse =
+  case statusCode (responseStatus statsResponse) of
+    200 -> claimIncumbentFromStats subscriptionName (responseBody statsResponse)
+    _ -> Nothing
+
+-- | Pull the holding consumer's name and address out of a topic-stats body.
+claimIncumbentFromStats :: Text.Text -> Lazy.ByteString -> Maybe Text.Text
+claimIncumbentFromStats subscriptionName body = do
+  statsValue <- decode body
+  parseMaybe (withObject "PulsarTopicStats" parseIncumbent) statsValue
+  where
+    parseIncumbent stats = do
+      subscriptions <- stats .: "subscriptions"
+      subscription <- subscriptions .: Key.fromText subscriptionName
+      consumers <- subscription .: "consumers"
+      case consumers :: [Object] of
+        [] -> fail "no consumer on the claimed subscription"
+        (consumer : _) -> do
+          consumerNameValue <- consumer .:? "consumerName" .!= ("unnamed" :: Text.Text)
+          addressValue <- consumer .:? "address"
+          pure (consumerNameValue <> maybe "" (" at " <>) addressValue)
+
+-- | 'reconcileStartupTopicList' with the same bounded-retry discipline the plan
+-- topic reconcile carries: the claim runs at daemon start, when the broker may
+-- still be coming up.
+reconcileStartupTopicListWithRetry :: PulsarTransport -> [Text.Text] -> IO ()
+reconcileStartupTopicListWithRetry transport topics =
+  retry (1 :: Int)
+  where
+    retry attempt = do
+      reconcileResult <- try @SomeException (reconcileStartupTopicList transport topics)
+      case reconcileResult of
+        Right _ -> pure ()
+        Left err ->
+          case fromException err :: Maybe SomeAsyncException of
+            Just asyncErr -> throwIO asyncErr
+            Nothing -> do
+              hPutStrLn
+                stderr
+                ( "pulsar claim topic reconcile attempt "
+                    <> show attempt
+                    <> " failed:\n"
+                    <> displayException err
+                )
+              threadDelay 1000000
+              retry (attempt + 1)
+
+-- | Who may write the fleet's registered contract digest.
+--
+-- The coordinator is the deployment's router and its publication is the event
+-- that changes what the fleet runs, so it registers — including over a digest it
+-- disagrees with, because that is what a deliberate contract change looks like.
+-- Every other role verifies, and a verifier that disagrees refuses to start.
+--
+-- Without this split the check is not fail-closed, it is frozen: the registered
+-- digest is durable broker state that outlives a cluster, so the first contract
+-- change would make every daemon refuse forever against a value nothing could
+-- update. Observed exactly that way on the Apple lane, where retained Pulsar
+-- state carried a previous run's digest across a cluster teardown.
+--
+-- Be exact about what the split costs: two /coordinators/ holding different
+-- contracts no longer detect each other, because each would register its own.
+-- The deployed topology has one coordinator, and the fleet case that needs more
+-- is Sprint 8.12's.
+data ContractDigestAuthority
+  = RegistersContractDigest
+  | VerifiesContractDigest
+  deriving (Eq, Show)
+
+-- | A daemon whose contract digest disagrees with the value registered on a
+-- topic it is about to consume. Its own type so the registration retry loop can
+-- tell a decision from a transient broker condition.
+newtype ContractDigestDisagreement = ContractDigestDisagreement String
+
+instance Show ContractDigestDisagreement where
+  show (ContractDigestDisagreement refusal) = refusal
+
+instance Exception ContractDigestDisagreement
+
+-- | The three states of the broker-registered digest. Absence is its own state
+-- rather than a mismatch; see 'ensureRemoteSchema'.
+data RegisteredDigestOutcome
+  = RegisteredDigestAgrees
+  | RegisteredDigestAbsent
+  | RegisteredDigestDisagrees Text.Text
+  deriving (Eq, Show)
+
+-- | Which authority a daemon role carries. See 'ContractDigestAuthority'.
+contractDigestAuthorityForRole :: DaemonRole -> ContractDigestAuthority
+contractDigestAuthorityForRole role =
+  case role of
+    Coordinator -> RegistersContractDigest
+    Engine -> VerifiesContractDigest
+    Webapp -> VerifiesContractDigest
+
+-- | Classify a topic-properties body against this
+-- daemon's contract digest. Pure so the three outcomes are provable without a
+-- broker; the live registration and refusal are the same three cases.
+classifyRegisteredContractDigest ::
+  SystemContractDigest ->
+  Lazy.ByteString ->
+  RegisteredDigestOutcome
+classifyRegisteredContractDigest contractDigest body =
+  case eitherDecode body :: Either String RegisteredTopicProperties of
+    Left _ -> RegisteredDigestAbsent
+    Right properties ->
+      case registeredTopicContractDigest properties of
+        Nothing -> RegisteredDigestAbsent
+        Just registeredDigest
+          | registeredDigest == systemContractDigestText contractDigest -> RegisteredDigestAgrees
+          | otherwise -> RegisteredDigestDisagrees registeredDigest
+
+-- | The refusal a disagreeing registered digest produces. Named separately so
+-- the message a daemon dies with is asserted rather than assumed.
+registeredContractDigestRefusal :: Text.Text -> Text.Text -> Text.Text -> String
+registeredContractDigestRefusal topicValue registeredDigest localDigest =
+  unlines
+    [ "this daemon's system contract disagrees with the one registered on "
+        <> Text.unpack topicValue,
+      "  registered digest: " <> Text.unpack registeredDigest,
+      "  this daemon:       " <> Text.unpack localDigest,
+      "A machine whose contract digest disagrees with the value registered"
+        <> " on the topic it is about to consume refuses to start, because"
+        <> " the two machines would route, admit, and answer against"
+        <> " different pool graphs while the broker sees two ordinary"
+        <> " consumers. Regenerate the fleet's configuration from one"
+        <> " binary (`infernix init --force`) and redeploy."
+    ]
+
+-- | The subset of a topic-properties response this check reads.
+newtype RegisteredTopicProperties = RegisteredTopicProperties
+  { registeredTopicContractDigest :: Maybe Text.Text
+  }
+
+instance FromJSON RegisteredTopicProperties where
+  parseJSON = withObject "RegisteredTopicProperties" $ \value ->
+    RegisteredTopicProperties <$> value .:? "contractDigest"
 
 consumeTopicForever ::
   PulsarTransport ->

@@ -376,6 +376,7 @@ RUN printf '%s\n' \
     '    { physicalMemoryMib = 0' \
     '    , effectiveMemoryMib = 0' \
     '    }' \
+    ', machine = < ImageDefault | Machine : { role : < Coordinator | Engine | Webapp >, members : List Text, modelCacheQuotaBytes : Natural, systemContractDigest : Text } >.ImageDefault' \
     ', commandPolicies =' \
     '    { kindRead = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
     '    , kindCreate = { timeoutMicros = 1800000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \

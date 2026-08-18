@@ -139,8 +139,9 @@ This table records the typed input families read by each consumer.
 | MinIO access-key and secret-key inputs | `readFile (SecretsConfig.minio.credentialsPath)` -> `accessKey` / `secretKey` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs` |
 | Keycloak base URL, realm, client id, and JWKS URL inputs | `keycloak.*` | `src/Infernix/Demo/Auth.hs`, `src/Infernix/Demo/Api.hs` |
 | Demo bind host, bridge mode, publication state path, and demo-config path inputs | `demoBackend.*` | `src/Infernix/Webapp.hs`, `src/Infernix/Service.hs` |
-| Model-cache root and quota inputs | `engine.modelCacheRoot`, `engine.modelCacheQuotaBytes` | `python/adapters/model_cache.py` |
-| Coordinator catalog-source, control-plane-context, daemon-location, and daemon-role inputs | `coordinator.*` plus the substrate `.dhall` role field | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Service.hs` |
+| Model-cache root and quota inputs | `engine.modelCacheRoot`, `engine.modelCacheQuotaBytes` (generated from the same default the machine contract's `machine.modelCacheQuotaBytes` carries, so the cluster engine and a host engine cannot disagree about one cache) | `python/adapters/model_cache.py` |
+| Coordinator catalog-source, control-plane-context, and daemon-location inputs | `coordinator.*` | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Service.hs` |
+| Daemon-role input | the machine contract's `machine.role`, overridden per process by `infernix service --role` | `src/Infernix/Service.hs` |
 
 Engine commands are not cluster-manifest inputs. `Runtime.Worker` derives the invocation from the
 opaque executable model's compiled engine binding; there is no arbitrary command-override field.

@@ -481,7 +481,7 @@ def run_setup_bootstrap(adapter_id: str, install_root: Path | None = None) -> in
     # discovered from process environment. The supported per-substrate
     # adapter dispatch happens upstream of this setup helper (the
     # Haskell daemon decodes the active substrate from the staged
-    # `infernix-substrate.dhall` before selecting which adapters to
+    # `infernix.dhall` before selecting which adapters to
     # bootstrap), so this manifest records only the versioned adapter
     # identity. Identical setup operations must publish identical evidence.
     resolved_install_root = (

@@ -10,11 +10,11 @@
 
 ### `init`
 
-- `infernix init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false] [--force] [--if-missing]` - writes the runtime config `./infernix.dhall` and host manifest `./infernix-host.dhall`. Fails fast if `./infernix.dhall` already exists unless `--force`; `--if-missing` makes an existing config a no-op. No other command auto-generates config.
+- `infernix init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false] [--engine-machines N] [--force] [--if-missing]` - writes the runtime config `./infernix.dhall` and host manifest `./infernix-host.dhall`. Fails fast if `./infernix.dhall` already exists unless `--force`; `--if-missing` makes an existing config a no-op. `--engine-machines` declares how many engine machines the fleet has (default 1, one engine process per machine). No other command auto-generates config.
 
 ### `service`
 
-- `infernix service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]` - starts one long-running role from the single infernix binary. Coordinator and engine roles consume the effective runtime-config request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the runtime config's `daemonRole` field for split Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit runtime config.
+- `infernix service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]` - starts one long-running role from the single infernix binary. Coordinator and engine roles consume the effective runtime-config request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the machine contract's `machine.role` for split Deployments, `--engine-name` selects one of the engine member identities this machine declares, and `--config` points the daemon at an explicit runtime config.
 
 ### `cluster`
 
@@ -43,7 +43,7 @@
 
 ### `test`
 
-- `infernix test init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false]` - writes the thin `./infernix.test.dhall` the test harness reads to generate the run's `./infernix.dhall`
+- `infernix test init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false] [--engine-machines N]` - writes the thin `./infernix.test.dhall` the test harness reads to generate the run's `./infernix.dhall`. `--engine-machines` declares the run's fleet size (default 1).
 - `infernix test lint` - runs the focused lint entrypoints together with the strict Haskell/Cabal style and Python quality gates
 - `infernix test unit` - runs all machine-independent Haskell suites (compile-fail, artifact transaction, Apple materializer, capped observer, execution-plan, and unit) plus the PureScript frontend unit suite
 - `infernix test integration` - runs the cluster-backed integration suite against the active substrate
@@ -64,7 +64,7 @@
 - `infernix internal discover claims RENDERED_CHART` - prints the persistent-claim inventory discovered in a rendered chart manifest
 - `infernix internal discover harbor-overlay OVERLAY` - prints the Harbor-backed image references discovered in a rendered override payload
 - `infernix internal publish-chart-images RENDERED_CHART OUTPUT` - publishes the chart image inventory into a Harbor override file
-- `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--empty-models]` - writes the generated runtime config and prepares the closed per-engine Python framework plan for one explicit substrate id
+- `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--engine-machines N] [--empty-models]` - writes the generated runtime config and prepares the closed per-engine Python framework plan for one explicit substrate id
 - `infernix internal materialize-metal-engines` - materializes the allowlisted Apple Metal/Core ML engine manifests under `./.data/engines/<adapterId>/` and prepares the canonical Apple per-engine Python framework plan through the Tart-free headless host lane (Apple-only; mirrors `internal materialize-substrate`)
 - `infernix internal materialize-linux-native-engines` - materializes the allowlisted Linux native runner roots under `/opt/infernix/engines/<adapterId>/` for substrate images
 - `infernix internal demo-config load PATH` - loads one generated demo config and prints the rendered model listing

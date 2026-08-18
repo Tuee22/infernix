@@ -154,16 +154,68 @@ let HostExecutionContext =
       | LinuxOuterContainer
       >
 
+let DaemonRole =
+      < Coordinator
+      | Engine
+      | Webapp
+      >
+
+let MachineContract =
+      < ImageDefault
+      | Machine :
+          { role : DaemonRole
+          , members : List Text
+          , modelCacheQuotaBytes : Natural
+          , systemContractDigest : Text
+          }
+      >
+
 in    { hostExecutionContext : HostExecutionContext
       , hostArchitecture : Text
       , toolPaths : ToolPaths
       , filesystem : FilesystemConventions
       , memory : HostMemoryFacts
+      , machine : MachineContract
       , commandPolicies : CommandPolicies
       , playwrightHost : Text
       , controlPlaneContext : Text
       }
 ```
+
+`machine` is what makes this file a **machine contract** rather than a host convenience record: it
+is the one block that differs between two boxes reading the same system contract. It is a union
+rather than a record of optional fields, because a machine contract without a pinned system contract
+is the state the configuration doctrine exists to make unrepresentable.
+
+- `ImageDefault` is what the Linux launcher image bakes. It is byte identical in every image and
+  therefore describes no machine at all; it exists so path discovery can classify the execution
+  context before any machine contract has been generated. A daemon started against it is refused by
+  name, and the substrate materializer replaces it with a `Machine` block the first time it runs.
+- `Machine` carries this box's default role (`infernix service --role` still names a role per
+  process, because three roles run from one system contract on the cluster lane), the engine member
+  identities this box may adopt, its model-cache quota, and `systemContractDigest` — the SHA-256 of
+  the generated system-contract text this manifest was written against, prefixed `sha256:`.
+
+The pools this machine serves are **derived** from its members against the pinned contract's pool
+graph rather than declared here: a pool names its members, so a declared pool list could only ever
+disagree with the graph it duplicates. A machine whose members no pool names is refused rather than
+started with an empty subscription set.
+
+Identity is declared, never discovered. One declared member needs no selection; more than one — the
+`linux-gpu` shape, one member per framework engine image — requires `--engine-name` to name one of
+the declared identities, and a name outside that set is refused rather than adopted.
+
+The digest is over a canonical projection of the contract — substrate mode, topic names, object
+bucket, and the pool graph with each pool's subscription, members, and models, every list sorted —
+not over the generated file's bytes. One deployment holds that contract as more than one payload (the
+operator's repo-root file and the published cluster mirror name different paths), and a byte digest
+would make those the same contract with two digests. The coupling that keeps the pin true is the generator's: the same
+materialization that writes the system contract re-stamps the machine contract beside it, so a
+system-contract change moves the hash and rewrites every machine contract with it. The check is
+local — it proves this machine's manifest matches this machine's copy of the contract, and cannot
+see another machine's copy; the fleet-wide half is the contract digest registered in the Pulsar
+topic's own properties
+([../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)).
 
 The schema is reflected from the `HostConfig` decoder type (`infernix internal dhall-schema host`);
 the operator's generated manifest is written by `infernix init` to `./infernix-host.dhall`

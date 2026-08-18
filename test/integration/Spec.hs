@@ -212,7 +212,9 @@ exerciseRuntimeMode paths runtimeMode = do
         "publication reports the substrate-specific inference executor location"
       assertHostBatchPublication runtimeMode publicationResponse
       assert ("\"demo_ui\":true" `isInfixOf` compact demoConfigResponse) "demo config reports the enabled demo UI flag"
-      assert (activeDaemonRole routedDemoConfig == Coordinator) "cluster-mounted demo config reports the coordinator role"
+      assert
+        (daemonConfigRole (coordinatorDaemon routedDemoConfig) == Coordinator)
+        "cluster-mounted system contract derives the coordinator daemon"
       assertRoutedDaemonSplit runtimeMode compiledPlan
       assert
         ( ("\"request_topics\":[\"persistent://infernix/demo/inference.request." <> showRuntimeMode runtimeMode <> "\"]")

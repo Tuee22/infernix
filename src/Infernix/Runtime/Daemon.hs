@@ -43,14 +43,18 @@ import Infernix.ExecutionPlan
     runtimePlanCompiledPlan,
     runtimePlanModels,
   )
+import Infernix.MachineContract (SystemContractDigest, digestSystemContractFile)
 import Infernix.Runtime.CappedEngine (EngineExecutionAuthority)
 import Infernix.Runtime.Enforcer (refineCompiledRuntimePlan)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
-  ( DaemonTopicCapability,
+  ( ContractDigestAuthority,
+    DaemonTopicCapability,
+    EngineMemberClaim,
     PulsarTransport,
     clearServiceReadinessMarker,
     consumeTopicForever,
+    contractDigestAuthorityForRole,
     coordinatorTopicCapabilities,
     discoverPulsarTransport,
     drainTopicWithKVCache,
@@ -65,6 +69,7 @@ import Infernix.Runtime.Pulsar
     runModelBootstrapLoop,
     runResultBridgeLoop,
     sweepEagerModelCacheForPlan,
+    withEngineMemberClaim,
     writeServiceReadinessMarker,
   )
 import Infernix.Substrate (decodeCompiledRuntimePlanFile)
@@ -103,6 +108,12 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
         ioError
           (userError ("generated substrate execution plan did not compile: " <> show errors))
       Right plan -> pure plan
+  -- Phase 8 Sprint 8.11: the digest registered on every topic this daemon
+  -- touches is the digest of the payload it actually compiled its plan from,
+  -- which in a pod is the mounted publication rather than the generated pair on
+  -- disk. That is the point: the broker check has to cover the contract the
+  -- daemon is really running.
+  contractDigest <- digestSystemContractFile selectedDemoConfigPath
   when (compiledPlanRuntimeMode compiledPlan /= runtimeMode) $
     ioError
       ( userError
@@ -165,7 +176,7 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
     Nothing ->
       runFilesystemTopicSpool paths daemonExecutionPlan topicCapabilities engineKVCache
     Just transport ->
-      runWebSocketPulsarDaemon paths daemonExecutionPlan topicCapabilities engineKVCache transport
+      runWebSocketPulsarDaemon paths daemonExecutionPlan topicCapabilities engineKVCache transport (contractDigestAuthorityForRole (compiledDaemonRole compiledDaemon)) contractDigest
 
 daemonExecutableModelCount :: DaemonExecutionPlan -> Int
 daemonExecutableModelCount daemonPlan =
@@ -214,57 +225,98 @@ runWebSocketPulsarDaemon ::
   [DaemonTopicCapability] ->
   KVCache.EngineKVCache ->
   PulsarTransport ->
+  ContractDigestAuthority ->
+  SystemContractDigest ->
   IO ()
-runWebSocketPulsarDaemon paths daemonPlan topicCapabilities engineKVCache transport = do
+runWebSocketPulsarDaemon paths daemonPlan topicCapabilities engineKVCache transport contractAuthority contractDigest = do
   let compiledPlan = daemonCompiledPlan daemonPlan
   ensureSchemaMarkersForPlan paths compiledPlan
   reconcileSupportedNamespacesForPlanWithRetry transport compiledPlan
   reconcileStartupTopicsForPlanWithRetry transport compiledPlan
-  ensureRegisteredSchemasForPlanWithRetry paths transport compiledPlan
-  writeServiceReadinessMarker paths
-  putStrLn "serviceSubscriptionMode: websocket-pulsar"
-  putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
-  case (daemonPlan, compiledPlanRuntimeMode compiledPlan, topicCapabilities) of
-    (ExecutingDaemonPlan {}, AppleSilicon, primaryCapability : extraCapabilities) -> do
-      forM_
-        extraCapabilities
-        ( \capability ->
-            forkIO
-              ( consumeTopicForever
-                  transport
-                  paths
-                  capability
-                  (Just engineKVCache)
-              )
-        )
-      consumeTopicForever transport paths primaryCapability (Just engineKVCache)
-    (ExecutingDaemonPlan {}, _, capabilities) -> do
-      forM_
-        capabilities
-        ( \capability ->
-            forkIO
-              ( consumeTopicForever
-                  transport
-                  paths
-                  capability
-                  (Just engineKVCache)
-              )
-        )
-      forever (threadDelay 60000000)
-    (RoutingDaemonPlan routingPlan, _, capabilities) -> do
-      forM_
-        capabilities
-        ( \capability ->
-            forkIO
-              ( consumeTopicForever
-                  transport
-                  paths
-                  capability
-                  (Just engineKVCache)
-              )
-        )
-      startCoordinatorLoops transport routingPlan
-      forever (threadDelay 60000000)
+  ensureRegisteredSchemasForPlanWithRetry paths transport contractAuthority contractDigest compiledPlan
+  -- Phase 8 Sprint 8.12: an engine holds the broker-side claim on its member
+  -- identity for the whole of its consuming life.
+  --
+  -- The claim sits here rather than first for two reasons. The namespace and
+  -- the claim topic have to exist before an exclusive subscription on one can
+  -- be granted, and the reconcile above is what creates them — claiming first
+  -- would leave a cold-cluster engine retrying a topic nothing had created yet.
+  -- And the contract-digest check runs before it, so a machine that disagrees
+  -- with the fleet's registered contract refuses before it claims an identity
+  -- inside that fleet rather than after.
+  --
+  -- What the position does guarantee is what matters: the claim precedes the
+  -- readiness sentinel and every pool subscription, so a machine refused for
+  -- adopting another machine's identity never reports ready and never takes a
+  -- message a second machine might answer too.
+  withDaemonEngineMemberClaim transport daemonPlan $ \_memberClaim -> do
+    writeServiceReadinessMarker paths
+    putStrLn "serviceSubscriptionMode: websocket-pulsar"
+    putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
+    case (daemonPlan, compiledPlanRuntimeMode compiledPlan, topicCapabilities) of
+      (ExecutingDaemonPlan {}, AppleSilicon, primaryCapability : extraCapabilities) -> do
+        forM_
+          extraCapabilities
+          ( \capability ->
+              forkIO
+                ( consumeTopicForever
+                    transport
+                    paths
+                    capability
+                    (Just engineKVCache)
+                )
+          )
+        consumeTopicForever transport paths primaryCapability (Just engineKVCache)
+      (ExecutingDaemonPlan {}, _, capabilities) -> do
+        forM_
+          capabilities
+          ( \capability ->
+              forkIO
+                ( consumeTopicForever
+                    transport
+                    paths
+                    capability
+                    (Just engineKVCache)
+                )
+          )
+        forever (threadDelay 60000000)
+      (RoutingDaemonPlan routingPlan, _, capabilities) -> do
+        forM_
+          capabilities
+          ( \capability ->
+              forkIO
+                ( consumeTopicForever
+                    transport
+                    paths
+                    capability
+                    (Just engineKVCache)
+                )
+          )
+        startCoordinatorLoops transport routingPlan
+        forever (threadDelay 60000000)
+
+-- | Phase 8 Sprint 8.12 — take the broker-side member claim when, and only
+-- when, this daemon is an engine.
+--
+-- A coordinator and a webapp have no member identity to claim: they are
+-- routers and presenters, and the fleet's one-process-per-machine rule is about
+-- the processes that hold KV caches, load weights, and admit work against a
+-- machine's capacity. Claiming for them would create an exclusive slot nothing
+-- protects and would refuse a legitimate second coordinator during a rollout.
+withDaemonEngineMemberClaim ::
+  PulsarTransport ->
+  DaemonExecutionPlan ->
+  (Maybe EngineMemberClaim -> IO a) ->
+  IO a
+withDaemonEngineMemberClaim transport daemonPlan action =
+  case daemonPlan of
+    RoutingDaemonPlan _ -> action Nothing
+    ExecutingDaemonPlan memberIdValue runtimePlan _ ->
+      withEngineMemberClaim
+        transport
+        (compiledPlanRuntimeMode (runtimePlanCompiledPlan runtimePlan))
+        memberIdValue
+        (action . Just)
 
 startCoordinatorLoops ::
   PulsarTransport ->

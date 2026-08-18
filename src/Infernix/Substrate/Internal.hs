@@ -20,7 +20,6 @@ import Control.Exception (SomeException, displayException, try)
 import Data.ByteString.Lazy qualified as Lazy
 import Data.Char (isAlphaNum, toLower)
 import Data.List (intercalate)
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
@@ -28,6 +27,7 @@ import Data.Text.IO qualified as TextIO
 import Dhall qualified
 import Dhall.Core qualified as DhallCore
 import GHC.Generics (Generic)
+import Infernix.DhallSchema.Enums (dhallEnumInterpretOptions, dhallEnumUnionType, dhallEnumValue)
 import Infernix.DhallSchema.Reflection (renderDecoderExpected)
 import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
 import Infernix.EngineRouting (requestTopicsForMode, resultTopicForMode)
@@ -149,8 +149,23 @@ retiredSubstrateMarkers =
     ("maxInflightPerMember = ", "per-pool `maxInflightPerMember` knob, which only ever held one supported value"),
     ("resource = <", "substrate-limit `resource` field, now derived from the runtime mode and which half of the budget the limit occupies"),
     ("source = <", "substrate-limit `source` field, now derived alongside its resource"),
-    ("headroomMib = ", "host-partition `headroomMib` term, which only ever held the binary's own minimum")
+    ("headroomMib = ", "host-partition `headroomMib` term, which only ever held the binary's own minimum"),
+    -- Phase 8 Sprint 8.11 split the wire into a system contract and a machine
+    -- contract. The role moved to the machine contract, the two in-cluster
+    -- daemon records became fully derivable, and the model catalog moved inside
+    -- the pool that owns it, taking the member list with it.
+    ("daemonRole = <", "generated `daemonRole` field, which now lives in the machine contract's `machine` block"),
+    ("coordinator = ", "generated `coordinator` record, now derived from the runtime mode"),
+    ("webapp = ", "generated `webapp` record, now derived from the runtime mode"),
+    ("engineMembers = ", "generated `engineMembers` list, now inverted out of the pool graph")
   ]
+
+-- The retired top-level `models` list has no marker of its own on purpose: a
+-- pool now renders its own `models = [ { matrixRowId …` list, so every text a
+-- top-level list could be recognised by is text a current payload also
+-- contains. A marker that matches a valid payload is worse than no marker,
+-- because it would report a migration for a file that needs none. The retired
+-- shape still fails the decode; it just fails with the structural diagnostic.
 
 decodeCompiledRuntimePlanFile :: FilePath -> IO (Either ConfigErrors CompiledRuntimePlan)
 decodeCompiledRuntimePlanFile filePath =
@@ -164,20 +179,32 @@ renderSubstrateConfigSchema :: Either String Text
 renderSubstrateConfigSchema =
   renderDecoderExpected (Dhall.auto @DhallDemoConfig)
 
+-- | Phase 8 Sprint 8.11 — the system contract: what the platform runs, held
+-- identically by every machine.
+--
+-- Three families of field left the wire with this sprint, each because it was a
+-- second copy of something another part of the pair already decides:
+--
+-- * @daemonRole@ moved to the machine contract, where a box's default role
+--   belongs. The @--role@ flag still selects a role per process for the split
+--   Deployments.
+-- * @coordinator@ and @webapp@ were fully derivable from the runtime mode —
+--   both run in a cluster pod, both use the configured transport, and neither
+--   ever carried a member id.
+-- * the top-level @models@ list and the @engineMembers@ list are gone. A pool
+--   now carries its own model descriptors, so a pool naming a model the catalog
+--   does not define is unrepresentable rather than rejected; and members are
+--   inverted out of the pool graph, so the bidirectional pool\/member link can
+--   no longer disagree with itself.
 data DhallDemoConfig = DhallDemoConfig
   { dhallConfigRuntimeMode :: DhallRuntimeMode,
     dhallConfigMapName :: Text,
     dhallGeneratedPath :: Text,
     dhallMountedPath :: Text,
     dhallDemoUi :: Bool,
-    dhallDaemonRole :: DhallDaemonRole,
-    dhallCoordinator :: DhallDaemonConfig,
-    dhallWebapp :: DhallDaemonConfig,
     dhallEnginePools :: [DhallEnginePool],
-    dhallEngineMembers :: [DhallEngineMember],
     dhallModelsBucket :: Text,
     dhallModelBootstrapTopic :: Text,
-    dhallModels :: [DhallModelDescriptor],
     dhallInferenceMemoryBudget :: DhallInferenceMemoryBudget
   }
   deriving (Generic)
@@ -185,38 +212,19 @@ data DhallDemoConfig = DhallDemoConfig
 instance Dhall.FromDhall DhallDemoConfig where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
--- | Phase 8 Sprint 8.10: the engine daemons left the wire entirely and the two
--- in-cluster daemons kept only what is theirs to declare. Location and topics
--- are functions of the runtime mode and the pool graph, so they are derived
--- rather than mirrored.
-data DhallDaemonConfig = DhallDaemonConfig
-  { dhallRole :: DhallDaemonRole,
-    dhallMemberId :: Maybe Text,
-    dhallPulsarConnectionMode :: DhallPulsarConnectionMode
-  }
-  deriving (Generic)
-
-instance Dhall.FromDhall DhallDaemonConfig where
-  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
-
+-- | A pool and the models it serves. Phase 8 Sprint 8.11 moved the model
+-- descriptors inside their pool: model ownership is now the structure of the
+-- wire rather than a cross-reference between two lists that a generator could
+-- get wrong.
 data DhallEnginePool = DhallEnginePool
   { dhallPoolId :: Text,
-    dhallPoolModelIds :: [Text],
     dhallPoolMemberIds :: [Text],
-    dhallPoolSubscriptionType :: DhallConsumerSubscription
+    dhallPoolSubscriptionType :: DhallConsumerSubscription,
+    dhallPoolModels :: [DhallModelDescriptor]
   }
   deriving (Generic)
 
 instance Dhall.FromDhall DhallEnginePool where
-  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
-
-data DhallEngineMember = DhallEngineMember
-  { dhallMemberConfigId :: Text,
-    dhallMemberPoolIds :: [Text]
-  }
-  deriving (Generic)
-
-instance Dhall.FromDhall DhallEngineMember where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
 data DhallModelDescriptor = DhallModelDescriptor
@@ -296,42 +304,6 @@ data DhallRequestField = DhallRequestField
 instance Dhall.FromDhall DhallRequestField where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
--- | Phase 8 Sprint 8.9 — the generated wire's enum-like choices are Dhall
--- unions, not @Text@ refined after decode.
---
--- Each mirror below carries a type-specific Haskell constructor prefix, because
--- several of them name an alternative the domain type also names and Haskell
--- has one constructor namespace per module. 'dhallEnumInterpretOptions' strips
--- that prefix, so the /wire/ alternative is exactly the suffix. Alternatives are
--- identifier-shaped (@AppleSilicon@, not @apple-silicon@) because a Dhall
--- alternative is a label rather than a string — which is the whole point of
--- retiring the text tags. Refinement is a total case match: an unsupported
--- spelling is now a structural type error at decode rather than a
--- post-decode @parseEnum@ failure.
---
--- One consequence is deliberate and recorded rather than incidental:
--- 'parseDaemonRole' accepts three retired aliases (@frontend@, @cluster@,
--- @host@) that the renderer has never emitted. A union cannot express an alias,
--- so a stale @.dhall@ carrying one is now a decode failure. The retired-shape
--- classifier names it.
-dhallEnumInterpretOptions :: Text -> Dhall.InterpretOptions
-dhallEnumInterpretOptions constructorPrefix =
-  Dhall.defaultInterpretOptions
-    { Dhall.constructorModifier =
-        \constructorName ->
-          fromMaybe constructorName (Text.stripPrefix constructorPrefix constructorName)
-    }
-
--- | The rendered spelling of an enum-only union. Both the value renderer and
--- every record-type annotation that contains the field select from one of these
--- values, so an annotation cannot drift from the value it annotates.
-dhallEnumUnionType :: [String] -> String
-dhallEnumUnionType alternatives =
-  "< " <> intercalate " | " alternatives <> " >"
-
-dhallEnumValue :: String -> String -> String
-dhallEnumValue unionType alternative = unionType <> "." <> alternative
-
 data DhallRuntimeMode
   = DhallRuntimeModeAppleSilicon
   | DhallRuntimeModeLinuxCpu
@@ -358,34 +330,6 @@ runtimeModeUnionType = dhallEnumUnionType (map runtimeModeAlternative allRuntime
 
 renderRuntimeMode :: RuntimeMode -> String
 renderRuntimeMode = dhallEnumValue runtimeModeUnionType . runtimeModeAlternative
-
-data DhallDaemonRole
-  = DhallDaemonRoleCoordinator
-  | DhallDaemonRoleEngine
-  | DhallDaemonRoleWebapp
-  deriving (Generic)
-
-instance Dhall.FromDhall DhallDaemonRole where
-  autoWith _ = Dhall.genericAutoWith (dhallEnumInterpretOptions "DhallDaemonRole")
-
-daemonRoleFromDhall :: DhallDaemonRole -> DaemonRole
-daemonRoleFromDhall rawRole = case rawRole of
-  DhallDaemonRoleCoordinator -> Coordinator
-  DhallDaemonRoleEngine -> Engine
-  DhallDaemonRoleWebapp -> Webapp
-
-daemonRoleAlternative :: DaemonRole -> String
-daemonRoleAlternative role = case role of
-  Coordinator -> "Coordinator"
-  Engine -> "Engine"
-  Webapp -> "Webapp"
-
-daemonRoleUnionType :: String
-daemonRoleUnionType =
-  dhallEnumUnionType (map daemonRoleAlternative [Coordinator, Engine, Webapp])
-
-renderDaemonRole :: DaemonRole -> String
-renderDaemonRole = dhallEnumValue daemonRoleUnionType . daemonRoleAlternative
 
 data DhallConsumerSubscription
   = DhallConsumerSubscriptionShared
@@ -417,37 +361,6 @@ consumerSubscriptionUnionType =
 renderConsumerSubscription :: ConsumerSubscriptionType -> String
 renderConsumerSubscription =
   dhallEnumValue consumerSubscriptionUnionType . consumerSubscriptionAlternative
-
-data DhallPulsarConnectionMode
-  = DhallPulsarConnectionModeConfiguredTransport
-  | DhallPulsarConnectionModePublicationEdgeAutoDiscovery
-  deriving (Generic)
-
-instance Dhall.FromDhall DhallPulsarConnectionMode where
-  autoWith _ =
-    Dhall.genericAutoWith (dhallEnumInterpretOptions "DhallPulsarConnectionMode")
-
-pulsarConnectionModeFromDhall :: DhallPulsarConnectionMode -> PulsarConnectionMode
-pulsarConnectionModeFromDhall rawMode = case rawMode of
-  DhallPulsarConnectionModeConfiguredTransport -> ConfiguredTransport
-  DhallPulsarConnectionModePublicationEdgeAutoDiscovery -> PublicationEdgeAutoDiscovery
-
-pulsarConnectionModeAlternative :: PulsarConnectionMode -> String
-pulsarConnectionModeAlternative connectionMode = case connectionMode of
-  ConfiguredTransport -> "ConfiguredTransport"
-  PublicationEdgeAutoDiscovery -> "PublicationEdgeAutoDiscovery"
-
-pulsarConnectionModeUnionType :: String
-pulsarConnectionModeUnionType =
-  dhallEnumUnionType
-    ( map
-        pulsarConnectionModeAlternative
-        [ConfiguredTransport, PublicationEdgeAutoDiscovery]
-    )
-
-renderPulsarConnectionMode :: PulsarConnectionMode -> String
-renderPulsarConnectionMode =
-  dhallEnumValue pulsarConnectionModeUnionType . pulsarConnectionModeAlternative
 
 -- | The one mirror that cannot use the generic derivation.
 --
@@ -510,7 +423,6 @@ dhallFieldSuffixName suffix =
   case suffix of
     "ConfigRuntimeMode" -> "runtimeMode"
     "DemoUi" -> "demo_ui"
-    "MemberId" -> "memberId"
     "ModelsBucket" -> "models_bucket"
     "ModelBootstrapTopic" -> "model_bootstrap_topic"
     "InferenceMemoryBudget" -> "inferenceMemoryBudget"
@@ -520,13 +432,10 @@ dhallFieldSuffixName suffix =
     "BudgetPodLimit" -> "podLimit"
     "BudgetVramLimit" -> "vramLimit"
     "EnginePools" -> "enginePools"
-    "EngineMembers" -> "engineMembers"
     "PoolId" -> "id"
-    "PoolModelIds" -> "models"
     "PoolMemberIds" -> "members"
     "PoolSubscriptionType" -> "subscription"
-    "MemberConfigId" -> "id"
-    "MemberPoolIds" -> "pools"
+    "PoolModels" -> "models"
     other -> lowerInitial other
 
 lowerInitial :: Text -> Text
@@ -547,21 +456,15 @@ lowerInitial value =
 demoConfigFromDhall :: DhallDemoConfig -> Either String DemoConfig
 demoConfigFromDhall rawConfig = do
   let runtimeModeValue = runtimeModeFromDhall (dhallConfigRuntimeMode rawConfig)
-      activeDaemonRoleValue = daemonRoleFromDhall (dhallDaemonRole rawConfig)
       derivedRequestTopics = requestTopicsForMode runtimeModeValue
       derivedResultTopic = resultTopicForMode runtimeModeValue
-  coordinatorDaemonValue <-
-    withDefaultConsumerSubscriptionType runtimeModeValue
-      <$> clusterDaemonConfigFromDhall derivedRequestTopics derivedResultTopic (dhallCoordinator rawConfig)
-  webappDaemonValue <-
-    withDefaultConsumerSubscriptionType runtimeModeValue
-      <$> clusterDaemonConfigFromDhall derivedRequestTopics derivedResultTopic (dhallWebapp rawConfig)
-  enginePoolValues <- traverse (enginePoolFromDhall runtimeModeValue) (dhallEnginePools rawConfig)
-  engineMemberValues <- traverse (engineMemberFromDhall runtimeModeValue) (dhallEngineMembers rawConfig)
-  modelValues <- traverse (modelDescriptorFromDhall runtimeModeValue) (dhallModels rawConfig)
+  decodedPools <- traverse (enginePoolFromDhall runtimeModeValue) (dhallEnginePools rawConfig)
+  let enginePoolValues = map fst decodedPools
+      modelValues = modelsFromPools decodedPools
   memoryBudgetValue <-
     inferenceMemoryBudgetFromDhall runtimeModeValue (dhallInferenceMemoryBudget rawConfig)
-  let engineDaemonValues =
+  let engineMemberValues = deriveEngineMembers runtimeModeValue enginePoolValues
+      engineDaemonValues =
         deriveEngineDaemonConfigs runtimeModeValue enginePoolValues engineMemberValues derivedResultTopic
       engineValues = deriveEngineBindings runtimeModeValue modelValues
   pure
@@ -571,9 +474,10 @@ demoConfigFromDhall rawConfig = do
         generatedPath = Text.unpack (dhallGeneratedPath rawConfig),
         mountedPath = Text.unpack (dhallMountedPath rawConfig),
         demoUiEnabled = dhallDemoUi rawConfig,
-        activeDaemonRole = activeDaemonRoleValue,
-        coordinatorDaemon = coordinatorDaemonValue,
-        webappDaemon = webappDaemonValue,
+        coordinatorDaemon =
+          clusterDaemonConfig Coordinator derivedRequestTopics derivedResultTopic,
+        webappDaemon =
+          clusterDaemonConfig Webapp derivedRequestTopics derivedResultTopic,
         engineDaemons = engineDaemonValues,
         enginePools = enginePoolValues,
         engineMembers = engineMemberValues,
@@ -585,6 +489,31 @@ demoConfigFromDhall rawConfig = do
         models = modelValues,
         inferenceMemoryBudget = memoryBudgetValue
       }
+
+-- | The catalog a pool graph implies, in pool order.
+--
+-- A model belongs to exactly one pool, and the wire now says so structurally:
+-- there is no second list for a pool to disagree with. What the nested shape can
+-- still express is one model id written under two pools, and that is left to the
+-- plan compiler, which already reports it against both the model and the pool by
+-- name.
+modelsFromPools :: [(EnginePool, [ModelDescriptor])] -> [ModelDescriptor]
+modelsFromPools = concatMap snd
+
+-- | The engine members a pool graph implies. A member exists because some pool
+-- names it, and the pools it serves are the pools that name it, so the two
+-- directions of the link are one fact rather than two that must agree.
+deriveEngineMembers :: RuntimeMode -> [EnginePool] -> [EngineMember]
+deriveEngineMembers runtimeModeValue pools =
+  [ EngineMember
+      { engineMemberId = memberIdValue,
+        engineMemberRuntimeMode = runtimeModeValue,
+        engineMemberLocation = engineMemberLocationForMode runtimeModeValue,
+        engineMemberPoolIds =
+          [enginePoolId pool | pool <- pools, memberIdValue `elem` enginePoolMemberIds pool]
+      }
+  | memberIdValue <- nubOn id (concatMap enginePoolMemberIds pools)
+  ]
 
 -- | The engine bindings a model set implies. A selected engine with no canonical
 -- binding produces no entry, so the compiler still reports it as
@@ -709,68 +638,38 @@ topicSegment =
       | isAlphaNum character || character == '-' || character == '_' || character == '.' = character
       | otherwise = '-'
 
--- | The two in-cluster daemons. Both run in a pod on every supported substrate
--- and both consume the coordinator request topic and publish the shared result
--- topic, so location and topics are derived rather than declared.
-clusterDaemonConfigFromDhall ::
-  [Text] ->
-  Text ->
-  DhallDaemonConfig ->
-  Either String DaemonConfig
-clusterDaemonConfigFromDhall derivedRequestTopics derivedResultTopic rawConfig = do
-  let roleValue = daemonRoleFromDhall (dhallRole rawConfig)
-      connectionModeValue =
-        pulsarConnectionModeFromDhall (dhallPulsarConnectionMode rawConfig)
-  pure
-    DaemonConfig
-      { daemonConfigRole = roleValue,
-        daemonConfigLocation = clusterDaemonLocation,
-        daemonConfigMemberId = dhallMemberId rawConfig,
-        daemonConfigRequestTopics = derivedRequestTopics,
-        daemonConfigResultTopic = derivedResultTopic,
-        daemonConfigPulsarConnectionMode = connectionModeValue,
-        daemonConfigConsumerSubscriptionType = Nothing
-      }
-
-enginePoolFromDhall :: RuntimeMode -> DhallEnginePool -> Either String EnginePool
-enginePoolFromDhall runtimeModeValue rawPool =
-  pure
-    EnginePool
-      { enginePoolId = dhallPoolId rawPool,
-        enginePoolRuntimeMode = runtimeModeValue,
-        enginePoolModelIds = dhallPoolModelIds rawPool,
-        enginePoolMemberIds = dhallPoolMemberIds rawPool,
-        enginePoolSubscriptionType =
-          consumerSubscriptionFromDhall (dhallPoolSubscriptionType rawPool),
-        enginePoolMaxInflightPerMember = defaultMaxInflightPerMember
-      }
-
-engineMemberFromDhall :: RuntimeMode -> DhallEngineMember -> Either String EngineMember
-engineMemberFromDhall runtimeModeValue rawMember =
-  pure
-    EngineMember
-      { engineMemberId = dhallMemberConfigId rawMember,
-        engineMemberRuntimeMode = runtimeModeValue,
-        engineMemberLocation = engineMemberLocationForMode runtimeModeValue,
-        engineMemberPoolIds = dhallMemberPoolIds rawMember
-      }
-
-withDefaultConsumerSubscriptionType :: RuntimeMode -> DaemonConfig -> DaemonConfig
-withDefaultConsumerSubscriptionType runtimeMode daemonConfig =
-  daemonConfig
-    { daemonConfigConsumerSubscriptionType =
-        case daemonConfigConsumerSubscriptionType daemonConfig of
-          Just subscriptionType -> Just subscriptionType
-          Nothing -> Just (defaultConsumerSubscriptionType runtimeMode daemonConfig)
+-- | The two in-cluster daemons. Both run in a pod on every supported substrate,
+-- both reach Pulsar over the configured transport, both consume the coordinator
+-- request topic and publish the shared result topic, and neither has ever
+-- carried a member id — so Phase 8 Sprint 8.11 derives them entirely instead of
+-- carrying two records the generator could only fill in one way.
+clusterDaemonConfig :: DaemonRole -> [Text] -> Text -> DaemonConfig
+clusterDaemonConfig roleValue derivedRequestTopics derivedResultTopic =
+  DaemonConfig
+    { daemonConfigRole = roleValue,
+      daemonConfigLocation = clusterDaemonLocation,
+      daemonConfigMemberId = Nothing,
+      daemonConfigRequestTopics = derivedRequestTopics,
+      daemonConfigResultTopic = derivedResultTopic,
+      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigConsumerSubscriptionType = Just ConsumerShared
     }
 
-defaultConsumerSubscriptionType :: RuntimeMode -> DaemonConfig -> ConsumerSubscriptionType
-defaultConsumerSubscriptionType runtimeMode daemonConfig
-  | runtimeMode == AppleSilicon
-      && daemonConfigRole daemonConfig == Engine
-      && daemonConfigLocation daemonConfig == "control-plane-host" =
-      ConsumerShared
-  | otherwise = ConsumerShared
+enginePoolFromDhall :: RuntimeMode -> DhallEnginePool -> Either String (EnginePool, [ModelDescriptor])
+enginePoolFromDhall runtimeModeValue rawPool = do
+  poolModels <- traverse (modelDescriptorFromDhall runtimeModeValue) (dhallPoolModels rawPool)
+  pure
+    ( EnginePool
+        { enginePoolId = dhallPoolId rawPool,
+          enginePoolRuntimeMode = runtimeModeValue,
+          enginePoolModelIds = map modelId poolModels,
+          enginePoolMemberIds = dhallPoolMemberIds rawPool,
+          enginePoolSubscriptionType =
+            consumerSubscriptionFromDhall (dhallPoolSubscriptionType rawPool),
+          enginePoolMaxInflightPerMember = defaultMaxInflightPerMember
+        },
+      poolModels
+    )
 
 modelDescriptorFromDhall :: RuntimeMode -> DhallModelDescriptor -> Either String ModelDescriptor
 modelDescriptorFromDhall runtimeModeValue rawModel = do
@@ -819,14 +718,10 @@ renderSubstrateConfig demoConfig =
       ", generatedPath = " <> dhallFilePath (generatedPath demoConfig),
       ", mountedPath = " <> dhallFilePath (mountedPath demoConfig),
       ", demo_ui = " <> dhallBool (demoUiEnabled demoConfig),
-      ", daemonRole = " <> renderDaemonRole (activeDaemonRole demoConfig),
-      ", coordinator = " <> renderDaemonConfig (coordinatorDaemon demoConfig),
-      ", webapp = " <> renderDaemonConfig (webappDaemon demoConfig),
-      ", enginePools = " <> dhallList enginePoolType renderEnginePool (enginePools demoConfig),
-      ", engineMembers = " <> dhallList engineMemberType renderEngineMember (engineMembers demoConfig),
+      ", enginePools = "
+        <> dhallList enginePoolType (renderEnginePool (models demoConfig)) (enginePools demoConfig),
       ", models_bucket = " <> dhallText (modelsBucket demoConfig),
       ", model_bootstrap_topic = " <> dhallText (modelBootstrapTopic demoConfig),
-      ", models = " <> dhallList modelDescriptorType renderModelDescriptor (models demoConfig),
       ", inferenceMemoryBudget = " <> renderInferenceMemoryBudget (inferenceMemoryBudget demoConfig),
       "}"
     ]
@@ -878,35 +773,25 @@ renderPodMemoryLimit podLimit =
     <> dhallNatural (podMemoryLimitMib podLimit)
     <> " }"
 
-renderDaemonConfig :: DaemonConfig -> String
-renderDaemonConfig daemonConfig =
-  "{ role = "
-    <> renderDaemonRole (daemonConfigRole daemonConfig)
-    <> ", memberId = "
-    <> dhallOptional "Text" dhallText (daemonConfigMemberId daemonConfig)
-    <> ", pulsarConnectionMode = "
-    <> renderPulsarConnectionMode (daemonConfigPulsarConnectionMode daemonConfig)
-    <> " }"
-
-renderEnginePool :: EnginePool -> String
-renderEnginePool pool =
+-- | Render one pool together with the models it owns. The catalog is passed in
+-- rather than read from the pool, because the pool holds model /ids/ in the
+-- domain record and the wire holds the descriptors themselves; a model id the
+-- catalog does not define is dropped here and reported by the plan compiler
+-- against the pool that named it.
+renderEnginePool :: [ModelDescriptor] -> EnginePool -> String
+renderEnginePool catalog pool =
   "{ id = "
     <> dhallText (enginePoolId pool)
-    <> ", models = "
-    <> dhallList "Text" dhallText (enginePoolModelIds pool)
     <> ", members = "
     <> dhallList "Text" dhallText (enginePoolMemberIds pool)
     <> ", subscription = "
     <> renderConsumerSubscription (enginePoolSubscriptionType pool)
+    <> ", models = "
+    <> dhallList modelDescriptorType renderModelDescriptor poolModels
     <> " }"
-
-renderEngineMember :: EngineMember -> String
-renderEngineMember member =
-  "{ id = "
-    <> dhallText (engineMemberId member)
-    <> ", pools = "
-    <> dhallList "Text" dhallText (engineMemberPoolIds member)
-    <> " }"
+  where
+    poolModels =
+      [model | model <- catalog, modelId model `elem` enginePoolModelIds pool]
 
 renderModelDescriptor :: ModelDescriptor -> String
 renderModelDescriptor model =
@@ -954,12 +839,6 @@ dhallList itemType renderItem values =
     [] -> "([] : List " <> itemType <> ")"
     _ -> "[ " <> intercalate ", " (map renderItem values) <> " ]"
 
-dhallOptional :: String -> (a -> String) -> Maybe a -> String
-dhallOptional itemType renderItem value =
-  case value of
-    Nothing -> "None " <> itemType
-    Just item -> "Some " <> renderItem item
-
 dhallBool :: Bool -> String
 dhallBool value
   | value = "True"
@@ -987,13 +866,11 @@ dhallText value =
 
 enginePoolType :: String
 enginePoolType =
-  "{ id : Text, models : List Text, members : List Text, subscription : "
+  "{ id : Text, members : List Text, subscription : "
     <> consumerSubscriptionUnionType
+    <> ", models : List "
+    <> modelDescriptorType
     <> " }"
-
-engineMemberType :: String
-engineMemberType =
-  "{ id : Text, pools : List Text }"
 
 requestFieldType :: String
 requestFieldType =

@@ -30,7 +30,12 @@ module Infernix.Models
     linuxGpuEnginePodMemoryLimitMib,
     appleFallbackInferenceRamBudgetMib,
     engineMembersForMode,
+    engineMembersForFleet,
     enginePoolsForMode,
+    enginePoolsForFleet,
+    engineMachineCountForMode,
+    engineMachineCountFromMemberIds,
+    fleetMemberIds,
     expectedDaemonLocationForRuntime,
     expectedInferenceExecutorLocationForRuntime,
     expectedInferenceDispatchModeForRuntime,
@@ -50,6 +55,8 @@ module Infernix.Models
 where
 
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
+import Data.Char (isDigit)
+import Data.Either (fromRight)
 import Data.List (find, intercalate, nub)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
@@ -250,6 +257,115 @@ engineMembersForMode runtimeMode =
         isPythonPool
       ]
 
+-- | Phase 8 Sprint 8.12 — the pool graph a fleet of @count@ engine machines
+-- declares.
+--
+-- The fleet dimension multiplies /members/ and nothing else. A pool's identity,
+-- its model set, its subscription type, and its per-member inflight bound are
+-- all properties of the platform every machine shares, so they are generated
+-- once and the fleet expansion only rewrites which member ids each pool names.
+-- Writing it as a rewrite of the single-machine graph rather than as a second
+-- generator is deliberate: two generators that must agree on everything except
+-- the member list is exactly the permanent illegal-state shape Sprint 8.10
+-- deleted from the wire.
+enginePoolsForFleet :: RuntimeMode -> EngineMachineCount -> [EnginePool]
+enginePoolsForFleet runtimeMode count =
+  [ pool
+      { enginePoolMemberIds =
+          concatMap (fleetMemberIds count) (enginePoolMemberIds pool)
+      }
+  | pool <- enginePoolsForMode runtimeMode
+  ]
+
+-- | The member list a fleet of @count@ engine machines declares.
+--
+-- Each single-machine member becomes @count@ members serving the same pools:
+-- the machines of a fleet are interchangeable consumers of one @Shared@ pool
+-- topic, which is the topology
+-- [daemon_topology.md](documents/architecture/daemon_topology.md) specifies.
+-- Nothing here decides /which/ machine adopts which identity; that is the
+-- machine contract's job, and preventing two machines from adopting the same
+-- one is the broker-side claim's.
+engineMembersForFleet :: RuntimeMode -> EngineMachineCount -> [EngineMember]
+engineMembersForFleet runtimeMode count =
+  [ member {engineMemberId = expandedId}
+  | member <- engineMembersForMode runtimeMode,
+    expandedId <- fleetMemberIds count (engineMemberId member)
+  ]
+
+-- | The member ids one single-machine member id expands to.
+--
+-- A one-machine fleet keeps the unsuffixed id, so the deployed single-node
+-- platform's generated contract is byte identical to what it was before this
+-- sprint and no existing machine contract is invalidated by the fleet
+-- dimension merely existing.
+fleetMemberIds :: EngineMachineCount -> Text -> [Text]
+fleetMemberIds count baseMemberId
+  | machines <= 1 = [baseMemberId]
+  | otherwise =
+      [ baseMemberId <> "-m" <> Text.pack (show machineIndex)
+      | machineIndex <- [1 .. machines]
+      ]
+  where
+    machines = engineMachineCountValue count
+
+-- | The fleet size a decoded contract's member ids describe.
+--
+-- @cluster up@ republishes the system contract for the pods that mount it, and
+-- that republication regenerates the payload rather than copying the operator's
+-- bytes. It therefore has to learn the fleet dimension from the contract it was
+-- handed, or a two-machine deployment would be published as a one-machine one
+-- and the second machine would find no member to adopt.
+--
+-- The suffix is the evidence because the suffix is generated: 'fleetMemberIds'
+-- is the only writer of a member id, and it writes @-m\<index\>@ only for a
+-- fleet. An id with no suffix is a one-machine contract, which is also what an
+-- empty member list means — a contract with no member declares no fleet.
+engineMachineCountFromMemberIds :: [Text] -> EngineMachineCount
+engineMachineCountFromMemberIds memberIds =
+  case mapMaybe fleetMachineIndex memberIds of
+    [] -> singleEngineMachine
+    indices -> fromRight singleEngineMachine (engineMachineCount (maximum indices))
+
+-- | The machine index a fleet member id carries, if it carries one.
+fleetMachineIndex :: Text -> Maybe Int
+fleetMachineIndex memberIdValue =
+  case Text.breakOnEnd "-m" memberIdValue of
+    (prefix, suffix)
+      | not (Text.null prefix),
+        not (Text.null suffix),
+        Text.all isDigit suffix ->
+          case reads (Text.unpack suffix) of
+            [(indexValue, "")] -> Just indexValue
+            _ -> Nothing
+    _ -> Nothing
+
+-- | The engine-machine count a runtime mode supports, or a named refusal.
+--
+-- @linux-gpu@ is refused above one machine, and the reason is a scope decision
+-- rather than a defect. Its member set is already per-framework-image — a
+-- python pool's member id /is/ its pool id, and the generated per-engine
+-- Deployments are named from those ids — so a fleet dimension there changes
+-- what an engine image is called as well as how many machines exist. That is a
+-- second, independent change whose only honest proof is the CUDA Linux cohort,
+-- which this sprint's lane is not. Refusing at generation is what keeps the
+-- unproven shape from being written into a contract.
+engineMachineCountForMode :: RuntimeMode -> Int -> Either String EngineMachineCount
+engineMachineCountForMode runtimeMode requested = do
+  count <- engineMachineCount requested
+  case runtimeMode of
+    LinuxGpu
+      | engineMachineCountValue count > 1 ->
+          Left
+            ( "linux-gpu declares one engine member per framework engine image, so a"
+                <> " fleet of "
+                <> show (engineMachineCountValue count)
+                <> " machines would rename every engine image as well as add machines;"
+                <> " that shape is owned by the CUDA Linux cohort. Use --engine-machines 1"
+                <> " on linux-gpu."
+            )
+    _ -> pure count
+
 memberIdsForPool :: RuntimeMode -> Text -> Bool -> [Text]
 memberIdsForPool runtimeMode poolId isPythonPool =
   case runtimeMode of
@@ -309,7 +425,7 @@ renderConfigMapManifest payload =
       "  name: infernix-demo-config",
       "  namespace: platform",
       "data:",
-      "  infernix-substrate.dhall: |"
+      "  infernix.dhall: |"
     ]
     <> indentBlock 4 (LazyChar8.unpack payload)
 

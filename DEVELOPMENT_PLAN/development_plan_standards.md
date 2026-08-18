@@ -506,7 +506,7 @@ Rules:
   Apple cluster daemons, and any Apple cluster-resident demo or support workload. The ConfigMap is
   a deployment mirror, not a second operator config authority.
 - Cluster-resident consumers mount that ConfigMap read-only beside the relevant runtime entrypoint
-  at `/opt/build/infernix-substrate.dhall`.
+  at `/opt/build/infernix.dhall`.
 - Apple host daemon consumers read repo-root `./infernix.dhall`, even when the Apple topology
   also republishes cluster-role payloads into the cluster for service daemons, routed demo, or
   other support surfaces.

@@ -225,7 +225,15 @@ Read first:
   `./bootstrap/apple-silicon.sh up` explicitly runs `./.build/infernix init --if-missing` before
   `cluster up`, while its `test` command runs the runtime-mode-specific `init --if-missing` before
   test initialization and `test all`. The test harness generates
-  `./infernix.dhall` from `./infernix.test.dhall`, runs, and deletes it. The model set is whatever
+  `./infernix.dhall` from `./infernix.test.dhall`, runs, and deletes it. The two files are a
+  **contract pair**: `./infernix.dhall` is the system contract every machine holds identically
+  (substrate mode plus the pool graph, each pool carrying its own model descriptors), and the
+  `machine` block of `./infernix-host.dhall` is this box's contract (default role, engine member
+  identities, model-cache quota, and the content digest of the system contract it was generated
+  against). The generator writes both together, so a system-contract change moves the digest and
+  re-stamps the manifest; a daemon paired with a contract it has never seen refuses to start and
+  names `infernix init --force`. The same digest is registered in the Pulsar topic's own
+  properties by the coordinator, and a daemon that verifies a disagreeing value is refused. The model set is whatever
   the mounted runtime `infernix.dhall` lists (the `src/Infernix/Models.hs` matrix is a demo-only
   generator); the coordinator eager-stages that set at startup. Canonical doctrine:
   [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md)

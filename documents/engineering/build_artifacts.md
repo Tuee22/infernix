@@ -187,8 +187,8 @@ that consume the file link the same library through the in-cluster `infernix` bi
 - in cluster-resident execution contexts, the ConfigMap-backed file is a deployment mirror of the
   initialized runtime config, not an operator-authoritative config location
 - the cluster pod's ConfigMap-backed substrate mount path is
-  `/opt/build/infernix-substrate.dhall` (chart `demoConfig.mountPath=/opt/build`,
-  `fileName=infernix-substrate.dhall`); the separate Phase-8 cluster-wiring `ClusterConfig`
+  `/opt/build/infernix.dhall` (chart `demoConfig.mountPath=/opt/build`,
+  `fileName=infernix.dhall`); the separate Phase-8 cluster-wiring `ClusterConfig`
   ConfigMap mounts at `/opt/infernix/cluster.dhall` (subPath `cluster.dhall`)
 
 ## Rules

@@ -14,6 +14,7 @@ module Infernix.Config
     generatedKubeconfigPath,
     helmEnvironment,
     hostConfigPath,
+    activeHostConfigPath,
     publicationStatePath,
     runtimeConfigPath,
     testConfigPath,
@@ -26,6 +27,7 @@ module Infernix.Config
   )
 where
 
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Substrate (resolveRuntimeModeFromSubstrateFile)
@@ -52,7 +54,15 @@ data Paths = Paths
     -- the manifest is absent (first-run bootstrap, unit tests
     -- without an explicit fixture) and the callers fall back to the
     -- bare-name tool resolution they used before this field landed.
-    pathsHostConfig :: Maybe HostConfig.HostConfig
+    pathsHostConfig :: Maybe HostConfig.HostConfig,
+    -- | The path the manifest in 'pathsHostConfig' was decoded from.
+    --
+    -- Phase 8 Sprint 8.11: the machine contract is stamped back into the
+    -- manifest this process actually read, so the Linux launcher image keeps one
+    -- manifest at its baked path instead of gaining a second one at the repo
+    -- root that would silently take over path discovery from the next command
+    -- onward.
+    pathsHostConfigPath :: Maybe FilePath
   }
   deriving (Eq, Show)
 
@@ -64,8 +74,13 @@ discoverPaths :: IO Paths
 discoverPaths = do
   cwd <- getCurrentDirectory
   repoRootPath <- findRepoRoot cwd
-  maybeHostConfig <- tryLoadHostManifest repoRootPath
-  pure (pathsFromRepoRoot repoRootPath maybeHostConfig)
+  maybeLoadedManifest <- tryLoadHostManifest repoRootPath
+  pure
+    ( pathsFromRepoRoot
+        repoRootPath
+        (snd <$> maybeLoadedManifest)
+        (fst <$> maybeLoadedManifest)
+    )
 
 -- | Variant exposed for callers that want explicit control over which
 -- host manifest is consulted (e.g. test fixtures that supply a typed
@@ -74,10 +89,10 @@ discoverPathsWithHostManifest :: Maybe HostConfig.HostConfig -> IO Paths
 discoverPathsWithHostManifest maybeHostConfig = do
   cwd <- getCurrentDirectory
   repoRootPath <- findRepoRoot cwd
-  pure (pathsFromRepoRoot repoRootPath maybeHostConfig)
+  pure (pathsFromRepoRoot repoRootPath maybeHostConfig Nothing)
 
-pathsFromRepoRoot :: FilePath -> Maybe HostConfig.HostConfig -> Paths
-pathsFromRepoRoot fallbackRepoRoot maybeHostConfig =
+pathsFromRepoRoot :: FilePath -> Maybe HostConfig.HostConfig -> Maybe FilePath -> Paths
+pathsFromRepoRoot fallbackRepoRoot maybeHostConfig maybeHostConfigPath =
   let manifestFs = HostConfig.hostFilesystem <$> maybeHostConfig
       repoRootPath =
         maybe
@@ -120,7 +135,8 @@ pathsFromRepoRoot fallbackRepoRoot maybeHostConfig =
           helmDataRoot = helmDataRootPath,
           resultsRoot = resultsRootPath,
           modelCacheRoot = modelCacheRootPath,
-          pathsHostConfig = maybeHostConfig
+          pathsHostConfig = maybeHostConfig,
+          pathsHostConfigPath = maybeHostConfigPath
         }
 
 resolveAgainst :: FilePath -> FilePath -> FilePath
@@ -136,7 +152,7 @@ resolveAgainst anchor candidate
 -- If a candidate exists but is invalid, fail immediately: silently
 -- falling through to convention defaults can misclassify the execution
 -- context and route Linux launcher work through host-native guardrails.
-tryLoadHostManifest :: FilePath -> IO (Maybe HostConfig.HostConfig)
+tryLoadHostManifest :: FilePath -> IO (Maybe (FilePath, HostConfig.HostConfig))
 tryLoadHostManifest repoRootPath = loop candidatePaths
   where
     candidatePaths =
@@ -149,7 +165,7 @@ tryLoadHostManifest repoRootPath = loop candidatePaths
     loop (candidate : rest) = do
       exists <- doesFileExist candidate
       if exists
-        then Just <$> HostConfig.decodeHostConfigFile candidate
+        then (\hostConfig -> Just (candidate, hostConfig)) <$> HostConfig.decodeHostConfigFile candidate
         else loop rest
 
 findRepoRoot :: FilePath -> IO FilePath
@@ -238,13 +254,14 @@ generatedDemoConfigPath = generatedSubstratePath
 generatedSubstratePath :: Paths -> FilePath
 generatedSubstratePath = runtimeConfigPath
 
--- | Phase 8: the operator-owned runtime config file (`./infernix.dhall`,
--- created by `infernix init`), relocated to the repo root from the former
--- `.build/infernix-substrate.dhall` staging location. All existing readers
--- reach it through 'generatedDemoConfigPath' / 'generatedSubstratePath', so
--- relocating it here moves them together (host + in-image bake + CLI read).
--- The in-pod ConfigMap mount ('watchedDemoConfigPath') is a separate deploy
--- file and is unaffected.
+-- | Phase 8: the operator-owned system contract (`./infernix.dhall`, created by
+-- `infernix init`). All readers reach it through 'generatedDemoConfigPath' /
+-- 'generatedSubstratePath'.
+--
+-- Phase 8 Sprint 8.11 gave the deployment mirror the same file name: the
+-- in-pod ConfigMap mount ('watchedDemoConfigPath') is still a separate deploy
+-- file with its own published payload, but it is no longer a second name for
+-- the same contract.
 runtimeConfigPath :: Paths -> FilePath
 runtimeConfigPath paths = repoRoot paths </> "infernix.dhall"
 
@@ -260,6 +277,14 @@ testConfigPath paths = repoRoot paths </> "infernix.test.dhall"
 -- `/opt/infernix/dhall/InfernixHost.dhall` fallback for image runtime.
 hostConfigPath :: Paths -> FilePath
 hostConfigPath paths = repoRoot paths </> "infernix-host.dhall"
+
+-- | Phase 8 Sprint 8.11: where a machine contract is written back to. The
+-- manifest this process decoded wins, so the launcher image keeps stamping its
+-- baked manifest instead of growing a second one at the repo root; a process
+-- that decoded none writes the operator manifest.
+activeHostConfigPath :: Paths -> FilePath
+activeHostConfigPath paths =
+  fromMaybe (hostConfigPath paths) (pathsHostConfigPath paths)
 
 -- | Fail fast with the canonical "run infernix init" message when the
 -- host manifest is missing on a host-native execution context. Shared by
@@ -287,7 +312,7 @@ publishedConfigMapCatalogPath paths =
   runtimeRoot paths
     </> "configmaps"
     </> "infernix-demo-config"
-    </> "infernix-substrate.dhall"
+    </> "infernix.dhall"
 
 publishedConfigMapManifestPath :: Paths -> FilePath
 publishedConfigMapManifestPath paths =
@@ -337,7 +362,7 @@ targetRuntimeModeForExecutionContext paths =
 
 watchedDemoConfigPath :: FilePath
 watchedDemoConfigPath =
-  "/opt/build/infernix-substrate.dhall"
+  "/opt/build/infernix.dhall"
 
 resolveRuntimeModeFromGeneratedFile :: FilePath -> IO RuntimeMode
 resolveRuntimeModeFromGeneratedFile = resolveRuntimeModeFromSubstrateFile

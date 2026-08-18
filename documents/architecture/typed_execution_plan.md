@@ -47,10 +47,9 @@ Neither proof substitutes for the other.
 
 The reflected schema uses proper alternatives: every enum-like choice in the substrate wire is a
 Dhall union rather than `Text` refined after decode, and every quantity is `Natural` rather than
-`Integer`. The union-typed fields are `runtimeMode` (four wire positions), `daemonRole` (two),
-`pulsarConnectionMode`, engine-pool `subscription`, model `runtimeLane`, request-shape `fieldType`,
-engine-binding `adapterType`, and the `resource` and `source` fields inside the substrate limit
-record.
+`Integer`. The union-typed fields are `runtimeMode`, engine-pool `subscription`, and request-shape `fieldType`.
+The role union moved with the contract split: a daemon role is a fact about one box, so it is spelled
+on the machine contract (`machine.role`) rather than on the system contract every box shares.
 
 `adapterType` and `source` use domain types (`EngineAdapterType`, `PodMemoryLimitSource`) rather than
 raw `Text` refined by membership or non-blank checks. An unsupported adapter type and a blank
@@ -61,8 +60,9 @@ enforcer source are therefore not constructible terms.
 
 Two mechanical facts are load-bearing. A Dhall union alternative is a **label**, so the wire spelling
 is `AppleSilicon`, not `"apple-silicon"`; invalid legacy spellings receive a targeted diagnostic
-instead of a bare structural type error. `daemonRole` is the sharpest case because its invalid
-aliases (`frontend`, `cluster`, `host`) are values a union cannot express at all.
+instead of a bare structural type error, and so does every field the language has since retired —
+including `daemonRole`, whose invalid aliases (`frontend`, `cluster`, `host`) are values a union
+cannot express at all.
 `genericAutoWith` dispatches on a datatype's GHC-Generics shape, so a
 **single-constructor** mirror derives as a record rather than as a one-alternative union;
 `fieldType` needs an explicitly built union decoder, which the generate-then-decode round trip is

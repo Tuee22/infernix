@@ -59,6 +59,11 @@ module Infernix.Cluster
     loadClusterState,
     pulsarBootstrapLogIndicatesDirtyState,
     renderHelmValues,
+    renderKindConfig,
+    renderFleetMachineContracts,
+    clusterFleetEngineDeployments,
+    finalPhaseDeployments,
+    fleetSlotLabelKey,
     runPlaywrightPrepareEngine,
     runKubectlCompat,
     writeGeneratedKindConfig,
@@ -114,8 +119,9 @@ import Infernix.ClusterConfig
   )
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (renderGeneratedDemoConfigPayload, resolveInferenceMemoryBudget)
+import Infernix.DemoConfig (renderGeneratedDemoConfigPayload, resolveInferenceMemoryBudget, restampMachineContractPin)
 import Infernix.DemoConfig.Internal (decodeBootstrapDemoConfigFile, decodeDemoConfigFile)
+import Infernix.DhallSchema.Enums (daemonRoleToDhall)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Error
   ( InfernixError (ClusterStateDecodeFailure),
@@ -127,6 +133,7 @@ import Infernix.Error
 import Infernix.Evidence.Lease (Acquire (..), Lease, leasePayload, withLease)
 import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.HostConfig qualified as HostConfig
+import Infernix.MachineContract (SystemContractDigest, digestSystemContractFile, systemContractDigestText)
 import Infernix.Models
 import Infernix.ProcessIdentity
   ( ProcessBirthIdentity (..),
@@ -287,6 +294,8 @@ data ClusterUpInputs = ClusterUpInputs
     clusterUpPublishedCatalogPath :: FilePath,
     clusterUpConfigMapManifestPath :: FilePath,
     clusterUpMountedCatalogPath :: FilePath,
+    clusterUpEngineMemberIds :: [Text.Text],
+    clusterUpFleetMachineContracts :: [(Int, String)],
     clusterUpPayload :: Lazy.ByteString
   }
 
@@ -340,15 +349,55 @@ finalPhaseDeployments state =
     <> [deployment | clusterStateHasDemoUi state, deployment <- demoDeployments]
   where
     baseDeployments =
-      [ "deployment/infernix-coordinator",
-        "deployment/infernix-engine"
-      ]
+      ["deployment/infernix-coordinator"]
+        <> engineDeployments
         <> map (("deployment/infernix-engine-" <>) . Text.unpack) (perEngineDeploymentNames (clusterRuntimeMode state))
         <> [deployment | clusterServiceEnabled (clusterRuntimeMode state), deployment <- ["deployment/infernix-service"]]
+    -- Phase 8 Sprint 8.12: the fleet lane replaces the single shared engine
+    -- workload with one Deployment per machine, so the rollout wait list has to
+    -- name the machines the Kind topology was created for. A single-machine
+    -- deployment is unchanged.
+    engineDeployments =
+      case clusterFleetEngineDeployments state of
+        [] -> ["deployment/infernix-engine"]
+        fleetDeployments -> fleetDeployments
     demoDeployments =
       [ "deployment/infernix-demo",
         "deployment/infernix-keycloak"
       ]
+
+-- | Phase 8 Sprint 8.12 — the machines this cluster deploys an engine for.
+--
+-- Empty means the deployed single-node topology: one shared @infernix-engine@
+-- Deployment. It is empty for every one-machine contract and for every Apple
+-- deployment, because Apple engine members are host daemons rather than pods —
+-- a fleet there is two Macs, which the cluster does not deploy and must not
+-- pretend to.
+clusterFleetMachines :: ClusterState -> [(Int, Text.Text)]
+clusterFleetMachines state =
+  case clusterRuntimeMode state of
+    AppleSilicon -> []
+    _
+      | engineMachineCountValue (engineMachineCountFromMemberIds memberIds) <= 1 -> []
+      | otherwise -> zip [1 ..] memberIds
+  where
+    memberIds = clusterEngineMemberIds state
+
+-- | The Deployment names a fleet's machines are deployed under.
+--
+-- The name is keyed on the machine's slot rather than on its member id: a
+-- Deployment name has to leave room for the ReplicaSet and pod suffixes
+-- Kubernetes appends, and a member id is operator-facing text of unbounded
+-- length. The identity itself travels in the machine contract and in
+-- @--engine-name@, where its length costs nothing.
+clusterFleetEngineDeployments :: ClusterState -> [String]
+clusterFleetEngineDeployments state =
+  [ "deployment/" <> fleetEngineWorkloadName slot
+  | (slot, _memberIdValue) <- clusterFleetMachines state
+  ]
+
+fleetEngineWorkloadName :: Int -> String
+fleetEngineWorkloadName slot = "infernix-engine-m" <> show slot
 
 finalPhaseStatefulSets :: [String]
 finalPhaseStatefulSets =
@@ -1088,7 +1137,7 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
       "cluster-up"
       (retainedReplayLifecyclePhaseName replayPlan "discover-persistent-claims")
       "rendering Helm inputs and discovering durable claim roots"
-  claimDiscoveryValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) provisionalState (clusterUpPayload inputs) FinalPhase
+  claimDiscoveryValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) provisionalState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) FinalPhase
   claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
   discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
   discoveredRoutes <- discoverChartRoutesFile claimDiscoveryRenderedChartPath
@@ -1163,12 +1212,12 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
   configureRuntimeModeCluster paths runtimeMode
   now <- getCurrentTime
   let seedState = activeState {claims = platformClaimsForRuntime runtimeMode, updatedAt = now}
-  warmupValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) WarmupPhase
-  bootstrapValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) BootstrapPhase
-  harborFinalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) HarborFinalPhase
-  keycloakStorageValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) KeycloakStoragePhase
-  pulsarReadyValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) PulsarReadyPhase
-  finalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) FinalPhase
+  warmupValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) WarmupPhase
+  bootstrapValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) BootstrapPhase
+  harborFinalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) HarborFinalPhase
+  keycloakStorageValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) KeycloakStoragePhase
+  pulsarReadyValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) PulsarReadyPhase
+  finalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) FinalPhase
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
   when clusterCreated $
     putStrLn "cluster-up phase: preload-bootstrap-images - skipped broad pre-Harbor support-image preload; Harbor-first publication owns remaining images"
@@ -1383,13 +1432,39 @@ prepareClusterUpInputs paths runtimeMode = do
       configMapManifestPath = Config.publishedConfigMapManifestPath paths
       publicationPath = Config.publicationStatePath paths
       mountedCatalogPath = Config.watchedDemoConfigPath
-      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue Coordinator inferenceMemoryBudgetValue)
+      -- Phase 8 Sprint 8.12: publication regenerates the payload rather than
+      -- copying the operator's bytes, so it has to carry the operator's fleet
+      -- dimension across that regeneration. Read from the declared member ids,
+      -- which is the only place the generated contract records it.
+      publishedMachineCount =
+        engineMachineCountFromMemberIds (map engineMemberId (engineMembers generatedConfig))
+      payload =
+        Lazy.fromStrict
+          ( renderGeneratedDemoConfigPayload
+              paths
+              runtimeMode
+              publishedMachineCount
+              demoUiEnabledValue
+              inferenceMemoryBudgetValue
+          )
   createDirectoryIfMissing True (buildRoot paths)
   createDirectoryIfMissing True (takeDirectory publishedCatalogPath)
   createDirectoryIfMissing True (takeDirectory configMapManifestPath)
   createDirectoryIfMissing True (takeDirectory publicationPath)
   Lazy.writeFile publishedCatalogPath payload
   writeFile configMapManifestPath (renderConfigMapManifest payload)
+  -- Phase 8 Sprint 8.12: a fleet's pods cannot share the image-baked machine
+  -- contract — it is byte identical in every image, so it collides across
+  -- machines instead of discriminating them (Sprint 6.45's finding, applied to
+  -- the manifest rather than to the repo root). Each machine gets its own
+  -- generated contract naming exactly one member identity, pinned to the
+  -- contract this publication just wrote.
+  publishedDigest <- digestSystemContractFile publishedCatalogPath
+  fleetMachineContracts <-
+    renderFleetMachineContracts
+      paths
+      publishedDigest
+      (fleetMemberIdsForPublication runtimeMode (map engineMemberId (engineMembers generatedConfig)))
   pure
     ClusterUpInputs
       { clusterUpControlPlane = Config.controlPlaneContext paths,
@@ -1402,8 +1477,71 @@ prepareClusterUpInputs paths runtimeMode = do
         clusterUpPublishedCatalogPath = publishedCatalogPath,
         clusterUpConfigMapManifestPath = configMapManifestPath,
         clusterUpMountedCatalogPath = mountedCatalogPath,
+        clusterUpEngineMemberIds = map engineMemberId (engineMembers generatedConfig),
+        clusterUpFleetMachineContracts = fleetMachineContracts,
         clusterUpPayload = payload
       }
+
+-- | Phase 8 Sprint 8.12 — the members a publication has to write a machine
+-- contract for.
+--
+-- Only a fleet needs them. A one-machine deployment's pod reads the manifest
+-- baked into its image, which describes that one machine correctly precisely
+-- because there is one pod to bake it into; and an Apple deployment's engine is
+-- a host daemon reading the operator's own repo-root manifest.
+fleetMemberIdsForPublication :: RuntimeMode -> [Text.Text] -> [Text.Text]
+fleetMemberIdsForPublication runtimeMode memberIds =
+  case runtimeMode of
+    AppleSilicon -> []
+    _
+      | engineMachineCountValue (engineMachineCountFromMemberIds memberIds) <= 1 -> []
+      | otherwise -> memberIds
+
+-- | Render one machine contract per fleet member, keyed by machine slot.
+--
+-- The base is this process's own host manifest, which in the launcher is the
+-- image manifest the pods run with, so the filesystem and tool facts are
+-- already the ones a pod holds. Only the machine block is replaced, and it is
+-- replaced with a contract naming exactly one member — the shape
+-- [daemon_topology.md](documents/architecture/daemon_topology.md) specifies for
+-- a fleet, and the reason the pods can no longer collide on identity by
+-- construction rather than by convention.
+renderFleetMachineContracts ::
+  Paths -> SystemContractDigest -> [Text.Text] -> IO [(Int, String)]
+renderFleetMachineContracts _paths _publishedDigest [] = pure []
+renderFleetMachineContracts paths publishedDigest memberIds =
+  case Config.pathsHostConfig paths of
+    Nothing ->
+      ioError
+        ( userError
+            ( "a fleet publication needs this machine's host manifest to derive the"
+                <> " per-machine contracts from, and none was discovered at "
+                <> Config.hostConfigPath paths
+                <> "; run `infernix init` first"
+            )
+        )
+    Just hostConfig ->
+      pure
+        [ (slot, machineContractText hostConfig memberIdValue)
+        | (slot, memberIdValue) <- zip [1 ..] memberIds
+        ]
+  where
+    machineContractText hostConfig memberIdValue =
+      LazyChar8.unpack
+        ( HostConfig.encodeHostConfig
+            hostConfig
+              { HostConfig.hostMachine =
+                  HostConfig.DeclaredMachine
+                    HostConfig.MachineNode
+                      { HostConfig.machineRole = daemonRoleToDhall Engine,
+                        HostConfig.machineMembers = [memberIdValue],
+                        HostConfig.machineModelCacheQuotaBytes =
+                          fromInteger defaultModelCacheQuotaBytes,
+                        HostConfig.machineSystemContractDigest =
+                          systemContractDigestText publishedDigest
+                      }
+              }
+        )
 
 clusterUpState :: ClusterOwner -> ClusterUpInputs -> RuntimeMode -> Bool -> Int -> Int -> [RouteInfo] -> [PersistentClaim] -> UTCTime -> ClusterState
 clusterUpState owner inputs runtimeMode clusterPresentValue edgePortValue harborPortValue routesValue claimsValue updatedAtValue =
@@ -1416,6 +1554,7 @@ clusterUpState owner inputs runtimeMode clusterPresentValue edgePortValue harbor
       storageClass = "infernix-manual",
       claims = claimsValue,
       clusterRuntimeMode = runtimeMode,
+      clusterEngineMemberIds = clusterUpEngineMemberIds inputs,
       kubeconfigPath = clusterUpKubeconfigPath inputs,
       generatedDemoConfigPath = clusterUpDemoConfigPath inputs,
       publishedDemoConfigPath = clusterUpPublishedCatalogPath inputs,
@@ -2584,6 +2723,7 @@ reconcileLegacyHarnessBackup paths = do
     runtimePresent <- doesFileExist runtimeConfig
     when runtimePresent (removeFile runtimeConfig)
     renameFile backupConfig runtimeConfig
+    restampMachineContractPin paths
 
 recoverHarnessConfigTransaction ::
   Subprocess.BoundedCommandActivitiesQuiescent ->
@@ -2608,6 +2748,9 @@ recoverHarnessConfigTransaction activitiesQuiescent paths reservation = do
         (_, True) -> do
           when runtimePresent (removeFile runtimeConfig)
           renameFile backupConfig runtimeConfig
+          -- Phase 8 Sprint 8.11: recovery restores the operator's system
+          -- contract, so it re-points this machine's pin at it too.
+          restampMachineContractPin paths
           pure markRestored
         (True, False) ->
           pure markRestored
@@ -3337,7 +3480,13 @@ runPlaywrightPrepareEngine requestedModelId =
     demoConfig <- decodeDemoConfigFile (generatedDemoConfigPath state)
     case configRuntimeMode demoConfig of
       AppleSilicon -> pure ()
-      LinuxCpu -> scale "deployment/infernix-engine" 1
+      LinuxCpu ->
+        -- Phase 8 Sprint 8.12: a fleet deploys one Deployment per machine and
+        -- no shared `infernix-engine`, so the browser preparation scales every
+        -- machine rather than a single workload that would not exist.
+        case clusterFleetEngineDeployments state of
+          [] -> scale "deployment/infernix-engine" 1
+          fleetDeployments -> forM_ fleetDeployments (`scale` 1)
       LinuxGpu -> do
         model <-
           maybe
@@ -3790,7 +3939,8 @@ createKindClusterNodes paths runtimeMode = case runtimeMode of
   _ -> go
   where
     go candidatePort harborPortCandidate pulsarHttpPortCandidate = do
-      configPath <- writeGeneratedKindConfig paths runtimeMode candidatePort harborPortCandidate pulsarHttpPortCandidate
+      machineCount <- resolveClusterEngineMachineCount paths runtimeMode
+      configPath <- writeGeneratedKindConfig paths runtimeMode machineCount candidatePort harborPortCandidate pulsarHttpPortCandidate
       result <- withKindScratchKubeconfig paths runtimeMode $ \scratchKubeconfig ->
         tryClusterCommand
           paths
@@ -3813,7 +3963,8 @@ createLinuxGpuCluster paths = go
   where
     go candidatePort harborPortCandidate pulsarHttpPortCandidate = do
       ensureLinuxGpuHostPrerequisites paths
-      configPath <- writeGeneratedKindConfig paths LinuxGpu candidatePort harborPortCandidate pulsarHttpPortCandidate
+      machineCount <- resolveClusterEngineMachineCount paths LinuxGpu
+      configPath <- writeGeneratedKindConfig paths LinuxGpu machineCount candidatePort harborPortCandidate pulsarHttpPortCandidate
       result <- withKindScratchKubeconfig paths LinuxGpu $ \scratchKubeconfig ->
         tryClusterCommand
           paths
@@ -4220,6 +4371,10 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
             storageClass = "infernix-manual",
             claims = claimInventory,
             clusterRuntimeMode = runtimeMode,
+            -- Namespace and storage-class application is fleet independent, so
+            -- this transient state names no machines rather than restating a
+            -- list nothing here reads.
+            clusterEngineMemberIds = [],
             kubeconfigPath = Config.generatedKubeconfigPath paths,
             generatedDemoConfigPath = Config.generatedDemoConfigPath paths,
             publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths,
@@ -6244,8 +6399,18 @@ reconcilePersistentVolumes state =
                 }
         )
 
-writeGeneratedKindConfig :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO FilePath
-writeGeneratedKindConfig paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue = do
+-- | Phase 8 Sprint 8.12: the Kind topology follows the system contract's fleet
+-- rather than a constant, so the machine count is an argument. A fleet needs one
+-- worker node per engine machine, because a machine is what the contract counts
+-- and a node is what a machine is on this lane; anything else would put two
+-- machines' engines on one box and reproduce exactly the double-admission the
+-- fleet contract exists to prevent.
+--
+-- The count is passed in rather than read here: this function writes a file
+-- from facts it is given, and the contract that carries the fleet is resolved
+-- by the lifecycle step that has already validated it.
+writeGeneratedKindConfig :: Paths -> RuntimeMode -> EngineMachineCount -> Int -> Int -> Int -> IO FilePath
+writeGeneratedKindConfig paths runtimeMode machineCount edgePortValue harborPortValue pulsarHttpPortValue = do
   let outputPath =
         buildRoot paths
           </> "kind"
@@ -6254,8 +6419,21 @@ writeGeneratedKindConfig paths runtimeMode edgePortValue harborPortValue pulsarH
   usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
   writeRegistryHostsConfig paths runtimeMode harborPortValue
   hostRegistryHostsDirectory <- resolveHostRegistryHostsRoot paths runtimeMode
-  writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue hostKindRoot hostRegistryHostsDirectory usesHostBindMounts))
+  writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode machineCount edgePortValue harborPortValue pulsarHttpPortValue hostKindRoot hostRegistryHostsDirectory usesHostBindMounts))
   pure outputPath
+
+-- | The fleet size the generated system contract declares.
+--
+-- Read from the contract rather than passed down from the caller because the
+-- Kind topology is created before any cluster state exists, and the contract is
+-- the only thing that has already been written at that point. It is required
+-- to exist: @cluster up@ fails fast without it (Sprint 8.3), so an absent
+-- contract is a named refusal here rather than a silent single-machine default.
+resolveClusterEngineMachineCount :: Paths -> RuntimeMode -> IO EngineMachineCount
+resolveClusterEngineMachineCount paths runtimeMode = do
+  generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
+  generatedConfig <- decodeBootstrapDemoConfigFile generatedConfigPath
+  pure (engineMachineCountFromMemberIds (map engineMemberId (engineMembers generatedConfig)))
 
 -- | Phase 3 follow-on (2026-05-29): the containerd registry-hosts
 -- namespace is keyed on @localhost:<host-port>@ — the same address
@@ -6367,8 +6545,8 @@ resolveHostRepoPathFromNormalized hostRepoRoot normalizedRepoRoot repoRootPrefix
         Just relativePath -> hostRepoRoot </> relativePath
         Nothing -> normalizedContainerPath
 
-renderKindConfig :: Paths -> RuntimeMode -> Int -> Int -> Int -> FilePath -> FilePath -> Bool -> String
-renderKindConfig paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue hostKindRoot registryHostsDirectory usesHostBindMounts =
+renderKindConfig :: Paths -> RuntimeMode -> EngineMachineCount -> Int -> Int -> Int -> FilePath -> FilePath -> Bool -> String
+renderKindConfig paths runtimeMode machineCount edgePortValue harborPortValue pulsarHttpPortValue hostKindRoot registryHostsDirectory usesHostBindMounts =
   unlines (preamble <> containerdConfigPatchesBlock <> ["nodes:"] <> nodeBlock "control-plane" initLabels edgePortLines <> workerNodeBlocks)
   where
     preamble =
@@ -6396,8 +6574,15 @@ renderKindConfig paths runtimeMode edgePortValue harborPortValue pulsarHttpPortV
       ]
     initLabels = controlPlaneRuntimeModeLabels runtimeMode
     workerLabels = runtimeModeLabels runtimeMode
+    -- Every worker carries its fleet slot, including the single-worker
+    -- topology: the label is what a fleet Deployment's `nodeSelector` names,
+    -- and a topology that only grows the label when a fleet appears would make
+    -- the two shapes differ in more than their size.
     workerNodeBlocks =
-      concat (replicate (kindWorkerCount runtimeMode) (nodeBlock "worker" workerLabels []))
+      concat
+        [ nodeBlock "worker" (workerLabels <> "," <> fleetSlotLabelKey <> "=" <> show slot) []
+        | slot <- [1 .. kindWorkerCount runtimeMode machineCount]
+        ]
     edgePortLines =
       [ "    extraPortMappings:",
         "      - containerPort: 30090",
@@ -6466,8 +6651,13 @@ renderKindConfig paths runtimeMode edgePortValue harborPortValue pulsarHttpPortV
 -- counts: the sprint edited the tracked @kind/cluster-linux-cpu.yaml@, but a
 -- Kind cluster is created from 'renderKindConfig', so the tracked file is a
 -- reference document and this function is what deploys.
-kindWorkerCount :: RuntimeMode -> Int
-kindWorkerCount _ = 1
+kindWorkerCount :: RuntimeMode -> EngineMachineCount -> Int
+kindWorkerCount runtimeMode machineCount =
+  case runtimeMode of
+    -- Apple engine members are host daemons, so an Apple fleet is a second Mac
+    -- rather than a second node: the cluster's worker count is unaffected by it.
+    AppleSilicon -> 1
+    _ -> max 1 (engineMachineCountValue machineCount)
 
 -- | Phase 2 Sprint 2.13: legacy host-repo-root env check
 -- retired. The supported control-plane-context detector is the typed
@@ -7261,6 +7451,19 @@ directoryHasEntries directory = do
     then not . null <$> listDirectory directory
     else pure False
 
+-- | The node label a fleet machine's engine Deployment is pinned by.
+--
+-- Phase 3 Sprint 3.16 retired the engine pod anti-affinity because it expressed
+-- a correctness rule as a scheduling preference the scheduler could leave
+-- unsatisfied. This is the opposite shape and the distinction is the whole
+-- reason a @nodeSelector@ is acceptable here: it does not express the
+-- one-engine-per-machine rule at all — the broker-side member claim does — it
+-- places a machine's declared identity on the node that is that machine. A slot
+-- whose node is gone leaves its engine `Pending`, which is the honest rendering
+-- of "that machine is down", not a silently unsatisfied invariant.
+fleetSlotLabelKey :: String
+fleetSlotLabelKey = "infernix.fleet/slot"
+
 runtimeModeLabels :: RuntimeMode -> String
 runtimeModeLabels runtimeMode = case runtimeMode of
   AppleSilicon -> "infernix.runtime/mode=apple-silicon"
@@ -7323,12 +7526,19 @@ currentKindContainerPort paths runtimeMode containerSpec = do
             portText -> readMaybe portText
         [] -> Nothing
 
-writeHelmValuesFile :: Paths -> ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> IO FilePath
-writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
+writeHelmValuesFile ::
+  Paths ->
+  ControlPlaneContext ->
+  ClusterState ->
+  Lazy.ByteString ->
+  [(Int, String)] ->
+  HelmDeployPhase ->
+  IO FilePath
+writeHelmValuesFile paths controlPlane state demoConfigPayload fleetMachineContracts deployPhase = do
   let outputPath =
         buildRoot paths
           </> ("helm-values-" <> phaseSuffix deployPhase <> "-" <> Text.unpack (runtimeModeId (clusterRuntimeMode state)) <> ".yaml")
-  writeFile outputPath (renderHelmValues paths controlPlane state demoConfigPayload deployPhase)
+  writeFile outputPath (renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContracts deployPhase)
   pure outputPath
   where
     phaseSuffix phaseValue = case phaseValue of
@@ -7356,8 +7566,15 @@ discoverPersistentClaims :: Paths -> FilePath -> IO [PersistentClaim]
 discoverPersistentClaims _paths =
   discoverChartClaimsFile
 
-renderHelmValues :: Paths -> ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> String
-renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
+renderHelmValues ::
+  Paths ->
+  ControlPlaneContext ->
+  ClusterState ->
+  Lazy.ByteString ->
+  [(Int, String)] ->
+  HelmDeployPhase ->
+  String
+renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContracts deployPhase =
   unlines
     ( [ "runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)),
         "controlPlaneContext: " <> show (controlPlaneContextId controlPlane),
@@ -7373,7 +7590,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
         "harbor:",
         "  externalURL: \"http://localhost:" <> show (harborPort state) <> "\"",
         "demoConfig:",
-        "  fileName: infernix-substrate.dhall",
+        "  fileName: infernix.dhall",
         "  catalogPayload: |",
         indentBlock 4 (LazyChar8.unpack demoConfigPayload),
         "demo:",
@@ -7413,6 +7630,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
              "    pullPolicy: IfNotPresent"
            ]
         <> engineResourceValueLines
+        <> fleetEngineValueLines
         <> [ "  perEngine:",
              "    enabled: " <> yamlBool (not (null perEngineNames)),
              "    replicaCount: " <> show (repoPerEngineReplicaCount deployPhase),
@@ -7421,6 +7639,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
              "    images:"
            ]
         <> perEngineImageValueLines
+        <> machineContractValueLines
         <> routeHelmValues demoUiEnabledValue
         <> unsupportedMonitoringOverrides
         <> clusterConfigValueLines
@@ -7432,6 +7651,39 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
     )
   where
     demoUiEnabledValue = clusterStateHasDemoUi state
+    -- Phase 8 Sprint 8.12: the fleet block. `engine.replicaCount` is already
+    -- phase-gated to one engine process; when a fleet is deployed that single
+    -- shared workload is replaced by one Deployment per machine, each pinned to
+    -- its own node and each started with the member identity its own machine
+    -- contract declares.
+    fleetMachines = clusterFleetMachines state
+    fleetEngineValueLines =
+      [ "  fleet:",
+        "    enabled: " <> yamlBool (not (null fleetMachines)),
+        -- Phase-gated for the same reason the shared engine count is: an engine
+        -- consumes Pulsar topics, so no engine — fleet or not — may be asked for
+        -- before the phase that brings Pulsar up.
+        "    replicaCount: " <> show (if null fleetMachines then 0 else repoWorkloadEngineReplicaCount deployPhase),
+        "    slotLabel: " <> fleetSlotLabelKey,
+        "    machines:"
+      ]
+        <> concat
+          [ [ "      - slot: " <> show (show slot),
+              "        name: " <> show (Text.unpack memberIdValue)
+            ]
+          | (slot, memberIdValue) <- fleetMachines
+          ]
+    machineContractValueLines =
+      [ "machineContracts:",
+        "  name: infernix-machine-contracts",
+        "  bodies:"
+      ]
+        <> concat
+          [ [ "    m" <> show slot <> ".dhall: |",
+              indentBlock 6 contractBody
+            ]
+          | (slot, contractBody) <- fleetMachineContracts
+          ]
     -- Phase 8 Sprint 8.4: the binary renders the `cluster.dhall`
     -- ConfigMap body and the `InfernixSecrets.dhall` manifest as strings;
     -- the chart templates only `nindent` these values. No `let`/schema
@@ -7585,8 +7837,11 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
     -- two copies of every loaded weight, and each admits work independently
     -- against the machine's whole observed capacity. Scale the fleet by
     -- adding machines, never by raising this number.
-    repoEngineReplicaCount :: HelmDeployPhase -> Int
-    repoEngineReplicaCount phaseValue = case (phaseValue, clusterRuntimeMode state) of
+    -- \| One engine process per machine, held at zero until Pulsar is up.
+    -- Shared by the single shared engine workload and by each fleet machine's
+    -- own Deployment, so the two cannot drift on when an engine may start.
+    repoWorkloadEngineReplicaCount :: HelmDeployPhase -> Int
+    repoWorkloadEngineReplicaCount phaseValue = case (phaseValue, clusterRuntimeMode state) of
       (WarmupPhase, _) -> 0
       (BootstrapPhase, _) -> 0
       (HarborFinalPhase, _) -> 0
@@ -7594,6 +7849,13 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
       (PulsarReadyPhase, _) -> 0
       (FinalPhase, AppleSilicon) -> 0
       (FinalPhase, _) -> 1
+    -- Phase 8 Sprint 8.12: a fleet renders one Deployment per machine and no
+    -- shared engine workload, so the shared count is zero rather than a value
+    -- naming a workload the overlay does not render.
+    repoEngineReplicaCount :: HelmDeployPhase -> Int
+    repoEngineReplicaCount phaseValue
+      | null fleetMachines = repoWorkloadEngineReplicaCount phaseValue
+      | otherwise = 0
     -- Phase 4 Sprint 4.17 follow-on (2026-06-11): the repo-owned
     -- linux-gpu lifecycle targets the documented single-worker,
     -- single-GPU Kind lane. The static chart still supports explicit

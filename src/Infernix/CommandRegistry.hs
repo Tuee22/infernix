@@ -22,8 +22,8 @@ import Text.Read (readMaybe)
 data Command
   = ShowRootHelp
   | ShowTopicHelp String
-  | InitCommand (Maybe RuntimeMode) (Maybe Bool) Bool Bool
-  | TestInitCommand (Maybe RuntimeMode) (Maybe Bool)
+  | InitCommand (Maybe RuntimeMode) (Maybe Bool) (Maybe Int) Bool Bool
+  | TestInitCommand (Maybe RuntimeMode) (Maybe Bool) (Maybe Int)
   | ServiceCommand (Maybe DaemonRole) (Maybe String) (Maybe FilePath)
   | ClusterUpCommand
   | ClusterDownCommand
@@ -48,7 +48,7 @@ data Command
   | InternalDiscoverClaimsCommand FilePath
   | InternalDiscoverHarborOverlayCommand FilePath
   | InternalPublishChartImagesCommand FilePath FilePath
-  | InternalMaterializeSubstrateCommand RuntimeMode Bool Bool
+  | InternalMaterializeSubstrateCommand RuntimeMode (Maybe Int) Bool Bool
   | InternalMaterializeMetalEnginesCommand
   | InternalMaterializeLinuxNativeEnginesCommand
   | InternalDemoConfigLoadCommand FilePath
@@ -166,43 +166,68 @@ initCommandFamily =
 initCommandSpec :: CommandSpec
 initCommandSpec =
   CommandSpec
-    { commandUsageSuffix = "init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false] [--force] [--if-missing]",
-      commandDescription = "writes the runtime config `./infernix.dhall` and host manifest `./infernix-host.dhall`. Fails fast if `./infernix.dhall` already exists unless `--force`; `--if-missing` makes an existing config a no-op. No other command auto-generates config.",
+    { commandUsageSuffix = "init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false] [--engine-machines N] [--force] [--if-missing]",
+      commandDescription = "writes the runtime config `./infernix.dhall` and host manifest `./infernix-host.dhall`. Fails fast if `./infernix.dhall` already exists unless `--force`; `--if-missing` makes an existing config a no-op. `--engine-machines` declares how many engine machines the fleet has (default 1, one engine process per machine). No other command auto-generates config.",
       commandParse = \case
-        ("init" : rest) -> parseInitFlags Nothing Nothing False False rest
+        ("init" : rest) -> parseInitFlags Nothing Nothing Nothing False False rest
         _ -> Nothing
     }
 
-parseInitFlags :: Maybe RuntimeMode -> Maybe Bool -> Bool -> Bool -> [String] -> Maybe Command
-parseInitFlags mode demoUi force ifMissing args =
+parseInitFlags ::
+  Maybe RuntimeMode -> Maybe Bool -> Maybe Int -> Bool -> Bool -> [String] -> Maybe Command
+parseInitFlags mode demoUi engineMachines force ifMissing args =
   case args of
-    [] -> Just (InitCommand mode demoUi force ifMissing)
+    [] -> Just (InitCommand mode demoUi engineMachines force ifMissing)
     ("--runtime-mode" : rawMode : rest) ->
-      parseRuntimeModeArg rawMode >>= \parsedMode -> parseInitFlags (Just parsedMode) demoUi force ifMissing rest
+      parseRuntimeModeArg rawMode
+        >>= \parsedMode -> parseInitFlags (Just parsedMode) demoUi engineMachines force ifMissing rest
     ("--demo-ui" : rawDemoUi : rest) ->
-      parseDemoUiArg rawDemoUi >>= \parsedDemoUi -> parseInitFlags mode (Just parsedDemoUi) force ifMissing rest
-    ("--force" : rest) -> parseInitFlags mode demoUi True ifMissing rest
-    ("--if-missing" : rest) -> parseInitFlags mode demoUi force True rest
+      parseDemoUiArg rawDemoUi
+        >>= \parsedDemoUi -> parseInitFlags mode (Just parsedDemoUi) engineMachines force ifMissing rest
+    ("--engine-machines" : rawMachines : rest) ->
+      parseEngineMachinesArg rawMachines
+        >>= \parsedMachines -> parseInitFlags mode demoUi (Just parsedMachines) force ifMissing rest
+    ("--force" : rest) -> parseInitFlags mode demoUi engineMachines True ifMissing rest
+    ("--if-missing" : rest) -> parseInitFlags mode demoUi engineMachines force True rest
+    _ -> Nothing
+
+-- | Phase 8 Sprint 8.12 — parse @--engine-machines@ as a plain positive
+-- integer.
+--
+-- The domain check — whether the resolved runtime mode supports a fleet of that
+-- size — belongs to 'Infernix.Models.engineMachineCountForMode' and runs where
+-- the mode is resolved. Keeping the two apart is what lets an unsupported fleet
+-- fail with a named refusal that says why, instead of with usage text that says
+-- only that something was wrong.
+parseEngineMachinesArg :: String -> Maybe Int
+parseEngineMachinesArg rawMachines =
+  case reads rawMachines of
+    [(parsed, "")] | parsed >= 1 -> Just parsed
     _ -> Nothing
 
 testInitCommandSpec :: CommandSpec
 testInitCommandSpec =
   CommandSpec
-    { commandUsageSuffix = "test init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false]",
-      commandDescription = "writes the thin `./infernix.test.dhall` the test harness reads to generate the run's `./infernix.dhall`",
+    { commandUsageSuffix = "test init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false] [--engine-machines N]",
+      commandDescription = "writes the thin `./infernix.test.dhall` the test harness reads to generate the run's `./infernix.dhall`. `--engine-machines` declares the run's fleet size (default 1).",
       commandParse = \case
-        ("test" : "init" : rest) -> parseTestInitFlags Nothing Nothing rest
+        ("test" : "init" : rest) -> parseTestInitFlags Nothing Nothing Nothing rest
         _ -> Nothing
     }
 
-parseTestInitFlags :: Maybe RuntimeMode -> Maybe Bool -> [String] -> Maybe Command
-parseTestInitFlags mode demoUi args =
+parseTestInitFlags :: Maybe RuntimeMode -> Maybe Bool -> Maybe Int -> [String] -> Maybe Command
+parseTestInitFlags mode demoUi engineMachines args =
   case args of
-    [] -> Just (TestInitCommand mode demoUi)
+    [] -> Just (TestInitCommand mode demoUi engineMachines)
     ("--runtime-mode" : rawMode : rest) ->
-      parseRuntimeModeArg rawMode >>= \parsedMode -> parseTestInitFlags (Just parsedMode) demoUi rest
+      parseRuntimeModeArg rawMode
+        >>= \parsedMode -> parseTestInitFlags (Just parsedMode) demoUi engineMachines rest
     ("--demo-ui" : rawDemoUi : rest) ->
-      parseDemoUiArg rawDemoUi >>= \parsedDemoUi -> parseTestInitFlags mode (Just parsedDemoUi) rest
+      parseDemoUiArg rawDemoUi
+        >>= \parsedDemoUi -> parseTestInitFlags mode (Just parsedDemoUi) engineMachines rest
+    ("--engine-machines" : rawMachines : rest) ->
+      parseEngineMachinesArg rawMachines
+        >>= \parsedMachines -> parseTestInitFlags mode demoUi (Just parsedMachines) rest
     _ -> Nothing
 
 serviceCommandFamily :: CommandFamily
@@ -220,10 +245,11 @@ serviceCommandFamily =
 -- env var (Phase 4 Sprint 4.13): coordinator + engine pods each pass
 -- the matching role via chart-supplied `args`, the webapp Deployment
 -- passes `--role webapp`, while host-native flows omit the flag and
--- fall back to the active runtime config's `daemonRole` field.
+-- fall back to this machine's contract (`machine.role`).
 -- Engine pods or host daemons may pass
--- `--engine-name` to select a stable engine member id from the derived
--- pool/member graph. `--config` is a typed path override used by
+-- `--engine-name` to name one of the engine member identities this
+-- machine's contract declares (Phase 8 Sprint 8.11); a name outside that
+-- set is refused rather than adopted. `--config` is a typed path override used by
 -- targeted validation harnesses and operator diagnostics that need an
 -- isolated runtime config.
 serviceCommandSpec :: CommandSpec
@@ -231,7 +257,7 @@ serviceCommandSpec =
   CommandSpec
     { commandUsageSuffix = "service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]",
       commandDescription =
-        "starts one long-running role from the single infernix binary. Coordinator and engine roles consume the effective runtime-config request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the runtime config's `daemonRole` field for split Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit runtime config.",
+        "starts one long-running role from the single infernix binary. Coordinator and engine roles consume the effective runtime-config request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the machine contract's `machine.role` for split Deployments, `--engine-name` selects one of the engine member identities this machine declares, and `--config` points the daemon at an explicit runtime config.",
       commandParse = parseServiceCommand
     }
 
@@ -437,25 +463,39 @@ internalCommandFamily =
 materializeSubstrateCommand :: CommandSpec
 materializeSubstrateCommand =
   CommandSpec
-    { commandUsageSuffix = "internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--empty-models]",
+    { commandUsageSuffix = "internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--engine-machines N] [--empty-models]",
       commandDescription = "writes the generated runtime config and prepares the closed per-engine Python framework plan for one explicit substrate id",
       commandParse = \case
-        ["internal", "materialize-substrate", rawRuntimeMode] ->
-          (\runtimeMode -> InternalMaterializeSubstrateCommand runtimeMode True False)
-            <$> parseRuntimeModeArg rawRuntimeMode
-        ["internal", "materialize-substrate", rawRuntimeMode, "--empty-models"] ->
-          (\runtimeMode -> InternalMaterializeSubstrateCommand runtimeMode True True)
-            <$> parseRuntimeModeArg rawRuntimeMode
-        ["internal", "materialize-substrate", rawRuntimeMode, "--demo-ui", rawDemoUiEnabled] ->
-          (\runtimeMode demoUiEnabledValue -> InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue False)
-            <$> parseRuntimeModeArg rawRuntimeMode
-            <*> parseDemoUiArg rawDemoUiEnabled
-        ["internal", "materialize-substrate", rawRuntimeMode, "--demo-ui", rawDemoUiEnabled, "--empty-models"] ->
-          (\runtimeMode demoUiEnabledValue -> InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue True)
-            <$> parseRuntimeModeArg rawRuntimeMode
-            <*> parseDemoUiArg rawDemoUiEnabled
+        ("internal" : "materialize-substrate" : rawRuntimeMode : rest) ->
+          parseRuntimeModeArg rawRuntimeMode
+            >>= \runtimeMode -> parseMaterializeSubstrateFlags runtimeMode True Nothing False rest
         _ -> Nothing
     }
+
+-- | Phase 8 Sprint 8.12 — @--engine-machines@ reaches the lane-facing generator,
+-- not only @init@.
+--
+-- @init@ deliberately discovers its paths /without/ an existing host manifest,
+-- because it is the migration boundary that replaces one. That makes it the
+-- wrong entry point inside the Linux launcher image, where the execution
+-- context a manifest records — @outer-container@ — is exactly the fact a
+-- context-free regeneration loses. The image and the fleet lane materialize
+-- through this command instead, which resolves its paths from the manifest it
+-- regenerates beside, so the context survives.
+parseMaterializeSubstrateFlags ::
+  RuntimeMode -> Bool -> Maybe Int -> Bool -> [String] -> Maybe Command
+parseMaterializeSubstrateFlags runtimeMode demoUi engineMachines emptyModels args =
+  case args of
+    [] -> Just (InternalMaterializeSubstrateCommand runtimeMode engineMachines demoUi emptyModels)
+    ("--demo-ui" : rawDemoUi : rest) ->
+      parseDemoUiArg rawDemoUi
+        >>= \parsedDemoUi -> parseMaterializeSubstrateFlags runtimeMode parsedDemoUi engineMachines emptyModels rest
+    ("--engine-machines" : rawMachines : rest) ->
+      parseEngineMachinesArg rawMachines
+        >>= \parsedMachines -> parseMaterializeSubstrateFlags runtimeMode demoUi (Just parsedMachines) emptyModels rest
+    ("--empty-models" : rest) ->
+      parseMaterializeSubstrateFlags runtimeMode demoUi engineMachines True rest
+    _ -> Nothing
 
 pulsarRoundTripCommand :: CommandSpec
 pulsarRoundTripCommand =

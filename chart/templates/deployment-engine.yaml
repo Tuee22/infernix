@@ -20,7 +20,7 @@ Scale the fleet by adding machines. On a multi-GPU node the single
 scheduled engine claims its device via `nvidia.com/gpu`; per-device model
 assignment is owned by the active substrate `.dhall`.
 */}}
-{{- if and .Values.daemonSplit.enabled .Values.engine.enabled }}
+{{- if and .Values.daemonSplit.enabled .Values.engine.enabled (not .Values.engine.fleet.enabled) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -243,5 +243,145 @@ spec:
         - name: model-cache
           emptyDir:
             sizeLimit: {{ $root.Values.engine.modelCache.sizeLimit }}
+{{- end }}
+{{- end }}
+{{/*
+Phase 8 Sprint 8.12: the fleet lane's per-machine engine Deployments.
+
+Two shapes were candidates for "one engine per machine, and the machine knows
+which member it is". A `DaemonSet` makes one pod per node true by construction,
+but it cannot carry a *declared* identity: every pod of a DaemonSet is
+identical, so a pod could only learn which machine it is from the downward API —
+an `env:` block, which the no-environment-variables doctrine forbids in
+infernix-owned templates — or from a Kubernetes API read, which makes identity
+discovered rather than declared and so contradicts the fail-closed member-
+identity rule in `documents/architecture/daemon_topology.md`. Generated
+per-machine Deployments carry `--engine-name` as a compiled constant, and each
+mounts its own binary-rendered machine contract. That is the shape chosen here.
+
+The `Pending` failure mode Sprint 3.16 rejected for the engine pod anti-affinity
+is a different thing from the `nodeSelector` below, and the difference is why
+this is acceptable. Anti-affinity expressed the one-engine-per-machine
+*correctness rule* as a constraint the scheduler could leave unsatisfied. Here
+the correctness rule is carried by the broker-side member claim instead, and the
+selector only places a declared machine on the node that is that machine: a slot
+whose node is gone leaves that machine's engine `Pending`, which is the honest
+rendering of a machine being down.
+*/}}
+{{- $fleetRoot := . }}
+{{- if and .Values.daemonSplit.enabled .Values.engine.enabled .Values.engine.fleet.enabled }}
+{{- range $machine := .Values.engine.fleet.machines }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infernix-engine-m{{ $machine.slot }}
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: infernix-engine-m{{ $machine.slot }}
+    app.kubernetes.io/component: engine
+    infernix.io/engine-member: {{ $machine.name | quote }}
+spec:
+  replicas: {{ $fleetRoot.Values.engine.fleet.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-engine-m{{ $machine.slot }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-engine-m{{ $machine.slot }}
+        app.kubernetes.io/component: engine
+        infernix.io/engine-member: {{ $machine.name | quote }}
+    spec:
+      nodeSelector:
+        {{ $fleetRoot.Values.engine.fleet.slotLabel }}: {{ $machine.slot | quote }}
+      containers:
+        - name: infernix-engine
+          image: "{{ $fleetRoot.Values.engine.image.repository }}:{{ $fleetRoot.Values.engine.image.tag }}"
+          imagePullPolicy: {{ $fleetRoot.Values.engine.image.pullPolicy }}
+          command:
+{{ toYaml $fleetRoot.Values.engine.command | nindent 12 }}
+          args:
+            - service
+            - --role
+            - engine
+            - --engine-name
+            - {{ $machine.name | quote }}
+          resources:
+            limits:
+{{- with $fleetRoot.Values.engine.resources.limits }}
+{{ toYaml . | nindent 14 }}
+{{- end }}
+            requests:
+{{- with $fleetRoot.Values.engine.resources.requests }}
+{{ toYaml . | nindent 14 }}
+{{- end }}
+          volumeMounts:
+            - name: cluster-config
+              mountPath: /opt/infernix/cluster.dhall
+              subPath: cluster.dhall
+              readOnly: true
+            - name: cluster-secrets
+              mountPath: /etc/infernix/secrets
+              readOnly: true
+            - name: demo-config
+              mountPath: "{{ $fleetRoot.Values.demoConfig.mountPath }}/{{ $fleetRoot.Values.demoConfig.fileName }}"
+              subPath: {{ $fleetRoot.Values.demoConfig.fileName }}
+              readOnly: true
+            - name: publication-state
+              mountPath: "{{ $fleetRoot.Values.demoConfig.mountPath }}/{{ $fleetRoot.Values.publication.fileName }}"
+              subPath: {{ $fleetRoot.Values.publication.fileName }}
+              readOnly: true
+            # This machine's own contract, at the path manifest discovery
+            # prefers over the byte-identical image-baked default.
+            - name: machine-contract
+              mountPath: /workspace/infernix-host.dhall
+              subPath: m{{ $machine.slot }}.dhall
+              readOnly: true
+            # The published system contract at the canonical repo-root path as
+            # well as at its mount path, so this pod holds a real generated
+            # *pair*. Without it the machine contract — pinned to the contract
+            # this deployment published — would be checked against the
+            # image-baked contract every image carries, and a fleet pod would
+            # refuse itself over a disagreement that is an artefact of the image
+            # rather than a fact about the fleet.
+            - name: demo-config
+              mountPath: /workspace/infernix.dhall
+              subPath: {{ $fleetRoot.Values.demoConfig.fileName }}
+              readOnly: true
+            - name: engine-data
+              mountPath: /workspace/.data
+            - name: model-cache
+              mountPath: /model-cache
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -lc
+                - test -f /workspace/.data/runtime/service/subscription.ready
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 120
+      volumes:
+        - name: cluster-config
+          configMap:
+            name: {{ $fleetRoot.Values.clusterConfig.name }}
+        - name: cluster-secrets
+          secret:
+            secretName: infernix-cluster-secrets
+        - name: demo-config
+          configMap:
+            name: {{ $fleetRoot.Values.demoConfig.name }}
+        - name: publication-state
+          configMap:
+            name: {{ $fleetRoot.Values.publication.name }}
+        - name: machine-contract
+          configMap:
+            name: {{ $fleetRoot.Values.machineContracts.name }}
+        - name: engine-data
+          emptyDir: {}
+        - name: model-cache
+          emptyDir:
+            sizeLimit: {{ $fleetRoot.Values.engine.modelCache.sizeLimit }}
 {{- end }}
 {{- end }}

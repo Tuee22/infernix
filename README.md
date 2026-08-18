@@ -889,6 +889,16 @@ this section is an orientation summary.
 - the operator runtime config lives at repo-root `./infernix.dhall`; `infernix init` creates it
   together with `./infernix-host.dhall`, while `infernix test init` creates
   `./infernix.test.dhall` for the reservation-gated test harness
+- those two generated files are a contract pair. `./infernix.dhall` is the **system contract** every
+  machine in a fleet holds identically — the substrate mode and the pool graph, with each pool
+  carrying the model descriptors it owns. The `machine` block of `./infernix-host.dhall` is this
+  box's **machine contract** — its default daemon role (which `infernix service --role` overrides
+  per process), the engine member identities it may adopt, its model-cache quota, and the content
+  digest of the system contract it was generated against. The generator writes both together, so a
+  system-contract change moves the digest and re-stamps the manifest; a daemon paired with a
+  contract it has never seen refuses to start and names `infernix init --force`. The same digest is
+  registered in the Pulsar topic's own properties, and a daemon whose digest disagrees with the
+  registered value refuses to start
 - ordinary Apple and Linux config-dependent commands validate the initialized repo-root config and
   fail fast naming the required init when it is absent; they do not auto-materialize a build-root
   substrate file

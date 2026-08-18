@@ -191,7 +191,7 @@ The generated demo catalog is the source of truth for the active runtime mode.
   `infernix init --demo-ui false` emits a demo-off config without hand-editing the file
 - in cluster-resident execution contexts, `cluster up` derives
   `ConfigMap/infernix-demo-config` from that initialized config and mounts the deployment mirror
-  read-only at `/opt/build/infernix-substrate.dhall`; cluster daemons read the cluster-role payload
+  read-only at `/opt/build/infernix.dhall`; cluster daemons read the cluster-role payload
   there at startup rather than watching it for reloads
 - `infernix test integration` and `infernix test e2e` enumerate every generated catalog entry for
   the active runtime mode rather than using a smoke subset

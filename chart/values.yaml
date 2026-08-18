@@ -38,7 +38,7 @@ repoGateway:
 demoConfig:
   name: infernix-demo-config
   mountPath: /opt/build
-  fileName: infernix-substrate.dhall
+  fileName: infernix.dhall
   catalogPayload: |
     {}
 
@@ -196,6 +196,21 @@ engine:
     replicaCount: 0
     names: []
     images: {}
+  # Phase 8 Sprint 8.12: the fleet lane. Disabled here because the deployed
+  # platform topology is a single engine machine (Phase 3 Sprint 3.16); the
+  # generated overlay turns it on when the system contract declares more than
+  # one engine machine. Each entry is one machine: `slot` selects the node it
+  # runs on and the machine contract it mounts, and `name` is the engine member
+  # identity that machine adopts.
+  fleet:
+    enabled: false
+    # Phase-gated exactly as `engine.replicaCount` is: an engine consumes Pulsar
+    # topics, so it is held at zero until the phase that brings Pulsar up. A
+    # fleet Deployment that started earlier would sit un-ready inside its own
+    # phase's rollout wait and time the release out.
+    replicaCount: 0
+    slotLabel: infernix.fleet/slot
+    machines: []
   command:
     - infernix
   args:
@@ -208,6 +223,14 @@ engine:
     # diffusers-format repos (e.g. Wan2.1-T2V-1.3B with the umt5-xxl text
     # encoder) alongside SDXL; 32Gi caused mid-bootstrap eviction on linux-gpu.
     sizeLimit: 64Gi
+
+# Phase 8 Sprint 8.12: per-machine host manifests, rendered by the `infernix`
+# binary and embedded here as strings. Helm only `nindent`s them, exactly as it
+# does for `clusterConfig.body`. Keyed `m<slot>.dhall` so a Deployment mounts
+# its own machine's contract by the same slot that pins it to its node.
+machineContracts:
+  name: infernix-machine-contracts
+  bodies: {}
 
 demoSplit:
   enabled: true

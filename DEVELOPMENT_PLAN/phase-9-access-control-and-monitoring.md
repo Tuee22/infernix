@@ -1,15 +1,25 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Blocked — strict numerical execution waits for Phase 8.
-**Blocked by**: Phase 8
-**Implementation state behind the blocker**: Done. The Apple/`linux-cpu`
+**Status**: Done — per Section C of
+[development_plan_standards.md](development_plan_standards.md), which lets a later phase close while
+an earlier one is still open when the earlier open item is a clearly named external or supported-lane
+validation blocker and the later phase says so explicitly. That is now the case, and it was not
+before: this phase's status previously read `Blocked` because Phase 8 Sprint 8.11 was open *code*
+work, which Section C's allowance does not cover. Sprints 8.11 and 8.12 closed on 2026-08-18, and
+every item still open in Phase 8 — Sprints 8.9 and 8.10 — is a `linux-gpu` cohort gate waiting on a
+CUDA-capable Linux host, as is Phase 6 Sprint 6.44. None of them is open code work, and none of them
+touches this phase's surfaces.
+
+**Named open dependency**: Phase 6 Sprint 6.44 and Phase 8 Sprints 8.9/8.10, all held by the same
+`linux-gpu` wave on hardware this cohort does not have.
+
+**Implementation state**: Done. The Apple/`linux-cpu`
 [evidence reset](cohort-validation-waves.md) had left the routed Playwright and `cluster up` evidence
 this phase rests on without current-source proof; that reopen is discharged by the 2026-08-17 Apple
 plus paired `linux-cpu` cohort recorded in [Wave Y](cohort-validation-waves.md), whose integration and
 routed browser stages exercised the admin-gated surfaces and the auth lifecycle on both lanes. The
-phase owns no known current defect and no open code-side work. It remains `Blocked` only by strict
-numerical order: Phase 8 Sprint 8.11 is open *code* work rather than an external blocker, so Section C's
-allowance for a later phase to close ahead of an earlier one does not apply here.
+phase owns no known current defect and no open code-side work.
+
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the supported role-based access-control contract for the durable-context demo —

@@ -35,7 +35,6 @@ module Infernix.ExecutionPlan
     compiledPlacementId,
     compiledPlacementRoutes,
     compiledPlanAvailableModels,
-    compiledPlanActiveDaemonRole,
     compiledPlanConfiguredModels,
     compiledPlanCoordinatorDaemon,
     compiledPlanEngineDaemons,
@@ -145,7 +144,6 @@ data ConfigError
   | BlankConfigMapName
   | BlankGeneratedPath
   | BlankMountedPath
-  | InvalidActiveDaemonRole
   | DaemonRoleMismatch Text DaemonRole DaemonRole
   | DaemonMemberMismatch Text (Maybe Text) (Maybe Text)
   | DaemonConnectionModeMismatch Text PulsarConnectionMode PulsarConnectionMode
@@ -529,7 +527,6 @@ compilerErrors config =
         <> [BlankConfigMapName | blankText (configMapName config)]
         <> [BlankGeneratedPath | all isSpace (generatedPath config)]
         <> [BlankMountedPath | all isSpace (mountedPath config)]
-        <> [InvalidActiveDaemonRole | not activeRoleDeclared]
         <> [ InvalidModelDescriptor (modelId model)
            | model <- models config,
              invalidModel model
@@ -543,12 +540,6 @@ compilerErrors config =
              toInteger (modelMemoryFootprintMib (modelRamFootprint model))
                > maxEnforceableMemoryMib
            ]
-    activeRoleDeclared =
-      activeDaemonRole config
-        `elem` ( daemonConfigRole (coordinatorDaemon config)
-                   : daemonConfigRole (webappDaemon config)
-                   : map daemonConfigRole (engineDaemons config)
-               )
     invalidModel model =
       any
         blankText
@@ -998,9 +989,6 @@ compiledPlanConfiguredModels = models . compiledConfig
 
 compiledPlanAvailableModels :: CompiledRuntimePlan -> [ModelDescriptor]
 compiledPlanAvailableModels = map placementDescriptor . Map.elems . compiledPlacements
-
-compiledPlanActiveDaemonRole :: CompiledRuntimePlan -> DaemonRole
-compiledPlanActiveDaemonRole = activeDaemonRole . compiledConfig
 
 compiledPlacementId :: CompiledPlacement -> Text
 compiledPlacementId = modelId . placementDescriptor

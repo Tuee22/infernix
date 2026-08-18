@@ -610,7 +610,8 @@ isolatedPropertyPaths paths propertyRoot =
       helmDataRoot = propertyRoot </> "helm" </> "data",
       resultsRoot = propertyRoot </> "results",
       modelCacheRoot = propertyRoot </> "model-cache",
-      pathsHostConfig = Nothing
+      pathsHostConfig = Nothing,
+      pathsHostConfigPath = Nothing
     }
 
 requireCapabilityRuntimePlan :: IO RuntimePlan
@@ -1032,7 +1033,6 @@ sampleConfig =
       generatedPath = ".build/execution-plan-internal.dhall",
       mountedPath = "/opt/infernix/execution-plan-internal.dhall",
       demoUiEnabled = False,
-      activeDaemonRole = Engine,
       coordinatorDaemon = coordinatorConfig,
       webappDaemon = webappConfig,
       engineDaemons = [engineDaemonConfig],

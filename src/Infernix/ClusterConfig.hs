@@ -48,6 +48,7 @@ import Dhall qualified
 import Dhall.Core qualified as DhallCore
 import GHC.Generics (Generic)
 import Infernix.DhallSchema.Reflection (renderDecoderExpected)
+import Infernix.Types (defaultModelCacheQuotaBytes)
 import Numeric.Natural (Natural)
 
 -- | Pulsar wiring values. Maps to the @pulsar@ Dhall record. Replaces
@@ -309,14 +310,14 @@ defaultDemoBackendWiring =
       demoPort = 8080,
       demoBridgeMode = "pulsar",
       demoPublicationStatePath = "/opt/build/publication.json",
-      demoConfigFilePath = "/opt/build/infernix-substrate.dhall"
+      demoConfigFilePath = "/opt/build/infernix.dhall"
     }
 
 defaultEngineWiring :: EngineWiring
 defaultEngineWiring =
   EngineWiring
     { engineModelCacheRoot = "/model-cache",
-      engineModelCacheQuotaBytes = 68719476736
+      engineModelCacheQuotaBytes = fromInteger defaultModelCacheQuotaBytes
     }
 
 clusterConfigGeneratedBanner :: String

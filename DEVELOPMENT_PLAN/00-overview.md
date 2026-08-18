@@ -713,7 +713,7 @@ The plan keeps control-plane execution context separate from substrate.
 - the outer-container launcher does not rely on a live repo bind mount for source code; the only
   bind mounts are `./.data/` and the Docker socket
 - the launcher reads repo-root `./infernix.dhall`; `cluster up` derives a ConfigMap deployment
-  mirror that remains mounted at `/opt/build/infernix-substrate.dhall` inside cluster-resident pods
+  mirror that remains mounted at `/opt/build/infernix.dhall` inside cluster-resident pods
 
 ### 12. Apple Host Build Output Stays Under `./.build`
 

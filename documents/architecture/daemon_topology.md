@@ -242,10 +242,50 @@ distinct process-qualified names.
 deployment.** The two enforcement mechanisms above are both local to one machine: a replica count
 is a property of one cluster's overlay, and the engine lock is a property of one checkout's runtime
 root. Neither can see a second machine, so neither scales past the single-node topology. The
-mechanism this doctrine specifies for a fleet is a machine contract naming exactly one engine
-identity, plus a claim for that identity registered against the broker — the broker being the only
-place N machines meet. Which of those is in force is what the deployed topology decides, and the
-supported fleet size is whatever the mechanism actually in force can bound.
+mechanism for a fleet is a machine contract naming exactly one engine identity, plus a claim for
+that identity held against the broker — the broker being the only place N machines meet. Which of
+those is in force is what the deployed topology decides, and the supported fleet size is whatever
+the mechanism actually in force can bound.
+
+**How a fleet is declared, placed, and identified.** The fleet is a count of machines in the system
+contract: `infernix init --engine-machines N` expands each single-machine member into `N` members
+(`<member>-m1 … -mN`) serving the same pools on the same `Shared` topic, and changes nothing else
+about the graph. `N = 1` reproduces the single-machine contract exactly, which is what the deployed
+platform runs. On the cluster lanes a fleet grows one Kind worker node per machine, and the engine
+is deployed as one generated `Deployment` per machine — `infernix-engine-m<slot>`, pinned to its own
+node by the `infernix.fleet/slot` label, started with `--engine-name <member>`, and mounting its own
+binary-generated machine contract at the manifest path discovery already prefers.
+
+That shape is chosen over a `DaemonSet` because a DaemonSet cannot carry a *declared* identity here:
+every pod of a DaemonSet is identical, so a pod could only learn which machine it is from the
+downward API — an `env:` block, which
+[no_env_vars.md](../development/no_env_vars.md) forbids in infernix-owned templates — or from a
+Kubernetes API read, which would make identity discovered and contradict the fail-closed rule above.
+The `nodeSelector` those Deployments carry is not the retired anti-affinity in another form: it does
+not express the one-engine-per-machine rule at all — the broker claim does — it places a declared
+machine on the node that *is* that machine, so a slot whose node is gone leaves that machine's
+engine `Pending`, which is the honest rendering of a machine being down.
+
+**The broker-side member claim.** Each member has a derived claim topic
+(`persistent://infernix/demo/fleet.member-claim.<mode>.<member>`) that carries no messages; holding
+the only **exclusive** subscription on it is the claim. It is a topic of its own rather than a
+subscription on a pool topic because a pool topic is consumed `Shared` by the whole pool, so an
+exclusive claim taken there would exclude the fleet instead of one identity. An engine takes the
+claim after namespace and topic reconciliation and after the contract-digest check, and before its
+readiness sentinel and every pool subscription: a refused machine never reports ready and never
+takes a message a second machine might answer too. A refusal names the identity, the claim topic,
+and the incumbent's consumer name and address. Losing the claim later is fatal, because a machine
+that can no longer prove it is the only holder of its identity must not keep consuming.
+
+Be exact about what the claim bounds. It bounds **one identity to one live claimant at a time**. It
+does not bound how many machines a fleet has. It cannot distinguish a restarting incumbent from an
+impostor inside the reacquisition window — Pulsar holds an exclusive slot for the life of the
+WebSocket session, so a claim that refused immediately would turn every engine restart into an
+outage; the claim therefore waits a bounded wall-clock window first, which makes the common case
+survivable rather than making the two cases distinguishable. The bound is measured rather than
+counted in retries, because the broker's session timeout it is sized against is measured. And it depends on the broker being the fleet's
+single meeting point: a second Pulsar cluster would partition the claim exactly as it would
+partition the contract digest.
 
 **Linux GPU per-engine images.** Framework-specific Linux GPU pools may still render as
 `infernix-engine-<engine>` Deployments whose image contains exactly one isolated framework venv.

@@ -1344,7 +1344,8 @@ withMaterializerFixture label action =
                   fixtureData </> "helm" </> "data",
                 resultsRoot = fixtureData </> "results",
                 modelCacheRoot = fixtureData </> "model-cache",
-                pathsHostConfig = Just hostConfig
+                pathsHostConfig = Just hostConfig,
+                pathsHostConfigPath = Nothing
               }
       createDirectory fixtureRoot
       createDirectoryIfMissing True (fixtureRepo </> "python")

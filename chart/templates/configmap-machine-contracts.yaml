@@ -1,0 +1,34 @@
+{{/*
+Phase 8 Sprint 8.12: per-machine host manifests for a fleet.
+
+Each body is rendered by the `infernix` binary
+(`Infernix.Cluster.renderFleetMachineContracts`) from this deployment's own host
+manifest with the machine block replaced by a contract naming exactly one engine
+member identity, pinned to the digest of the published system contract. Helm
+only embeds those strings verbatim — there is no `let`/schema Dhall in this
+template (`infernix lint chart` rejects any).
+
+Why the fleet needs this at all: the manifest baked into the launcher image is
+byte identical in every image, so with more than one engine machine it collides
+rather than discriminates — the same finding Sprint 6.45 recorded for the baked
+repo root. A machine contract that names one member is what makes "which machine
+am I" a declared fact instead of a discovered one.
+
+Absent on the single-machine deployed topology, whose one pod reads the baked
+manifest correctly precisely because there is one pod to bake it into.
+*/}}
+{{- if .Values.engine.fleet.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.machineContracts.name }}
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: infernix-machine-contracts
+    app.kubernetes.io/component: machine-contracts
+data:
+{{- range $contractKey, $contractBody := .Values.machineContracts.bodies }}
+  {{ $contractKey }}: |
+{{ $contractBody | nindent 4 }}
+{{- end }}
+{{- end }}

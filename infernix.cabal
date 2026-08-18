@@ -75,6 +75,7 @@ library
         Infernix.Lint.HaskellStyle
         Infernix.Lint.Plan
         Infernix.Lint.Proto
+        Infernix.MachineContract
         Infernix.Models
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
@@ -111,6 +112,7 @@ library
         Infernix.EngineBindings
         Infernix.EngineRouting
         Infernix.DemoConfig.Colima
+        Infernix.DhallSchema.Enums
         Infernix.DemoConfig.Internal
         Infernix.Engines.AppleSilicon.Internal
         Infernix.Engines.Artifact
@@ -240,6 +242,7 @@ test-suite infernix-unit
         Infernix.Demo.WebSocket
         Infernix.DemoConfig
         Infernix.DemoConfig.Colima
+        Infernix.DhallSchema.Enums
         Infernix.DemoConfig.Internal
         Infernix.DemoConfig.Properties
         Infernix.DhallSchema
@@ -284,6 +287,7 @@ test-suite infernix-unit
         Infernix.Lint.HaskellStyle
         Infernix.Lint.Plan
         Infernix.Lint.Proto
+        Infernix.MachineContract
         Infernix.Models
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
@@ -419,6 +423,7 @@ test-suite infernix-apple-materializer
         Infernix.Cluster.Subprocess.Activity
         Infernix.Cluster.Subprocess.Protocol
         Infernix.Config
+        Infernix.DhallSchema.Enums
         Infernix.DhallSchema.Reflection
         Infernix.EngineBindings
         Infernix.EngineRouting
@@ -444,6 +449,7 @@ test-suite infernix-apple-materializer
         Infernix.HostConfig
         Infernix.HostTools
         Infernix.Internal.Util
+        Infernix.MachineContract
         Infernix.Models
         Infernix.DescriptorSpace
         Infernix.ProcessIdentity
@@ -566,6 +572,7 @@ test-suite infernix-integration
         Infernix.Demo.WebSocket
         Infernix.DemoConfig
         Infernix.DemoConfig.Colima
+        Infernix.DhallSchema.Enums
         Infernix.DemoConfig.Internal
         Infernix.DemoConfig.Properties
         Infernix.DhallSchema
@@ -610,6 +617,7 @@ test-suite infernix-integration
         Infernix.Lint.HaskellStyle
         Infernix.Lint.Plan
         Infernix.Lint.Proto
+        Infernix.MachineContract
         Infernix.Models
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
