@@ -68,7 +68,7 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > `ClusterLifecycle` had no mutating position, a test-mutated cluster (a drained node, an over-scaled
 > deployment) read as a clean `steady-state`, and `runClusterOwnedValidation`'s unconditional
 > `clusterDown` over the shared operator cluster identity let even a clean run destroy an operator's
-> cluster. [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-blocked)
+> cluster. [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-done)
 > owns the harness half — the evidence-gated seizure (fail closed on an `OperatorOwned` cluster), the
 > chaos-mutation `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup
 > reconcile — and [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model
@@ -2629,14 +2629,17 @@ Section C this named external blocker is what permits later phases to close whil
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Active]
 
 **Status**: Active — code-side closed. The `linux-gpu` behavioral cohort is the only
-remaining gate, and it is runnable on the current host for the first time (CUDA Linux, RTX 5090).
+remaining gate. It requires a CUDA-capable Linux host on the 570.x driver branch whose Docker daemon
+sets `"default-runtime": "nvidia"`; [Wave Z](cohort-validation-waves.md) states that requirement in
+full and owns the run.
 **Code-side closure**: Complete. The complete machine-independent gate set passes:
 `cabal build all --enable-tests` (`-Wall -Werror`), `infernix-unit`,
 `infernix-execution-plan-internal`, `infernix-capped-engine-observer`, `infernix-compile-fail`
 (6 positive / 81 negative), `infernix-haskell-style` (`haskell-style-check: ok`, including the
 realness rules), and `lint files|chart|proto|docs` plus `docs check`.
 **Cohort gate**: selected `linux-gpu` plus `linux-cpu`, new typed-execution-plan wave — pending, and
-now the sprint's **only** remaining item. Its three prior code-side residuals — the adversarial CUDA
+now the sprint's **only** remaining item. Both lanes run on the one CUDA Linux host, so the wave holds
+a single frozen identity. Its three prior code-side residuals — the adversarial CUDA
 breach fixture, the `close_fds` descriptor stall, and the raw-spawn exemption decision — are all
 closed and are recorded in their own sections below.
 **Blocked by**: nothing. Phase 4 Sprint 4.32's code-side closure landed the shared resource-indexed

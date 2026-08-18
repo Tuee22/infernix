@@ -416,11 +416,11 @@ retained-state teardown.
 The historical closed rows remain unchanged. Waves Y, AA, and AB are Done; Wave Z remains open —
 AB closed on 2026-08-18, its fleet items on a live two-machine `linux-cpu` lane.
 Current scheduling follows the restored numerical order:
-Phases 1 through 3 plus Wave Y are Done on the closing Apple-plus-`linux-cpu` identities recorded
-above. Their
+Phases 1 through 5 plus Wave Y are Done on the closing Apple-plus-`linux-cpu` identities recorded
+above, and Wave AB closed Phase 8's fleet sprints on a live two-machine `linux-cpu` lane. Their
 earlier INVALIDATED/RED attempts remain identity-scoped chronology, not current blockers. Wave AA
-remains GREEN/Done/no-rerun. Phase 4 is now the first phase eligible for execution; later phases
-remain blocked in numerical order, with Wave Z/AB queued according to their owning phase status.
+remains GREEN/Done/no-rerun. Wave Z is the only queued wave: Phase 6 is the first open execution
+gate, and its Sprint 6.44 plus Phase 8 Sprints 8.9 and 8.10 are the three sprints that consume it.
 The Wave Y row's historical attempt narrative is superseded for current scheduling by the closing
 receipt above; its failure chronology remains exact.
 
@@ -460,10 +460,19 @@ receipt above; its failure chronology remains exact.
 
 ## Wave Z: Phase 6 Sprint 6.44 NVIDIA Enforcement Sign-Off (Open)
 
-**Machine**: CUDA Linux (RTX 5090, driver 570.x) — the selected accelerator for this wave is
-`linux-gpu`, paired with `linux-cpu`. This is the first wave whose selected accelerator is
-`linux-gpu` since the typed-execution-plan reopen, and the first that is runnable on the current
-development host without a machine switch.
+**Machine**: CUDA Linux — the selected accelerator for this wave is `linux-gpu`, paired with
+`linux-cpu`, and both lanes run on that one host, so the wave holds one frozen identity rather than a
+cross-machine pairing. This is the first wave whose selected accelerator is `linux-gpu` since the
+typed-execution-plan reopen.
+
+**Hardware this wave requires**, stated as a requirement rather than as a claim about where the
+cohort is standing, because the latter stops being true the moment a different machine is booted: a
+CUDA-capable Linux host on the 570.x driver branch (the pinned CUDA 12.8 runtime needs a pre-580
+driver), whose Docker daemon sets `"default-runtime": "nvidia"`. That daemon setting is not a
+convenience — it is what injects the driver into every container without a `--gpus` flag, and without
+it the live NVIDIA unit assertions skip loudly by name instead of running, so the wave would record
+less coverage than its text claims. An Apple Silicon host satisfies none of this, and Section Q
+forbids substituting the other accelerator for it.
 
 **Scope**: Phase 6 Sprint 6.44 (verified NVIDIA per-process-group VRAM enforcement and raw-spawn
 exemption reduction) plus Phase 8 Sprint 8.9, whose behavioral evidence is consumed from this wave
@@ -472,11 +481,34 @@ dual-accelerator gate. Under Section Q's single-accelerator-per-phase rule this 
 `linux-gpu`; the Apple accelerator evidence for Phases 1, 2, and 4 stays with Wave Y and no result
 here substitutes for it.
 
-**Frozen state**: the 2026-08-02 source whose complete machine-independent gate set is GREEN
-(`cabal build all --enable-tests` under `-Wall -Werror`; `infernix-unit`,
-`infernix-execution-plan-internal`, `infernix-capped-engine-observer`, and `infernix-compile-fail`
-at 6 positive / 81 negative; `infernix-haskell-style` including the realness rules; and
-`lint files|chart|proto|docs` plus `docs check`).
+**Frozen state prepared for attempt 6**: source digest
+`95c9c47aafda3150c16feb76d57925539371a066efa3f610140f8069622683b5` over 390 files, at commit
+`64e19b88` with no executable source modified.
+
+Two scoping decisions are recorded because either would otherwise be rediscovered. The digest
+**excludes `DEVELOPMENT_PLAN/`**: a whole-worktree digest written into the worktree it measures can
+never be self-consistent, and this wave's own convention already says evidence-only plan edits record
+a result without changing executable source. Excluding the plan directory makes that convention
+mechanical instead of a promise, so the identity survives the closure edits this wave will itself
+make. And the digest is **lane-independent**, which the `org.infernix.cluster-source-fingerprint`
+image label is not: that label's header includes the runtime mode and base image, so the two lanes
+necessarily produce different values for identical source, and it cannot serve as a cross-lane
+identity. Recompute and compare on the CUDA host before building, so both lanes are provably the
+same source — **from the repository root**, because `git ls-files` is directory-relative and running
+it from a subdirectory silently digests only that subtree:
+
+```
+{ git ls-files -z; git ls-files -z --others --exclude-standard; } \
+  | sort -z | grep -zv '^DEVELOPMENT_PLAN/' | xargs -0 shasum -a 256 | shasum -a 256
+```
+
+The complete machine-independent gate set is GREEN on that identity, measured rather than carried
+forward: the governed Apple build; `infernix test lint` (`haskell-style-check: ok`,
+`cabal-format-check: ok`, the Python gate, and `cabal build all --enable-tests` under
+`-Wall -Werror`); `infernix test unit` with `infernix-compile-fail` at 6 positive / 92 negative,
+`infernix-unit`, `infernix-execution-plan-internal`, `infernix-capped-engine-observer`,
+`infernix-artifact-transaction`, and `infernix-apple-materializer` all PASS, and web 83/83; and
+`lint files|chart|proto|docs|plan` plus `docs check` all at zero.
 
 **What this wave must prove, beyond an ordinary green run**:
 
@@ -623,8 +655,9 @@ before any descriptor is opened, proven end to end by the eight self-exec observ
 completing in 3.7 s inside a container at the pod's real 1073741816 limit. Attempt 6 has **not been
 run**: every source change since attempt 5 — the descriptor bound, the CUDA breach fixture, the
 raw-spawn migrations, Sprint 6.45's identity, and Sprint 8.9's wire migration — needs one exact-source
-image rebuild, and the wave must start from that frozen state. Sprints 6.44, 6.45, and 8.9 all remain
-`Active — Validation Only` on this wave alone.
+image rebuild, and the wave must start from that frozen state. Sprint 6.45 no longer waits on this wave — it closed on the
+Apple plus paired `linux-cpu` cohort recorded in Wave Y. The three sprints that do consume it are
+Sprints 6.44, 8.9, and 8.10, each `Active` with this wave named as its cohort-gate residual.
 
 ## Wave Y: Phase 1, Phase 2, Then Typed Execution Plan Apple/CPU Sign-Off (Done)
 
@@ -4411,16 +4444,16 @@ this index records only the cohort disposition each phase is waiting on.
 
 | Phase | Current cohort disposition |
 |-------|----------------------------|
-| 0 | No accelerator cohort; immediate receipt-covering repo-wide diff rerun is audit-only |
-| 1 | The current activity-namespace source passes the governed Apple build, whole aggregate lint, full unit/web gate, standalone lint/docs/plan/docs/diff checks, and uncontested seven-artifact materializer. The materializer exited 0 with all seven final manifests, no candidate/previous residue, and the foreign Linux version-3 lease quarantined. The earlier complete `linux-cpu` cohort against image `1923aa…` is historical GREEN-as-run because this correction changes shared production source. Wave Y still requires the Darwin cancellation, installed-Python isolation, build-memory, and full Apple suite receipts, then a rebuilt source-matched paired `linux-cpu` cohort and schema-complete seven-model attestations. Earlier RED/INVALIDATED chronology retains its exact scope. |
-| 2 | Apple and paired `linux-cpu` closure remain queued after Phase 1 |
-| 3 | `linux-cpu` lifecycle residual remains queued |
-| 4 | Selected-Apple and current Linux behavioral residuals remain queued |
-| 5 | Own code-side state remains Done; current browser evidence remains queued |
-| 6 | Apple/selected-accelerator and `linux-cpu` residuals remain queued; stronger internal blockers remain recorded |
-| 7 | Own state remains Active — Validation Only; Wave Y evidence remains queued |
-| 8 | Validation-only work remains in Sprints 8.9 and 8.10, both consuming the `linux-gpu` wave; Sprints 8.11 and 8.12 closed on 2026-08-18 and Wave AB is Done |
-| 9 | Own code-side state remains Done; Wave Y evidence remains queued |
+| 0 | No accelerator cohort; machine-independent throughout, and it blocks no accelerator phase |
+| 1 | No open disposition. The Apple accelerator plus paired source-matched `linux-cpu` component closure Wave Y owns is recorded, including the Darwin cancellation, installed-Python isolation, and seven-artifact materializer receipts; Wave AA's Darwin build-memory proof is closed and not rerun. Earlier RED/INVALIDATED chronology retains its exact scope |
+| 2 | No open disposition; closed on the explicit post-prerequisite `test lint` and `test unit` aggregates over the unchanged Wave Y source, after that wave's frozen Apple and paired `linux-cpu` suites |
+| 3 | No open disposition; closed on the current-source `linux-cpu` lifecycle receipt, which proved exactly one running engine pod and no `Pending` platform workload |
+| 4 | No open disposition; closed on the frozen-identity Apple plus paired `linux-cpu` cohort in Wave Y |
+| 5 | No open disposition; reproduced by Phase 4's frozen-identity closure on the same receipts — generated browser contracts, the web unit suite, and the routed Playwright matrix on both lanes |
+| 6 | One open disposition: Sprint 6.44's `linux-gpu` half plus its paired `linux-cpu` lane, which Wave Z owns. Every other sprint is closed on the Wave Y cohort |
+| 7 | No open disposition; Sprint 7.29's evidence reopen is discharged by the Wave Y cohort |
+| 8 | Two open dispositions: Sprints 8.9 and 8.10, both consuming Wave Z's `linux-gpu` half rather than a wave of their own. Sprints 8.11 and 8.12 closed on Wave AB, which is Done |
+| 9 | No open disposition; its evidence reopen is discharged by the Wave Y cohort |
 
 ### Suspended Pre-Sprint-0.22 Cohort Index
 

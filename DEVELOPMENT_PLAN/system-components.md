@@ -9,17 +9,19 @@
 ## Current Execution State
 
 Phase 0 is Done: the plan corpus satisfies the mechanical Section C, D, I, J, and Q scans that
-`infernix lint plan` implements, and those scans run inside the aggregate lint gate. Phase 1 is
-Active on Sprints
-1.20 through 1.25, which own Apple engine materialization, current-source runtime evidence, and the
-paired `linux-cpu` cohort. Phases 2 through 9 are blocked in strict numerical order, each by its
-predecessor; Phase 5 and Phase 9 carry no open code-side work, so their own implementation state
-stays `Done` with their cohort evidence named as an open dependency, and Phase 7 is an evidence
-reopen on the same dependency. Behind those blockers, Phases 3, 4, 6, and 8 still carry open
-implementation state; each phase document names its own open sprints, and
+`infernix lint plan` implements, and those scans run inside the aggregate lint gate. Phases 1 through
+5 are Done, closed in numerical order on Apple accelerator cohorts plus their paired `linux-cpu`
+cohorts, and Phases 7 and 9 are Done on those same receipts under Section C's later-phase allowance.
+No phase carries open code-side work.
+
+Phases 6 and 8 are Active, and the whole of what is open inside them is one hardware gate: Phase 6
+Sprint 6.44 and Phase 8 Sprints 8.9 and 8.10 are each code-side closed and each consume the same
+`linux-gpu` cohort plus its paired `linux-cpu` lane, which needs a CUDA-capable Linux host. Section Q
+forbids substituting the other accelerator, so those three sprints are validation-only residuals
+rather than unfinished implementation. Each phase document names its own open sprints, and
 [README.md](README.md) holds the plan's single phase-status table.
 
-[Wave Y](cohort-validation-waves.md) owns the remaining Phase 1 Apple and paired source-matched
+[Wave Y](cohort-validation-waves.md) is Done and owns the Apple and paired source-matched
 `linux-cpu` component closure for `llm-smollm2-safetensors`, `audio-demucs-htdemucs`,
 `audio-open-unmix`, `music-mt3-infer`, `music-mr-mt3`, `music-omnizart`, and `audio-bark-small`.
 Each lane record binds frozen source identity, lane, model id, adapter and engine-artifact identity
@@ -28,19 +30,21 @@ exact command and settlement receipt. Apple additionally owns the materializer r
 smokes, cancellation and installed-Python source isolation, the typed `image-sdxl-turbo` refusal,
 and `integration` / `e2e` / `all`; `linux-cpu` owns its source-matched image and materialization
 identity, the same seven outputs, and its full cohort gate.
-[Wave Z](cohort-validation-waves.md) owns the Phase 6 Sprint 6.44 NVIDIA enforcement sign-off. Every
+[Wave Z](cohort-validation-waves.md) is the one open wave and owns the Phase 6 Sprint 6.44 NVIDIA
+enforcement sign-off, whose `linux-gpu` half Phase 8 Sprints 8.9 and 8.10 also consume. Every
 per-lane attestation lives in [cohort-validation-waves.md](cohort-validation-waves.md), and every
 superseded surface is inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ## Current Repo Assessment
 
-- the typed execution-plan refactor is reopened: current generated Dhall decodes descriptive model,
-  pool, and memory records, while the target compiles proper Dhall unions into an opaque
-  `RuntimePlan`, refines declared enforcers against live OS evidence, exposes only
-  `ExecutableModel` values to routing, and gates every subprocess behind a bounded command,
-  provisioning, or resource-indexed inference capability. See
-  [Typed Execution Plan](../documents/architecture/typed_execution_plan.md)
+- the typed execution-plan refactor is landed code-side: the generated Dhall is proper unions
+  throughout, compilation produces an opaque `RuntimePlan`, the engine refines declared enforcers
+  against live OS evidence, only `ExecutableModel` values reach routing, and every subprocess is
+  gated behind a bounded command, provisioning, or resource-indexed inference capability. The
+  reflected substrate schema went from 110 lines to 54 as the derivable wire fields were deleted.
+  Behavioral sign-off for its `linux-gpu` arm is the open residual in Phase 8 Sprints 8.9 and 8.10.
+  See [Typed Execution Plan](../documents/architecture/typed_execution_plan.md)
 - the bounded-command kernel replacement uses public Haskell process APIs: the parent self-execs
   one anchor with closed descriptor inheritance, an explicit environment, a new process group, and
   standard-stream framing. The required replacement starts the supervisor inside the anchor group
@@ -55,8 +59,8 @@ superseded surface is inventoried in
 - the Apple capped-engine footprint observer uses only fixed absolute `/usr/bin/top` process-group
   discovery and `/usr/bin/footprint` exact-byte measurement under one total deadline, bounded
   captures, an explicit environment, and exhaustive cleanup. The direct-FFI sampler and its prior
-  evidence are superseded; Phase 4 Sprint 4.32 has closed its exact-source `linux-cpu` half and
-  waits on selected Apple hardware for the observer and adversarial-breach proof
+  evidence are superseded; Phase 4 Sprint 4.32 is closed on both its exact-source `linux-cpu` half
+  and its selected Apple accelerator half, including the observer and adversarial-breach proof
 - the repo ships the one-binary Haskell role topology, Envoy Gateway assets, the PureScript demo UI,
   the split runtime modules under `src/Infernix/Runtime/`, the shared Python project, the shared
   Linux substrate Dockerfile that bakes the source-snapshot manifest used by git-less

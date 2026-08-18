@@ -46,27 +46,34 @@ surface the repository no longer has.
 
 ## Current Repo Assessment
 
-Phase 1 is the execution gate. Sprints 1.20 through 1.25 are Active and own Apple native-source
-removal, the bounded host build-memory kernel, the resolved build-memory lane, per-engine Python
-environment preparation, the removal of build-time Haskell protobuf generation from Darwin, and the
-in-process Haskell style gate; Sprints 1.1 through 1.19 retain their recorded closure. Phase 0 is
-Done: its final sprint landed `infernix lint plan` as the mechanical enforcement of the plan
+Phase 6 is the execution gate, and it is the only gate: no phase carries open code work. Phase 0 is
+Done, its final sprint having landed `infernix lint plan` as the mechanical enforcement of the plan
 standards the standards document had declared only in prose, and the corpus satisfies it. Phase 0
-reopens are machine-independent, carry no accelerator cohort, and block no accelerator phase.
-Phases 2 through 9
-are Blocked in strict numerical order, each by its immediate predecessor, and each phase document
-records the implementation position it holds behind that blocker.
+reopens are machine-independent, carry no accelerator cohort, and block no accelerator phase. Phases
+1 through 5 are Done, closed in numerical order on Apple accelerator cohorts plus their paired
+`linux-cpu` cohorts, and Phases 7 and 9 are Done on those same receipts under Section C's allowance
+for a later phase to close while an earlier open item is a named supported-lane validation blocker.
+
+Two phases remain Active, and every item open inside them is the *same* blocker rather than
+unfinished work: Phase 6 Sprint 6.44 and Phase 8 Sprints 8.9 and 8.10 are each code-side closed and
+each consume one `linux-gpu` cohort plus its paired `linux-cpu` lane, on a CUDA-capable Linux host.
+Section Q forbids substituting the other accelerator for it, so no Apple-cohort work discharges them.
+Each phase document records the implementation position it holds behind that blocker, and
+[README.md](README.md) holds the plan's single phase-status table.
 
 Per-lane attestation lives in [cohort-validation-waves.md](cohort-validation-waves.md), and
 superseded surfaces are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). [Wave Y](cohort-validation-waves.md)
-owns the Phase 1 Apple plus paired `linux-cpu` sign-off, [Wave Z](cohort-validation-waves.md) the
-NVIDIA sign-off behind Phase 6, and [Wave AB](cohort-validation-waves.md) the per-machine fleet
-cohort; [Wave AA](cohort-validation-waves.md) is closed for the Darwin build-memory mechanism and is
-not rerun. Wave Y freezes one reviewed source identity across both lanes and requires a per-lane
-real-output record for each of `llm-smollm2-safetensors`, `audio-demucs-htdemucs`,
-`audio-open-unmix`, `music-mt3-infer`, `music-mr-mt3`, `music-omnizart`, and `audio-bark-small`,
-plus the typed `image-sdxl-turbo` refusal on Apple.
+is Done and owns the Apple accelerator plus paired `linux-cpu` sign-off for Phases 1 and 2, Phase 3's
+single-node lifecycle receipt, and the frozen-identity cohort that closed Phases 4, 5, 7, and every
+Phase 6 sprint but 6.44. It froze one reviewed source identity across both lanes and carries a
+per-lane real-output record for each of `llm-smollm2-safetensors`, `audio-demucs-htdemucs`,
+`audio-open-unmix`, `music-mt3-infer`, `music-mr-mt3`, `music-omnizart`, and `audio-bark-small`, plus
+the typed `image-sdxl-turbo` refusal on Apple. [Wave AB](cohort-validation-waves.md) is Done and owns
+the per-machine fleet cohort that closed Phase 8 Sprints 8.11 and 8.12, and
+[Wave AA](cohort-validation-waves.md) is closed for the Darwin build-memory mechanism and is not
+rerun. [Wave Z](cohort-validation-waves.md) is the one open wave: the `linux-gpu` NVIDIA sign-off
+behind Phase 6 Sprint 6.44, consumed also by Phase 8 Sprints 8.9 and 8.10.
 
 The repository implements the runtime-config architecture, bootstrap responsibility boundary, and
 Harbor-first image-boundary doctrine described in this overview. The governed validation surface

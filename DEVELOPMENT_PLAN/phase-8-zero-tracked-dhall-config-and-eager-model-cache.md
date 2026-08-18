@@ -695,7 +695,7 @@ None code-side. The cohort rebuild is the residual named above.
 **Status**: Done — implemented and validated on the machine-independent gate set plus the Apple
 accelerator lane's schema, pin, identity, and round-trip proofs. The three layers this sprint owns
 are built and proved at one engine machine; what genuinely needs a second machine is
-[Sprint 8.12](#sprint-812-fleet-member-identity-and-broker-side-claim-blocked).
+[Sprint 8.12](#sprint-812-fleet-member-identity-and-broker-side-claim-done).
 
 **The contradiction this sprint was blocked by, and its resolution.** The earlier blocker read: the
 machine contract has no home on the Linux lanes, because the only host manifest a pod can see is the
