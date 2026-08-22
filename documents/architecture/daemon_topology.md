@@ -292,6 +292,14 @@ partition the contract digest.
 That split is an image and dependency-isolation boundary; pool membership and model routing are
 derived from the typed engine-pool graph.
 
+Because that split is per image rather than per machine, one `linux-gpu` machine contract declares
+more than one engine member — one per framework image, plus the member the shared
+`infernix-engine` Deployment is. The shared Deployment therefore names its own member with
+`--engine-name` exactly as the fleet Deployments do: it runs the launcher image, which carries the
+native payloads and none of the framework virtual environments, so the member it names is the one
+with no per-engine Deployment of its own. Identity is declared on every engine Deployment on every
+lane, never left to be resolved by counting.
+
 **Apple silicon symmetry.** On Apple substrates engine members are on-host `infernix service`
 daemons with stable host ids, not Kubernetes pods. Normal Apple model pools use `Shared`
 subscriptions across distinct host ids so broker-native permits distribute work. Broker permits
@@ -470,7 +478,7 @@ readiness wait returns typed evidence for the state it gates rather than a bare 
 | Coordinator process crash | The Failover subscription's active consumer is unreachable | The owning process restarts and resubscribes under the stable Failover name; Pulsar then redelivers unacknowledged conversation events to the dispatcher and unacknowledged inference results to the result bridge. Producer dedup on `inference.request.<mode>` and on the conversation topic prevents duplicate dispatch and duplicate writeback. `Failover` supplies broker coordination, not a standby coordinator. |
 | Engine member crash | Active engine member disappears | Pulsar redelivers the unacked pool-topic message to another eligible member when the route is a `Shared` pool. The receiving engine has a KV-cache miss on that request's `prefixHash` and rebuilds from the conversation log; producer dedup on `inference.result.<mode>` prevents a duplicate result if the original engine had partially published. |
 | Engine machine unavailable | Its engine member disappears | Pulsar redelivers an unacknowledged pool-topic message to another eligible fleet member when one exists for a `Shared` route; otherwise the message remains pending until an eligible member returns. The receiving engine rebuilds a missing KV cache from the conversation log. |
-| Engine model-memory admission failure | Plan refinement on the executing machine classifies a placed model above that machine's own resource capacity as `UnavailableModel` | The engine publishes a per-request `status=failed` result with typed `InferenceError.ModelMemoryLimitExceeded`, including `requiredMib` and `availableMib`, without launching an engine process; the coordinator forwards the request to its pool rather than vetoing it, because a machine that will not run the work has no verdict to give. Smaller admitted placements continue serving; a machine that admits none of its placements refuses to start. |
+| Engine model-memory admission failure | Plan refinement on the executing machine classifies a placed model above that machine's own resource capacity for one of the resources it consumes as `UnavailableModel` | The engine publishes a per-request `status=failed` result with typed `InferenceError.ModelMemoryLimitExceeded`, including `requiredMib`, `availableMib`, and the `resource` the model did not fit, without launching an engine process; the coordinator forwards the request to its pool rather than vetoing it, because a machine that will not run the work has no verdict to give. Smaller admitted placements continue serving; a machine that admits none of its placements refuses to start. |
 | Invalid inference request | A coordinator or engine receives an empty model id, unknown model, wrong-route model, or malformed protobuf | Empty/unknown/wrong-route requests publish a terminal failed `InferenceResult`; malformed bytes publish a typed malformed failed result. File-spool sources are removed and Pulsar messages acknowledged only after terminal result persistence/publication. |
 | Pulsar broker / MinIO / IdP outage | A platform dependency is unavailable | Frontend caches JWKS with short TTL so brief IdP outages do not break existing sessions. The platform services are deployed single-node on the supported substrate, so an outage is an outage: recovery is restart, and durability comes from their own storage rather than from replication. |
 
@@ -517,28 +525,39 @@ that machine's `InferenceMemoryBudget`. Refinement accounts for every placed mod
 whole config or prevent smaller placements from serving, and a machine that admits none of its
 placements refuses to start rather than reporting ready and rejecting every request.
 
+The requirement admission compares against is **derived from the model's own artifact** and the
+execution shape the engine will run under — never authored per family — so the quantity one machine
+admits is a fact about the model rather than a number a second machine could write down differently.
+
 The active budget is a typed value, not an integer sentinel:
-`HostEnforcedBudget HostMemoryPartition | SubstrateEnforcedBudget PodMemoryLimit`. There is no
-unenforced arm. The checked host partition rejects oversubscription, and positive
-`ModelMemoryFootprint` values prevent absent/zero requirements from disabling admission.
+`HostEnforcedBudget HostMemoryPartition | SubstrateEnforcedBudget PodMemoryLimit | DualEnforcedBudget PodMemoryLimit PodMemoryLimit`.
+There is no unenforced arm, and no arm admits two physical resources against one number: the dual arm
+names the pod cgroup RAM limit first and the device VRAM limit second, because host residency and
+device residency are different quantities with different drivers. The checked host partition rejects
+oversubscription, and a `ModelMemoryRequirement` minted only by the artifact-header derivation
+prevents absent/zero requirements from disabling admission.
 
 Budget sources are:
 
 - `apple-silicon`: unified host RAM, computed as physical memory (`sysctl -n hw.memsize`) minus the
   read-only Colima pledge and host reserve
 - `linux-cpu`: the Kubernetes engine pod memory limit for the active workload
-- `linux-gpu`: an executable placement requires independently indexed pod-RAM and GPU-VRAM grants;
-  either missing half fails closed with `GpuDualResourceBudgetRequired`
+- `linux-gpu`: the dual arm — an executable placement requires independently indexed pod-RAM and
+  GPU-VRAM grants; either missing half fails closed with `GpuDualResourceBudgetRequired`
 
-Compilation mints a resource-indexed grant only for a fitting placement. Package-owned live
-observations pair it with the matching enforcer inside `ExecutableModel`; public engine launch
-accepts that whole capability and derives its model, runtime, binding, and command from it. A
-measured ceiling breach becomes typed `ModelMemoryLimitExceeded`, while sampler loss fails closed as
-enforcement unavailable.
+Compilation mints one resource-indexed grant per physical resource a fitting placement consumes.
+Package-owned live observations pair each grant with the matching enforcer inside `ExecutableModel`;
+public engine launch accepts that whole capability and derives its model, runtime, binding, command,
+and execution shape from it — the same execution shape the cache term was computed from, carried to
+the engine rather than restated inside it. A measured ceiling breach becomes typed
+`ModelMemoryLimitExceeded` naming the resource it breached and the footprint it observed, while
+sampler loss fails closed as enforcement unavailable.
 
 The execution authority remains inside the opaque engine capability and serializes inference for
-that engine member. Package-owned observers enforce Apple/Linux CPU resident-memory ceilings and
-independent Linux GPU process-group RAM and VRAM ceilings. Canonical home:
+that engine member. Where a lane can install a kernel ceiling, that ceiling is installed before the
+engine's first allocation and package-owned observers **corroborate** it over the residue it does not
+charge; where a lane cannot, the observers are the whole mechanism, and the lane declares that
+strength in its own type rather than presenting a sampled bound as a prevented one. Canonical home:
 [bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Production Shape

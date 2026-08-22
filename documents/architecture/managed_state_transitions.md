@@ -23,12 +23,17 @@
   `ModelMemoryLimitExceeded`, closed ADTs rather than integer sentinels) is the in-repo precedent this
   doctrine generalizes; [bounded inference memory](bounded_inference_memory.md) carries the same
   bounded-primitive shape to the inference subprocess itself — an opaque `ExecutableModel` carrying
-  a matching resource-indexed grant/enforcer pair and a measured, watchdog-terminated
-  `MemoryCeiling`, the memory analog
-  of `runBoundedCommand` under a `Timeout`. The analogy has one limit worth stating: a deadline is a
+  a matching resource-indexed grant/enforcer pair per physical resource, a kernel `MemoryCeiling`
+  installed before the engine's first allocation on every lane that can install one, and a sampled
+  backstop over the residue that ceiling does not charge: the memory analog
+  of `runBoundedCommand` under a `Timeout`. An installed ceiling makes that analogy *stronger* than a
+  sampled one, because a limit the kernel binds to a process image before its first allocation is as
+  intrinsic to that process as a deadline is, and is refused rather than observed after the fact. The
+  strengthening does not touch the one limit worth stating: a deadline is a
   property of a single process and composes trivially, whereas a ceiling on one process says nothing
   about the host, so memory additionally needs a declared budget and an admission rule over
-  concurrent claims — owned by [bounded host memory](bounded_host_memory.md).
+  concurrent claims — owned by [bounded host memory](bounded_host_memory.md). That is now the precise
+  residual rather than one objection among several.
 - Enforcement rides on **GHC module export lists plus `-Wall -Werror`** — the sound, compile-checked
   lever. The governed lints are line-based and cannot see scope; the type system does. Line-based
   capability-gating lints back the raw primitives that have no type-level chokepoint: `unboundedExecViolations`
@@ -426,6 +431,21 @@ preserved, and the hard limit is written back unchanged, so no privilege is requ
 than a stall that reads as a hang. Because it is an observation at the point of use, it holds when a
 process image fails to establish the bound.
 
+The inference row installs the same shape for a different resource, and it belongs beside this one
+because the precedent is exact rather than merely similar: a kernel rlimit lowered before the
+resource it governs is touched, plus a lint keeping a new spawn surface from skipping the lowering.
+On a lane that can install a ceiling, an engine is started through a fixed public-tool launch prefix
+that lowers the data-segment limit and then replaces itself with the engine image, so an over-budget
+allocation is **refused inside the engine** rather than sampled after it. Two differences are worth
+stating rather than eliding. Descriptor space lowers only the *soft* limit, which is reversible and
+can therefore be established in-process as the image's first action; the memory ceiling lowers the
+*hard* limit too, which is one-way, so it cannot belong to the long-lived daemon and requires a fresh
+process image dedicated to a single execution. And the descriptor bound is uniform — every supported
+image can lower it — whereas a memory ceiling is installable on some lanes and not others, so a lane
+declares the strength it has instead of asserting a bound it cannot install. What the ceiling charges,
+what it leaves to the backstop, and which lane claims which strength are owned by
+[bounded inference memory](bounded_inference_memory.md).
+
 ### Diagnosable bounds
 
 A bound that cannot report its own violation is not an enforceable bound; it is an unexplained stop.
@@ -439,6 +459,19 @@ is distinguishable from one that grew after it was admitted. A refusal that repo
 bound was crossed leaves editing and rebuilding the kernel as the only way to learn why a supported
 lane cannot proceed, which is the same opacity the [realness contract](realness_contract.md) rejects
 on the results side.
+
+A memory ceiling is the case where satisfying this rule takes deliberate work rather than falling out
+of the mechanism, so it is stated as a requirement on the design rather than assumed. A deadline
+expires in the process that holds it, and the refusal has every term in hand; an allocation refused by
+a kernel limit inside an engine produces only a failed allocation and an exit status, which names no
+quantity, no observed value, no configured value, and no object. The obligation therefore falls on the
+launch and not on the kernel: the launch records the ceiling it installed and the resource it
+installed it for, the engine reports back the limit it actually received from inside the process that
+will allocate, and the breach names the resource it breached and the footprint it observed. A refusal
+that cannot say *which* resource it is about cannot be acted on, because host and device breaches have
+different fixes; and a breach that arrives as a bare non-zero exit is indistinguishable from an
+ordinary model crash, which is the confusion the [realness contract](realness_contract.md) forbids on
+the results side.
 
 Two audit obligations bound the review surface: **probe honesty**
 (each evidence type has exactly one mint, co-located with its hidden constructor, that must consume a

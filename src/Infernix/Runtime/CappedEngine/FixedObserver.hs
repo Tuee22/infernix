@@ -14,6 +14,7 @@ module Infernix.Runtime.CappedEngine.FixedObserver
     NvidiaComputeApp (..),
     nvidiaComputeAppGroupBytes,
     observeNvidiaComputeApps,
+    observeNvidiaDeviceFreeMib,
     observeNvidiaDeviceTotalMib,
     parseFootprintPhysicalBytes,
     parseNvidiaComputeApps,
@@ -24,6 +25,7 @@ module Infernix.Runtime.CappedEngine.FixedObserver
     probeNvidiaVramObserver,
     probePhysicalFootprintObserver,
     processGroupHasNoLiveMembers,
+    processGroupMemberCount,
     processGroupPhysicalFootprintBytes,
     runFixedObserverFixtureModeIfRequested,
     runFixedObserverKernelTest,
@@ -160,6 +162,11 @@ data FixedObserverRequest
 data FixedObserverRequest
   = QueryNvidiaComputeApps
   | QueryNvidiaDeviceMemory
+  | -- | Phase 6 Sprint 6.51: what the card currently has free, as distinct from
+    -- what it contains. Admission is against capacity by doctrine, so a
+    -- competing tenant changes nothing about what was admitted; what it changes
+    -- is whether the admitted arena can actually be taken.
+    QueryNvidiaDeviceFreeMemory
 #endif
 
 data FixedObserverSpec = FixedObserverSpec
@@ -229,6 +236,25 @@ processGroupHasNoLiveMembers processGroup =
 #else
 processGroupHasNoLiveMembers _ =
   pure (Left "Apple process-group live-member observation is unavailable on this platform")
+#endif
+
+-- | Phase 4 Sprint 4.40 — how many live members the group holds.
+--
+-- The shared sampling loop sums a per-process residency field across a group,
+-- and that sum is a bounded quantity only against a bounded member count. This
+-- is the Apple lane's half of that check; it reuses the same fixed public-tool
+-- discovery the footprint sample already performs and adds no caller-supplied
+-- command specification.
+processGroupMemberCount :: CPid -> IO (Either Text Int)
+#if defined(darwin_HOST_OS)
+processGroupMemberCount processGroup =
+  captureSynchronousFailure "Apple process-group member-count observation failed" $ do
+    deadline <- deadlineFromNow observerSampleTimeoutMicros
+    discovered <- discoverProcessGroupMembers deadline processGroup
+    pure (fmap length discovered)
+#else
+processGroupMemberCount _ =
+  pure (Left "Apple process-group member-count observation is unavailable on this platform")
 #endif
 
 processGroupPhysicalFootprintBytes :: CPid -> IO (Either Text Word64)
@@ -360,6 +386,24 @@ observeNvidiaComputeApps = do
 -- | Observe the installed NVIDIA device's total VRAM (MiB). This is the outer
 -- envelope a VRAM grant must fit inside, the GPU analogue of the pod cgroup
 -- memory limit read for the resident-set lane.
+-- | Phase 6 Sprint 6.51 — what the device currently has free.
+--
+-- Serialization is what makes this observation worth taking: one engine process
+-- per machine and one execution at a time means the only claimant that can move
+-- the number between the observation and the allocation is one this repository
+-- did not start, which is exactly the claimant a refusal must name instead of
+-- assuming absent.
+observeNvidiaDeviceFreeMib :: IO (Either Text Int)
+#if defined(darwin_HOST_OS)
+observeNvidiaDeviceFreeMib =
+  pure (Left "NVIDIA device free-memory observation is unavailable on this platform")
+#else
+observeNvidiaDeviceFreeMib = do
+  deadline <- deadlineFromNow observerSampleTimeoutMicros
+  output <- runFixedObserverRequest deadline QueryNvidiaDeviceFreeMemory
+  pure (output >>= parseNvidiaDeviceTotalMib)
+#endif
+
 observeNvidiaDeviceTotalMib :: IO (Either Text Int)
 #if defined(darwin_HOST_OS)
 observeNvidiaDeviceTotalMib =
@@ -542,6 +586,17 @@ fixedObserverSpec request =
               "--format=csv,noheader,nounits"
             ],
           observerLabel = "fixed " <> nvidiaSmiExecutable <> " device-memory observer",
+          observerStdoutLimit = maximumNvidiaOutputBytes,
+          observerRequiresFixtureGate = False
+        }
+    QueryNvidiaDeviceFreeMemory ->
+      FixedObserverSpec
+        { observerExecutable = nvidiaSmiExecutable,
+          observerArguments =
+            [ "--query-gpu=memory.free",
+              "--format=csv,noheader,nounits"
+            ],
+          observerLabel = "fixed " <> nvidiaSmiExecutable <> " device-free-memory observer",
           observerStdoutLimit = maximumNvidiaOutputBytes,
           observerRequiresFixtureGate = False
         }

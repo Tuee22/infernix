@@ -10,12 +10,14 @@ module Infernix.ExecutionPlan.Internal
     CompiledRuntimePlan (..),
     EnforcedGrant (..),
     Enforcer (..),
+    enforcerBudgetMib,
     EnforcerPlan (..),
     EngineRoute (..),
     ExecutableModel (..),
     MemoryCeiling (..),
     MemoryGrant (..),
     PlacementEnforcementShape (..),
+    ModelRequirementObservation (..),
     PlacementObservation (..),
     RawRuntimeConfig (..),
     Resource (..),
@@ -37,16 +39,12 @@ import Infernix.Types
     HostMemoryPartition,
     InferenceError,
     ModelDescriptor,
+    ModelResourceRequirement,
     PodMemoryLimit,
+    Resource (..),
+    hostPartitionInferenceCapacityMib,
+    podMemoryLimitMib,
   )
-
--- | The physical resource bounded by a grant. The promoted constructors keep
--- host RAM, pod RAM, and NVIDIA VRAM proofs distinct at compile time.
-data Resource
-  = HostRam
-  | PodRam
-  | NvidiaVram
-  deriving (Eq, Ord, Read, Show)
 
 -- | A positive admitted ceiling for exactly one resource.
 newtype MemoryCeiling (resource :: Resource) = MemoryCeiling Int
@@ -86,6 +84,19 @@ type role Enforcer nominal
 deriving instance Eq (Enforcer resource)
 
 deriving instance Show (Enforcer resource)
+
+-- | Phase 4 Sprint 4.43 — the per-execution budget this enforcer bounds.
+--
+-- It is the lane's own quantity rather than the model's: the pod's cgroup limit
+-- on the resident lanes, and the host partition's inference capacity on the
+-- Apple lane. A model's derived requirement is what admission compares against
+-- it; this is what the lane provisioned.
+enforcerBudgetMib :: Enforcer resource -> Int
+enforcerBudgetMib enforcer =
+  case enforcer of
+    HostFootprintWatchdogEnforcer partition -> hostPartitionInferenceCapacityMib partition
+    LinuxProcessGroupRssWatchdogEnforcer podLimit -> podMemoryLimitMib podLimit
+    NvidiaVramAccountingEnforcer podLimit -> podMemoryLimitMib podLimit
 
 -- | A matching live enforcer and admitted grant. The shared resource index
 -- makes cross-resource substitution a type error.
@@ -198,7 +209,24 @@ data PlacementObservation
   | GpuPlacementObservation Text Bool (Maybe Int) Bool (Maybe Int)
   deriving (Eq, Show)
 
-newtype RuntimeObservation = RuntimeObservation [PlacementObservation]
+-- | Phase 4 Sprint 4.39 — what the executing machine derived for one model's
+-- memory requirement from that model's own staged artifact.
+--
+-- A derivation that failed carries its reason rather than a smaller number. The
+-- moment a derivation fails is the moment the artifact is known not to describe
+-- itself, so a fallback constant would be consulted exactly then — which is a
+-- code path nothing validates, and the objection that makes a machine's capacity
+-- an observation rather than a declaration, applied to the other side of the
+-- comparison.
+data ModelRequirementObservation
+  = ModelRequirementObservation Text (Either Text ModelResourceRequirement)
+  deriving (Eq, Show)
+
+-- | Everything the machine that will execute observed about itself and about
+-- the artifacts it holds. Both halves are package internal, so no routing-only
+-- role can manufacture one.
+data RuntimeObservation
+  = RuntimeObservation [PlacementObservation] [ModelRequirementObservation]
   deriving (Eq, Show)
 
 -- | Runtime-refined placement. Its constructor is hidden from public callers.

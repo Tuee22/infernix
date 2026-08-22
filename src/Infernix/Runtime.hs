@@ -20,13 +20,14 @@ import Infernix.ExecutionPlan
   ( ExecutableModel,
     executableModelDescriptor,
     executableModelId,
-    executableModelResidentCeilingMib,
-    executableModelResidentResource,
   )
 import Infernix.Models (resultFamilyForDescriptor)
 import Infernix.Runtime.Cache (evictCache, listCacheManifests, materializeCache, rebuildCache)
 import Infernix.Runtime.KVCache qualified as KVCache
-import Infernix.Runtime.Worker (runExecutableInferenceWorker)
+import Infernix.Runtime.Worker
+  ( WorkerFailure (WorkerError, WorkerTypedInferenceFailure),
+    runExecutableInferenceWorker,
+  )
 import Infernix.Storage
   ( readInferenceResultProtoMaybe,
     writeInferenceResultProto,
@@ -72,12 +73,17 @@ executeExecutableInferenceWithKVCache paths maybeEngineCache maybeCacheRequest e
           request
           cacheObservation
       case workerResult of
-        Left workerError
-          | errorCode workerError == modelMemoryLimitExceededErrorCode -> do
-              let result = failedMemoryResult now model (ceilingBreachError executableModel)
-              persistInferenceResult paths result
-              pure (Right result)
-          | otherwise -> pure (Left workerError)
+        -- Phase 4 Sprint 4.37: the worker's own measurement is consumed, not
+        -- re-derived. The retired arm matched a reserved error code and then
+        -- dropped the worker's report whole, rebuilding the payload from the
+        -- 'ExecutableModel' — so everything the sampler measured ended at that
+        -- match, and a device breach was published against the resident host
+        -- resource carrying the pod ceiling.
+        Left (WorkerTypedInferenceFailure breach) -> do
+          let result = failedMemoryResult now model breach
+          persistInferenceResult paths result
+          pure (Right result)
+        Left (WorkerError workerError) -> pure (Left workerError)
         Right outputText -> do
           let result =
                 InferenceResult
@@ -133,23 +139,6 @@ failedMemoryResult now model errorValue =
       resultContextId = "",
       resultCausalRef = ""
     }
-
--- | The typed error for a runtime resident-memory ceiling breach: the model was
--- admitted, so its footprint fit the budget, but the engine's actual resident
--- memory exceeded that admitted footprint (its 'MemoryCeiling') and the kernel
--- terminated it. Reported against the model footprint with the enforcing source.
-ceilingBreachError :: ExecutableModel -> InferenceError
-ceilingBreachError executableModel =
-  ModelMemoryLimitExceeded
-    { inferenceErrorModelId = modelId model,
-      inferenceErrorRequiredMib = ceilingMib,
-      inferenceErrorAvailableMib = ceilingMib,
-      inferenceErrorResource = executableModelResidentResource executableModel,
-      inferenceErrorSource = cappedEngineResidentCeilingSource
-    }
-  where
-    model = executableModelDescriptor executableModel
-    ceilingMib = executableModelResidentCeilingMib executableModel
 
 loadInferenceResult :: Paths -> Text -> IO (Maybe InferenceResult)
 loadInferenceResult paths requestIdValue =

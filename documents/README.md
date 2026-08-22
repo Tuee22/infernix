@@ -29,8 +29,10 @@
   empty foreign-claimant census — and states
   precisely which host out-of-memory conditions that does and does not make unrepresentable
 - [architecture/bounded_inference_memory.md](architecture/bounded_inference_memory.md) defines the
-  target "memory-safety by construction" invariant for the inference row of that ledger, and
-  names the per-substrate enforcement surfaces the execution plan requires
+  "memory-safety by construction" invariant for the inference row of that ledger — a requirement
+  derived from the model's own artifact, indexed per physical resource, and a ceiling installed
+  before the engine's first allocation on every lane that can install one — and records the
+  enforcement strength each lane declares
 - [architecture/typed_execution_plan.md](architecture/typed_execution_plan.md) defines the closed
   generated-Dhall execution language, raw-to-compiled plan boundary, live enforcer refinement, and
   capability-gated command, provisioning, routing, and inference surfaces
@@ -181,10 +183,14 @@
   It is also the canonical home for the scope statement naming what is *not* bounded, so no other
   document asserts that a host out-of-memory condition is impossible.
 - `documents/architecture/bounded_inference_memory.md` owns the inference row of that ledger —
-  the "memory-safety by construction" invariant that compilation mints a resource-indexed
-  `MemoryGrant`, live refinement pairs it with a matching `Enforcer`, and public engine launch
-  accepts only the resulting opaque `ExecutableModel` whose capped-engine region applies the
-  ceiling — the memory analog of the bounded-command kernel in
+  the "memory-safety by construction" invariant that a model's requirement is derived from its own
+  artifact rather than authored, that compilation mints one resource-indexed `MemoryGrant` per
+  physical resource the placement consumes, that live refinement pairs each grant with a matching
+  `Enforcer`, and that public engine launch accepts only the resulting opaque `ExecutableModel`.
+  It is also the canonical home for the three enforcement layers — a ceiling installed before the
+  engine's first allocation, the sampled backstop over the residue that ceiling cannot charge, and
+  the engine's conformance report — and for the rule that a lane declares the enforcement strength
+  it actually has. The memory analog of the bounded-command kernel in
   `documents/architecture/managed_state_transitions.md`; `realness_contract.md` and
   `runtime_modes.md` reference it as the home for the runtime-memory chokepoint.
 - Monitoring is not a supported first-class surface. The governed docs suite has no canonical

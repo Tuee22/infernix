@@ -1,4 +1,7 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RoleAnnotations #-}
 
 module Infernix.Types
   ( ApiUpstream (..),
@@ -24,13 +27,20 @@ module Infernix.Types
     ErrorResponse (..),
     InferenceError (..),
     InferenceMemoryBudget (..),
-    InferenceMemoryResource (..),
     InferenceRequest (..),
     InferenceResult (..),
     HostMemoryPartition,
     HostClaimablePool,
     ConcurrentHostPoolClaim,
-    ModelMemoryFootprint,
+    HostResidentResource,
+    KnownResource,
+    ModelExecutionShape (..),
+    ModelGeometry (..),
+    ModelLoadStrategy (..),
+    ModelMemoryRequirement,
+    ModelResourceRequirement (..),
+    Resource (..),
+    resourceValue,
     PodMemoryLimit (..),
     PodMemoryLimitSource (..),
     podMemoryLimitSourceText,
@@ -73,18 +83,26 @@ module Infernix.Types
     inferenceMemoryBudgetCapacityMib,
     inferenceMemoryBudgetPodLimits,
     inferenceMemoryBudgetResource,
-    inferenceMemoryBudgetResourceText,
+    resourceText,
     inferenceMemoryBudgetSource,
     cappedEngineResidentCeilingSource,
     minHostHeadroomMib,
     modelMemoryLimitExceededErrorCode,
+    modelRequirementUnderivableErrorCode,
+    cappedEngineRefusedAtCeilingSource,
     mkHostMemoryPartition,
-    mkModelMemoryFootprint,
-    modelMemoryFootprintMib,
+    mkHostAndDeviceRequirement,
+    mkHostResidentRequirement,
+    modelDeviceRequirement,
+    modelHostResidencyRequirement,
+    modelMemoryRequirementMib,
+    modelResourceRequirementHostMib,
+    modelResourceRequirementDeviceMib,
+    requiresGpu,
     parseApiUpstreamMode,
     parseConsumerSubscriptionType,
     parseDaemonRole,
-    parseInferenceMemoryResource,
+    parseResource,
     parsePulsarConnectionMode,
     parseRequestFieldType,
     parseRuntimeLane,
@@ -674,31 +692,87 @@ data DemoConfig = DemoConfig
   }
   deriving (Eq, Show)
 
-data InferenceMemoryResource
-  = UnifiedHostRam
+-- | Phase 4 Sprint 4.38 — the physical resource a quantity is about.
+--
+-- This is the /only/ name for a resource in the repository. It is used at the
+-- value level for the wire and for error payloads, and promoted with
+-- @DataKinds@ to index every memory ceiling, grant, enforcer, enforcer plan,
+-- and requirement, so a host quantity handed to a device admission is not a
+-- term. The retired shape carried the same three resources twice — a promoted
+-- kind in the execution planner and an ordinary value-level enumeration here —
+-- joined by hand-written functions that had to agree with one another by
+-- inspection and that nothing could check, because each was total over its own
+-- input. Two enumerations for one concept are two chances to disagree, and the
+-- disagreement is silent because both compile.
+--
+-- The constructor spellings are the promoted kind's, deliberately: the
+-- compile-fail fixtures pin GHC's diagnostics by substring on @HostRam@,
+-- @PodRam@, and @NvidiaVram@, so renaming one makes those fixtures pass or fail
+-- on whether the new name happens to appear elsewhere in the error text.
+data Resource
+  = HostRam
   | PodRam
-  | GpuVram
+  | NvidiaVram
   deriving (Eq, Ord, Read, Show)
 
-inferenceMemoryBudgetResourceText :: InferenceMemoryResource -> Text
-inferenceMemoryBudgetResourceText resource = case resource of
-  UnifiedHostRam -> "unified-host-ram"
-  PodRam -> "pod-ram"
-  GpuVram -> "gpu-vram"
+-- | The one demotion from the promoted kind to its value.
+--
+-- Every site that needs to report which resource a statically-indexed value is
+-- about reads it from here, so the index and the reported value cannot
+-- disagree. The retired shape wrote that correspondence out once per consumer:
+-- a witness-to-value map in the admission path, a shape-to-list map in the
+-- placement projection, and a live-resources-to-value map on the executable —
+-- the last of which answered pod RAM for every device placement by
+-- construction, which is how a device breach was published as a host breach.
+-- The method takes any value already indexed by the resource — a witness, a
+-- grant, a ceiling, a requirement — so demotion needs no proxy and no ambiguous
+-- type: the caller always has the indexed value in hand at the site that has to
+-- report which resource it is about.
+class KnownResource (resource :: Resource) where
+  resourceValue :: f resource -> Resource
 
-parseInferenceMemoryResource :: Text -> Maybe InferenceMemoryResource
-parseInferenceMemoryResource rawValue = case Text.toLower rawValue of
-  "unified-host-ram" -> Just UnifiedHostRam
+instance KnownResource 'HostRam where
+  resourceValue _ = HostRam
+
+instance KnownResource 'PodRam where
+  resourceValue _ = PodRam
+
+instance KnownResource 'NvidiaVram where
+  resourceValue _ = NvidiaVram
+
+-- | The two indices that name memory resident on the executing machine: unified
+-- host RAM on the Apple lane and the container's pod RAM on the Linux lanes.
+--
+-- They are two lanes' names for one physical quantity — bytes the engine holds
+-- on the machine — which is why one derived host-residency term may be admitted
+-- against either. Device memory is deliberately not an instance: a host
+-- residency figure is not a statement about the card, and this class is what
+-- stops it being handed to a device admission.
+class HostResidentResource (resource :: Resource)
+
+instance HostResidentResource 'HostRam
+
+instance HostResidentResource 'PodRam
+
+resourceText :: Resource -> Text
+resourceText resource = case resource of
+  HostRam -> "unified-host-ram"
+  PodRam -> "pod-ram"
+  NvidiaVram -> "gpu-vram"
+
+parseResource :: Text -> Maybe Resource
+parseResource rawValue = case Text.toLower rawValue of
+  "unified-host-ram" -> Just HostRam
   "pod-ram" -> Just PodRam
-  "gpu-vram" -> Just GpuVram
+  "gpu-vram" -> Just NvidiaVram
   _ -> Nothing
 
-instance ToJSON InferenceMemoryResource where
-  toJSON = String . inferenceMemoryBudgetResourceText
+instance ToJSON Resource where
+  toJSON = String . resourceText
 
-instance FromJSON InferenceMemoryResource where
-  parseJSON = withText "InferenceMemoryResource" $ \rawValue ->
-    case parseInferenceMemoryResource rawValue of
+instance FromJSON Resource where
+  parseJSON = withText "Resource" $ \rawValue ->
+    case parseResource rawValue of
       Just resource -> pure resource
       Nothing -> fail ("Unsupported inference memory resource: " <> Text.unpack rawValue)
 
@@ -989,7 +1063,7 @@ instance FromJSON PodMemoryLimitSource where
 -- impossible; this record names that already-enforced limit for admission and
 -- observability.
 data PodMemoryLimit = PodMemoryLimit
-  { podMemoryLimitResource :: InferenceMemoryResource,
+  { podMemoryLimitResource :: Resource,
     podMemoryLimitSource :: PodMemoryLimitSource,
     podMemoryLimitMib :: Int
   }
@@ -1105,9 +1179,9 @@ inferenceMemoryBudgetCapacityMib budget = case budget of
   SubstrateEnforcedBudget podLimit -> podMemoryLimitMib podLimit
   DualEnforcedBudget _ vramLimit -> podMemoryLimitMib vramLimit
 
-inferenceMemoryBudgetResource :: InferenceMemoryBudget -> InferenceMemoryResource
+inferenceMemoryBudgetResource :: InferenceMemoryBudget -> Resource
 inferenceMemoryBudgetResource budget = case budget of
-  HostEnforcedBudget _ -> UnifiedHostRam
+  HostEnforcedBudget _ -> HostRam
   SubstrateEnforcedBudget podLimit -> podMemoryLimitResource podLimit
   DualEnforcedBudget _ vramLimit -> podMemoryLimitResource vramLimit
 
@@ -1127,21 +1201,143 @@ inferenceMemoryBudgetPodLimits budget = case budget of
   SubstrateEnforcedBudget podLimit -> [podLimit]
   DualEnforcedBudget podLimit vramLimit -> [podLimit, vramLimit]
 
--- | Phase 4 Sprint 4.31 — a required per-model peak-resident memory footprint
--- (MiB). The constructor is hidden; 'mkModelMemoryFootprint' rejects a
--- non-positive value, so a model admitted on an absent or zero footprint (the
--- superseded bare-@Int@ that decoded to @0@ and silently disabled admission) is
--- unrepresentable.
-newtype ModelMemoryFootprint = ModelMemoryFootprint Int
+-- | Phase 4 Sprint 4.38 — a required per-model memory quantity for exactly one
+-- physical resource (MiB).
+--
+-- The constructor is hidden and the role is nominal, so a host quantity handed
+-- to a device admission stops being a term rather than a review obligation. The
+-- retired 'ModelMemoryFootprint' was one @Int@ behind a positivity check, and it
+-- was the last un-indexed quantity feeding both admission arms: the same scalar
+-- was compared against a host capacity and against a device capacity, and the
+-- result was a correctly indexed grant either way. The type system was enforcing
+-- non-substitutability at the far end of a pipe whose input was a single scalar.
+newtype ModelMemoryRequirement (resource :: Resource) = ModelMemoryRequirement Int
   deriving (Eq, Ord, Show)
 
-mkModelMemoryFootprint :: Int -> Either String ModelMemoryFootprint
-mkModelMemoryFootprint mib
-  | mib > 0 = Right (ModelMemoryFootprint mib)
-  | otherwise = Left ("model RAM footprint must be a positive MiB value, got " <> show mib)
+type role ModelMemoryRequirement nominal
 
-modelMemoryFootprintMib :: ModelMemoryFootprint -> Int
-modelMemoryFootprintMib (ModelMemoryFootprint mib) = mib
+modelMemoryRequirementMib :: ModelMemoryRequirement resource -> Int
+modelMemoryRequirementMib (ModelMemoryRequirement mib) = mib
+
+-- | Phase 4 Sprint 4.39 — where a model's weights live while it runs.
+--
+-- This is the one declaration that decides which resource the model-size term is
+-- charged to. A host-resident load holds the weights on the executing machine; a
+-- streamed load holds one tensor at a time on the host and the whole checkpoint
+-- on the device, which is why the host formula for a streamed model has no
+-- model-size term in it at all.
+data ModelLoadStrategy
+  = LoadResidentHost
+  | StreamWeightsToDevice
+  deriving (Eq, Ord, Read, Show)
+
+-- | Phase 4 Sprint 4.39 — the execution shape the engine will actually run
+-- under.
+--
+-- It is declared rather than derived, because it is policy rather than
+-- measurement: how long a context this deployment runs is a decision, and the
+-- artifact has no opinion about it. It is the second input to the cache term,
+-- computed once by the compiler and carried to the engine, so the engine runs
+-- the shape the model was admitted against rather than a number that was never
+-- compared against a machine.
+data ModelExecutionShape = ModelExecutionShape
+  { executionContextLength :: Int,
+    executionBatchSize :: Int,
+    executionGenerationBound :: Int,
+    -- | Bytes per key/value cache element.
+    executionCacheElementWidth :: Int,
+    executionLoadStrategy :: ModelLoadStrategy
+  }
+  deriving (Eq, Show)
+
+-- | Phase 4 Sprint 4.39 — the declared geometry the cache term is computed
+-- from.
+--
+-- Every field is cross-checked against the artifact's own tensor table before it
+-- is used, so a geometry that the checkpoint does not corroborate yields no
+-- requirement rather than a small one. A model whose engine keeps no key/value
+-- cache declares none, and its cache term is zero rather than guessed.
+data ModelGeometry = ModelGeometry
+  { geometryLayers :: Int,
+    geometryKeyValueHeads :: Int,
+    geometryHeadWidth :: Int,
+    geometryHiddenWidth :: Int
+  }
+  deriving (Eq, Show)
+
+-- | Phase 4 Sprint 4.38 — what a model requires, by the resources it uses.
+--
+-- The retired descriptor carried @requiresGpu :: Bool@ beside a single
+-- footprint, so \"this model uses the device\" and \"this model has stated what
+-- it needs from the device\" were two independent fields that could disagree.
+-- They are one fact here: the arms are host-only and host-plus-device, the
+-- device term is present exactly on the arm that uses the device, and
+-- 'requiresGpu' is derived from the arm rather than written beside it.
+data ModelResourceRequirement
+  = HostResidentRequirement (ModelMemoryRequirement 'HostRam)
+  | HostAndDeviceRequirement
+      (ModelMemoryRequirement 'HostRam)
+      (ModelMemoryRequirement 'NvidiaVram)
+  deriving (Eq, Show)
+
+-- | Mint a host-only requirement. Rejects a non-positive quantity, so a model
+-- admitted on an absent or zero requirement is unrepresentable.
+mkHostResidentRequirement :: Int -> Either String ModelResourceRequirement
+mkHostResidentRequirement hostMib
+  | hostMib > 0 = Right (HostResidentRequirement (ModelMemoryRequirement hostMib))
+  | otherwise =
+      Left ("model host-residency requirement must be a positive MiB value, got " <> show hostMib)
+
+-- | Mint a host-plus-device requirement. Both terms are checked, because a
+-- device-using model that states nothing about the device is exactly the
+-- disagreement this arm exists to make unrepresentable.
+mkHostAndDeviceRequirement :: Int -> Int -> Either String ModelResourceRequirement
+mkHostAndDeviceRequirement hostMib deviceMib
+  | hostMib <= 0 =
+      Left ("model host-residency requirement must be a positive MiB value, got " <> show hostMib)
+  | deviceMib <= 0 =
+      Left ("model device requirement must be a positive MiB value, got " <> show deviceMib)
+  | otherwise =
+      Right
+        ( HostAndDeviceRequirement
+            (ModelMemoryRequirement hostMib)
+            (ModelMemoryRequirement deviceMib)
+        )
+
+-- | The host-residency term, indexed for whichever host-side resource the
+-- executing lane admits it against. 'HostResidentResource' is what keeps the
+-- device index out of this projection.
+modelHostResidencyRequirement ::
+  (HostResidentResource resource) =>
+  ModelResourceRequirement ->
+  ModelMemoryRequirement resource
+modelHostResidencyRequirement requirement =
+  case requirement of
+    HostResidentRequirement hostRequirement ->
+      ModelMemoryRequirement (modelMemoryRequirementMib hostRequirement)
+    HostAndDeviceRequirement hostRequirement _ ->
+      ModelMemoryRequirement (modelMemoryRequirementMib hostRequirement)
+
+-- | The device term, present exactly on the device-using arm.
+modelDeviceRequirement ::
+  ModelResourceRequirement ->
+  Maybe (ModelMemoryRequirement 'NvidiaVram)
+modelDeviceRequirement requirement =
+  case requirement of
+    HostResidentRequirement _ -> Nothing
+    HostAndDeviceRequirement _ deviceRequirement -> Just deviceRequirement
+
+-- | The host-residency quantity in MiB, for rendering and observability.
+modelResourceRequirementHostMib :: ModelResourceRequirement -> Int
+modelResourceRequirementHostMib requirement =
+  case requirement of
+    HostResidentRequirement hostRequirement -> modelMemoryRequirementMib hostRequirement
+    HostAndDeviceRequirement hostRequirement _ -> modelMemoryRequirementMib hostRequirement
+
+-- | The device quantity in MiB when the model uses the device.
+modelResourceRequirementDeviceMib :: ModelResourceRequirement -> Maybe Int
+modelResourceRequirementDeviceMib =
+  fmap modelMemoryRequirementMib . modelDeviceRequirement
 
 -- | Phase 4 Sprint 4.30 — the internal 'ErrorResponse' code the capped-engine
 -- kernel raises when a running engine subprocess breaches its admitted
@@ -1153,6 +1349,15 @@ modelMemoryFootprintMib (ModelMemoryFootprint mib) = mib
 modelMemoryLimitExceededErrorCode :: Text
 modelMemoryLimitExceededErrorCode = "model_memory_limit_exceeded"
 
+-- | Phase 4 Sprint 4.43 — the operator-facing code for a model whose memory
+-- requirement could not be established at all.
+--
+-- It is deliberately not the limit-exceeded code: the two demand opposite
+-- responses, and a refusal that cannot say which proposition failed cannot be
+-- acted on.
+modelRequirementUnderivableErrorCode :: Text
+modelRequirementUnderivableErrorCode = "model_requirement_underivable"
+
 -- | Phase 4 Sprint 4.30 — the @inferenceErrorSource@ a runtime resident-memory
 -- ceiling breach reports (the model was admitted but its actual footprint
 -- exceeded its admitted ceiling and the capped-engine kernel terminated it),
@@ -1161,14 +1366,41 @@ modelMemoryLimitExceededErrorCode = "model_memory_limit_exceeded"
 cappedEngineResidentCeilingSource :: Text
 cappedEngineResidentCeilingSource = "capped-engine-resident-ceiling"
 
+-- | Phase 4 Sprint 4.44 — the @inferenceErrorSource@ a /kernel refusal at the
+-- installed ceiling/ names, as distinct from a sampled overrun above it.
+--
+-- The two are different shapes and the payload has to be able to say which. An
+-- overrun reports an observation strictly above the ceiling; a refusal has no
+-- such observation to report, because the kernel refused the allocation and the
+-- memory never became resident. Its payload therefore carries the ceiling that
+-- was installed and the peak that was actually observed — which is at or below
+-- it — rather than a number invented above the limit to satisfy an invariant
+-- that belongs to the other shape.
+cappedEngineRefusedAtCeilingSource :: Text
+cappedEngineRefusedAtCeilingSource = "capped-engine-refused-at-ceiling"
+
 data InferenceError
   = ModelMemoryLimitExceeded
-  { inferenceErrorModelId :: Text,
-    inferenceErrorRequiredMib :: Int,
-    inferenceErrorAvailableMib :: Int,
-    inferenceErrorResource :: InferenceMemoryResource,
-    inferenceErrorSource :: Text
-  }
+      { inferenceErrorModelId :: Text,
+        inferenceErrorRequiredMib :: Int,
+        inferenceErrorAvailableMib :: Int,
+        inferenceErrorResource :: Resource,
+        inferenceErrorSource :: Text
+      }
+  | -- | Phase 4 Sprint 4.39 — the model's memory requirement could not be
+    -- derived from its own artifact, so the model was never admitted.
+    --
+    -- This is a distinct terminal outcome from a limit being exceeded, and
+    -- collapsing the two would be the same defect the breach path was corrected
+    -- for: a refusal that cannot say which proposition failed cannot be acted
+    -- on. There is deliberately no quantity here, because the quantity is
+    -- exactly what could not be established — reporting a constant in its place
+    -- is the shape this derivation exists to delete.
+    ModelRequirementUnderivable
+      { inferenceErrorModelId :: Text,
+        inferenceErrorArtifactType :: Text,
+        inferenceErrorReason :: Text
+      }
   deriving (Eq, Read, Show)
 
 instance ToJSON InferenceError where
@@ -1182,6 +1414,13 @@ instance ToJSON InferenceError where
           "resource" .= inferenceErrorResource,
           "source" .= inferenceErrorSource
         ]
+    ModelRequirementUnderivable {inferenceErrorModelId, inferenceErrorArtifactType, inferenceErrorReason} ->
+      object
+        [ "tag" .= ("ModelRequirementUnderivable" :: Text),
+          "modelId" .= inferenceErrorModelId,
+          "artifactType" .= inferenceErrorArtifactType,
+          "reason" .= inferenceErrorReason
+        ]
 
 instance FromJSON InferenceError where
   parseJSON = withObject "InferenceError" $ \value -> do
@@ -1194,6 +1433,11 @@ instance FromJSON InferenceError where
           <*> value .: "availableMib"
           <*> value .: "resource"
           <*> value .: "source"
+      "ModelRequirementUnderivable" ->
+        ModelRequirementUnderivable
+          <$> value .: "modelId"
+          <*> value .: "artifactType"
+          <*> value .: "reason"
       _ -> fail ("Unsupported inference error: " <> Text.unpack tag)
 
 data PulsarConnectionMode
@@ -1497,21 +1741,35 @@ data ModelDescriptor = ModelDescriptor
     requestShape :: [RequestField],
     runtimeMode :: RuntimeMode,
     runtimeLane :: RuntimeLane,
-    requiresGpu :: Bool,
     notes :: Text,
-    -- | Phase 4 Sprint 4.31 — the required peak host-resident memory
-    -- footprint for one serialized inference of this model on the
-    -- unified-memory / CPU execution path, a 'ModelMemoryFootprint' whose
-    -- hidden constructor rejects a non-positive value (superseding the
-    -- bare-@Int@ that decoded to @0@ and silently disabled admission). This is
-    -- the binding constraint on @apple-silicon@, where model memory is host
-    -- RAM; the execution-plan compiler rejects a model whose footprint exceeds
-    -- the active 'InferenceMemoryBudget', and the admitted footprint becomes the
-    -- resource-indexed capped-engine ceiling. Values are conservative per-engine
-    -- defaults until measured peak-RSS / VRAM passes refine them.
-    modelRamFootprint :: ModelMemoryFootprint
+    -- | Phase 4 Sprint 4.39 — the execution shape this model runs under.
+    --
+    -- Sprint 4.38 put a closed requirement here in place of the retired
+    -- @requiresGpu :: Bool@ plus a single authored footprint. Sprint 4.39 then
+    -- took the /quantities/ off the wire entirely: they are derived from the
+    -- artifact's own bytes on the machine that will execute, and what remains
+    -- declared is the shape that derivation is evaluated against.
+    modelExecutionShape :: ModelExecutionShape,
+    -- | The declared geometry, for a model whose engine keeps a key/value
+    -- cache. It is cross-checked against the artifact's tensor table before the
+    -- cache term is computed from it.
+    modelGeometry :: Maybe ModelGeometry
   }
   deriving (Eq, Show)
+
+-- | Phase 4 Sprint 4.39 — whether this model uses the device, derived from
+-- where its weights live.
+--
+-- This was a wire field beside a footprint, so \"this model uses the device\"
+-- and \"this model has stated what it needs from the device\" were two
+-- independent facts that could disagree. It is one fact now: a model whose
+-- weights stream to the device uses the device, and the derivation charges the
+-- model-size term to the device for exactly those models.
+requiresGpu :: ModelDescriptor -> Bool
+requiresGpu modelDescriptor =
+  case executionLoadStrategy (modelExecutionShape modelDescriptor) of
+    LoadResidentHost -> False
+    StreamWeightsToDevice -> True
 
 instance ToJSON ModelDescriptor where
   toJSON modelDescriptor =
@@ -1530,7 +1788,11 @@ instance ToJSON ModelDescriptor where
         "runtimeLane" .= runtimeLane modelDescriptor,
         "requiresGpu" .= requiresGpu modelDescriptor,
         "notes" .= notes modelDescriptor,
-        "modelRamFootprintMib" .= modelMemoryFootprintMib (modelRamFootprint modelDescriptor)
+        "contextLength" .= executionContextLength (modelExecutionShape modelDescriptor),
+        "batchSize" .= executionBatchSize (modelExecutionShape modelDescriptor),
+        "generationBound" .= executionGenerationBound (modelExecutionShape modelDescriptor),
+        "cacheElementWidth"
+          .= executionCacheElementWidth (modelExecutionShape modelDescriptor)
       ]
 
 instance FromJSON ModelDescriptor where
@@ -1548,9 +1810,19 @@ instance FromJSON ModelDescriptor where
       <*> value .: "requestShape"
       <*> value .: "runtimeMode"
       <*> value .: "runtimeLane"
-      <*> value .: "requiresGpu"
       <*> value .: "notes"
-      <*> (value .: "modelRamFootprintMib" >>= either fail pure . mkModelMemoryFootprint)
+      <*> ( ModelExecutionShape
+              <$> value .: "contextLength"
+              <*> value .: "batchSize"
+              <*> value .: "generationBound"
+              <*> value .: "cacheElementWidth"
+              <*> ( ( \gpuRequired ->
+                        if gpuRequired then StreamWeightsToDevice else LoadResidentHost
+                    )
+                      <$> value .: "requiresGpu"
+                  )
+          )
+      <*> pure Nothing
 
 -- | Phase 4 Sprint 4.15 — the closed set of per-family result contracts.
 -- Each README matrix row resolves to exactly one 'ResultFamily' (via

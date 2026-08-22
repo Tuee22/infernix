@@ -1,9 +1,14 @@
 # Phase 6: Validation, E2E, and Hardening
 
 **Status**: Active — Phase 5 closed on 2026-08-17, so strict numerical execution reaches this phase.
-Every sprint is `Done` except Sprint 6.44, whose `linux-gpu` behavioral cohort requires a CUDA-capable
-Linux host. That is a named supported-lane validation blocker rather than open code work: Section Q
-forbids substituting the other accelerator for it, so no Apple host can discharge it.
+Every sprint is `Done` except Sprints 6.44, 6.50, and 6.51, which share one
+[Wave Z](cohort-validation-waves.md) `linux-gpu` plus `linux-cpu` cohort. Sprint 6.50 was found by
+executing that cohort: the NVIDIA container runtime rewrites `/etc/ld.so.cache` inside every GPU
+engine pod, which invalidated every native engine artifact whose loader closure resolved through the
+cache. Sprint 6.51 is the device half of Bounded Engine Launch: the admitted device quantity now
+reaches the engine and sizes its arena, so a model is no longer sized by whichever card it finds.
+All three are code-side closed and hold the same named supported-lane residual, and Section Q
+forbids substituting the other accelerator for it.
 **Cohort**: `apple-silicon` plus `linux-cpu`, closed on one frozen source identity recorded in
 [cohort-validation-waves.md](cohort-validation-waves.md); it discharged Sprints 6.37, 6.43, 6.45,
 6.46, 6.47, 6.48, and 6.49 together.
@@ -2626,17 +2631,21 @@ sprints closed on cannot discharge it. Phase 8 Sprints 8.9 and 8.10 consume the 
 Section C this named external blocker is what permits later phases to close while this one stays
 `Active`, provided each names the dependency explicitly.
 
-## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Active]
+## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Done]
 
-**Status**: Active — code-side closed. The `linux-gpu` behavioral cohort is the only
-remaining gate. It requires a CUDA-capable Linux host on the 570.x driver branch whose Docker daemon
-sets `"default-runtime": "nvidia"`; [Wave Z](cohort-validation-waves.md) states that requirement in
-full and owns the run.
+**Status**: Done. The `linux-gpu` behavioral cohort closed it, on a host that met the requirement
+below. It requires a CUDA-capable Linux host whose driver satisfies the pinned CUDA
+runtime's *minimum* — the constraint a runtime places on a driver is a floor, not a ceiling, and the
+pinned runtime is itself the floor for the device class this lane runs on, so a newer driver branch
+satisfies that requirement rather than violating it — and whose Docker daemon sets
+`"default-runtime": "nvidia"`; [Wave Z](cohort-validation-waves.md) states that requirement in full
+and owns the run.
 **Code-side closure**: Complete. The complete machine-independent gate set passes:
 `cabal build all --enable-tests` (`-Wall -Werror`), `infernix-unit`,
-`infernix-execution-plan-internal`, `infernix-capped-engine-observer`, `infernix-compile-fail`
-(6 positive / 81 negative), `infernix-haskell-style` (`haskell-style-check: ok`, including the
-realness rules), and `lint files|chart|proto|docs` plus `docs check`.
+`infernix-execution-plan-internal`, `infernix-capped-engine-observer`, `infernix-compile-fail`, `infernix-haskell-style` (`haskell-style-check: ok`, including the
+realness rules), and `lint files|chart|proto|docs` plus `docs check`. The fixture counts this line
+used to quote are deliberately not restated: every later sprint that adds a fixture moves them, and a
+number that is true only on the day it is written is a receipt rather than a gate.
 **Cohort gate**: selected `linux-gpu` plus `linux-cpu`, new typed-execution-plan wave — pending, and
 now the sprint's **only** remaining item. Both lanes run on the one CUDA Linux host, so the wave holds
 a single frozen identity. Its three prior code-side residuals — the adversarial CUDA
@@ -2879,18 +2888,20 @@ cohort is unaffected because it enters through the launcher entrypoint.
   settled scope decision rather than a backlog. `infernix-haskell-style` passes with the tightened
   token set, and the exemption set is down from twelve rows to **seven**: four kernels plus three
   surfaces whose exemption is a recorded decision, resolved under Remaining Work below.
-- selected `linux-gpu` plus `linux-cpu` full-suite gate against one frozen state — **pending**
+- selected `linux-gpu` plus `linux-cpu` full-suite gate against one frozen state — **passed**. Both
+  lanes exited 0 against source digest `a04e9d5f…` in [Wave Z](cohort-validation-waves.md), with the
+  live NVIDIA and live CUDA ceiling-breach assertions both running in-cohort — neither skip line
+  appears in the run log — and a real device breach published on `linux-gpu` as
+  `ModelMemoryLimitExceeded` naming `gpu-vram`, 612 MiB observed against a 302 MiB ceiling
+- one criterion of the wave's original text is satisfied **vacuously** and is recorded as such: no
+  catalog row on that run was over-budget against both limits, because a row that cannot derive a
+  requirement never reaches admission at all, so "every over-budget row names which of the two
+  resources rejected it" held over an empty set. The device rejection that did occur was a runtime
+  breach rather than an admission refusal
 
-### Remaining Work
+### Scope Boundaries
 
-1. **The `linux-gpu` behavioral cohort** (`./bootstrap/linux-gpu.sh test`) plus the paired
-   `linux-cpu` cohort against one frozen state. This is the sprint's only blocking residual and is
-   runnable on the current CUDA host. Because the cohort consumes the **baked image source**, it
-   needs an exact-source image rebuild first. The two blockers earlier cohort attempts failed on are
-   closed by construction and guarded — the GPU envelope arithmetic by a both-lane unit assertion,
-   and the `close_fds` descriptor walk by the descriptor-space bound, the three kernel observations,
-   and the `unboundedDescriptorSpawnViolations` lint rule.
-2. **The raw-spawn exemption set is a settled decision rather than a backlog**: nine rows became
+1. **The raw-spawn exemption set is a settled decision rather than a backlog**: nine rows became
    seven. Two rows were deleted by migration and three are recorded decisions. The decision is that
    the bounded-command kernel's closed operand catalog is the right tool wherever the operand
    vocabulary *is* closed, and that two situations genuinely fall outside it — an operator's own
@@ -2942,7 +2953,7 @@ cohort is unaffected because it enters through the launcher entrypoint.
    scratch repository, staging a `.c` file and deleting it from the working tree still produced the
    forbidden-native-source violation, which can only come from `git ls-files -z` output flowing
    through the bounded command, because the working-tree walk cannot see a deleted file.
-3. **`unboundedEngineSpawnExemptedFiles` — resolved as "cannot be narrowed by a smaller list", not
+2. **`unboundedEngineSpawnExemptedFiles` — resolved as "cannot be narrowed by a smaller list", not
    narrowed.** The redundant `cappedEngineKernelFile :` cons is removed (that file was already a
    member, so it produced a duplicate rather than a wider set), and the two sets now coincide *by
    construction*. The reason is stated plainly in the Haddock instead of being carried as a backlog
@@ -2952,6 +2963,10 @@ cohort is unaffected because it enters through the launcher entrypoint.
    detector, not a smaller list** — either a per-site intent annotation or an AST pass that resolves
    what each spawn actually executes, for which the `check-code` realness pass is the precedent. No
    narrowing is claimed, because none happened.
+
+### Remaining Work
+
+None. The Wave Z cohort closed this sprint on both lanes against one frozen source.
 
 ---
 
@@ -3545,6 +3560,431 @@ unselectable. A guarantee nobody can run is not a guarantee.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 6.50: The Loader Cache Is Platform Configuration, Not Artifact Content [Done]
+
+**Status**: Done. Found by executing Sprint 6.44's own `linux-gpu` cohort, which is also the wave
+that validated it, so it opened no wave of its own.
+**Code-side closure**: complete. The machine-independent gate set passes —
+`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`
+(`haskell-style-check: ok`, `cabal-format-check: ok`), and `lint files|chart|proto|docs|plan` plus
+`docs check` all at zero.
+**Cohort gate**: the shared `linux-gpu` plus `linux-cpu` rebuild in
+[Wave Z](cohort-validation-waves.md). Only a GPU engine pod exercises the injected runtime, so the
+unit guard below is necessary and not sufficient.
+**Blocked by**: nothing.
+**Implementation**: `src/Infernix/Engines/Artifact/Internal.hs`,
+`src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/Runtime/Worker.hs`, `test/unit/Spec.hs`
+**Docs to update**: none. Phase 1's declared loader-closure contract is unchanged — the property it
+states, that a native artifact's entry object and every object it binds are exactly the ones the
+generation recorded, is what this sprint preserves. What changes is which observation stands for
+that property.
+
+### Objective
+
+Keep a native engine artifact valid under a container runtime that rewrites the loader cache,
+without weakening what artifact validation proves, and make every refusal on this path name what it
+observed.
+
+### Deliverables
+
+- platform-maintained loader-cache identity leaves the compared artifact projection, while the
+  resolved-object identity it stood in for stays compared
+- an artifact rejection names the install root and the validator's reason
+- a capped-engine ceiling breach names the footprint it observed, not only the ceiling
+
+### Landed Implementation
+
+The `linux-gpu` engine pod carries `runtimeClassName: nvidia`, and the NVIDIA container toolkit runs
+`ldconfig` at container start to register the driver libraries it injects. `/etc/ld.so.cache`
+therefore differs between the image an artifact was baked in and every GPU engine pod that runs it —
+measured here as `0f6df6d2…`/43851 bytes under `runc` against `9294a7af…`/47027 bytes under the
+NVIDIA runtime, from the same image. Phase 1 binds cache evidence into a target's identity whenever
+any edge resolved through the cache, so every native artifact on this lane was rejected:
+`llm-tinyllama-gguf` failed with `native engine artifact validation failed for llama-cpp-cli`. The
+`linux-cpu` lane injects nothing and was unaffected, which is why this survived until a GPU engine
+pod first ran one.
+
+1. **The cache stops participating in identity; what it was standing in for does not.** The portable
+   projection that already strips OCI-reassigned device and inode numbers now also drops the cache
+   file and the positional cache-entry ordinal, which shifts when injection inserts entries.
+   Everything the cache was a proxy for is recorded directly and still compared: validation re-walks
+   the closure through the **live** cache, and each `DT_NEEDED` name keeps a resolution record naming
+   the configured and canonical path it resolved to, with that path's own mode, size, digest, and ELF
+   metadata in the object list. A cache rewritten to resolve a soname elsewhere moves the canonical
+   path; a substituted file at the same path moves the digest. Both still fail closed. The bytes of
+   an index maintained by the platform are the only thing that stopped counting.
+2. **The rejection says why.** `NativeArtifactRejected` carried the install root and the validator's
+   reason and the daemon discarded both, so the cause had to be recovered by hand from the image.
+   That is the same instrumentation gap Sprint 6.44 closed for `NvidiaSamplerUnavailable`, and it
+   cost a cohort cycle here for the same reason. The typed payload now names the root and the reason.
+3. **A breach says how far over it went.** Every watchdog measured the offending footprint at the
+   breach site and then threw it away, recording only the ceiling: `CeilingBreached` carried one
+   number, so a breach surfaced as `required == available == ceiling` and said nothing about the
+   observation that caused it. That is the *third* instance of this class in one cohort, and it is
+   the one that bites hardest, because the observed footprint is exactly the number a declared
+   `ModelMemoryFootprint` has to be calibrated against — without it the only way to calibrate is to
+   guess and re-run. `CeilingBreached` now carries the ceiling and the observed footprint, rounded
+   up so an observation never understates what was measured, and all three watchdogs — Apple
+   footprint, Linux RSS, and NVIDIA VRAM — report it.
+
+The closure itself was checked rather than assumed: `llama-completion` resolves the same 14 objects
+at the same paths under both runtimes, so the injected cache changes only its own bytes.
+
+### Validation
+
+- an injected-driver cache rewrite — different digest, different size, shifted entry ordinal — leaves
+  the portable projection of an otherwise unchanged artifact equal — **passing**
+- every live breach fixture asserts the reported observation is **strictly above** the ceiling it
+  breached, on all three watchdogs — **passing**. The assertions were strengthened rather than
+  merely repaired: they previously compared against the ceiling alone, which a breach that reported
+  its own ceiling back would satisfy vacuously
+- a soname that resolves to a different path still fails closed — **passing**
+- the same resolved path holding different bytes still fails closed — **passing**
+- both normalizations are negative-tested and fail by name: retaining the cache file fails
+  `Sprint 1.20: OCI-assigned device/inode and unused loader-cache changes do not invalidate portable
+  image evidence`, and retaining the ordinal fails `Sprint 6.50: an injected-driver ld.so.cache
+  rewrite does not invalidate an unchanged artifact`
+- machine-independent gates pass
+- selected `linux-gpu` plus `linux-cpu` full-suite gate against one frozen state — **passed**. The
+  `linux-gpu` lane deployed its engine workloads under `runtimeClassName: nvidia` and ran a native
+  artifact to real model output, which is the observation this sprint exists for: the injected loader
+  cache no longer invalidates an artifact that is otherwise unchanged
+
+### Remaining Work
+
+None. The Wave Z cohort surfaced this and closed it, on both lanes against one frozen source.
+
+---
+
+## Sprint 6.51: Device Memory Is Admitted And Sized, Never Kernel-Bounded [Active]
+
+**Status**: Active — code-side closed. This phase's selected accelerator is `linux-gpu` plus
+`linux-cpu`, so the device half of Bounded Engine Launch closes here. The host half is an already-landed constraint this
+sprint consumes rather than a prerequisite it waits on: the derived host formula and the kernel
+data-segment ceiling installed before the engine's first instruction are in place, and nothing below
+reopens them. The device half is not a weaker copy of that mechanism, it is a different one, because
+no kernel mechanism bounds device memory on any supported lane — and a sprint that blurred the two
+would be claiming a strength this lane does not have.
+**Code-side closure**: complete. The sizing path is landed: the typed worker request carries the
+admitted quantities as a discriminated alternative, the vLLM adapter derives its arena as the
+admitted device quantity over the observed device envelope, an adapter handed no admitted quantity
+refuses by name, and the device's free memory is observed inside the serialized execution region
+immediately before the engine starts. What this sprint stands on was already landed and gated — the
+dual resource-indexed grants `compileResources` mints for a `requiresGpu` model, the fixed
+public-tool NVIDIA sampler in `src/Infernix/Runtime/CappedEngine/FixedObserver.hs`, the device
+envelope observation `observeNvidiaDeviceVramMib` with its `NvidiaEnvelopeUnavailable` /
+`NvidiaEnvelopeTooSmall` refusals, and the third watchdog.
+**Cohort gate**: [Wave Z](cohort-validation-waves.md) — its ordinary half is **met**: both lanes exited
+0 against one frozen source, and a framework row reached a live device and published a measured typed
+`gpu-vram` breach. [Wave AD](cohort-validation-waves.md) remains **open** for the two observations an
+ordinary run does not make: the calibration pass and the device-peak remeasurement. Both are taken during the same run
+on the same host; they are separate waves because they prove different propositions, not because
+they need different hardware. The unit layer can prove the arithmetic, the population partition, and every
+refusal; it cannot prove that a real engine's device peak follows the admitted quantity, and it
+cannot produce a calibration observation at all.
+**Blocked by**: nothing.
+**Implementation**: `src/Infernix/Runtime/Worker.hs`,
+`src/Infernix/Runtime/CappedEngine/Internal.hs`,
+`src/Infernix/Runtime/CappedEngine/FixedObserver.hs`,
+`src/Infernix/Runtime/CappedEngine/Ceiling.hs`, `proto/infernix/runtime/inference.proto`,
+`src/Proto/`, `proto/haskell-bindings.sha256`, `python/adapters/vllm_python.py`,
+`python/adapters/common.py`, `test/unit/Spec.hs`
+**Docs to update**: none. `documents/architecture/bounded_inference_memory.md` already declares this
+contract — the device half of a dual-resource placement is admission plus arena sizing plus
+detection, the arena is set from the admitted quantity directly, and the fraction is an admission
+check rather than a ceiling. The gap is in the code, not in the doctrine, and Section C reserves a
+doc edit for a target that changed rather than for recording that something now works.
+
+### Objective
+
+Make the quantity a device engine is sized by the quantity that admitted it, and make each lane
+declare the device strength its mechanism actually provides — admission, arena sizing, and a
+namespace-local sampled backstop — with no lane claiming a kernel bound that does not exist.
+
+### Deliverables
+
+- the device arena is derived from the admitted VRAM grant and the observed device envelope, never
+  from a fraction literal
+- the fraction knob is reclassified as an admission input, in the code and in this plan's language
+- exactly one device route is populated per placement: a device-using placement carries the admitted
+  quantity, a shared-lane placement carries none, and an adapter asked for a device arena without
+  one refuses instead of defaulting
+- the device observer's scope is stated as detection over a residue nothing kernel-bounds
+- a lane's declared strength is calibrated rather than asserted, and the two reasons a column can
+  read `detection` are kept distinct
+- availability under a competing device tenant is observed inside the serialized execution region
+
+### Sized by the card, not by the model
+
+`python/adapters/vllm_python.py` starts every vLLM row with `"gpu_memory_utilization": 0.25`, so the
+engine's device consumption follows from that literal and from whichever card the pod was scheduled
+onto. Measured on this phase's cohort hardware: **8706 MiB** of device memory for a model whose
+derived requirement is about **302 MiB** — 256.6 MiB of weights summed from the artifact's own
+tensor table plus 45.0 MiB of key/value cache at a 2048-token context. A quarter of a 32607 MiB card
+is 8151 MiB, and a CUDA context is itself a real device allocation of roughly half a gigabyte before
+any explicit allocation is made, which is the remainder of the figure. Change the card and the same
+model consumes a different amount; change the model and it consumes the same amount. A number with
+both of those properties is determined by the hardware, and admitting a model against a derived
+requirement while the engine sizes itself from the card leaves the admission decision with nothing
+downstream that respects it — a 28x gap between what was admitted and what was taken is not a
+tuning error, it is an admission that never reached the thing it was admitting.
+
+The correction is arithmetic, not a new mechanism. The admitted quantity is already on the
+executable: `executableModelGpuVramCeilingMib` returns it for exactly those placements carrying
+`RuntimeGpuResources`. The envelope is already observed and already required to be present and
+positive before refinement will mint an enforcer. The fraction handed to the engine becomes the
+ratio of the two, so the arena tracks the model: a larger card now yields a *smaller* fraction for
+the same model, and that inversion is the observable sign that the number has stopped belonging to
+the hardware.
+
+### The fraction is admission, not a ceiling
+
+Read out of the installed package rather than out of its documentation string,
+`gpu_memory_utilization` has exactly three uses: a startup check that the device's free memory is at
+least the requested fraction of its total, the sizing of the key/value cache arena, and a log line.
+No allocation path consults it afterwards and nothing refuses an allocation against it — an engine
+that allocates past the fraction is stopped by the device running out, not by the knob. It is an
+admission input and an arena input, and every description of it as a limit is the category error the
+doctrine names: a fraction of the card is not a bound on the model.
+
+That reading is also why this column cannot be promoted later by better engineering on the same
+knob. Turning the fraction down does not add prevention, it moves the arena. Prevention on this
+resource would need a kernel mechanism that charges device bytes to a process and refuses the
+allocation, and no such mechanism exists on any lane this repository supports, which is why the
+per-lane device row reads admission and arena sizing plus detection and will keep reading that.
+
+### Exactly one device route per placement
+
+`compileResources` already partitions the lane. A `requiresGpu` model compiles
+`CompiledGpuResources` with one grant admitted against each of the two limits, while a shared-lane
+model on the same lane stays on `CompiledPodResources` alone, because a VRAM grant a model would
+never consume is not evidence of anything. `executableModelGpuVramCeilingMib` reflects that
+partition exactly — `Just` for the first, `Nothing` for the second — and the typed worker request
+carries it the same way: `WorkerRequest` gains one device field, populated from the `Just` and
+absent from the `Nothing`. An adapter that needs a device arena and finds the field absent refuses
+by name. A device-using placement that reached an adapter with no admitted quantity is a
+construction defect, and a literal fallback would convert that defect into a silently unbounded
+launch, which is the single state this whole contract exists to make unrepresentable.
+
+The lane's own catalog exercises both arms without a fixture: 13 of the 16 `linux-gpu` rows are
+device-using and 3 are shared-lane. One scope boundary belongs here rather than in a deliverable —
+the same request is the carrier for the execution shape the cache term was computed from, so a
+context-window literal restated beside the fraction would make the admitted quantity a number about
+a different execution than the one that runs.
+
+### The observer is a backstop, and says so
+
+`runNvidiaWatchdog` and the fixed `nvidia-smi` request pair are detection. This sprint records that
+scope in the plan's own language rather than leaving a third watchdog to read as a third ceiling.
+Sampling cannot refuse an allocation; it observes one that already happened and converts it into a
+clean typed terminal `ModelMemoryLimitExceeded` on the next sample. That is worth having — the
+alternative is a device out-of-memory surfacing as an engine crash and an at-least-once redelivery
+of the same request — and it is not prevention.
+
+What makes the sampled attribution sound inside a pod was measured rather than assumed and is not
+re-derived here: NVML resolves each compute context against the reading process's PID namespace and
+omits the contexts it cannot resolve, so an engine pod observes its own namespace's compute
+applications with namespace-local identifiers and never another container's, and a device process
+outside the namespace is invisible to the query — correctly, because it is not ours. Membership
+comes from the same `/proc` walk the resident-set lane already uses, so the device lane spawns one
+fixed command per sample and performs no process discovery of its own.
+
+One property this sprint depends on and does not restate as its own: a device breach has to arrive
+at the published result naming `gpu-vram`, its own ceiling, and the footprint that was observed. A
+device breach reported against the resident host resource makes the cohort's device output
+undiagnosable from itself, which is how the erased-resource defect was found in the first place.
+Breach-path fidelity is a property of the breach path; this sprint's device evidence is read from it.
+
+### Calibration cannot be done by an enforcement run
+
+A lane claims prevention only where a real engine on that lane has been observed to refuse cleanly
+under an installed ceiling. Until that observation exists the lane declares detection only, in its
+type rather than in prose, because an uncalibrated limit is a guess wearing an enforcement costume,
+and one installed low enough to refuse a legitimate allocation converts a capacity question into a
+redelivery loop.
+
+The trap is that the run which enforces cannot be the run that calibrates. Under an installed
+ceiling the observation is truncated at exactly the value being measured: the engine is stopped at
+the ceiling, so the peak the sampler reports *is* the ceiling, and a peak equal to the ceiling is
+equally consistent with an engine that wanted slightly more and one that wanted ten times more. The
+calibration pass is therefore a deliberately generous ceiling whose only output is the observed
+peak — high enough that nothing binds, on the real engine, on the lane, with the device runtime
+initialized — compared afterwards against the derived requirement. Only then does the refusal
+experiment mean anything, because the quantity it refuses is known to be the quantity the engine
+would otherwise have taken.
+
+The two lanes in this phase's cohort keep their device columns unchanged through that pass, and the
+distinction is worth stating because both readings spell the same word. A host column that reads
+`detection` reads that way because the observation has not been made yet; the `linux-gpu` device
+column reads that way because there is no mechanism to calibrate. Collapsing the two would let an
+absent mechanism be mistaken for a pending measurement, and a later reader would go looking for the
+run that promotes it.
+
+### A competing tenant changes availability, not admission
+
+`observeNvidiaDeviceVramMib` reports what the card contains. A second tenant on the same device — a
+pod scheduled onto it, an operator's own process, anything outside this repository's process
+groups — reduces what is free without changing what is total. Admission is against capacity by
+doctrine, so a competing tenant changes nothing about what was admitted; what it changes is whether
+the admitted arena can actually be taken. That difference is observed rather than assumed away: the
+free reading is taken inside the region `EngineExecutionAuthority` serializes, immediately before
+the engine is started, and a shortfall is a named refusal carrying the free bytes observed and the
+arena required, rather than a device allocation failure surfacing later as an engine crash with two
+empty captured streams.
+
+Serialization is what makes that observation worth taking. One engine process per machine and one
+execution at a time means the only claimant that can move the number between the observation and the
+allocation is one this repository did not start, which is exactly the claimant a refusal must name
+instead of assuming absent. This is the device analogue of the host ledger's availability
+observation, and it is admission-adjacent rather than a second ceiling: it decides whether to start,
+never how much the engine may take.
+
+### Validation
+
+- the derived fraction equals the admitted quantity over the observed envelope, and an envelope that
+  is absent or smaller than the admitted quantity is refused rather than divided into — **passing**
+  at the adapter, whose derivation refuses a non-positive envelope and an admitted quantity past it
+- the device field is populated for exactly the placements carrying a device grant, and an adapter
+  handed no admitted quantity refuses by name rather than defaulting — **passing**; the wire makes
+  the pairing unrepresentable, because the budget is a discriminated alternative rather than two
+  independent optional fields
+- the adapter no longer contains a fraction literal, asserted by name so a replacement literal
+  cannot reappear under another spelling — **passing**
+- the measurement that made this sprint necessary is repeated on the cohort lane, where the same
+  model's observed device peak now tracks its derived requirement instead of a quarter of the card
+  plus a context — **pending**, and the closing Wave Z run narrowed why. A framework row on
+  `linux-gpu` did reach a live device for the first time and published a measured
+  `ModelMemoryLimitExceeded` naming `gpu-vram` at 612 MiB observed against a 302 MiB ceiling, so the
+  device sampler, its attribution, and the typed breach path are all proven live. What that run did
+  **not** show is the arena tracking the model, because the adapter is now sized by the lane's device
+  budget while the backstop still watches the admitted grant — the same prevention-and-detection
+  asymmetry the host side corrected, surviving on the device side, and a defect this sprint's own
+  contract owns
+- the calibration pass runs on both lanes of this phase's cohort under a deliberately generous
+  ceiling whose only output is the observed peak, through `./bootstrap/linux-gpu.sh` and
+  `./bootstrap/linux-cpu.sh`, and each lane's declared strength is set from what it observed rather
+  than from what the mechanism is expected to do — **pending**
+- a competing device tenant produces the named refusal rather than an engine crash, driven by
+  holding a real device allocation outside the engine's process group while an admitted model
+  starts — **pending**
+- machine-independent gates pass — **pending**
+- selected `linux-gpu` plus `linux-cpu` full-suite gate against one frozen state — **pending**
+
+### Remaining Work
+
+1. **The device backstop watches the admitted grant, not the quantity the engine is sized by.** The
+   host half of this argument landed with the ceiling work; its device half did not, and the closing
+   Wave Z run is the evidence: a framework row was sized by the lane's device budget and terminated by
+   a sampler watching 302 MiB. This is the sprint's own contract — the arena and the backstop have to
+   name the same quantity — and it is what the device-peak remeasurement is blocked behind.
+2. **The calibration pass on both lanes**, which is the only thing that can move a host column from
+   detection to prevention, together with the device-peak remeasurement that shows the arena now
+   follows the model. Both belong to [Wave AD](cohort-validation-waves.md), which the closing Wave Z
+   run did not discharge: an ordinary run does not perform either observation.
+
+---
+
+## Sprint 6.52: A Reservation Outliving Its Own Subject [Done]
+
+**Status**: Done. Found by executing Sprint 6.44's `linux-gpu` cohort, which is also the wave that
+validated it, so it opened no wave of its own. Same discovery shape as Sprint 6.50:
+a defect no other lane can reach, because no other lane runs the harness inside a container whose
+filesystem is discarded when the run ends.
+**Code-side closure**: complete. `cabal build all --enable-tests` under `-Wall -Werror`,
+`infernix-unit`, `infernix-haskell-style`, and `lint files|chart|proto|docs|plan` plus `docs check`.
+**Cohort gate**: [Wave Z](cohort-validation-waves.md) — the same `linux-gpu` plus `linux-cpu` run the
+other three Phase 6 sprints hold. A killed launcher is what produces the state this sprint reconciles,
+so only a lane that can be killed mid-transaction proves the reconciliation.
+**Blocked by**: nothing.
+**Implementation**: `src/Infernix/Cluster.hs`, `test/unit/Spec.hs`
+**Docs to update**: none.
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
+already declares that a killed harness leaves a persisted, detectable, reconcilable state and that
+recovery is evidence-gated; this sprint makes the container lane match a contract the governed suite
+already states.
+
+### Objective
+
+Let the supported dead-owner reclamation path reclaim a slot whose interrupted config transaction
+names a filesystem that no longer exists, without weakening the refusal that protects a real operator
+config.
+
+### Deliverables
+
+**The record outlives its subject, and only on one lane.** The harness cluster-slot reservation is
+written under `.data/runtime/locks/`, which `compose.yaml` mounts from the host. The config it
+describes is `/workspace/infernix.dhall`, which on the container lane belongs to the image. A killed
+launcher therefore leaves a durable record whose subject is discarded with the container — the
+transaction's evidence and the transaction's object no longer share a filesystem.
+
+**The refusal was unconditional where it needed to be conditional.**
+`recoverHarnessConfigTransaction` reads a `restore-pending` transaction and looks for the runtime
+config and its `.harness-backup`. Finding neither, it raised. That premise — restore-pending implies
+one of the two exists — holds exactly when the record and its subject share a filesystem, and the
+container lane is where they do not. The dead-owner path in
+`ensureHarnessReservationAvailable` calls this function precisely so it can then remove the
+reservation, so the unconditional refusal made the slot unreclaimable *by the one path that exists to
+reclaim it*. Every config-dependent command then fails, on a host whose only fault is that a container
+was killed.
+
+**The evidence that separates the two cases was already recorded and never read.** The reservation
+carries `owner-pid-namespace`, and `classifyRecordedNamespace` already distinguishes a matching
+namespace from a foreign one and from one that cannot be compared — `inspectHarnessReservationOwner`
+uses it to decide liveness. Recovery now consults the same classification through the pure
+`classifyAbsentConfigRecovery`: a namespace proven foreign licenses reclamation, because the config
+and backup lived somewhere this process cannot see and there is nothing here either to restore or to
+clobber.
+
+**Both fail-closed arms are deliberate, and are the reason the fix is narrow.** A *matching*
+namespace with both files absent means the operator's own config was moved to a backup that then
+vanished. That is real loss, it stays loud, and reclaiming there would silently swallow it — which is
+what the retired arm existed to prevent and what this sprint must not undo. A namespace that cannot
+be compared is not evidence of anything, so it fails closed as well: absence of proof that the subject
+is foreign is not proof that it is ours.
+
+### Validation
+
+- `infernix-unit` pins all three arms of `classifyAbsentConfigRecovery` — reclaimable on a foreign
+  namespace, unrecoverable on a matching one, unrecoverable on an incomparable one — and pins that the
+  incomparable refusal names why it refused. The decision is a pure function the IO path calls, so
+  these assertions exercise the production code rather than a parallel copy of it.
+- The two fail-closed assertions are the load-bearing ones. A fix that reclaimed unconditionally
+  would pass a reclamation-only test and reintroduce the data-loss blindness; only asserting the
+  refusals distinguishes the correction from the defect it replaces.
+- **Cohort ([Wave Z](cohort-validation-waves.md)) — passed.** The wave's fourteen attempts included
+  runs stopped mid-flight and runs whose launcher was replaced between attempts, and every subsequent
+  attempt acquired the harness slot without a file being deleted by hand. The closing attempt ran both
+  lanes back to back through the same reservation path and each acquired cleanly.
+
+### Scope Boundaries
+
+1. **The recovery command is not reachable from the state it recovers.** Fixing the reconciliation
+   made the slot reclaimable in principle, but the operator-facing route to it is circular:
+   `infernix cluster reclaim-slot` resolves paths through `discoverClusterCommandPaths`, which
+   requires the host manifest, while `infernix init` refuses to write runtime config while any
+   reservation exists. A host whose launcher was killed therefore cannot reach either command.
+
+   This residual is recorded rather than fixed, because the obvious fix is not obviously right. The
+   refusal `init` raises is **deliberate**: `authorizeRuntimeConfigWriteAccess` requires
+   `ownerAlive`, and the unit suite pins that a dead owner authorizes nothing — "a delegation
+   outliving a crashed harness authorizes nothing". Relaxing it would contradict a tested decision.
+   Making `reclaim-slot` manifest-tolerant instead is the other candidate, and it carries its own
+   question: its reconciliation consults live Kind state through `presentClusterRuntimeModes`, so a
+   manifest-free variant has to decide what a reclaim means when the cluster cannot be inspected at
+   all — degrade to record-only, or require the existing `--force-owner-pid` escape hatch. That is a
+   contract decision, not a mechanical one.
+
+   Until it is settled, a host in this state is recovered by removing the stale reservation record
+   directly, which is safe exactly when the conditions this sprint's fix already tests for hold: the
+   recorded owner namespace is provably foreign, so nothing the record protects is reachable from
+   this filesystem.
+
+### Remaining Work
+
+None. The Wave Z cohort closed this sprint on both lanes against one frozen source.
 
 ---
 

@@ -1,7 +1,7 @@
 # Model Catalog
 
 **Status**: Authoritative source
-**Referenced by**: [overview.md](overview.md), [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
+**Referenced by**: [overview.md](overview.md), [bounded_inference_memory.md](bounded_inference_memory.md), [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
 
 > **Purpose**: Define the authoritative model catalog contract that the service and UI both consume.
 
@@ -46,20 +46,27 @@ Each generated entry includes:
 - a named residual when a researched matrix cell is intentionally not runnable
 - request-shape metadata used by the API, UI, and tests
 - runtime-lane metadata such as GPU requirement and lane identifier
-- `modelRamFootprintMib`: a conservative peak model memory footprint (MiB) for one
-inference on the selected engine path. `Models.hs` `conservativeRamFootprintMibForRow` assigns
-conservative per-family/per-engine footprints; only measured peak RSS/VRAM evidence may refine them.
-The field is threaded through the hand-written JSON codec, the Dhall decoder/renderer/type in
+- the execution shape the engine will run under — context length, batch, generation bound, and load
+strategy — from which, together with the entry's own artifact, the memory requirement is **derived
+rather than authored**. No entry carries a hand-written memory number: the weight term is the sum
+over the artifact's tensor table of each tensor's element count times its element width, read from a
+bounded prefix without loading the model, and the cache term is a closed function of the model's
+declared geometry and that same execution shape. The derivation fails closed on an artifact whose
+header overruns its file, whose tensor extents disagree with their shapes, whose offsets do not tile
+densely, or whose geometry disagrees with its own header, so an artifact that misdescribes itself
+yields no requirement rather than a small one. The derived quantity is **resource-indexed**, not one
+scalar reused: host residency and device residency are separate terms with different formulas, and
+where weights stream to a device the model-size term is absent from the host term entirely. Each term
+is admitted against the executing machine's observed capacity for that resource, and the host term is
+then the ceiling the launch prefix installs before the engine's first allocation on a lane that can
+install one, or the quantity the sampled backstop compares an observed footprint against where it
+cannot; the device term sizes the engine's arena and is admitted rather than kernel-bounded, on every
+lane. A Linux GPU plan without independently indexed host and device requirements and enforcement
+fails closed with `GpuDualResourceBudgetRequired`. Every descriptor surface carries the requirement
+in this indexed form — the hand-written JSON codec, the Dhall decoder/renderer/type in
 `src/Infernix/Substrate.hs`, and the purescript-bridge `ModelDescriptor` (generated
-`web/src/Generated/Contracts.purs`), so every generated catalog entry carries it. The Haskell
-execution-plan compiler uses it for Apple unified-host and Linux CPU pod-RAM accounting. A Linux GPU
-plan without independently indexed RAM/VRAM enforcement fails closed with
-`GpuDualResourceBudgetRequired`. The field is a required, positive
-`ModelMemoryFootprint` newtype (accessor `modelMemoryFootprintMib`): the wire field name stays
-`modelRamFootprintMib` (an Integer), but the smart constructor `mkModelMemoryFootprint` and the
-decoder fail closed when it is absent or non-positive; a missing value cannot silently disable
-admission. Once admitted, this footprint is the `MemoryCeiling` the
-capped-engine kernel OS-bounds the engine subprocess's resident memory to; canonical home
+`web/src/Generated/Contracts.purs`) — so no surface can reintroduce a single unindexed number by
+adding one field. Canonical home:
 [bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Rules
@@ -107,9 +114,12 @@ as a typed `InferenceError` branch. `buildPayload` routes LLM and speech success
 and artifact successes to object references. Runtime admission builds
 `InferenceError.ModelMemoryLimitExceeded` with explicit `required_mib` and `available_mib`
 quantities plus the budget resource/source, so browser and integration tests do not parse human
-text to identify memory-capacity failures. The newer proto fields are a non-text **input**
-object-ref on `InferenceRequest` / `WorkerRequest` and an object-ref **output** on
-`WorkerResponse` for the artifact adapters. Artifact results always use the always-on
+text to identify memory-capacity failures. The worker envelope carries the decision rather than
+restating it: `WorkerRequest` holds the admitted per-resource quantities and the execution shape the
+cache term was derived from, as typed fields rather than adapter-side literals, and `WorkerResponse`
+reports back the ceiling the engine actually received once its image is in place. The other non-text
+fields are an **input** object-ref on `InferenceRequest` / `WorkerRequest` and an object-ref
+**output** on `WorkerResponse` for the artifact adapters. Artifact results always use the always-on
 `infernix-demo-objects` bucket, never the retired `infernix-runtime` / `infernix-results` buckets.
 
 ### Row-to-ResultFamily table
@@ -173,6 +183,8 @@ catalog does not overstate GPU acceleration:
 
 ## Cross-References
 
+- [bounded_inference_memory.md](bounded_inference_memory.md)
+- [../development/python_policy.md](../development/python_policy.md)
 - [realness_contract.md](realness_contract.md)
 - [runtime_modes.md](runtime_modes.md)
 - [../reference/api_surface.md](../reference/api_surface.md)

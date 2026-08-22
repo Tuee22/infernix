@@ -467,7 +467,7 @@ resolveInferenceMemoryBudget paths runtimeMode =
                 podMemoryLimitMib = linuxGpuEngineInferenceRamBudgetMib
               }
             PodMemoryLimit
-              { podMemoryLimitResource = GpuVram,
+              { podMemoryLimitResource = NvidiaVram,
                 podMemoryLimitSource = LinuxGpuVramBudget,
                 podMemoryLimitMib = linuxEngineInferenceVramBudgetMib
               }

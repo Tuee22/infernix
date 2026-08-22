@@ -110,6 +110,44 @@ message WorkerRequest {
   // artifact uploads. Artifact adapters and native-runner upload paths must
   // write under this prefix and fail closed when it is absent or invalid.
   string generated_output_object_prefix = 20;
+  // Phase 4 Sprint 4.42: the admitted quantities and the execution shape the
+  // compiler admitted this model against, carried on the message the engine
+  // already reads. An adapter receives its memory-shaping parameters rather
+  // than choosing them.
+  InferenceMemoryBudget memory_budget = 21;
+  ModelExecutionShape execution_shape = 22;
+}
+
+// Phase 4 Sprint 4.42: exactly one device route is populated, never both.
+//
+// A discriminated alternative makes the choice the sender already made visible
+// to the receiver. Two independent optional fields would let a caller populate
+// both and let a decoder guess which one meant it.
+message InferenceMemoryBudget {
+  oneof claim {
+    HostResidentClaim host_resident = 1;
+    HostAndDeviceClaim host_and_device = 2;
+  }
+}
+
+message HostResidentClaim {
+  int64 host_mib = 1;
+}
+
+message HostAndDeviceClaim {
+  int64 host_mib = 1;
+  int64 device_mib = 2;
+}
+
+// The shape the cache term was computed from, carried to the engine so it runs
+// the execution the model was admitted against rather than a number that was
+// never compared against a machine.
+message ModelExecutionShape {
+  int64 context_length = 1;
+  int64 batch_size = 2;
+  int64 generation_bound = 3;
+  int64 cache_element_width = 4;
+  bool stream_weights_to_device = 5;
 }
 
 message WorkerResponse {
@@ -123,6 +161,29 @@ message WorkerResponse {
   // families (LLM, speech transcription) leave it empty and use
   // output_text.
   string object_ref = 4;
+  // Phase 4 Sprint 4.42: the conformance acknowledgement.
+  //
+  // A limit that was set and a limit the running image fits under are different
+  // claims, and only the second is evidence that this execution is bounded. The
+  // acknowledgement rides this response rather than becoming a handshake: an
+  // adapter that announced its installed limit and waited for permission would
+  // turn a process with exactly one failure mode into one with a protocol state
+  // machine, a second deadline, and a partial-exchange state neither side can
+  // classify.
+  CeilingAcknowledgement ceiling_acknowledgement = 5;
+}
+
+// Phase 4 Sprint 4.42: the two values the engine read back from inside the
+// process the limit binds, and deliberately nothing else.
+//
+// The resource is not carried. The only consumer is the worker, which already
+// holds it in the `InstalledCeiling` it installed, so a field here would be a
+// second copy of a fact one side derives — and the adapter cannot produce it
+// without duplicating the lane's resource naming in Python, which is the
+// two-enumerations defect Sprint 4.38 deleted.
+message CeilingAcknowledgement {
+  int64 soft_bytes = 1;
+  int64 hard_bytes = 2;
 }
 
 message ResultPayload {
@@ -136,7 +197,18 @@ message ResultPayload {
 message InferenceError {
   oneof error {
     ModelMemoryLimitExceeded model_memory_limit_exceeded = 1;
+    // Phase 4 Sprint 4.39: a model whose memory requirement could not be
+    // derived from its own artifact is a distinct terminal outcome from one
+    // whose requirement exceeded a limit. It carries no quantity, because the
+    // quantity is exactly what could not be established.
+    ModelRequirementUnderivable model_requirement_underivable = 2;
   }
+}
+
+message ModelRequirementUnderivable {
+  string model_id = 1;
+  string artifact_type = 2;
+  string reason = 3;
 }
 
 message ModelMemoryLimitExceeded {

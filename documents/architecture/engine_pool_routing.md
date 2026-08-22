@@ -36,13 +36,20 @@ batch-topic field in the supported Dhall surface.
 **Resource-safety scope.** The routing controls here — Pulsar consumer permits and receiver backlog,
 with each consumer holding a single permit — plus the model cache (LRU in
 `python/adapters/model_cache.py`) bound in-flight request *concurrency* and *disk*. Model memory is
-bounded separately by the typed execution-plan refiner, on the machine that will execute. Apple uses
-a checked unified-host partition; Linux CPU uses pod capacity plus live RSS and cgroup refinement;
-Linux GPU requires independently indexed pod-RAM and VRAM enforcement and fails closed without it.
-Capacity failures remain explicit unavailable models carrying typed `ModelMemoryLimitExceeded`, so
-one oversized entry does not invalidate smaller placements. A machine that places models and admits
-none of them refuses to start rather than reporting ready and rejecting every request. A fitting model launches only through
-`ExecutableModel`, whose matching indexed grant/enforcer pair drives the capped-engine watchdog.
+bounded separately by the typed execution-plan refiner, on the machine that will execute, against a
+requirement derived from the model's artifact rather than from anything a route declares. Each lane
+declares the enforcement strength it has: Apple sizes against a checked unified-host partition and
+declares detection, because no kernel ceiling is installable there; Linux CPU adds a ceiling
+installed before the engine's first allocation once that ceiling is calibrated on the lane, over pod
+capacity plus live RSS and cgroup refinement; Linux GPU requires independently indexed pod-RAM and
+VRAM enforcement and fails closed without it, and its device half is admission and arena sizing plus
+detection, because no kernel mechanism bounds device memory anywhere. Capacity failures remain
+explicit unavailable models carrying a typed `ModelMemoryLimitExceeded` that names the resource it
+breached and the footprint it observed, so one oversized entry does not invalidate smaller
+placements. A machine that places models and admits none of them refuses to start rather than
+reporting ready and rejecting every request. A fitting model launches only through
+`ExecutableModel`, whose matching indexed grant/enforcer pair installs that ceiling where the lane
+can install one and drives the capped-engine sampler over the residue everywhere.
 Canonical home: [bounded_inference_memory.md](bounded_inference_memory.md).
 
 **Closed messaging authority.** Compilation rejects a `TopicFamilyCollision` when any topic is

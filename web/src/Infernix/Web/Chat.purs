@@ -847,6 +847,13 @@ inferenceErrorSummary errorValue =
         <> " MiB; this daemon has "
         <> show details.modelMemoryLimitExceededAvailableMib
         <> " MiB available."
+    ModelRequirementUnderivable details ->
+      "Model "
+        <> details.modelRequirementUnderivableModelId
+        <> " states no memory requirement this daemon can derive from its "
+        <> details.modelRequirementUnderivableArtifactType
+        <> " artifact: "
+        <> details.modelRequirementUnderivableReason
 
 activeConversationTitle :: ChatViewState -> String
 activeConversationTitle state =

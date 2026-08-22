@@ -1,7 +1,7 @@
 # Runtime Modes
 
 **Status**: Authoritative source
-**Referenced by**: [overview.md](overview.md), [daemon_topology.md](daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
+**Referenced by**: [overview.md](overview.md), [daemon_topology.md](daemon_topology.md), [bounded_inference_memory.md](bounded_inference_memory.md), [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
 
 > **Purpose**: Describe the supported control-plane execution contexts, service placement options,
 > and the three product runtime modes.
@@ -75,7 +75,7 @@ serialization lock and an Apple physical-footprint watchdog. A configured over-c
 publish a clean typed `ModelMemoryLimitExceeded` result without launch, while smaller compiled
 placements keep serving. The serialization authority remains inside the opaque engine capability,
 and the Apple watchdog's adversarial breach gate must leave the daemon alive with a typed failure.
-See the Per-Substrate Inference RAM Budget section below for the budget contract. Apple native engine artifacts resolve from `./.data/engines/<adapterId>/` and the
+See the Per-Substrate Inference Memory Budget section below for the budget contract. Apple native engine artifacts resolve from `./.data/engines/<adapterId>/` and the
 materialization contract is Tart-free: a typed engine-artifact manifest surface uses public
 upstream MLX GPU execution and coremltools device observation without repository-owned native
 source. No Tart or native bridge helper path exists; the retained command name
@@ -99,30 +99,40 @@ engine code by the realness lint.
 
 ## Per-Substrate Inference Memory Budget
 
-The generated substrate config carries a resource-specific inference memory budget used by a shared
-pure admission policy. Each `ModelDescriptor` records a required, positive `ModelMemoryFootprint`
-(the wire field stays `modelRamFootprintMib`, MiB, but decode fails closed if it is absent or
-non-positive), and `DemoConfig` records an `InferenceMemoryBudget` value instead of using integer
-sentinels. The shape names its enforcer:
+The generated substrate config carries a resource-indexed inference memory budget used by a shared
+pure admission policy. No model authors its own memory number: a requirement is **derived from the
+artifact** — exact weight bytes from the tensor table in a bounded prefix read, exact key/value cache
+bytes from the model's declared geometry and the execution shape the engine will run under — and the
+derivation fails closed on an artifact that misdescribes itself, so an unverifiable artifact yields
+no placement rather than a small requirement. The derived quantity is **per physical resource**,
+because host residency and device residency are different formulas rather than one scalar reused:
+where weights stream to a device, the host term is the staging window and the model-size term is
+absent from it entirely. `DemoConfig` records an `InferenceMemoryBudget` whose every arm names the
+enforcer that will hold it, per resource, instead of using integer sentinels. The derivation and its
+refusals are owned by [bounded_inference_memory.md](bounded_inference_memory.md):
 
 - `HostEnforcedBudget HostMemoryPartition` means the host itself owns the ceiling: admission draws
-  from the partition's `inferenceCapacity` and the on-host capped-engine kernel enforces the admitted
-  ceiling at runtime (the `apple-silicon` lane)
+  from the partition's `inferenceCapacity`, and the engine's own launch installs that ceiling where
+  the lane can install one. On `apple-silicon` it cannot — Darwin rejects every finite ceiling
+  written against the address-space limit — so the sampled backstop is the whole of the runtime
+  enforcement on that lane, and the budget says so in its type
 - `SubstrateEnforcedBudget PodMemoryLimit` carries substrate RAM capacity. On `linux-cpu` it
-  supplies the configured outer pod envelope; refinement additionally requires the
-  live process-group RSS sampler and exact `memory.max`
-- `compileRuntimePlan` validates each model against the budget and mints
-  `MemoryGrant resource` only inside `CompiledPlacement`; an over-capacity model remains in the
-  explicit unavailable map with
+  supplies the outer pod envelope the per-engine ceiling sits inside; refinement additionally
+  requires the live process-group sampler and exact `memory.max`. The pod limit is the envelope, not
+  the per-request ceiling: the ceiling is installed on the engine image itself
+- `compileRuntimePlan` validates each derived requirement against the executing machine's observed
+  capacity for that resource and mints one `MemoryGrant resource` per resource, only inside
+  `CompiledPlacement`; an over-capacity model remains in the explicit unavailable map with
   `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource, source }`
 - package-owned live observations refine a compiled grant/enforcer plan into an
-  `EnforcedGrant resource` inside `ExecutableModel`; public engine launch accepts only that whole
-  executable capability
+  `EnforcedGrant resource` inside `ExecutableModel`, one per resource and at the strength that
+  resource's lane declares; public engine launch accepts only that whole executable capability, and a
+  placement naming a device but carrying no device grant is not a constructible term
 
 There is no hardcoded capacity floor such as `max 1024 ...` and no "enforced by nobody" arm: an
 over-pledged Apple host is rejected when the `HostMemoryPartition` smart constructor refuses
-the oversubscription, and a model whose footprint exceeds the resolved `inferenceCapacity` fail-closes
-cleanly at admission. Validation may report capacity diagnostics, but it must not reject the entire
+the oversubscription, and a model whose derived host requirement exceeds the resolved
+`inferenceCapacity` fail-closes cleanly at admission. Validation may report capacity diagnostics, but it must not reject the entire
 daemon solely because one configured model exceeds the current budget. The smaller configured models
 still serve.
 
@@ -141,43 +151,54 @@ Budget sources are substrate-specific while admission and error construction sta
   a plan that names only one resource fails closed with `GpuDualResourceBudgetRequired`
 
 Compilation, rather than an independently recomputed request-time check, is the shared pure admission
-boundary. When a footprint exceeds capacity, the compiled unavailable entry supplies the typed
-failure. A fitting placement receives a resource-indexed grant and can launch only after refinement
-pairs it with a verified matching enforcer inside `ExecutableModel`. On
-`apple-silicon` a fixed, bounded `/usr/bin/top` plus `/usr/bin/footprint` observer measures the
-child process group's physical footprint without direct FFI or a caller-supplied command, and the
-watchdog SIGKILLs that group on a measured ceiling breach. That path produces a typed
-`status=failed ModelMemoryLimitExceeded`, and the single-flight authority remains encapsulated so
-aggregate concurrent overcommit is unrepresentable. The browser renders
-`ModelMemoryLimitExceeded` as a helpful capacity error naming
-the model footprint and available memory in MiB.
+boundary. When a derived requirement exceeds capacity, the compiled unavailable entry supplies the
+typed failure. A fitting placement receives a resource-indexed grant per resource and can launch only
+after refinement pairs each with a verified matching enforcer inside `ExecutableModel`. The observers
+that discharge the sampled half are one kernel parameterised by the resource it reads, not one
+implementation per platform: on `apple-silicon` it measures the child process group's physical
+footprint through fixed, absolute `/usr/bin/top` and `/usr/bin/footprint` commands, on `linux-cpu`
+process-group anonymous residency through `/proc`, and on `linux-gpu` per-process device bytes
+through a fixed device query. None of the three accepts a caller-supplied command or uses direct FFI,
+and a measured breach SIGKILLs the child group and produces a typed
+`status=failed ModelMemoryLimitExceeded` that names the resource it breached and the footprint it
+observed. The single-flight authority remains encapsulated so aggregate concurrent overcommit is
+unrepresentable. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error naming
+the required and available quantities in MiB for the named resource.
 
-Linux CPU refinement probes the process-group RSS sampler and exact larger cgroup envelope under the
-same opaque serialization authority. At run time, terminal procfs tasks are excluded from the live
-group; a no-live-member observation receives four fresh 50 ms observations and then requires a
-terminal or absent leader before it can settle as ordinary completion. Reappearance resumes the
-watchdog, while stable-live or unreadable evidence fails closed without competing for the engine
-action's `ProcessHandle` reap. CUDA OOM classification is not proof of an installed VRAM limit, so
-Linux GPU refinement requires independent live NVIDIA accounting and uses the same bounded group
-settlement discipline.
-Engine members do not become ready until the selected enforcer has been verified against the compiled
-execution plan.
+The settlement discipline belongs to that one kernel rather than to a lane. Terminal procfs tasks are
+excluded from the live group; a no-live-member observation receives four fresh observations at the
+backstop's own interval and then requires a terminal or absent leader before it can settle as
+ordinary completion. Reappearance resumes sampling, while stable-live or unreadable evidence fails
+closed without competing for the engine action's `ProcessHandle` reap. That interval belongs to the
+backstop and to nothing else, because an allocation the installed ceiling refuses has no cadence to
+poll at. Linux CPU refinement probes that sampler and the exact larger cgroup envelope under the same
+opaque serialization authority; CUDA OOM classification is not proof of an installed device limit, so
+Linux GPU refinement additionally requires independent live NVIDIA accounting.
+Engine members do not become ready until the mechanism their lane declares has been verified against
+the compiled execution plan, at the strength it declares.
 
 The per-substrate `InferenceMemoryBudget` / `ModelMemoryLimitExceeded` typed ADT — a typed
 evidence value rather than integer sentinels — is the in-repo precedent that the managed
 state-transition doctrine generalizes; its canonical home is
 [Managed State Transitions](managed_state_transitions.md).
 
-**Memory-safety by construction.** The admission above proves a request *fits* before launch; the
-capped-engine kernel additionally measures the engine subprocess's *actual* resident memory against
-that decision and terminates it on breach, closing a gap a full-suite run once exercised as a host
-OOM-kill. "By construction" describes the *admission* — an engine cannot launch without a matching
-grant and enforcer — not the runtime enforcement, which is a fixed-cadence sampler. Compilation and live
-refinement create an `ExecutableModel` carrying the matching resource-indexed grant/enforcer pair over a
-checked `HostMemoryPartition` (physical minus the co-tenant pledge minus a headroom that covers the OS
-and the routed end-to-end browser, rejecting oversubscription) with a required `ModelMemoryFootprint`
-and an enforcer-typed budget (`HostEnforcedBudget` / `SubstrateEnforcedBudget`, with no unenforced
-arm). Its canonical home is [bounded_inference_memory.md](bounded_inference_memory.md).
+**Memory-safety by construction.** The admission above proves a request *fits* before launch, and the
+launch itself binds the engine to the quantity it was admitted for, closing a gap a full-suite run
+once exercised as a host OOM-kill. "By construction" describes the *admission* — an engine cannot
+launch without a matching grant and enforcer for every resource it consumes — and, on a host lane
+whose ceiling is calibrated and installed before the engine's first allocation, it describes the
+runtime enforcement too: the over-budget allocation is refused inside the process rather than
+observed after the fact. It does not describe the device half, or a lane that can install no ceiling,
+or a ceiling no real engine on that lane has been observed to refuse cleanly under. There the
+ceiling is the quantity a fixed-cadence sampler compares an observed footprint against, and a breach
+is detected and terminated rather than prevented. Which of the two a lane gets is part of its type
+and not a footnote, so a contract requiring prevention refuses readiness on a lane offering only
+detection. Compilation and live refinement create an `ExecutableModel` carrying the matching
+resource-indexed grant/enforcer pair over a checked `HostMemoryPartition` (physical minus the
+co-tenant pledge minus a headroom that covers the OS and the routed end-to-end browser, rejecting
+oversubscription) with an artifact-derived requirement per resource and an enforcer-typed budget
+(`HostEnforcedBudget` / `SubstrateEnforcedBudget`, with no unenforced arm). Its canonical home is
+[bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Generated Demo Config Contract
 
@@ -218,8 +239,9 @@ and one demo process on the already selected native arm64 Docker daemon so the r
 gate fits constrained Colima memory; Linux generated values use the single-node platform defaults
 on every lane. This single-instance sizing bounds the control-plane services; the on-host `infernix service`
 inference RAM is separately bounded by the typed resource-admission policy (see Per-Substrate
-Inference Memory Budget), so peak *inference* memory stays within its
-declared budget. Host memory as a whole has other claimants — including the host toolchain — and is
+Inference Memory Budget), so peak *inference* memory is held to its derived requirement by whichever
+mechanism that lane declares — a ceiling installed before the engine's first allocation, or the
+sampled backstop alone. Host memory as a whole has other claimants — including the host toolchain — and is
 owned by [bounded host memory](bounded_host_memory.md). The chart ships
 `chart/templates/deployment-{coordinator,engine,demo}.yaml`, `clusterServiceEnabled` returns `False`
 on every substrate, and `finalPhaseDeployments` waits on `deployment/infernix-{coordinator,engine}`

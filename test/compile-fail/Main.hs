@@ -61,7 +61,8 @@ passingFixtures =
     "pass-refined-route",
     "pass-compiled-route",
     "pass-ordered-subprocess-protocol",
-    "pass-ordered-artifact-program"
+    "pass-ordered-artifact-program",
+    "pass-matching-requirement"
   ]
 
 failingFixtures :: [FailingFixture]
@@ -72,11 +73,23 @@ failingFixtures =
     readFixture "fail-cannot-read-memory-grant" "CannotReadMemoryGrant.hs" "MemoryGrant",
     readFixture "fail-cannot-read-engine-route" "CannotReadEngineRoute.hs" "EngineRoute",
     readFixture "fail-cannot-read-host-memory-partition" "CannotReadHostMemoryPartition.hs" "HostMemoryPartition",
-    readFixture "fail-cannot-read-model-memory-footprint" "CannotReadModelMemoryFootprint.hs" "ModelMemoryFootprint",
+    readFixture "fail-cannot-read-model-memory-requirement" "CannotReadModelMemoryRequirement.hs" "ModelMemoryRequirement",
     nominalResourceFixture "fail-cannot-coerce-memory-ceiling-resource" "CannotCoerceMemoryCeilingResource.hs",
     nominalResourceFixture "fail-cannot-coerce-memory-grant-resource" "CannotCoerceMemoryGrantResource.hs",
     nominalResourceFixture "fail-cannot-coerce-enforcer-resource" "CannotCoerceEnforcerResource.hs",
     nominalResourceFixture "fail-cannot-coerce-enforcer-plan-resource" "CannotCoerceEnforcerPlanResource.hs",
+    -- Phase 4 Sprint 4.38: the requirement is the quantity that used to feed
+    -- both admission arms as one scalar. Its index is nominal, so neither a
+    -- coercion nor a plain substitution can move a host quantity onto the
+    -- device. The positive control is @pass-matching-requirement@.
+    deviceResourceFixture
+      "fail-cannot-coerce-model-memory-requirement-resource"
+      "CannotCoerceModelMemoryRequirementResource.hs"
+      ["HostRam", "NvidiaVram", "coerce"],
+    deviceResourceFixture
+      "fail-cannot-supply-host-requirement-for-device"
+      "CannotSupplyHostRequirementForDevice.hs"
+      ["HostRam", "NvidiaVram"],
     constructorFixture "fail-cannot-construct-executable-model" "CannotConstructExecutableModel.hs" "ExecutableModel",
     constructorFixture "fail-cannot-construct-raw-runtime-config" "CannotConstructRawRuntimeConfig.hs" "RawRuntimeConfig",
     hiddenModuleFixture "fail-cannot-import-cluster-command" "CannotImportClusterCommand.hs" "Infernix.Cluster.Command",
@@ -344,6 +357,15 @@ nominalResourceFixture target sourceFile =
     sourceFile
     typeMismatchDiagnostics
     ["HostRam", "PodRam", "coerce"]
+
+-- | Phase 4 Sprint 4.38: the device twin of 'nominalResourceFixture'. The
+-- expected symbols are supplied rather than fixed because a host-to-device
+-- rejection names @NvidiaVram@ where a host-to-pod rejection names @PodRam@,
+-- and a fixture that accepted either would pass on a diagnostic about the
+-- wrong pair of resources.
+deviceResourceFixture :: String -> FilePath -> [String] -> FailingFixture
+deviceResourceFixture target sourceFile =
+  FailingFixture target sourceFile typeMismatchDiagnostics
 
 linearityFixture :: String -> FilePath -> String -> FailingFixture
 linearityFixture target sourceFile =

@@ -123,8 +123,9 @@ this canonical list.
   `MemoryCeiling`; a measured breach is a clean typed `ModelMemoryLimitExceeded`. The execution
   authority remains inside the opaque engine capability so concurrent reuse is unrepresentable;
   Apple/Linux CPU observers enforce resident-memory ceilings, and Linux GPU execution requires
-  independently indexed RAM and VRAM grants and observers. Physical RAM is a checked `HostMemoryPartition`, every model
-  declares a required `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its enforcer.
+  independently indexed RAM and VRAM grants and observers. Physical RAM is a checked
+  `HostMemoryPartition`, every model's requirement is derived from its own artifact as a
+  resource-indexed `ModelMemoryRequirement`, and every `InferenceMemoryBudget` names its enforcer.
   Canonical:
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) and
   [../architecture/typed_execution_plan.md](../architecture/typed_execution_plan.md)

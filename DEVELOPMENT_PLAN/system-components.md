@@ -10,16 +10,17 @@
 
 Phase 0 is Done: the plan corpus satisfies the mechanical Section C, D, I, J, and Q scans that
 `infernix lint plan` implements, and those scans run inside the aggregate lint gate. Phases 1 through
-5 are Done, closed in numerical order on Apple accelerator cohorts plus their paired `linux-cpu`
-cohorts, and Phases 7 and 9 are Done on those same receipts under Section C's later-phase allowance.
-No phase carries open code-side work.
+3 and 5 are Done, closed in numerical order on Apple accelerator cohorts plus their paired `linux-cpu`
+cohorts, and Phases 7 and 9 are Done on those same receipts. Since Sprint 0.25 a phase's status
+describes only the scope it owns, so those closures need no allowance and are not reverted by an
+earlier phase gaining sprints.
 
-Phases 6 and 8 are Active, and the whole of what is open inside them is one hardware gate: Phase 6
-Sprint 6.44 and Phase 8 Sprints 8.9 and 8.10 are each code-side closed and each consume the same
-`linux-gpu` cohort plus its paired `linux-cpu` lane, which needs a CUDA-capable Linux host. Section Q
-forbids substituting the other accelerator, so those three sprints are validation-only residuals
-rather than unfinished implementation. Each phase document names its own open sprints, and
-[README.md](README.md) holds the plan's single phase-status table.
+Phases 4, 6 and 8 are Active. Phase 6 Sprints 6.44 and 6.50 and Phase 8 Sprints 8.9, 8.10 and 8.13 are
+implementation-complete and consume the same `linux-gpu` cohort plus its paired `linux-cpu` lane,
+which needs a CUDA-capable Linux host; Section Q forbids substituting the other accelerator, so they
+are validation-only residuals. Phase 4 Sprints 4.37 through 4.42 and Phase 6 Sprint 6.51 are open code
+work — the Bounded Engine Launch host and device halves. Each phase document names its own open
+sprints, and [README.md](README.md) holds the plan's single phase-status table.
 
 [Wave Y](cohort-validation-waves.md) is Done and owns the Apple and paired source-matched
 `linux-cpu` component closure for `llm-smollm2-safetensors`, `audio-demucs-htdemucs`,
@@ -30,8 +31,10 @@ exact command and settlement receipt. Apple additionally owns the materializer r
 smokes, cancellation and installed-Python source isolation, the typed `image-sdxl-turbo` refusal,
 and `integration` / `e2e` / `all`; `linux-cpu` owns its source-matched image and materialization
 identity, the same seven outputs, and its full cohort gate.
-[Wave Z](cohort-validation-waves.md) is the one open wave and owns the Phase 6 Sprint 6.44 NVIDIA
-enforcement sign-off, whose `linux-gpu` half Phase 8 Sprints 8.9 and 8.10 also consume. Every
+[Wave Z](cohort-validation-waves.md) is the queued accelerator wave and owns the Phase 6 Sprint 6.44
+NVIDIA enforcement sign-off, whose `linux-gpu` half Phase 6 Sprint 6.50 and Phase 8 Sprints 8.9, 8.10
+and 8.13 also consume. Waves AC and AD are declared for the Bounded Engine Launch host and device
+halves and are not scheduled ahead of it. Every
 per-lane attestation lives in [cohort-validation-waves.md](cohort-validation-waves.md), and every
 superseded surface is inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).

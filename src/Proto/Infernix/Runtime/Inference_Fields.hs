@@ -57,12 +57,31 @@ availableMib ::
    Data.ProtoLens.Field.HasField s "availableMib" a) =>
   Lens.Family2.LensLike' f s a
 availableMib = Data.ProtoLens.Field.field @"availableMib"
+batchSize ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "batchSize" a) =>
+  Lens.Family2.LensLike' f s a
+batchSize = Data.ProtoLens.Field.field @"batchSize"
+cacheElementWidth ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "cacheElementWidth" a) =>
+  Lens.Family2.LensLike' f s a
+cacheElementWidth = Data.ProtoLens.Field.field @"cacheElementWidth"
 causalRef ::
   forall f s a.
   (Prelude.Functor f,
    Data.ProtoLens.Field.HasField s "causalRef" a) =>
   Lens.Family2.LensLike' f s a
 causalRef = Data.ProtoLens.Field.field @"causalRef"
+ceilingAcknowledgement ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "ceilingAcknowledgement" a) =>
+  Lens.Family2.LensLike' f s a
+ceilingAcknowledgement
+  = Data.ProtoLens.Field.field @"ceilingAcknowledgement"
 clientIdempotencyKey ::
   forall f s a.
   (Prelude.Functor f,
@@ -82,6 +101,12 @@ contextId ::
    Data.ProtoLens.Field.HasField s "contextId" a) =>
   Lens.Family2.LensLike' f s a
 contextId = Data.ProtoLens.Field.field @"contextId"
+contextLength ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "contextLength" a) =>
+  Lens.Family2.LensLike' f s a
+contextLength = Data.ProtoLens.Field.field @"contextLength"
 conversationLogOffset ::
   forall f s a.
   (Prelude.Functor f,
@@ -106,6 +131,12 @@ description ::
    Data.ProtoLens.Field.HasField s "description" a) =>
   Lens.Family2.LensLike' f s a
 description = Data.ProtoLens.Field.field @"description"
+deviceMib ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "deviceMib" a) =>
+  Lens.Family2.LensLike' f s a
+deviceMib = Data.ProtoLens.Field.field @"deviceMib"
 displayName ::
   forall f s a.
   (Prelude.Functor f,
@@ -152,6 +183,12 @@ errorMessage ::
    Data.ProtoLens.Field.HasField s "errorMessage" a) =>
   Lens.Family2.LensLike' f s a
 errorMessage = Data.ProtoLens.Field.field @"errorMessage"
+executionShape ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "executionShape" a) =>
+  Lens.Family2.LensLike' f s a
+executionShape = Data.ProtoLens.Field.field @"executionShape"
 family ::
   forall f s a.
   (Prelude.Functor f, Data.ProtoLens.Field.HasField s "family" a) =>
@@ -176,6 +213,35 @@ generatedPath ::
    Data.ProtoLens.Field.HasField s "generatedPath" a) =>
   Lens.Family2.LensLike' f s a
 generatedPath = Data.ProtoLens.Field.field @"generatedPath"
+generationBound ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "generationBound" a) =>
+  Lens.Family2.LensLike' f s a
+generationBound = Data.ProtoLens.Field.field @"generationBound"
+hardBytes ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "hardBytes" a) =>
+  Lens.Family2.LensLike' f s a
+hardBytes = Data.ProtoLens.Field.field @"hardBytes"
+hostAndDevice ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "hostAndDevice" a) =>
+  Lens.Family2.LensLike' f s a
+hostAndDevice = Data.ProtoLens.Field.field @"hostAndDevice"
+hostMib ::
+  forall f s a.
+  (Prelude.Functor f, Data.ProtoLens.Field.HasField s "hostMib" a) =>
+  Lens.Family2.LensLike' f s a
+hostMib = Data.ProtoLens.Field.field @"hostMib"
+hostResident ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "hostResident" a) =>
+  Lens.Family2.LensLike' f s a
+hostResident = Data.ProtoLens.Field.field @"hostResident"
 inferenceError ::
   forall f s a.
   (Prelude.Functor f,
@@ -211,12 +277,46 @@ matrixRowId ::
    Data.ProtoLens.Field.HasField s "matrixRowId" a) =>
   Lens.Family2.LensLike' f s a
 matrixRowId = Data.ProtoLens.Field.field @"matrixRowId"
+maybe'ceilingAcknowledgement ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "maybe'ceilingAcknowledgement" a) =>
+  Lens.Family2.LensLike' f s a
+maybe'ceilingAcknowledgement
+  = Data.ProtoLens.Field.field @"maybe'ceilingAcknowledgement"
+maybe'claim ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "maybe'claim" a) =>
+  Lens.Family2.LensLike' f s a
+maybe'claim = Data.ProtoLens.Field.field @"maybe'claim"
 maybe'error ::
   forall f s a.
   (Prelude.Functor f,
    Data.ProtoLens.Field.HasField s "maybe'error" a) =>
   Lens.Family2.LensLike' f s a
 maybe'error = Data.ProtoLens.Field.field @"maybe'error"
+maybe'executionShape ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "maybe'executionShape" a) =>
+  Lens.Family2.LensLike' f s a
+maybe'executionShape
+  = Data.ProtoLens.Field.field @"maybe'executionShape"
+maybe'hostAndDevice ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "maybe'hostAndDevice" a) =>
+  Lens.Family2.LensLike' f s a
+maybe'hostAndDevice
+  = Data.ProtoLens.Field.field @"maybe'hostAndDevice"
+maybe'hostResident ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "maybe'hostResident" a) =>
+  Lens.Family2.LensLike' f s a
+maybe'hostResident
+  = Data.ProtoLens.Field.field @"maybe'hostResident"
 maybe'inferenceError ::
   forall f s a.
   (Prelude.Functor f,
@@ -231,6 +331,13 @@ maybe'inlineOutput ::
   Lens.Family2.LensLike' f s a
 maybe'inlineOutput
   = Data.ProtoLens.Field.field @"maybe'inlineOutput"
+maybe'memoryBudget ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "maybe'memoryBudget" a) =>
+  Lens.Family2.LensLike' f s a
+maybe'memoryBudget
+  = Data.ProtoLens.Field.field @"maybe'memoryBudget"
 maybe'modelMemoryLimitExceeded ::
   forall f s a.
   (Prelude.Functor f,
@@ -238,6 +345,13 @@ maybe'modelMemoryLimitExceeded ::
   Lens.Family2.LensLike' f s a
 maybe'modelMemoryLimitExceeded
   = Data.ProtoLens.Field.field @"maybe'modelMemoryLimitExceeded"
+maybe'modelRequirementUnderivable ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "maybe'modelRequirementUnderivable" a) =>
+  Lens.Family2.LensLike' f s a
+maybe'modelRequirementUnderivable
+  = Data.ProtoLens.Field.field @"maybe'modelRequirementUnderivable"
 maybe'objectRef ::
   forall f s a.
   (Prelude.Functor f,
@@ -256,6 +370,12 @@ maybe'payload ::
    Data.ProtoLens.Field.HasField s "maybe'payload" a) =>
   Lens.Family2.LensLike' f s a
 maybe'payload = Data.ProtoLens.Field.field @"maybe'payload"
+memoryBudget ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "memoryBudget" a) =>
+  Lens.Family2.LensLike' f s a
+memoryBudget = Data.ProtoLens.Field.field @"memoryBudget"
 message ::
   forall f s a.
   (Prelude.Functor f, Data.ProtoLens.Field.HasField s "message" a) =>
@@ -323,6 +443,13 @@ modelMemoryLimitExceeded ::
   Lens.Family2.LensLike' f s a
 modelMemoryLimitExceeded
   = Data.ProtoLens.Field.field @"modelMemoryLimitExceeded"
+modelRequirementUnderivable ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "modelRequirementUnderivable" a) =>
+  Lens.Family2.LensLike' f s a
+modelRequirementUnderivable
+  = Data.ProtoLens.Field.field @"modelRequirementUnderivable"
 models ::
   forall f s a.
   (Prelude.Functor f, Data.ProtoLens.Field.HasField s "models" a) =>
@@ -373,6 +500,11 @@ pythonNative ::
    Data.ProtoLens.Field.HasField s "pythonNative" a) =>
   Lens.Family2.LensLike' f s a
 pythonNative = Data.ProtoLens.Field.field @"pythonNative"
+reason ::
+  forall f s a.
+  (Prelude.Functor f, Data.ProtoLens.Field.HasField s "reason" a) =>
+  Lens.Family2.LensLike' f s a
+reason = Data.ProtoLens.Field.field @"reason"
 referenceModel ::
   forall f s a.
   (Prelude.Functor f,
@@ -451,6 +583,12 @@ selectedEngine ::
    Data.ProtoLens.Field.HasField s "selectedEngine" a) =>
   Lens.Family2.LensLike' f s a
 selectedEngine = Data.ProtoLens.Field.field @"selectedEngine"
+softBytes ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "softBytes" a) =>
+  Lens.Family2.LensLike' f s a
+softBytes = Data.ProtoLens.Field.field @"softBytes"
 source ::
   forall f s a.
   (Prelude.Functor f, Data.ProtoLens.Field.HasField s "source" a) =>
@@ -461,6 +599,13 @@ status ::
   (Prelude.Functor f, Data.ProtoLens.Field.HasField s "status" a) =>
   Lens.Family2.LensLike' f s a
 status = Data.ProtoLens.Field.field @"status"
+streamWeightsToDevice ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "streamWeightsToDevice" a) =>
+  Lens.Family2.LensLike' f s a
+streamWeightsToDevice
+  = Data.ProtoLens.Field.field @"streamWeightsToDevice"
 userId ::
   forall f s a.
   (Prelude.Functor f, Data.ProtoLens.Field.HasField s "userId" a) =>

@@ -71,6 +71,18 @@ spec:
             - service
             - --role
             - engine
+{{- if .Values.engine.memberName }}
+            # Phase 8 Sprint 8.13: the shared engine workload names the member
+            # it is. Sprint 8.12 made engine identity fail closed, and a
+            # `linux-gpu` machine contract declares one member per framework
+            # engine image plus `native`, so without this the shared Deployment
+            # cannot say which member it is and refuses to start. The launcher
+            # image this Deployment runs carries the native payloads and none of
+            # the framework virtual environments, which is why the member the
+            # lifecycle renders here is the one with no per-engine Deployment.
+            - --engine-name
+            - {{ .Values.engine.memberName | quote }}
+{{- end }}
           # Phase 7 Sprint 7.17: credentials live in
           # `Secret/infernix-cluster-secrets` mounted at
           # `/etc/infernix/secrets/`; no `env:` block remains on the

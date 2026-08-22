@@ -1,7 +1,7 @@
 # Host Tools Manifest
 
 **Status**: Authoritative source
-**Referenced by**: [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md), [../development/no_env_vars.md](../development/no_env_vars.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
+**Referenced by**: [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md), [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md), [../development/no_env_vars.md](../development/no_env_vars.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
 
 > **Purpose**: Define the host-manifest record (reflected from the `Infernix.HostConfig` decoder
 > type; printed by `infernix internal dhall-schema host`), the absolute-path discipline for every
@@ -11,8 +11,11 @@
 ## TL;DR
 
 - The generated host manifest `./infernix-host.dhall` (written by `infernix init`) is the single
-  authoritative inventory of every external command the project ever invokes — by absolute path. Its
-  schema is reflected from the `HostConfig` Haskell type; no `.dhall` is version-controlled.
+  authoritative inventory of every external command whose executable is selected from
+  configuration — by absolute path. Its schema is reflected from the `HostConfig` Haskell type; no
+  `.dhall` is version-controlled. Its complement is the closed enforcement catalog described below:
+  a tool that installs or observes a memory ceiling is a pinned literal **because** a manifest field
+  is operator-editable, and configuration cannot reach it.
 - The Haskell binary loads this file at startup via the `dhall` library. Closed cluster commands
   declare their exact domain `HostTool` set, and the opaque compiler resolves only those selected
   tools from `HostConfig.toolPaths.*`, rejecting empty, nonabsolute, missing, and nonexecutable
@@ -296,6 +299,40 @@ and the Linux lane reads `/proc` instead of either, so neither belongs in the sc
 materializes. Canonical doctrine:
 [../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md).
 
+`top`, `footprint`, `prlimit`, and enforcement's own reading of `nvidia-smi` are not manifest fields
+either — but **not** for the reason above. The Apple footprint observer reads `/usr/bin/top` and
+`/usr/bin/footprint`, the device observer reads `/usr/bin/nvidia-smi`, and the Linux launch prefix
+that installs an engine's data-segment ceiling before its first allocation is `/usr/bin/prlimit`;
+each is pinned as an absolute literal in Haskell. `ps` and `vm_stat` earn their carve-out by being
+read-only probes, and `prlimit` is not read-only at all: it installs kernel state and then replaces
+itself with the engine image, so that argument does not transfer. The argument that does is
+**non-redirectability**. A manifest field is operator-editable by design, and an enforcement path an
+operator can repoint is not an enforcement path — an enforcement observer that follows a configurable
+path is redirectable, which is exactly what the closed catalog exists to prevent. Canonical doctrine:
+[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
+
+`nvidia-smi` is consequently the one tool reached two ways, and the duplication is deliberate rather
+than an oversight. As `toolPaths.nvidiaSmi` it is an operator-facing prerequisite probe: `nvidia-smi
+-L` answers whether this host has a usable driver at all, and an operator whose driver lives
+somewhere unusual has to be able to say so. As the pinned literal it is an enforcement instrument
+whose reading decides whether a running engine has breached its device ceiling, and that reading may
+not follow a path the thing being bounded could have edited. The same absolute path is reached under
+two different trust assumptions, so it is registered under both — as a field the operator owns, and
+as a constant the operator cannot reach.
+
+Read the inventory claim above accordingly: the manifest is authoritative over the commands
+configuration selects, and the enforcement catalog is a fixed, exhaustively enumerated complement it
+does not cover. Because these are pinned literals rather than manifest fields, the automatic lint
+coverage a field confers does not reach them: `forbiddenBareProcCommands` is derived from the
+`HostTool` enum, so it knows nothing of `top`, `footprint`, or `prlimit` at all, and the name it does
+learn from `HostNvidiaSmi` guards the manifest field's probe use rather than the pinned enforcement
+literal. The guard is structural instead: the observers' request vocabulary is a closed enum whose
+`FixedObserverSpec` is unexported, and the launch prefix is a closed constructor whose only free
+values are quantities rendered from indexed types, with its target executable and argument vector
+taken from the already-closed engine command. Neither surface gives a caller any way to supply an
+executable, argument vector, environment, or working directory, and a path no caller can name needs
+no lint forbidding callers to name it.
+
 `protoc` is not a host-manifest field. Ordinary Haskell builds consume the exact tracked
 `src/Proto/` snapshot and Python generation invokes `python -m grpc_tools.protoc` from its governed
 venv. The only standalone compiler is pinned inside the Linux Docker build's regeneration gate; it
@@ -430,7 +467,11 @@ become inherited environment overrides or ambient `PATH` lookups.
 
 ## Adding a new external command
 
-When a sprint introduces a new external CLI:
+First decide which catalog the command belongs to. A tool that **installs or observes an enforcement
+ceiling** is pinned as an absolute literal inside its closed Haskell specification and never gains a
+manifest field, for the non-redirectability reason above; it is registered by extending that closed
+vocabulary rather than by this procedure. Every other external CLI is a manifest tool, and when a
+sprint introduces one:
 
 1. Add a field to the `ToolPaths` record in the `HostConfig` Haskell decoder type
    (`src/Infernix/HostConfig.hs`); the reflected schema and `infernix init` defaults pick it up
@@ -471,6 +512,8 @@ When a sprint introduces a new external CLI:
 
 - [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md) — overall
   configuration substrate.
+- [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) — the
+  closed enforcement catalog whose ceiling installer and observers are pinned literals.
 - [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md) — Tart-free
   Apple Metal/Core ML materialization target.
 - [../development/no_env_vars.md](../development/no_env_vars.md) — developer-facing rules.

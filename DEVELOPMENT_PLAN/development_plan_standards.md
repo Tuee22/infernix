@@ -13,9 +13,12 @@
 The plan reads as one ordered buildout from empty repository to supported local platform.
 
 - Each phase is written after the previous phase in dependency order, and the
-  phase graph is a **strict forward DAG**: every `Blocked by` / dependency edge
-  references an equal-or-lower-numbered phase, so no earlier phase is ever blocked
-  by an incomplete later phase and the plan is workable in strict numerical order.
+  phase graph is a **strict forward DAG**: every dependency of any kind — a `Blocked by`
+  edge, a deliverable's owner, or the evidence a phase closes on — references an
+  equal-or-lower-numbered phase, so no earlier phase is ever blocked by an incomplete
+  later phase and the plan is workable in strict numerical order. A blocker edge is
+  only the most visible form; an earlier phase whose deliverable a later sprint owns
+  is the same violation written as prose.
   The binding form of this invariant, together with single-accelerator-per-phase
   validation, lives in [§Q](#q-single-accelerator-phase-validation-and-forward-only-cohorts).
 - Implementation order and hardware-validation scheduling are separate concerns. Phase docs stay
@@ -70,10 +73,18 @@ Rules:
   status; `infernix lint plan` (Section Q scans 3 and 4) rejects any other value and checks that
   each status carries the obligations its row states.
 - If Phase 0 is still open, later code-writing phases use `Blocked`, not `Planned`.
-- A later phase may remain `Done` while an earlier phase is still `Active` or `Blocked` only when
-  the earlier open item is a clearly named external dependency or supported-lane validation
-  blocker, and the later phase calls that dependency out explicitly in its phase-status or
-  current-assessment text.
+- **A phase's status describes only the scope that phase owns.** A later phase remains `Done` while an
+  earlier phase is `Active` or `Blocked`, without qualification: the later phase's `Done` was earned
+  against its own deliverables and its own cohort, and adding scope to an earlier phase does not take
+  that away. Where a later phase consumed an earlier phase's evidence it names it, and is still not
+  reverted when that earlier phase gains new sprints.
+- **Every phase must be completable and validatable using only equal-or-lower-numbered phases.** A
+  deliverable that an earlier phase needs but a higher-numbered phase owns, implements, or validates
+  is a **defect to be re-homed**, not a dependency to be recorded. This is the converse of the
+  forward-only DAG and is the reason it matters: a plan whose earlier phases cannot close without
+  later ones is not workable in numerical order no matter which direction its blocker edges point.
+  Section Q scan 8 enforces it mechanically, because the violating form is an ownership sentence
+  rather than a `Blocked by` line and the forward-edge scan cannot see it.
 - A validation-only hardware blocker must not trigger repeated ad hoc machine switches. Record it
   in [cohort-validation-waves.md](cohort-validation-waves.md), keep implementing and validating
   same-cohort work that does not depend on that proof point, and request the switch only at the
@@ -164,6 +175,14 @@ A cohort-gated sprint may also carry two optional header fields directly after `
 and `**Cohort gate**:` (the pending single-accelerator full-suite — one of `apple-silicon` or
 `linux-gpu` plus `linux-cpu` — and its owning wave). These make the single-accelerator execution
 state from Section Q explicit at the top of the sprint.
+
+A **closed** sprint whose surface a later sprint replaces carries two further optional fields, which
+are how a `Done` sprint forward-points without reopening: `**Supersession note**:` (what replaced it
+and why) and `**Current-API note**:` (that the signatures below are the sprint's historical surface
+rather than the current one). They exist because Section C forbids reverting a closed sprint and
+Section A forbids leaving a stale completion claim standing; a forward pointer satisfies both. Note
+the asymmetry with scan 8: a *closed* sprint pointing forward to what replaced it is this rule
+working, whereas an *open* deliverable owned by a later sprint is the violation.
 
 ### H. Documentation Requirements Section
 
@@ -632,6 +651,13 @@ Substrate-specific validation is explicit.
 - Supported validation removes simulated cluster, route, transport, and generic inference-success
   fallback behavior from the supported execution path. Test results name the single substrate they
   exercised and do not imply coverage that was not run.
+- A resource-exhaustion result is classified into **four** outcomes, not two, and a suite that
+  collapses any pair of them is not evidence. A model refused at admission is a typed capacity
+  failure with no launch. An allocation refused inside a live engine by an installed ceiling is a
+  typed memory failure of an admitted model — a different fact, on a lane that prevents rather than
+  samples. A missing result, including a host out-of-memory kill, is a stall. And a pass produced
+  without real output is a fabrication. The first two are supported outcomes; the last two are
+  defects.
 - when an owning phase calls out real-cluster lifecycle or recovery assertions, the supported
   non-Apple-cluster lane owns those checks on the deployed single-instance substrate rather than
   any simulated fallback. Replica failover, anti-affinity, and chaos results belong only to
@@ -682,10 +708,14 @@ Definitions:
 
 Two binding invariants (mechanically checkable; the maintenance pass scans for them):
 
-1. **Forward-only DAG.** Every `Blocked by` / dependency edge references an
-   equal-or-lower-numbered phase or sprint. No earlier phase is blocked by an
-   incomplete later phase; the plan is workable in numerical order, each phase
-   validated before the next begins.
+1. **Forward-only DAG, in every form a dependency can take.** Every `Blocked by`
+   edge, every deliverable's owner, and every piece of evidence a phase closes on
+   references an equal-or-lower-numbered phase or sprint. No earlier phase is
+   blocked by an incomplete later phase; the plan is workable in numerical order,
+   each phase validated before the next begins. The converse obligation is
+   Section C's: a phase must be completable and validatable using only
+   equal-or-lower-numbered phases, so a deliverable a later phase owns on an
+   earlier phase's behalf is re-homed rather than recorded.
 2. **Single-accelerator per phase.** A phase that needs an accelerator selects
    **exactly one** of `{apple-silicon, linux-gpu}` plus `linux-cpu`. No phase's
    `Validation` lists a single must-pass-together gate spanning both accelerators.
@@ -791,6 +821,16 @@ The scans, and what each one can and cannot decide:
    of exactly `Phase` and some column naming status — because a removal-ledger
    row that opens with the phase owning the removal is Section I working, not a
    second status table.
+8. **Zero forward ownership** — no phase document names a higher-numbered
+   `Sprint N'.M` or `Phase N'` in an *ownership* or *evidence* position: the
+   sentence forms are a deliverable another sprint `owns`, work that is
+   `re-home`d forward, an implementation `landed with` a later sprint, and a
+   phase closing on a wave whose owner is higher-numbered. Scan 1 cannot see any
+   of these, because none is a `Blocked by` line, and they are the form the
+   violation actually takes in practice — a phase whose scope is complete except
+   for the one piece a later phase kept. What this scan cannot decide is whether
+   a re-home was correct; it decides only that the plan no longer claims an
+   earlier phase depends on a later one.
 
 What a clean report does not establish: that the plan is well written, that a
 recorded status is true, or that a cited receipt describes a run that happened.
@@ -969,6 +1009,18 @@ Rules:
 - When a sprint adds a new external command (e.g. a new third-party CLI used by a lifecycle
   helper), the sprint adds the field to the `HostConfig` decoder type first and only then writes the
   invocation in Haskell or shell.
+- **Enforcement and enforcement-observation tools are the declared exception, and they are pinned
+  rather than declared.** A manifest field is operator-editable by design, which is the property the
+  manifest exists to provide; an enforcement path an operator can repoint is not an enforcement path.
+  A tool that observes a bound or installs one is therefore a literal absolute path inside a closed,
+  unexported command specification that gives callers no executable, argument vector, environment, or
+  working directory to supply. Because such a tool is not a manifest field, it does not inherit the
+  automatic bare-name lint coverage a field confers, and the closed specification is the guard
+  instead. The boundary is enumerated in
+  [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md);
+  a sprint adding one records it there rather than adding a `HostConfig` field, and the canonical
+  reasoning lives in
+  [../documents/architecture/bounded_inference_memory.md](../documents/architecture/bounded_inference_memory.md).
 - Every Haskell invocation reads the absolute path from the loaded `HostConfig` record (the
   canonical helper is `runHostTool :: HostConfig -> HostTool -> [String] -> IO a`). Bare
   `proc "<name>"` calls and direct `findExecutable` / `findExecutables` discovery are forbidden

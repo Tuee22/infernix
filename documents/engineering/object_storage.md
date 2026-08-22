@@ -127,12 +127,13 @@ runtime admission.
 model weights sit on the cache mount before least-recently-used weights
 are evicted — and does not govern resident MEMORY. Resident inference
 memory is bounded separately by a resource-admission contract: each
-`ModelDescriptor` carries `modelRamFootprintMib`, and each substrate
-compiles Apple and Linux CPU placements against the declared host or pod
-capacity. An oversized row remains an explicit `UnavailableModel`; a
-fitting row receives a resource-indexed grant that live refinement must
-pair with its matching enforcer before launch can receive an
-`ExecutableModel`. A request for an unavailable row must return typed
+model's requirement is derived from its own artifact, and each substrate
+compiles placements against the executing machine's observed host or pod
+capacity, per physical resource. An oversized row remains an explicit
+`UnavailableModel`; a fitting row receives a resource-indexed grant
+that live refinement must pair with its matching enforcer before launch
+can receive an `ExecutableModel`. A request for an unavailable row must
+return typed
 `ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source
 }` without launch, while the disk quota governs LRU EVICTION of staged
 weights. The two are orthogonal: a model can be cache-resident on disk
@@ -171,6 +172,13 @@ artifact-family successes to object references. The proto fields
 are a non-text INPUT object reference on `InferenceRequest` /
 `WorkerRequest` and an object-reference OUTPUT on `WorkerResponse` for
 the artifact adapters.
+The memory proto fields are the admitted resource-indexed budget and
+the execution shape it was derived from on `WorkerRequest`, and the
+ceiling the engine actually received on `WorkerResponse` for every
+adapter. Both ride the existing pair of messages rather than a
+handshake of their own, so the exchange stays exactly one request and
+one response (see
+[../development/python_policy.md](../development/python_policy.md)).
 For native-process-runner artifact families, the child process may return a local artifact-file
 marker instead of doing its own MinIO write; the Haskell worker uploads that file to the same
 Haskell-derived generated-object target using secret-backed presigned PUT credentials and publishes

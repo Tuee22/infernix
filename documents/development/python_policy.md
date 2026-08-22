@@ -1,7 +1,7 @@
 # Python Policy
 
 **Status**: Authoritative source
-**Referenced by**: [../architecture/overview.md](../architecture/overview.md), [../engineering/model_lifecycle.md](../engineering/model_lifecycle.md), [../../DEVELOPMENT_PLAN/00-overview.md](../../DEVELOPMENT_PLAN/00-overview.md), [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
+**Referenced by**: [../architecture/overview.md](../architecture/overview.md), [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md), [../engineering/model_lifecycle.md](../engineering/model_lifecycle.md), [../../DEVELOPMENT_PLAN/00-overview.md](../../DEVELOPMENT_PLAN/00-overview.md), [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
 
 > **Purpose**: Define when Python is permitted in this repository, how it is managed, and the
 > strict quality gate every adapter build must run.
@@ -191,6 +191,15 @@ Each engine-specific adapter module under `python/adapters/` honors a small proc
 - write one result payload to stdout
 - log errors to stderr; the Haskell worker captures stderr for diagnostics
 
+**One message in each direction is a deliberate choice, not an accident of the original shape, and
+the memory contract is carried without breaking it.** The admitted quantities and the execution
+shape travel in on the request the adapter was already going to read, and the adapter's
+acknowledgement of the ceiling it actually received travels back on the result payload it was
+already going to write. A separate handshake round trip — the adapter announcing its installed limit
+and waiting for permission to continue — would turn a process with exactly one failure mode into one
+with a protocol state machine, a second deadline, and a partial-exchange state that neither side can
+classify. The acknowledgement therefore rides the response.
+
 Worker protocol:
 
 - the worker request and response payloads are typed protobuf messages from
@@ -199,6 +208,15 @@ Worker protocol:
 - the worker request includes selected-model metadata, the engine install root, non-text input
   object references, and model-cache/MinIO wiring decoded by the Haskell worker from mounted
   `ClusterConfig` plus secret-file-backed `SecretsConfig` values
+- the worker request carries one further category: the admitted resource-indexed memory budget and
+  the execution shape — context length, batch, generation bound, and load strategy — the plan
+  derived that budget from. The adapter both **acts on** it and **acknowledges** it. It acts on it
+  because those are the numbers its own arenas, caches, and generation bound are sized from; an
+  engine that instead sizes an arena from the fraction of whatever device it finds is bounded by the
+  hardware rather than by the model the compiler reasoned about. It acknowledges it by reporting the
+  ceiling actually in force inside the process that will allocate, which is the conformance layer of
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) and the
+  only report that distinguishes a limit that was set from a limit the running image fits under
 - the shared project exposes one Poetry console script per adapter together with matching
   `setup-*` entrypoints
 - each Apple `setup-*` materialization writes an idempotent repo-local bootstrap manifest at
@@ -206,9 +224,13 @@ Worker protocol:
   publishes the matching per-engine framework marker beside each Apple Python-stdio interpreter.
   Linux framework environments are immutable image payloads and use that same marker contract
   instead of trying to publish retained setup state into each pod's private `emptyDir`
-- adapter modules load durable runtime context from the protobuf request, configure
-  `adapters.model_cache` from that same request before calling `get_model_path`, load model weights,
-  and perform real inference over a prebuilt host wheel. The runtime worker invokes the real engine
+- adapter modules load durable runtime context from the protobuf request, apply the received memory
+  budget and execution shape **before any weight is loaded** — earlier in this sequence than the
+  cache configuration that follows, because a framework that has already sized an arena cannot be
+  retroactively bounded, and a ceiling read back after the first large allocation reports a fact
+  rather than establishing one — configure `adapters.model_cache` from that same request before
+  calling `get_model_path`, load model weights, and perform real inference over a prebuilt host
+  wheel. The runtime worker invokes the real engine
   for the selected binding — the Python adapter transform over a prebuilt host wheel for
   python-stdio bindings, or the real native runner binary resolved from a typed HostConfig data root
   or Linux image-owned `/opt/infernix/engines/<adapterId>/` root for native-process-runner bindings —
@@ -236,10 +258,30 @@ For the artifact families the adapter returns a typed object reference for the g
 which the worker resolves against the always-on infernix-demo-objects MinIO bucket
 (see [../engineering/object_storage.md](../engineering/object_storage.md)).
 
+## Engine Parameters
+
+**An adapter does not choose its own memory-shaping parameters; it receives them.** Context length,
+batch size, generation bound, key/value cache dtype, device-arena size, and load strategy are terms
+in the requirement the model was admitted against, so an adapter that picks its own does not tune
+the admission, it invalidates it. A literal in adapter source is a number that was never compared
+against a machine — the same objection that makes a machine's capacity an observation rather than a
+declaration — and the disagreement surfaces as a resident-memory breach on a real request rather
+than as a refusal at compile time. Every one of these values arrives on the worker request as a
+single execution shape and is applied as received.
+
+The rule is the memory analog of the environment-variable prohibition this repository already
+enforces ([no_env_vars.md](no_env_vars.md)): the adapter is handed its operating parameters as
+typed, decoded fields rather than discovering them from ambient state, and an adapter that needs a
+value it was not given is a request-envelope change rather than a constant. The quantities
+themselves, the resources they are indexed by, and the enforcement each lane can install are owned
+by [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
+
 ## Cross-References
 
 - [purescript_policy.md](purescript_policy.md)
 - [haskell_style.md](haskell_style.md)
 - [testing_strategy.md](testing_strategy.md)
+- [no_env_vars.md](no_env_vars.md)
+- [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
 - [../engineering/model_lifecycle.md](../engineering/model_lifecycle.md)
 - [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)

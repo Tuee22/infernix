@@ -91,8 +91,9 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
   demo-ui disablement on the `linux-cpu` lane via
   `infernix internal materialize-substrate linux-cpu --demo-ui false`, and edge-port rediscovery
   on the host-native `apple-silicon` lane. This per-model catalog traversal is bounded by the
-  resource-admission doctrine: a full run completes rows that fit the active budget or fails closed
-  per row with typed `ModelMemoryLimitExceeded` and explicit MiB quantities (see
+  resource-admission doctrine: a full run completes rows that fit the active budget and fails closed
+  per row with typed `ModelMemoryLimitExceeded`, the breached resource, and explicit MiB quantities —
+  whether the refusal is decided at admission or by an installed ceiling inside a running engine (see
   `## Resource Memory-Bounded Validation`)
 - `infernix test e2e` validates the routed browser surface through the full durable-context
   Playwright flow alongside the SPA root, the `Infernix` heading, and the published platform-state
@@ -163,8 +164,8 @@ Hardware-specific validation runs on the machine that owns the changed path.
   config and publication state, then validates the routed demo API, auxiliary routed prefixes, every
   generated active-mode catalog entry, cache mutation endpoints, and the daemon request or result
   loop for the active substrate. This per-model traversal is bounded by runtime memory admission and
-  either completes or fails closed per row with typed `ModelMemoryLimitExceeded` (see
-  `## Resource Memory-Bounded Validation`)
+  by the ceiling the lane installs, so every row lands in exactly one of the three typed per-row
+  outcomes (see `## Resource Memory-Bounded Validation`)
 - `infernix test integration` also validates `cluster status`, `cluster down`, and repeated
   `cluster up` behavior for the active substrate
 - `infernix test integration` also validates the routed `GET /api/cache`,
@@ -311,11 +312,13 @@ real-output gates required for newly added runnable rows.
 ## Resource Memory-Bounded Validation
 
 For Apple and Linux CPU, per-model integration traversal must exercise the compiled/refined
-execution plan. Every model carries `modelRamFootprintMib`; compilation retains both available and
-unavailable rows, refinement promotes only matching grant/enforcer pairs to `ExecutableModel`, and
-  the normal coordinator path rejects an unavailable request without engine launch. Empty,
-unknown, wrong-route, and malformed coordinator/engine inputs also have terminal failed-result
-paths before source removal/acknowledgement. The single-flight authority remains inside the opaque
+execution plan. Every model's requirement is derived from its own artifact, once per physical
+resource, so the traversal exercises a derivation as well as a comparison; compilation retains both
+available and unavailable rows, refinement promotes only grant/enforcer pairs naming the same
+resource to `ExecutableModel`, and the normal coordinator path rejects an unavailable request
+without engine launch. Empty, unknown, wrong-route, and malformed coordinator/engine inputs also
+have terminal failed-result paths before source removal/acknowledgement. The single-flight
+authority remains inside the opaque
 engine capability, and Apple/Linux CPU adversarial breaches must leave the daemon alive.
 Linux GPU compiles under independent RAM and VRAM enforcement, so a
 device-using row is admitted against both limits and watched by both enforcers. A `linux-gpu` budget
@@ -323,18 +326,40 @@ that names only one resource still fails plan compilation closed with
 `GpuDualResourceBudgetRequired`, and a dual budget whose halves name the wrong physical resources is
 rejected by `InvalidMemoryEnforcer`.
 
-A per-model row lands in exactly one of two supported outcomes:
+A per-model row lands in exactly one of three supported outcomes:
 
 - **completes** — the model fits the active enforced budget, runs, and honors its per-family
   real-output contract
-- **fails closed** — the model's footprint exceeds the active budget, so the row is a clean per-row
-  `status=failed` with typed `ModelMemoryLimitExceeded` and explicit MiB quantities
+- **fails closed at admission** — the model's derived requirement exceeds the active budget for one
+  of the resources it names, so the row is a clean per-row `status=failed` with typed
+  `ModelMemoryLimitExceeded`, the breached resource, and explicit MiB quantities, and no engine
+  starts
+- **refused in run** — on a lane that prevents, the engine starts and the kernel ceiling installed
+  before its first allocation refuses an allocation, so the row is the same clean per-row
+  `status=failed` naming the resource it breached and the footprint it observed. An admitted row can
+  still be refused mid-run, and a suite that recognizes only the first two outcomes reads that
+  refusal as a crash
+
+Two obligations attach to a lane that installs a ceiling, and neither is discharged by inspecting the
+launch that installed it.
+
+- **Read-back.** The engine reports the limit it actually received, read from inside the process that
+  will allocate, after the image is replaced and before any weight is loaded, and the suite compares
+  both the soft and the hard value against the quantity the plan installed. Setting a limit and
+  fitting under one are different claims, and only the second is evidence — only the allocating
+  process can report it, and a limit read anywhere else is a report about the launcher.
+- **Calibration.** A lane claims prevention only where a real engine on that lane has been observed
+  to refuse cleanly under an installed ceiling: the runtime initialized, the over-budget allocation
+  rejected, and the process tree intact afterward. A lane without that observation declares detection
+  only, and the gate that would prove its prevention is red rather than assumed green: a ceiling
+  nobody has watched a real engine hit is a guess, and one set low enough to refuse a legitimate
+  allocation turns a capacity question into a redelivery loop.
 
 Validation proves cross-family topic collisions are rejected, bootstrap
 model/URL/timestamp drift fails before side effects, the raw publisher is absent, and non-ASCII
 substrate metadata round-trips through explicit UTF-8 Dhall emission. The validation classifier
-must distinguish a typed memory-capacity failure from the two disallowed
-outcomes: a **stall** (a genuinely missing result, including an OS-OOM kill) and a
+must distinguish a typed memory-capacity failure — refused at admission or refused in run — from the
+two disallowed outcomes: a **stall** (a genuinely missing result, including an OS-OOM kill) and a
 **fabricated pass**. Machine-independent GPU enforcement tests cover the fixed `nvidia-smi`
 observer's parsers, the group
 attribution arithmetic and its overflow rejections, and a live no-CUDA-context sample that must

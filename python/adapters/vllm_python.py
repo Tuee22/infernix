@@ -34,6 +34,57 @@ def _release_vllm_engine(engine: object | None) -> None:
     gc.collect()
 
 
+def _observed_device_envelope_mib() -> int:
+    """Phase 6 Sprint 6.51 — the device's own total, in MiB.
+
+    Read from the same NVML surface the sampler uses, so the arena's denominator
+    is an observation of the card this pod was scheduled onto rather than a
+    number anybody wrote down.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "a device arena was requested on a host with no visible CUDA device"
+        )
+    total_bytes = int(torch.cuda.get_device_properties(0).total_memory)
+    return total_bytes // (1024 * 1024)
+
+
+def _device_arena_fraction(context: AdapterContext) -> float:
+    """Phase 6 Sprint 6.51 — the admitted device quantity over the observed
+    device envelope.
+
+    The retired literal made the engine's device consumption follow from a
+    fraction and from whichever card the pod was scheduled onto: change the card
+    and the same model consumed a different amount; change the model and it
+    consumed the same amount. A number with both of those properties is
+    determined by the hardware, and admitting a model against a derived
+    requirement while the engine sizes itself from the card leaves the admission
+    decision with nothing downstream that respects it.
+
+    Read out of the installed package rather than out of its documentation
+    string, ``gpu_memory_utilization`` has exactly three uses: a startup check
+    that free memory is at least the requested fraction of total, the sizing of
+    the key/value cache arena, and a log line. No allocation path consults it
+    afterwards. It is an admission input and an arena input, and every
+    description of it as a limit is a category error.
+    """
+    admitted_mib = context.require_device_mib()
+    envelope_mib = _observed_device_envelope_mib()
+    if envelope_mib <= 0:
+        raise RuntimeError(
+            "the observed device envelope is not positive, so no arena fraction "
+            "can be derived from it"
+        )
+    if admitted_mib > envelope_mib:
+        raise RuntimeError(
+            f"the admitted device quantity of {admitted_mib} MiB exceeds the "
+            f"observed device envelope of {envelope_mib} MiB"
+        )
+    return admitted_mib / envelope_mib
+
+
 def transform(context: AdapterContext) -> str:
     # Phase 4 Sprint 4.7: real vLLM generation over a prebuilt host wheel.
     # vLLM is lazy-imported (it is CUDA-Linux-centric and absent on other
@@ -58,8 +109,13 @@ def transform(context: AdapterContext) -> str:
     llm_options = {
         "model": str(weights_dir),
         "enforce_eager": True,
-        "max_model_len": 2048,
-        "gpu_memory_utilization": 0.25,
+        "max_model_len": context.context_length,
+        # Phase 6 Sprint 6.51: the arena is the admitted device quantity over the
+        # observed device envelope, so it tracks the model rather than the card.
+        # A larger card now yields a *smaller* fraction for the same model, and
+        # that inversion is the observable sign that the number has stopped
+        # belonging to the hardware.
+        "gpu_memory_utilization": _device_arena_fraction(context),
     }
     if context.model_id.endswith("-awq"):
         llm_options.update({"quantization": "awq", "dtype": "half"})
@@ -68,7 +124,7 @@ def transform(context: AdapterContext) -> str:
     engine = None
     try:
         engine = LLM(**llm_options)
-        sampling = SamplingParams(max_tokens=256)
+        sampling = SamplingParams(max_tokens=context.generation_bound)
         outputs = engine.generate([context.input_text], sampling)
         continuation: str = outputs[0].outputs[0].text
         return continuation

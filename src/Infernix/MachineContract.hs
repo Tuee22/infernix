@@ -107,7 +107,9 @@ canonicalSystemContractText config =
                <> " "
                <> (if requiresGpu model then "gpu" else "cpu")
                <> " "
-               <> Text.pack (show (modelMemoryFootprintMib (modelRamFootprint model)))
+               <> Text.pack (show (executionContextLength (modelExecutionShape model)))
+               <> " "
+               <> Text.pack (show (executionCacheElementWidth (modelExecutionShape model)))
                <> " "
                <> downloadUrl model
            | model <- sortOn modelId (poolModels pool)

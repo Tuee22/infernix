@@ -5,7 +5,10 @@
 {-# LANGUAGE RoleAnnotations #-}
 
 module Infernix.Cluster
-  ( clusterWorkloadArchitectureForHostArchitecture,
+  ( AbsentConfigRecovery (..),
+    RecordedNamespaceRelation (..),
+    classifyAbsentConfigRecovery,
+    clusterWorkloadArchitectureForHostArchitecture,
     clusterDown,
     clusterDownHarness,
     clusterStatus,
@@ -64,6 +67,7 @@ module Infernix.Cluster
     clusterFleetEngineDeployments,
     finalPhaseDeployments,
     fleetSlotLabelKey,
+    perEngineDeploymentNames,
     runPlaywrightPrepareEngine,
     runKubectlCompat,
     writeGeneratedKindConfig,
@@ -2754,11 +2758,37 @@ recoverHarnessConfigTransaction activitiesQuiescent paths reservation = do
           pure markRestored
         (True, False) ->
           pure markRestored
-        (False, False) ->
-          ioError
-            ( userError
-                "cannot recover interrupted harness config takeover: both the operator config and its backup are absent"
-            )
+        (False, False) -> do
+          -- Phase 6 Sprint 6.52: a restore-pending transaction with neither
+          -- file present means one of two very different things, and the
+          -- recorded owner namespace is what separates them.
+          --
+          -- The reservation is durable (`.data/` is host-mounted) while the
+          -- config it describes is not: on the container lane `/workspace` is
+          -- the image's own filesystem, so a killed launcher leaves a record
+          -- whose subject no longer exists anywhere this process can see. The
+          -- supported dead-owner reclamation path then asks this function to
+          -- reconcile a transaction over a filesystem that is gone, and the
+          -- retired arm refused unconditionally — which made the slot
+          -- unreclaimable by the very path that exists to reclaim it.
+          --
+          -- A foreign namespace proves the subject is not ours: there is
+          -- nothing here to restore and nothing here to clobber, so the
+          -- transaction is terminal and the slot may be reclaimed. A matching
+          -- namespace with both files absent is the opposite case — the
+          -- operator's own config was moved to a backup that then vanished,
+          -- which is real loss, and continuing would hide it. That one still
+          -- fails closed, as does a namespace that cannot be compared at all,
+          -- because absence of proof that the subject is foreign is not proof
+          -- that it is ours.
+          currentNamespace <- observeCurrentProcessNamespaceIdentity
+          case classifyAbsentConfigRecovery
+            ( classifyRecordedNamespace
+                (harnessReservationOwnerPidNamespace reservation)
+                currentNamespace
+            ) of
+            AbsentConfigReclaimable -> pure markRestored
+            AbsentConfigUnrecoverable reason -> ioError (userError reason)
     HarnessConfigRemovePending ->
       if backupPresent
         then
@@ -2769,6 +2799,30 @@ recoverHarnessConfigTransaction activitiesQuiescent paths reservation = do
         else do
           when runtimePresent (removeFile runtimeConfig)
           pure markRestored
+
+-- | Phase 6 Sprint 6.52 — what a restore-pending transaction means when
+-- neither the operator config nor its backup is present.
+data AbsentConfigRecovery
+  = AbsentConfigReclaimable
+  | AbsentConfigUnrecoverable String
+  deriving (Eq, Show)
+
+-- | The decision, as a pure function of the recorded owner namespace.
+--
+-- Only a namespace proven foreign licenses reclamation. A matching namespace
+-- means the operator's own config was moved to a backup that then vanished —
+-- real loss, which must stay loud — and an incomparable namespace is not
+-- evidence of anything, so it fails closed too.
+classifyAbsentConfigRecovery :: RecordedNamespaceRelation -> AbsentConfigRecovery
+classifyAbsentConfigRecovery relation =
+  case relation of
+    RecordedNamespaceIsForeign -> AbsentConfigReclaimable
+    RecordedNamespaceMatches ->
+      AbsentConfigUnrecoverable
+        "cannot recover interrupted harness config takeover: both the operator config and its backup are absent"
+    RecordedNamespaceCannotBeCompared ->
+      AbsentConfigUnrecoverable
+        "cannot recover interrupted harness config takeover: both the operator config and its backup are absent, and the recorded owner namespace cannot be compared with this one"
 
 ensureHarnessReservationAvailable :: Paths -> IO ()
 ensureHarnessReservationAvailable paths = do
@@ -7624,6 +7678,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
         <> coordinatorResourceValueLines
         <> [ "engine:",
              "  replicaCount: " <> show (repoEngineReplicaCount deployPhase),
+             "  memberName: " <> show (Text.unpack sharedEngineMemberName),
              "  image:",
              "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
              "    tag: local",
@@ -7747,6 +7802,8 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
     appleHostedLinuxCpuLocalTopology =
       isAppleHostedLinuxCpuLocalTopology paths controlPlane (clusterRuntimeMode state)
     perEngineNames = perEngineDeploymentNames (clusterRuntimeMode state)
+    sharedEngineMemberName =
+      sharedEngineMemberId (clusterRuntimeMode state)
     perEngineImageValueLines =
       if null perEngineNames
         then ["      {}"]
@@ -8425,6 +8482,34 @@ perEngineDeploymentNames runtimeMode =
   case runtimeMode of
     LinuxGpu -> frameworkEngineNamesForMode runtimeMode
     _ -> []
+
+-- | The engine member identity the shared @infernix-engine@ Deployment is.
+--
+-- Phase 8 Sprint 8.13: the shared engine workload runs the launcher image, so
+-- it is exactly the member that has no per-engine Deployment of its own. On
+-- @linux-gpu@ the launcher image carries the native payloads and none of the
+-- framework virtual environments, so it is the @native@ member and the
+-- framework members are the per-engine images; on @linux-cpu@ there are no
+-- per-engine Deployments at all, so it is that lane's single member.
+--
+-- Deriving it by subtraction rather than writing a per-mode literal is
+-- deliberate: the member list and the per-engine Deployment list already exist,
+-- and a third hand-written copy of the same fact is the illegal-state shape
+-- Sprint 8.10 deleted from the wire. A mode whose subtraction does not leave
+-- exactly one member has no shared engine workload to name, and renders the
+-- empty identity the chart treats as "no @--engine-name@".
+sharedEngineMemberId :: RuntimeMode -> Text.Text
+sharedEngineMemberId runtimeMode =
+  case declaredSharedMembers of
+    [onlyMember] -> onlyMember
+    _ -> Text.empty
+  where
+    perEngineMembers = perEngineDeploymentNames runtimeMode
+    declaredSharedMembers =
+      [ memberIdValue
+      | memberIdValue <- map engineMemberId (engineMembersForMode runtimeMode),
+        memberIdValue `notElem` perEngineMembers
+      ]
 
 -- | Phase 3 Sprint 3.12: select the native container architecture for
 -- cluster workloads. Apple remains arm64, linux-gpu remains amd64

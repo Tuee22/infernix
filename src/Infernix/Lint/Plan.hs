@@ -25,6 +25,7 @@ module Infernix.Lint.Plan
     receiptMarkerViolations,
     ledgerDoubleListingViolations,
     phaseStatusTableViolations,
+    forwardOwnershipViolations,
     parseSprintBlocks,
     SprintBlock
       ( SprintBlock,
@@ -103,7 +104,8 @@ scanPlanViolations documents =
       dualAcceleratorGateViolations phaseDocuments,
       receiptMarkerViolations phaseDocuments,
       ledgerDoubleListingViolations documents,
-      phaseStatusTableViolations documents
+      phaseStatusTableViolations documents,
+      forwardOwnershipViolations phaseDocuments
     ]
   where
     phaseDocuments = filter (isPhasePlanDocument . fst) documents
@@ -740,6 +742,66 @@ backtickedTokens = collect
 --
 -- Duplicated status tables do not merely repeat; they diverge, and a reader
 -- has no way to tell which copy is current.
+-- | Section Q scan 8 — zero forward ownership.
+--
+-- Scan 1 reads @Blocked by@ statements, which is the form a dependency takes
+-- when someone writes it down as one. The form it takes in practice is a
+-- sentence: a deliverable another sprint @owns@, work @re-home@d forward, an
+-- implementation @landed with@ a later sprint. None of those is a blocker line,
+-- so scan 1 is structurally blind to them, and they are precisely how an earlier
+-- phase ends up unable to close without a later one.
+--
+-- What this scan decides: the plan no longer /claims/ an earlier phase depends on
+-- a later one. What it cannot decide: whether a re-home was correct, or whether
+-- the earlier phase can now actually close. A closed sprint pointing forward to
+-- what replaced it is Section G working and is not matched here, because the
+-- ownership verbs below describe who owns an obligation rather than what
+-- superseded a finished one.
+forwardOwnershipViolations :: [(FilePath, String)] -> [String]
+forwardOwnershipViolations = concatMap documentViolations
+  where
+    documentViolations (relativePath, contents) =
+      [ relativePath
+          <> ":"
+          <> show lineNumber
+          <> ": forward ownership — a phase-"
+          <> show owningPhase
+          <> " document places an obligation with phase "
+          <> show referenced
+          <> " ("
+          <> verb
+          <> "); Section C requires every phase to be completable using only"
+          <> " equal-or-lower-numbered phases, so this deliverable is re-homed rather than recorded"
+      | owningPhase <- maybeToList (phaseNumberOfDocument relativePath),
+        (lineNumber, lineValue) <- zip [1 :: Int ..] (lines contents),
+        not (isSupersessionLine lineValue),
+        verb <- ownershipVerbsIn lineValue,
+        referenced <- nub (referencedPhaseNumbers lineValue),
+        referenced > owningPhase
+      ]
+
+    ownershipVerbsIn lineValue =
+      [verb | verb <- forwardOwnershipVerbs, verb `isInfixOf` lineValue]
+
+    -- Section G's forward pointer from a closed sprint is the sanctioned form and
+    -- is excluded by its own field marker rather than by guessing at prose.
+    isSupersessionLine lineValue =
+      any
+        (`isInfixOf` lineValue)
+        ["**Supersession note**", "**Current-API note**", "**Historical-scope note**"]
+
+-- | The sentence forms that place an obligation with another sprint. Kept
+-- narrow deliberately: a broader list would match ordinary cross-references,
+-- and a scan that cries wolf is turned off.
+forwardOwnershipVerbs :: [String]
+forwardOwnershipVerbs =
+  [ "owned by",
+    "is owned by",
+    "re-home",
+    "landed with",
+    "owns the"
+  ]
+
 phaseStatusTableViolations :: [(FilePath, String)] -> [String]
 phaseStatusTableViolations documents =
   [ "phase-status table appears "

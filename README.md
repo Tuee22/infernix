@@ -535,16 +535,17 @@ warning classification. In short:
 
 - long image publication, final-image preload, Apple retained-state replay, and early Kubernetes
   readiness warnings can be healthy convergence while lifecycle heartbeat fields continue to update
-- inference compilation accounts against the resource that holds model weights: Apple unified host
-  RAM or Linux CPU engine-pod RAM. A model whose declared requirement exceeds that capacity remains
-  an explicit `UnavailableModel` carrying `ModelMemoryLimitExceeded` quantities while smaller
-  placements continue. The normal coordinator path publishes that typed terminal result without
-  engine launch. Linux GPU execution requires independently indexed RAM and VRAM grants and
-  observers; a single-resource plan fails closed with `GpuDualResourceBudgetRequired`.
-  Apple/Linux CPU capped-engine watchdog gates must demonstrate that an adversarial breach leaves
-  the daemon alive under the encapsulated serialization authority. Treat a host `SystemOOM` as a
-  defect or environment contention, not as an accepted capacity result; see
-  [bounded inference memory](documents/architecture/bounded_inference_memory.md)
+- inference compilation accounts against the resource that holds model weights, per resource: Apple
+  unified host RAM, Linux CPU engine-pod RAM, and on Linux GPU both pod RAM and device VRAM as
+  independently indexed grants. A model's requirement is derived from its artifact rather than
+  authored, and a model whose derived requirement exceeds that capacity remains an explicit
+  `UnavailableModel` carrying `ModelMemoryLimitExceeded` quantities while smaller placements
+  continue. The normal coordinator path publishes that typed terminal result without engine launch.
+  On a lane that installs a kernel ceiling, an over-budget allocation is refused inside the engine
+  rather than observed after the fact; on a lane that cannot, the sampled backstop must demonstrate
+  that an adversarial breach leaves the daemon alive under the encapsulated serialization authority.
+  Treat a host `SystemOOM` as a defect or environment contention, not as an accepted capacity result;
+  see [bounded inference memory](documents/architecture/bounded_inference_memory.md)
 - buildx, npm update notices, npm deprecation warnings, Python root-pip warnings, and GHCup
   shell-profile warnings are eliminated on the supported image and web toolchain; if they
   return, treat them as regressions unless the canonical policy doc names a new upstream constraint
@@ -925,15 +926,18 @@ this section is an orientation summary.
   artifacts
 - inference memory admission compiles each configured model against an explicit, resource-specific
   budget: Apple uses a checked unified-host-RAM partition, Linux CPU uses the engine-pod capacity,
-  and Linux GPU uses independently indexed pod-RAM and GPU-VRAM enforcement. A single-resource GPU
-  plan fails closed with `GpuDualResourceBudgetRequired`. An oversized model remains an explicit
-  `UnavailableModel` carrying typed `ModelMemoryLimitExceeded` data rather than invalidating smaller
-  placements. The memory-safety construction
+  and Linux GPU uses independently indexed pod-RAM and GPU-VRAM enforcement. Each model's requirement
+  is derived from its own artifact — exact weight bytes from a bounded header read, exact cache bytes
+  from the model geometry and the declared execution shape — so host and device are different
+  formulas rather than one number reused. An oversized model remains an explicit `UnavailableModel`
+  carrying typed `ModelMemoryLimitExceeded` data rather than invalidating smaller placements. The
+  memory-safety construction
   ([documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)),
-  rests on a compiled and refined execution plan, encapsulated serialized execution, exact
-  per-model Linux enforcement, verified GPU VRAM enforcement, and resource-indexed launch
-  capabilities. Even so, these mechanisms are not proof that every resource-exhaustion state is
-  unrepresentable
+  rests on a compiled and refined execution plan, encapsulated serialized execution, a kernel ceiling
+  installed before the engine's first allocation on the lanes that can install one, a sampled
+  backstop over the residue it does not cover, and resource-indexed launch capabilities. Each lane
+  declares which of those strengths it actually has. Even so, these mechanisms are not proof that
+  every resource-exhaustion state is unrepresentable
 - host memory has more than one claimant, and inference is only one of them. The host toolchain is
   the other large one this repository starts: an uncapped `cabal build` from this checkout reached
   109.46 GiB resident on a
@@ -1138,8 +1142,10 @@ Contributions should keep implementation, tests, and docs aligned in the same ch
   allowed. Use public Haskell package APIs behind internal modules; never relocate lock, spawn,
   signal, or cleanup boundaries through direct FFI declarations, inline C, or
   `System.Process.Internals`. Direct `foreign import` is forbidden throughout repo-owned Haskell.
-  Darwin birth identity uses registry-backed Haskell state, and Apple footprint observation uses
-  fixed bounded `/usr/bin/top` and `/usr/bin/footprint` commands behind an internal kernel
+  Darwin birth identity uses registry-backed Haskell state; Apple footprint observation uses
+  fixed bounded `/usr/bin/top` and `/usr/bin/footprint` commands behind an internal kernel, and every
+  fixed enforcement tool is pinned the same way, because an observer or a ceiling installer reached
+  through a caller-supplied or operator-editable path is redirectable
 - keep Apple artifact provisioning inside the hidden rank-2
   `ProvisioningGrant`/`ProvisioningSession` facade. Candidate roots must be fully hydrated,
   relocated, smoke-validated, provenance-recorded, and actual-payload-hashed before the fsynced

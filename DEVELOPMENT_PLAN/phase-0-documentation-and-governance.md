@@ -696,8 +696,8 @@ as `Planned` Phase 4/6 work. The doctrine is canonical at
   inferenceCapacity, rejecting oversubscription; headroom covering OS + routed-E2E browser), the
   historical macOS `proc_pid_rusage` physical-footprint watchdog + process-group SIGKILL and the
   Linux pod-cgroup/VRAM-OOM exit classifier, and the `unboundedEngineSpawnViolations` lint. The
-  direct-FFI sampler and its Apple-specific evidence are superseded; Sprint 4.32 owns the current
-  fixed bounded `/usr/bin/top` plus `/usr/bin/footprint` observer
+  direct-FFI sampler and its Apple-specific evidence are superseded by the fixed bounded
+  `/usr/bin/top` plus `/usr/bin/footprint` observer that replaced them
 - the doctrine doc registered as a required doc in `requiredDocs` with a `DocumentStructureRule`
   (`src/Infernix/Lint/Docs.hs`) and indexed in `documents/README.md`
 - the new non-negotiable rule added to `documents/development/assistant_workflow.md` (canonical),
@@ -1256,6 +1256,58 @@ an inode receipt, symbol overlap pairing unrelated ledger rows, and a removal-le
 first cell names the phase owning the removal counted as a second phase-status table. A scan that
 cries wolf is worse than no scan, so the tuning is part of the deliverable rather than a detail of
 it, and each removed class carries a unit assertion so it cannot return.
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 0.25: Phase-Scope Independence And The Forward-Ownership Scan [Done]
+
+**Status**: Done — machine-independent. This sprint carries no accelerator cohort and blocks no
+accelerator phase.
+**Implementation**: `DEVELOPMENT_PLAN/development_plan_standards.md`, `src/Infernix/Lint/Plan.hs`,
+`test/unit/Spec.hs`
+**Docs to update**: none. The standards file is the governed home for this rule, and it is the file
+this sprint changes.
+
+### Objective
+
+Make an earlier phase completable and validatable without any later phase, and enforce it.
+
+### Deliverables
+
+- Section C states phase-scope independence: a phase's status describes only the scope that phase
+  owns, and a later phase stays `Done` when an earlier one gains sprints
+- Section C states the converse obligation: every phase must be completable using only
+  equal-or-lower-numbered phases, and a deliverable a higher-numbered phase owns on an earlier
+  phase's behalf is re-homed rather than recorded
+- Sections A and Q widen the forward-only invariant from blocker edges to dependencies of every form
+- Section Q gains scan 8, and `Infernix.Lint.Plan` implements it
+- Section G blesses the two header fields a closed sprint uses to point forward without reopening
+
+### Validation
+
+- The rule was previously the other way round, and that is the defect. Section C had made a later
+  phase's `Done` conditional on an earlier phase staying frozen, which meant adding scope to an
+  earlier phase silently invalidated everything above it — the opposite of a plan workable in
+  numerical order.
+- Scan 1 reads `Blocked by` statements, so it is structurally blind to the form the violation
+  actually takes: a sentence placing an obligation with a later sprint. Scan 8 reads those sentence
+  forms — a deliverable another sprint owns, work re-homed forward, an implementation landed with a
+  later sprint — and is the reason this sprint is enforcement rather than prose. Section Q's own
+  preamble is the argument: a rule that is only prose is a rule that decays.
+- **Fifteen violations across four phase documents, reduced to zero.** The scan found forward
+  ownership in Phases 0, 1, 4 and 5 — five times what a reading pass had identified. Each was
+  re-stated as a scope boundary or as a supersession rather than as a transfer of obligation, which
+  is the distinction the rule turns on: a closed sprint naming what replaced it is Section G working,
+  while an open deliverable another phase owns is the violation.
+- The scan is negative-tested in both directions and for its exemption: an obligation placed with a
+  later sprint is reported, the same sentence pointing at an earlier sprint is not, and a closed
+  sprint's supersession field is exempt.
+- `infernix lint plan` reports all eight scans at zero, and `infernix lint docs` plus `docs check`
+  stay clean.
 
 ### Remaining Work
 

@@ -43,6 +43,7 @@ import Infernix.Engines.MaterializationLock
   ( ArtifactGenerationLease,
     withTryArtifactGenerationReadLock,
   )
+import Infernix.Types (Resource)
 import System.Exit (ExitCode)
 import System.Posix.Files (FileStatus)
 
@@ -81,7 +82,15 @@ data ArtifactOutputStream
 -- capability.
 data ArtifactProcessOutcome
   = ArtifactProcessExited !ExitCode
-  | ArtifactProcessExceededCeiling !Int
+  | -- | Phase 6 Sprint 6.50: the declared ceiling and the observed footprint.
+    -- Phase 4 Sprint 4.37: the physical resource that breached rides beside
+    -- them, because a value that is complete at the sampler and lossy one
+    -- frame up is not carried, it is re-guessed.
+    ArtifactProcessExceededCeiling !Resource !Int !Int
+  | -- | Phase 4 Sprint 4.44: the kernel refused an allocation at the installed
+    -- ceiling. It carries the resource, the ceiling, the peak the sampler
+    -- observed, and the engine's own exit code.
+    ArtifactProcessRefusedAtCeiling !Resource !Int !Int !ExitCode
   | ArtifactProcessEnforcementUnavailable !Text
   | ArtifactProcessOutputLimitExceeded !ArtifactOutputStream
   | ArtifactProcessOutputCaptureFailed !ArtifactOutputStream !Text
@@ -93,6 +102,12 @@ data ArtifactProcessOutcome
 data ArtifactTerminalOutcome
   = ArtifactTerminalCompleted
   | ArtifactTerminalRejected
+  | -- | Phase 4 Sprint 4.43: the engine's own pre-flight projection could not be
+    -- obtained, so no ceiling was installed and no engine was started. It
+    -- carries the reason for the same instrumentation argument Sprint 6.50 made
+    -- for a rejected artifact: a refusal whose cause has to be recovered by hand
+    -- from the image costs a cohort cycle to diagnose.
+    ArtifactTerminalProjectionRefused !Text
   | ArtifactTerminalProcess
       !ArtifactProcessOutcome
       !ExitCode

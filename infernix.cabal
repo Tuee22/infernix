@@ -77,6 +77,8 @@ library
         Infernix.Lint.Proto
         Infernix.MachineContract
         Infernix.Models
+        Infernix.Models.Artifact
+        Infernix.Models.Requirement
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
         Infernix.Objects.Sts
@@ -137,6 +139,8 @@ library
         Infernix.ExecutionPlan.Internal
         Infernix.Runtime.CappedEngine
         Infernix.Runtime.CappedEngine.Cleanup
+        Infernix.Runtime.CappedEngine.Ceiling
+        Infernix.Runtime.CappedEngine.Projection
         Infernix.Runtime.CappedEngine.FixedObserver
         Infernix.Runtime.CappedEngine.Internal
         Infernix.Runtime.CappedEngine.OutputCapture
@@ -289,6 +293,8 @@ test-suite infernix-unit
         Infernix.Lint.Proto
         Infernix.MachineContract
         Infernix.Models
+        Infernix.Models.Artifact
+        Infernix.Models.Requirement
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
         Infernix.Objects.Sts
@@ -304,6 +310,8 @@ test-suite infernix-unit
         Infernix.Runtime.Cache
         Infernix.Runtime.CappedEngine
         Infernix.Runtime.CappedEngine.Cleanup
+        Infernix.Runtime.CappedEngine.Ceiling
+        Infernix.Runtime.CappedEngine.Projection
         Infernix.Runtime.CappedEngine.FixedObserver
         Infernix.Runtime.CappedEngine.Internal
         Infernix.Runtime.CappedEngine.OutputCapture
@@ -391,6 +399,7 @@ test-suite infernix-artifact-transaction
         Infernix.Engines.MaterializationLock
         Infernix.Engines.MaterializationLock.Internal
         Infernix.Error
+        Infernix.Types
 
     default-language: GHC2021
     ghc-options:
@@ -407,6 +416,7 @@ test-suite infernix-artifact-transaction
         filelock >=0.1.1.9 && <0.2,
         filepath >=1.4 && <1.6,
         text >=2.0 && <2.2,
+        time >=1.12 && <1.15,
         unix >=2.8 && <2.9
 
 test-suite infernix-apple-materializer
@@ -451,6 +461,8 @@ test-suite infernix-apple-materializer
         Infernix.Internal.Util
         Infernix.MachineContract
         Infernix.Models
+        Infernix.Models.Artifact
+        Infernix.Models.Requirement
         Infernix.DescriptorSpace
         Infernix.ProcessIdentity
         Infernix.ProcessIdentity.Internal
@@ -494,14 +506,18 @@ test-suite infernix-capped-engine-observer
         Infernix.ProcessIdentity
         Infernix.ProcessIdentity.Internal
         Infernix.Runtime.CappedEngine.Cleanup
+        Infernix.Runtime.CappedEngine.Ceiling
+        Infernix.Runtime.CappedEngine.Projection
         Infernix.Runtime.CappedEngine.FixedObserver
         Infernix.Runtime.CappedEngine.OutputCapture
+        Infernix.Types
 
     default-language: GHC2021
     ghc-options:
         -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-M1024M
 
     build-depends:
+        aeson >=2.1 && <2.3,
         base >=4.18 && <4.23,
         base16-bytestring >=1.0 && <1.1,
         bytestring >=0.11 && <0.13,
@@ -512,6 +528,7 @@ test-suite infernix-capped-engine-observer
         filepath >=1.4 && <1.6,
         process >=1.6 && <1.7,
         text >=2.0 && <2.2,
+        time >=1.12 && <1.16,
         unix >=2.8 && <2.9
 
 test-suite infernix-compile-fail
@@ -619,6 +636,8 @@ test-suite infernix-integration
         Infernix.Lint.Proto
         Infernix.MachineContract
         Infernix.Models
+        Infernix.Models.Artifact
+        Infernix.Models.Requirement
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
         Infernix.Objects.Sts
@@ -634,6 +653,8 @@ test-suite infernix-integration
         Infernix.Runtime.Cache
         Infernix.Runtime.CappedEngine
         Infernix.Runtime.CappedEngine.Cleanup
+        Infernix.Runtime.CappedEngine.Ceiling
+        Infernix.Runtime.CappedEngine.Projection
         Infernix.Runtime.CappedEngine.FixedObserver
         Infernix.Runtime.CappedEngine.Internal
         Infernix.Runtime.CappedEngine.OutputCapture

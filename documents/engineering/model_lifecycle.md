@@ -66,16 +66,21 @@ Linux substrates, cluster engine members consume, execute, and publish the resul
 - engine workers are Haskell processes; for Python-native engines, the worker forks the named adapter
 entrypoint and exchanges typed protobuf worker messages over stdio. The worker passes the model
 metadata (`display_name`, `family`, `artifact_type`, `runtime_lane`, `selected_engine`,
-`adapter_id`, `engine_install_root`) and the model-cache/MinIO wiring (`model_cache_root`, quota,
-endpoint, buckets, region, and secret-file-backed access keys) directly on the private
+`adapter_id`, `engine_install_root`), the model-cache/MinIO wiring (`model_cache_root`, quota,
+endpoint, buckets, region, and secret-file-backed access keys), and the admitted resource-indexed
+memory budget together with the execution shape (context length, batch, generation bound, load
+strategy) that budget was derived from, directly on the private
 `WorkerRequest` envelope; the shared adapter entrypoints call
 `python/adapters/model_cache.configure()` before `get_model_path(model_id)` obtains the on-disk path
-to weights streamed from the eagerly pre-staged MinIO `infernix-models` bucket. Note: that quota
-bounds the on-disk model cache (`python/adapters/model_cache.py` LRU); model memory is separately
-governed by the typed execution plan. A per-model `modelRamFootprintMib` compiles against Apple
-unified host RAM or Linux CPU pod capacity. An oversized row remains an `UnavailableModel`; a
-fitting row advances through live-enforcer refinement to `ExecutableModel`. A Linux GPU plan without
-independently indexed RAM/VRAM enforcement fails closed with `GpuDualResourceBudgetRequired`.
+to weights streamed from the eagerly pre-staged MinIO `infernix-models` bucket. Disk and memory are
+two independently sized quantities carried on the one envelope, and keeping them distinct is the
+point: that quota bounds the on-disk model cache (`python/adapters/model_cache.py` LRU) and nothing
+else, while the memory budget bounds what the engine process may hold resident and is applied by the
+adapter before any weight is loaded. A model's requirement is derived from its own artifact and
+admitted per physical resource against the executing machine's observed capacity. An oversized row
+remains an `UnavailableModel`; a fitting row advances through live-enforcer refinement to
+`ExecutableModel`. A Linux GPU plan without independently indexed RAM/VRAM enforcement fails closed
+with `GpuDualResourceBudgetRequired`.
 Canonical home:
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 - the runtime worker invokes the engine for the selected binding — the Python adapter transform over

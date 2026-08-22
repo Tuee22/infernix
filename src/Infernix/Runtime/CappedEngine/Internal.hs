@@ -18,6 +18,10 @@ module Infernix.Runtime.CappedEngine.Internal
     NativeArtifactInvocation,
     NativeArtifactLaunchOutcome (..),
     PythonWorkerLaunchOutcome (..),
+    BoundedEngineLaunch,
+    boundedEngineLaunchCeiling,
+    executableEngineCeiling,
+    withEngineCeilingInstalled,
     appleRuntimeEnvironmentForTest,
     appleRuntimeEnvironmentNamesForTest,
     nativeArtifactCache,
@@ -27,6 +31,12 @@ module Infernix.Runtime.CappedEngine.Internal
     appleWatchdogOutcomeForTest,
     linuxWatchdogOutcomeForTest,
     nvidiaWatchdogOutcomeForTest,
+    scriptedWatchdogOutcomeForTest,
+    scriptedWatchdogPeakForTest,
+    classifyCeilingRefusalForTest,
+    accountedAllocationMarginMibForTest,
+    executableWatchdogCeilingsForTest,
+    observeDeviceArenaAvailability,
     observeNvidiaDeviceVramMib,
     probeNvidiaVramSampler,
     parseResidentBytesForTest,
@@ -57,9 +67,11 @@ import Control.Monad (foldM, unless, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (elemIndices)
 import Data.List qualified as List
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Maybe qualified as Maybe
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -69,6 +81,7 @@ import GHC.IO.Exception (IOErrorType (ResourceVanished), IOException (IOError, i
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (dataRoot, repoRoot))
 import Infernix.DescriptorSpace (requireBoundedDescriptorSpace)
+import Infernix.DescriptorSpace qualified as DescriptorSpace
 import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
 import Infernix.Engines.Artifact qualified as Artifact
 import Infernix.ExecutionPlan.Internal
@@ -86,15 +99,23 @@ import Infernix.ExecutionPlan.Internal
         RuntimeHostResources,
         RuntimePodResources
       ),
+    enforcerBudgetMib,
   )
-import Infernix.Python qualified as Python
-import Infernix.Runtime.CappedEngine.Cleanup qualified as CappedCleanup
 -- The @\/proc@ resident-set reader is reachable only from the Linux pair, so
 -- its imports belong to the branch that uses it. The fixed public-tool
 -- observer kernel is reachable from both branches: the Apple footprint pair on
 -- Darwin, the NVIDIA VRAM pair elsewhere.
+
+import Infernix.Models.Requirement
+  ( keyValueCacheBytes,
+    modelRequirementBytesToMib,
+  )
+import Infernix.Python qualified as Python
+import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
+import Infernix.Runtime.CappedEngine.Cleanup qualified as CappedCleanup
 import Infernix.Runtime.CappedEngine.FixedObserver qualified as FixedObserver
 import Infernix.Runtime.CappedEngine.OutputCapture qualified as OutputCapture
+import Infernix.Runtime.CappedEngine.Projection qualified as Projection
 import Infernix.Types
   ( EngineAdapterType (..),
     EngineBinding
@@ -102,12 +123,22 @@ import Infernix.Types
         engineBindingAdapterType
       ),
     InferenceRequest (inputObjectRef, inputText, requestModelId),
-    ModelDescriptor (family, modelId, runtimeMode, selectedEngine),
+    ModelDescriptor
+      ( family,
+        modelExecutionShape,
+        modelGeometry,
+        modelId,
+        runtimeMode,
+        selectedEngine
+      ),
+    ModelExecutionShape (executionCacheElementWidth, executionContextLength),
+    Resource (..),
     RuntimeMode (AppleSilicon, LinuxCpu, LinuxGpu),
+    resourceText,
   )
 import System.Directory qualified as Directory
 import System.Exit (ExitCode (..))
-import System.FilePath (isAbsolute, takeExtension, (</>))
+import System.FilePath (isAbsolute, takeDirectory, takeExtension, (</>))
 import System.IO (Handle, hClose, hPutStr)
 import System.Posix.Signals (sigKILL, signalProcessGroup)
 import System.Posix.Types (CPid)
@@ -135,12 +166,70 @@ data EngineCommand
   = DirectEngineCommand FilePath [String] FilePath [(String, String)]
   deriving (Eq, Show)
 
+-- | Phase 4 Sprint 4.41 — an engine launch that has passed through the ceiling
+-- installation region.
+--
+-- The constructor is hidden and 'withEngineCeilingInstalled' is the only mint,
+-- so an engine that never passed through the region is not a term. This is the
+-- same move the repository already makes for grants: the authority to start
+-- something is a value someone had to mint, not a convention someone had to
+-- follow.
+data BoundedEngineLaunch = BoundedEngineLaunch EngineCommand Ceiling.InstalledCeiling
+  deriving (Eq, Show)
+
+-- | The installation region.
+--
+-- The operations are ordered, and the order is the point. The descriptor-space
+-- bound is established first, because every spawn kernel sets @close_fds@ and
+-- the pre-@exec@ descriptor walk is linear in the soft descriptor limit; then
+-- the ceiling is rendered from the admitted grant; then the launch prefix lowers
+-- both the soft and the hard data-segment limit and replaces itself with the
+-- engine image. The limit is in force before the engine's first instruction and
+-- cannot be raised back by the process it binds.
+withEngineCeilingInstalled ::
+  Ceiling.InstalledCeiling ->
+  EngineCommand ->
+  (BoundedEngineLaunch -> IO result) ->
+  IO result
+withEngineCeilingInstalled installed command action = do
+  _ <- DescriptorSpace.requireBoundedDescriptorSpace "capped engine ceiling installation"
+  action (BoundedEngineLaunch (applyCeilingPrefix installed command) installed)
+
+-- | Prepend the launch prefix. A detection-only lane has none, so its command is
+-- unchanged and its strength says so.
+applyCeilingPrefix :: Ceiling.InstalledCeiling -> EngineCommand -> EngineCommand
+applyCeilingPrefix installed command =
+  case (Ceiling.installedCeilingArgumentPrefix installed, command) of
+    ([], _) -> command
+    (tool : leadingArguments, DirectEngineCommand executable arguments workingDirectory processEnvironment) ->
+      DirectEngineCommand
+        tool
+        (leadingArguments <> (executable : arguments))
+        workingDirectory
+        processEnvironment
+
+-- | The ceiling this launch installed, for the read-back comparison.
+boundedEngineLaunchCeiling :: BoundedEngineLaunch -> Ceiling.InstalledCeiling
+boundedEngineLaunchCeiling (BoundedEngineLaunch _ installed) = installed
+
 -- | A total terminal engine outcome. Enforcement unavailability is distinct
 -- from a measured ceiling breach: both fail closed, but only a measured breach
 -- is reported as 'ModelMemoryLimitExceeded'.
 data EngineOutcome
   = EngineExited ExitCode
-  | EngineExceededCeiling Int
+  | -- | Phase 4 Sprint 4.44: the kernel refused an allocation at the installed
+    -- ceiling, so the engine exited non-zero without the memory ever becoming
+    -- resident for the sampled backstop to see. It carries the resource, the
+    -- ceiling that was installed, the peak the sampler actually observed, and
+    -- the engine's own exit code — every quantity is one that was measured, and
+    -- deliberately no invented number above the limit.
+    EngineRefusedAtCeiling Resource Int Int ExitCode
+  | -- | Phase 4 Sprint 4.37: the resource that breached, the ceiling installed
+    -- for it, and the footprint observed above it. The resource is decided at
+    -- grant-mint time from a nominal role that cannot be relabelled, so it is
+    -- known statically at every breach site and is carried rather than
+    -- re-derived one frame up.
+    EngineExceededCeiling Resource Int Int
   | EngineEnforcementUnavailable Text
   | EngineOutputLimitExceeded EngineOutputStream
   | EngineOutputCaptureFailed EngineOutputStream Text
@@ -187,10 +276,21 @@ data NativeArtifactInvocation = NativeArtifactInvocation
 data NativeArtifactLaunchOutcome
   = NativeArtifactUnsupported !Text
   | NativeArtifactUnavailable
-  | NativeArtifactRejected
+  | -- | Phase 6 Sprint 6.50: the rejection carries the install root and the
+    -- validator's own reason. Discarding them cost a whole @linux-gpu@ cohort
+    -- cycle: the daemon reported only that validation failed, so the reason
+    -- had to be rediscovered by hand from the image, exactly as the
+    -- reason-less @NvidiaSamplerUnavailable@ did in Sprint 6.44.
+    NativeArtifactRejected !FilePath !String
   | NativeArtifactBusy
   | NativeArtifactInvocationRejected !String
   | NativeArtifactUseValidationFailed
+  | -- | Phase 4 Sprint 4.43: the engine's own projection could not be obtained,
+    -- so no ceiling was installed and no engine was started. It is a distinct
+    -- outcome from a limit being exceeded for the same reason
+    -- 'ModelRequirementUnderivable' is: the quantity is exactly what could not
+    -- be established, so there is none to report.
+    NativeArtifactProjectionRefused !Text
   | NativeArtifactLaunched !EngineOutcome !ExitCode !String !String
   deriving (Eq, Show)
 
@@ -298,7 +398,21 @@ validateNativeArtifactInput invocationInput =
       requireInvocationText ("input object reference", value)
 
 data EnforcementTermination
-  = CeilingBreached Int
+  = -- | Phase 6 Sprint 6.50: the ceiling that was breached __and the footprint
+    -- actually observed__. The observed value was measured at every breach site
+    -- and then discarded, so a breach reported @required == available ==
+    -- ceiling@ and said nothing about how far over the engine went — which is
+    -- exactly the number needed to calibrate a declared footprint from a cohort
+    -- rather than from a guess.
+    --
+    -- Phase 4 Sprint 4.37: the leading 'Resource' is what makes
+    -- one shared termination slot attributable. 'withCappedEngine' forks every
+    -- watchdog against a single 'IORef', and a @RuntimeGpuResources@ placement
+    -- forks two; the single slot is correct — 'recordFirstTermination' is
+    -- first-writer-wins, so the recorded value is the breach that actually
+    -- terminated the group — but without a tag the value cannot say which loop
+    -- wrote it.
+    CeilingBreached Resource Int Int
   | EnforcementUnavailable Text
   | OutputLimitExceeded EngineOutputStream
   | OutputCaptureFailed EngineOutputStream Text
@@ -329,10 +443,57 @@ withSerializedEngineExecution :: EngineExecutionAuthority -> IO a -> IO a
 withSerializedEngineExecution (EngineExecutionAuthority token) action =
   withMVar token (const action)
 
-data WatchdogSpec
-  = AppleFootprintWatchdog Int
-  | LinuxProcessGroupRssWatchdog Int
-  | NvidiaVramWatchdog Int
+-- | Phase 6 Sprint 6.51 — whether the admitted device arena can actually be
+-- taken right now.
+--
+-- Admission is against capacity by doctrine: a competing tenant on the same
+-- device reduces what is free without changing what is total, so it changes
+-- nothing about what was admitted. What it changes is whether the arena can be
+-- taken, and that difference is observed rather than assumed away. The reading
+-- is taken inside the serialized execution region, immediately before the engine
+-- starts, so a shortfall is a named refusal carrying the free bytes observed and
+-- the arena required rather than a device allocation failure surfacing later as
+-- an engine crash with two empty captured streams.
+--
+-- This is admission-adjacent rather than a second ceiling: it decides whether to
+-- start, never how much the engine may take.
+observeDeviceArenaAvailability :: Int -> IO (Either Text ())
+observeDeviceArenaAvailability requiredMib = do
+  observed <- FixedObserver.observeNvidiaDeviceFreeMib
+  pure $
+    case observed of
+      Left reason ->
+        Left ("the device's free memory could not be observed before launch: " <> reason)
+      Right freeMib
+        | freeMib >= requiredMib -> Right ()
+        | otherwise ->
+            Left
+              ( "the device has "
+                  <> Text.pack (show freeMib)
+                  <> " MiB free against the "
+                  <> Text.pack (show requiredMib)
+                  <> " MiB arena this model was admitted for; a claimant this "
+                  <> "machine did not start holds the difference"
+              )
+
+-- | Phase 4 Sprint 4.40 — the watchdog specification is indexed by the same
+-- 'Resource' kind the grant is.
+--
+-- 'watchdogForGrant' matches an @EnforcedGrant resource@ — the resource is right
+-- there in the type — and the retired flat specification then re-encoded by hand
+-- what the index already said, at which point the loop had to be selected by
+-- matching on the re-encoding. Here the sampler is chosen by the index, and a
+-- breach carries the resource it breached because it never stopped carrying it.
+data WatchdogSpec (resource :: Resource) where
+  AppleFootprintWatchdog :: Int -> Int -> WatchdogSpec 'HostRam
+  LinuxProcessGroupRssWatchdog :: Int -> Int -> WatchdogSpec 'PodRam
+  NvidiaVramWatchdog :: Int -> Int -> WatchdogSpec 'NvidiaVram
+
+-- | The heterogeneous list a placement's watchdogs form. A device placement runs
+-- two loops over two different resources, so the list is existential in the
+-- index while each element keeps its own.
+data SomeWatchdogSpec where
+  SomeWatchdogSpec :: WatchdogSpec resource -> SomeWatchdogSpec
 
 data EngineHandle s = EngineHandle
   { engineStdin :: Maybe Handle,
@@ -341,34 +502,46 @@ data EngineHandle s = EngineHandle
     engineProcess :: ProcessHandle,
     engineProcessGroup :: CPid,
     engineTermination :: IORef (Maybe EnforcementTermination),
+    -- | Phase 4 Sprint 4.44 — the highest complete observation each loop made.
+    enginePeaks :: EnginePeakObservations,
     engineWatchdogs :: [ThreadId]
   }
 
 -- | Production text-stdio launch. The executable placement supplies every
 -- indexed enforcer/grant pair; an unsupported or unavailable enforcer rejects
 -- the command before a child is spawned.
-runExecutableProcess :: ExecutableModel -> EngineCommand -> String -> IO (EngineOutcome, ExitCode, String, String)
-runExecutableProcess executableModel command input =
-  case executableWatchdogs executableModel of
-    Left reason -> pure (unavailableTextResult reason)
-    Right watchdogs ->
-      withCappedEngine watchdogs command $ \handle ->
-        case (engineStdin handle, engineStdout handle, engineStderr handle) of
-          (Just stdinHandle, Just stdoutHandle, Just stderrHandle) -> do
-            withEngineOutputCaptures handle stdoutHandle stderrHandle $
-              \stdoutCapture stderrCapture -> do
-                ignoreSigPipe
-                  (unless (null input) (hPutStr stdinHandle input) >> hClose stdinHandle)
-                stdoutOutput <- awaitOutputCapture stdoutCapture
-                stderrOutput <- awaitOutputCapture stderrCapture
-                outcome <- awaitEngineOutcome handle
-                pure
-                  ( outcome,
-                    engineOutcomeExitCode outcome,
-                    ByteString8.unpack stdoutOutput,
-                    ByteString8.unpack stderrOutput
-                  )
-          _ -> failMissingPipes
+runExecutableProcess ::
+  ExecutableModel ->
+  Ceiling.EngineCeilingProjection ->
+  EngineCommand ->
+  String ->
+  IO (EngineOutcome, ExitCode, String, String)
+runExecutableProcess executableModel projection command input = do
+  arenaAvailable <- requireDeviceArenaAvailable executableModel
+  let installed = executableEngineCeiling projection executableModel
+  case (arenaAvailable, executableWatchdogs installed executableModel) of
+    (Left reason, _) -> pure (unavailableTextResult reason)
+    (_, Left reason) -> pure (unavailableTextResult reason)
+    (Right (), Right watchdogs) ->
+      withEngineCeilingInstalled installed command $ \launch ->
+        withCappedEngine watchdogs launch $ \handle ->
+          case (engineStdin handle, engineStdout handle, engineStderr handle) of
+            (Just stdinHandle, Just stdoutHandle, Just stderrHandle) -> do
+              withEngineOutputCaptures handle stdoutHandle stderrHandle $
+                \stdoutCapture stderrCapture -> do
+                  ignoreSigPipe
+                    (unless (null input) (hPutStr stdinHandle input) >> hClose stdinHandle)
+                  stdoutOutput <- awaitOutputCapture stdoutCapture
+                  stderrOutput <- awaitOutputCapture stderrCapture
+                  outcome <- awaitEngineOutcome handle
+                  classified <- classifiedEngineOutcome executableModel launch handle outcome
+                  pure
+                    ( classified,
+                      engineOutcomeExitCode outcome,
+                      ByteString8.unpack stdoutOutput,
+                      ByteString8.unpack stderrOutput
+                    )
+            _ -> failMissingPipes
 
 -- | Resolve, validate, launch, and reap one native artifact under a single
 -- shared-lock region. Neither the validated capability nor its raw executable
@@ -412,8 +585,8 @@ runExecutableNativeArtifact
                   nativeArtifactTerminalOutcome terminalOutcome
                 Artifact.ArtifactUnavailable _ ->
                   NativeArtifactUnavailable
-                Artifact.ArtifactRejected _ _ ->
-                  NativeArtifactRejected
+                Artifact.ArtifactRejected rejectedRoot rejectionReason ->
+                  NativeArtifactRejected rejectedRoot rejectionReason
                 Artifact.ArtifactBusy _ ->
                   NativeArtifactBusy
 
@@ -544,27 +717,42 @@ runArtifactLaunchRequest
             installRoot
             invocation
             processEnvironment
-        (outcome, exitCode, stdoutOutput, stderrOutput) <-
-          runExecutableProcess
+        -- Phase 4 Sprint 4.43: the projection is taken before the ceiling is
+        -- installed, because the ceiling is what it decides. A refusal here
+        -- starts no engine at all.
+        projectionOutcome <-
+          resolveNativeEngineProjection
             executableModel
-            ( DirectEngineCommand
-                entrypoint
-                (leadingArguments <> invocationArguments)
-                installRoot
-                artifactEnvironment
-            )
-            ""
-        finalizedOutput <-
-          finalizeNativeArtifactOutput invocation exitCode stdoutOutput
-        pure $
-          case finalizedOutput of
-            Left _ -> Artifact.ArtifactTerminalRejected
-            Right finalStdout ->
-              Artifact.ArtifactTerminalProcess
-                (artifactProcessOutcome outcome)
-                exitCode
-                (ByteString8.pack finalStdout)
-                (ByteString8.pack stderrOutput)
+            invocation
+            entrypoint
+            installRoot
+            artifactEnvironment
+        case projectionOutcome of
+          Left refusal ->
+            pure (Artifact.ArtifactTerminalProjectionRefused refusal)
+          Right projection -> do
+            (outcome, exitCode, stdoutOutput, stderrOutput) <-
+              runExecutableProcess
+                executableModel
+                projection
+                ( DirectEngineCommand
+                    entrypoint
+                    (leadingArguments <> invocationArguments)
+                    installRoot
+                    artifactEnvironment
+                )
+                ""
+            finalizedOutput <-
+              finalizeNativeArtifactOutput invocation exitCode stdoutOutput
+            pure $
+              case finalizedOutput of
+                Left _ -> Artifact.ArtifactTerminalRejected
+                Right finalStdout ->
+                  Artifact.ArtifactTerminalProcess
+                    (artifactProcessOutcome outcome)
+                    exitCode
+                    (ByteString8.pack finalStdout)
+                    (ByteString8.pack stderrOutput)
     where
       -- The closed catalog's leading arguments come first. They are what makes a
       -- target complete: Python runners receive their script and fixed protocol
@@ -574,6 +762,189 @@ runArtifactLaunchRequest
       entrypoint = Artifact.artifactLaunchEntrypoint launchRequest
       leadingArguments =
         Artifact.artifactLaunchLeadingArguments launchRequest
+
+-- | Phase 4 Sprint 4.43 — ask the engine what it projects it needs.
+--
+-- The probe executable is resolved as a sibling of the validated entry object,
+-- inside the same sealed immutable closure root the artifact's own evidence
+-- binds, so the probe cannot be pointed anywhere the engine itself is not. It
+-- runs through the ordinary engine launch under the /artifact-derived/ ceiling
+-- alone, which is the honest bound for it: a tool that reports what a model will
+-- need must cost less than the model, and one that does not is refused rather
+-- than trusted.
+--
+-- A refusal is fail-closed by construction: it does not fall back to the derived
+-- quantity and does not launch unbounded, because the caller turns it into a
+-- terminal outcome that starts no engine.
+resolveNativeEngineProjection ::
+  ExecutableModel ->
+  NativeArtifactInvocation ->
+  FilePath ->
+  FilePath ->
+  [(String, String)] ->
+  IO (Either Text Ceiling.EngineCeilingProjection)
+resolveNativeEngineProjection
+  executableModel
+  invocation
+  entrypoint
+  installRoot
+  artifactEnvironment =
+    case requireNativeArtifactCache invocation of
+      _
+        -- A projection only ever changes an /installed/ quantity: it widens the
+        -- launch prefix and the read-back it is compared against, and it reaches
+        -- nothing else. On a lane whose arm is detection-only there is no prefix
+        -- and no read-back, so probing there would spend a process to change
+        -- nothing — and would turn an engine payload that happens not to ship
+        -- the projection tool into a refused row for no gain. The question is
+        -- therefore asked exactly where its answer is used.
+        | Ceiling.installedCeilingStrength unprojectedCeiling
+            == Ceiling.CeilingDetectionOnly ->
+            pure (Right Ceiling.NoEngineProjection)
+      -- An adapter with no model cache has no checkpoint to project against.
+      -- Every family that declares a projection is a checkpoint runner whose
+      -- own invocation grammar already required that cache, so this arm is
+      -- reached only by the families that declare none.
+      Left _ -> pure (Right Ceiling.NoEngineProjection)
+      Right cache ->
+        case Projection.engineProjectionRequest
+          (nativeInvocationAdapterId invocation)
+          (nativeModelPayloadPath cache invocation)
+          llamaNativeExecution of
+          Nothing -> pure (Right Ceiling.NoEngineProjection)
+          Just request -> do
+            let probeExecutable =
+                  takeDirectory entrypoint
+                    </> Projection.projectionExecutableName request
+            probePresent <- Directory.doesFileExist probeExecutable
+            if not probePresent
+              then
+                pure
+                  ( Left
+                      ( "the engine's projection tool is absent from the sealed "
+                          <> "artifact closure at "
+                          <> Text.pack probeExecutable
+                      )
+                  )
+              else do
+                (outcome, _probeExitCode, stdoutOutput, stderrOutput) <-
+                  runProjectionProbeProcess
+                    unprojectedCeiling
+                    ( DirectEngineCommand
+                        probeExecutable
+                        (Projection.projectionArguments request)
+                        installRoot
+                        artifactEnvironment
+                    )
+                pure
+                  ( classifyEngineProjection
+                      outcome
+                      stdoutOutput
+                      stderrOutput
+                  )
+    where
+      unprojectedCeiling =
+        executableEngineCeiling Ceiling.NoEngineProjection executableModel
+
+-- | Phase 4 Sprint 4.43 — run one projection probe.
+--
+-- The probe passes through the installation region like every other engine
+-- spawn, so the capability-gating lint sees what it expects, and the value it
+-- passes through says plainly that nothing was installed. It runs no watchdog
+-- for the same reason it installs no ceiling: both would be the model's own
+-- derived quantity, and the probe exists precisely because that quantity may be
+-- too small for the execution that runs. See 'Ceiling.projectionProbeCeiling'
+-- for what bounds it instead.
+runProjectionProbeProcess ::
+  Ceiling.InstalledCeiling ->
+  EngineCommand ->
+  IO (EngineOutcome, ExitCode, String, String)
+runProjectionProbeProcess unprojected command =
+  withEngineCeilingInstalled probeCeiling command $ \launch ->
+    withCappedEngine [] launch $ \handle ->
+      case (engineStdin handle, engineStdout handle, engineStderr handle) of
+        (Just stdinHandle, Just stdoutHandle, Just stderrHandle) ->
+          withEngineOutputCaptures handle stdoutHandle stderrHandle $
+            \stdoutCapture stderrCapture -> do
+              ignoreSigPipe (hClose stdinHandle)
+              stdoutOutput <- awaitOutputCapture stdoutCapture
+              stderrOutput <- awaitOutputCapture stderrCapture
+              outcome <- awaitEngineOutcome handle
+              pure
+                ( outcome,
+                  engineOutcomeExitCode outcome,
+                  ByteString8.unpack stdoutOutput,
+                  ByteString8.unpack stderrOutput
+                )
+        _ -> failMissingPipes
+  where
+    probeCeiling =
+      Ceiling.projectionProbeCeiling
+        (Ceiling.installedCeilingResource unprojected)
+        (Ceiling.installedCeilingMib unprojected)
+
+-- | Turn one probe run into a projection or a reason.
+classifyEngineProjection ::
+  EngineOutcome ->
+  String ->
+  String ->
+  Either Text Ceiling.EngineCeilingProjection
+classifyEngineProjection outcome stdoutOutput stderrOutput =
+  case outcome of
+    EngineExited ExitSuccess ->
+      Ceiling.EngineProjectedMib
+        <$> Projection.parseEngineProjectionMib (Text.pack stdoutOutput)
+    EngineExited (ExitFailure code) ->
+      Left
+        ( "the engine's projection probe exited "
+            <> Text.pack (show code)
+            <> boundedProbeStandardError stderrOutput
+        )
+    -- The probe runs under the artifact-derived ceiling, so a probe refused at
+    -- that ceiling is itself the evidence that this model's derived requirement
+    -- is too tight to run anything at all — including the tool that would have
+    -- said so. It refuses rather than widening the bound on a guess.
+    EngineRefusedAtCeiling resource ceilingMib observedMib _refusedExitCode ->
+      Left
+        ( "the engine's projection probe was refused an allocation at the "
+            <> Text.pack (show ceilingMib)
+            <> " MiB "
+            <> resourceText resource
+            <> " ceiling it ran under, peaking at "
+            <> Text.pack (show observedMib)
+            <> " MiB"
+        )
+    EngineExceededCeiling resource ceilingMib observedMib ->
+      Left
+        ( "the engine's projection probe exceeded the "
+            <> Text.pack (show ceilingMib)
+            <> " MiB "
+            <> resourceText resource
+            <> " ceiling it ran under, holding "
+            <> Text.pack (show observedMib)
+            <> " MiB"
+        )
+    EngineEnforcementUnavailable reason ->
+      Left ("the engine's projection probe could not be enforced: " <> reason)
+    EngineOutputLimitExceeded _ ->
+      Left "the engine's projection probe exceeded its bounded output capture"
+    EngineOutputCaptureFailed _ reason ->
+      Left
+        ( "the engine's projection probe output could not be captured: "
+            <> reason
+        )
+
+-- | A bounded slice of a failed probe's standard error, so a refusal names what
+-- the tool said without carrying an unbounded upstream stream into a result.
+boundedProbeStandardError :: String -> Text
+boundedProbeStandardError captured
+  | Text.null trimmed = ""
+  | otherwise = ": " <> Text.take maximumProbeStandardErrorChars trimmed
+  where
+    trimmed = Text.strip (Text.pack captured)
+
+maximumProbeStandardErrorChars :: Int
+maximumProbeStandardErrorChars = 512
 
 finalizeNativeArtifactOutput ::
   NativeArtifactInvocation ->
@@ -718,8 +1089,10 @@ artifactProcessOutcome outcome =
   case outcome of
     EngineExited exitCode ->
       Artifact.ArtifactProcessExited exitCode
-    EngineExceededCeiling observedBytes ->
-      Artifact.ArtifactProcessExceededCeiling observedBytes
+    EngineExceededCeiling resource ceilingMib observedMib ->
+      Artifact.ArtifactProcessExceededCeiling resource ceilingMib observedMib
+    EngineRefusedAtCeiling resource ceilingMib observedMib exitCode ->
+      Artifact.ArtifactProcessRefusedAtCeiling resource ceilingMib observedMib exitCode
     EngineEnforcementUnavailable reason ->
       Artifact.ArtifactProcessEnforcementUnavailable reason
     EngineOutputLimitExceeded outputStream ->
@@ -747,6 +1120,8 @@ nativeArtifactTerminalOutcome terminalOutcome =
       NativeArtifactUseValidationFailed
     Artifact.ArtifactTerminalRejected ->
       NativeArtifactUseValidationFailed
+    Artifact.ArtifactTerminalProjectionRefused reason ->
+      NativeArtifactProjectionRefused reason
     Artifact.ArtifactTerminalProcess
       processOutcome
       exitCode
@@ -763,8 +1138,10 @@ engineOutcomeFromArtifact processOutcome =
   case processOutcome of
     Artifact.ArtifactProcessExited exitCode ->
       EngineExited exitCode
-    Artifact.ArtifactProcessExceededCeiling observedBytes ->
-      EngineExceededCeiling observedBytes
+    Artifact.ArtifactProcessExceededCeiling resource ceilingMib observedMib ->
+      EngineExceededCeiling resource ceilingMib observedMib
+    Artifact.ArtifactProcessRefusedAtCeiling resource ceilingMib observedMib exitCode ->
+      EngineRefusedAtCeiling resource ceilingMib observedMib exitCode
     Artifact.ArtifactProcessEnforcementUnavailable reason ->
       EngineEnforcementUnavailable reason
     Artifact.ArtifactProcessOutputLimitExceeded outputStream ->
@@ -859,6 +1236,29 @@ validateInvocationBinding
 -- Dropping @--log-disable@ restores 905 bytes naming the GGUF path, and
 -- @llama-completion@ under the corrected argv exits 1 with 1019 bytes of
 -- diagnostics and no unsupported-flag complaint.
+-- | Phase 4 Sprint 4.43 — the execution literals the llama native lane runs
+-- under, in one value.
+--
+-- The engine invocation and its projection probe both render from here, so the
+-- projection is a statement about exactly the execution that runs. Two matching
+-- literals would have been the same program with one extra way to be wrong: a
+-- probe asked about a different context length reports a number about work the
+-- machine will not do.
+--
+-- These are the lane's own literals and deliberately not the carried execution
+-- shape. Sprint 4.42 carries that shape to the /Python/ adapters and records the
+-- native argument vector as its outstanding residual; adopting it here would
+-- change what this lane executes, which is a different change from making the
+-- projection describe it.
+llamaNativeExecution :: Projection.LlamaNativeExecution
+llamaNativeExecution =
+  Projection.LlamaNativeExecution
+    { Projection.llamaExecutionContextLength = 512,
+      Projection.llamaExecutionGenerationBound = 32,
+      Projection.llamaExecutionThreads = 1,
+      Projection.llamaExecutionGpuLayers = 0
+    }
+
 llamaLaneSpecificArguments :: RuntimeMode -> [String]
 llamaLaneSpecificArguments runtimeModeValue =
   case runtimeModeValue of
@@ -880,22 +1280,15 @@ renderNativeArtifactArguments installRoot invocation =
           NativeArtifactObjectRef _ ->
             Left "llama-cpp-cli requires inline text input"
       pure
-        ( [ "--model",
-            nativeModelPayloadPath cache invocation,
-            "--prompt",
-            Text.unpack prompt,
-            "--n-predict",
-            "32",
-            "--ctx-size",
-            "512",
-            "--threads",
-            "1",
-            "--gpu-layers",
-            "0",
-            "--no-display-prompt",
-            "--single-turn",
-            "--simple-io"
-          ]
+        ( Projection.llamaNativeExecutionArguments
+            (nativeModelPayloadPath cache invocation)
+            llamaNativeExecution
+            <> [ "--prompt",
+                 Text.unpack prompt,
+                 "--no-display-prompt",
+                 "--single-turn",
+                 "--simple-io"
+               ]
             <> llamaLaneSpecificArguments (nativeInvocationRuntimeMode invocation)
         )
     "whisper-cpp-cli" -> do
@@ -1053,22 +1446,32 @@ renderNativeArtifactCache cache =
   ]
 
 -- | Production binary-stdio launch for Python adapters.
+-- | The Python-stdio launch. Phase 4 Sprint 4.43: this lane declares no
+-- projection, because no supported Python engine family ships a tool that
+-- reports what it will need before it allocates. Its ceiling is therefore the
+-- artifact-derived quantity, and the provenance on the installed value says so
+-- rather than implying a projection was consulted.
 runExecutableStdioEngine :: ExecutableModel -> EngineCommand -> ByteString -> IO (EngineOutcome, ExitCode, ByteString, ByteString)
-runExecutableStdioEngine executableModel command input =
-  case executableWatchdogs executableModel of
-    Left reason -> pure (unavailableBinaryResult reason)
-    Right watchdogs ->
-      withCappedEngine watchdogs command $ \handle ->
-        case (engineStdin handle, engineStdout handle, engineStderr handle) of
-          (Just stdinHandle, Just stdoutHandle, Just stderrHandle) -> do
-            withEngineOutputCaptures handle stdoutHandle stderrHandle $
-              \stdoutCapture stderrCapture -> do
-                ignoreSigPipe (ByteString.hPut stdinHandle input >> hClose stdinHandle)
-                stdoutOutput <- awaitOutputCapture stdoutCapture
-                stderrOutput <- awaitOutputCapture stderrCapture
-                outcome <- awaitEngineOutcome handle
-                pure (outcome, engineOutcomeExitCode outcome, stdoutOutput, stderrOutput)
-          _ -> failMissingPipes
+runExecutableStdioEngine executableModel command input = do
+  arenaAvailable <- requireDeviceArenaAvailable executableModel
+  let installed = executableEngineCeiling Ceiling.NoEngineProjection executableModel
+  case (arenaAvailable, executableWatchdogs installed executableModel) of
+    (Left reason, _) -> pure (unavailableBinaryResult reason)
+    (_, Left reason) -> pure (unavailableBinaryResult reason)
+    (Right (), Right watchdogs) ->
+      withEngineCeilingInstalled installed command $ \launch ->
+        withCappedEngine watchdogs launch $ \handle ->
+          case (engineStdin handle, engineStdout handle, engineStderr handle) of
+            (Just stdinHandle, Just stdoutHandle, Just stderrHandle) -> do
+              withEngineOutputCaptures handle stdoutHandle stderrHandle $
+                \stdoutCapture stderrCapture -> do
+                  ignoreSigPipe (ByteString.hPut stdinHandle input >> hClose stdinHandle)
+                  stdoutOutput <- awaitOutputCapture stdoutCapture
+                  stderrOutput <- awaitOutputCapture stderrCapture
+                  outcome <- awaitEngineOutcome handle
+                  classified <- classifiedEngineOutcome executableModel launch handle outcome
+                  pure (classified, engineOutcomeExitCode outcome, stdoutOutput, stderrOutput)
+            _ -> failMissingPipes
 
 unavailableTextResult :: Text -> (EngineOutcome, ExitCode, String, String)
 unavailableTextResult reason =
@@ -1198,38 +1601,171 @@ maximumEngineOutputFailureChars = 4096
 -- grants: the pod resident-set watchdog and the NVIDIA per-process-group VRAM
 -- watchdog each run against their own admitted ceiling, and neither a pod limit
 -- nor an exit code is ever accepted as a substitute for the other's evidence.
-executableWatchdogs :: ExecutableModel -> Either Text [WatchdogSpec]
-executableWatchdogs (ExecutableModel _ _ _ resources) =
+-- | Phase 4 Sprint 4.43 — the sampled backstop watches the quantity that was
+-- actually installed.
+--
+-- Prevention and detection have to agree. Sprint 4.40 moved the Linux sampler to
+-- the field the kernel limit charges for exactly that reason; a ceiling widened
+-- by the engine's own projection while the sampler kept watching the narrower
+-- artifact-derived quantity reopens the same disagreement from the other side,
+-- and it does so in the direction that terminates a model the ceiling permits.
+-- Measured on the cohort lane before this correction: an engine launched under a
+-- 507 MiB installed ceiling was terminated at 54 MiB by a sampler still watching
+-- 52 MiB. The resource the ceiling binds takes the installed quantity; every
+-- other resource keeps its own grant, because no ceiling was installed for it.
+executableWatchdogs ::
+  Ceiling.InstalledCeiling ->
+  ExecutableModel ->
+  Either Text [SomeWatchdogSpec]
+executableWatchdogs installed executable@(ExecutableModel _ _ _ resources) =
   case resources of
     RuntimeHostResources hostGrant ->
-      (: []) <$> watchdogForGrant hostGrant
+      (: []) <$> watchdogForGrant declaredMembers effectiveCeiling hostGrant
     RuntimePodResources podGrant ->
-      (: []) <$> watchdogForGrant podGrant
+      (: []) <$> watchdogForGrant declaredMembers effectiveCeiling podGrant
     RuntimeGpuResources podGrant vramGrant -> do
-      podWatchdog <- watchdogForGrant podGrant
-      vramWatchdog <- watchdogForGrant vramGrant
+      podWatchdog <- watchdogForGrant declaredMembers effectiveCeiling podGrant
+      vramWatchdog <- watchdogForGrant declaredMembers effectiveCeiling vramGrant
       pure [podWatchdog, vramWatchdog]
+  where
+    declaredMembers = executableEngineMemberBound executable
+    effectiveCeiling resource grantCeilingMib
+      | Ceiling.installedCeilingResource installed == resource =
+          max grantCeilingMib (Ceiling.installedCeilingMib installed)
+      | otherwise = grantCeilingMib
 
-watchdogForGrant :: EnforcedGrant resource -> Either Text WatchdogSpec
-watchdogForGrant (EnforcedGrant enforcer grant) =
+-- | Phase 4 Sprint 4.40 — how many processes a placement's engine may run.
+--
+-- It is derived from the engine binding rather than authored beside it: a native
+-- runner is one process image, and a Python stdio adapter is the interpreter
+-- plus the bounded set of workers a framework starts under it. The number exists
+-- so the loop's tree arithmetic states its premise; without it the sum has a
+-- premise nobody wrote down.
+executableEngineMemberBound :: ExecutableModel -> Int
+executableEngineMemberBound (ExecutableModel _ binding _ _) =
+  case engineBindingAdapterType binding of
+    NativeProcessRunner -> nativeEngineMemberBound
+    PythonStdio -> pythonEngineMemberBound
+
+nativeEngineMemberBound :: Int
+nativeEngineMemberBound = 1
+
+-- | A Python adapter is the interpreter plus the workers a framework's own
+-- dataloader or tokenizer pool starts under it. The bound is deliberately small:
+-- a group that grows past it is an enforcement failure naming both numbers, not
+-- a larger sum quietly accepted.
+pythonEngineMemberBound :: Int
+pythonEngineMemberBound = 8
+
+-- | The bound the per-lane test seams use when they drive a production loop
+-- against a fixture group they created themselves.
+defaultEngineMemberBound :: Int
+defaultEngineMemberBound = pythonEngineMemberBound
+
+-- | Phase 4 Sprint 4.41 — the ceiling this placement's lane can install, over
+-- the resident quantity it admitted.
+--
+-- A device grant is deliberately not a candidate: no kernel mechanism bounds
+-- device memory on any supported lane, so the device column is admission, arena
+-- sizing, and a sampled backstop, and never a ceiling.
+executableEngineCeiling ::
+  Ceiling.EngineCeilingProjection ->
+  ExecutableModel ->
+  Ceiling.InstalledCeiling
+executableEngineCeiling projection executable@(ExecutableModel descriptor binding _ resources) =
+  case resources of
+    RuntimeHostResources grant ->
+      resolve HostRam (installableQuantity grant)
+    RuntimePodResources grant ->
+      resolve PodRam (installableQuantity grant)
+    RuntimeGpuResources grant _ ->
+      resolve PodRam (installableQuantity grant)
+  where
+    resolve resource installableMib =
+      Ceiling.resolveEngineCeiling
+        runtimeModeValue
+        resource
+        installableMib
+        projection
+
+    -- Phase 4 Sprint 4.43 — which quantity this binding can actually be bounded
+    -- at.
+    --
+    -- A native runner's own working set is small beside its weights, so the
+    -- artifact-derived requirement is a ceiling it can run under, and where its
+    -- family ships a projection tool that quantity is corrected upward by the
+    -- engine's own account of itself.
+    --
+    -- A framework adapter's is not. The interpreter, the framework, and its
+    -- device runtime are resident before a single weight is read, and no term of
+    -- them appears in a checkpoint's tensor table. Installing the derived
+    -- requirement on such an engine refuses a model that would have run —
+    -- measured: a 269 MB safetensors checkpoint derives roughly 302 MiB while the
+    -- framework alone needs more than that before it loads anything. Until a
+    -- family offers a way to ask what it will need, the quantity installed for it
+    -- is the lane's own per-execution budget, which is what the pod was
+    -- provisioned for and what the retired per-family constant approximated. The
+    -- model's derived requirement is unchanged as the quantity admission compares
+    -- against the machine's capacity; what changes is only what is installed.
+    installableQuantity :: forall resource. EnforcedGrant resource -> Int
+    installableQuantity grant =
+      case engineBindingAdapterType binding of
+        NativeProcessRunner -> enforcedGrantCeiling grant
+        PythonStdio -> max (enforcedGrantCeiling grant) (enforcedGrantBudget grant)
+
+    runtimeModeValue = runtimeMode descriptor
+    _unusedExecutable = executable
+
+enforcedGrantCeiling :: EnforcedGrant resource -> Int
+enforcedGrantCeiling (EnforcedGrant _ (MemoryGrant (MemoryCeiling ceilingMib))) = ceilingMib
+
+-- | The lane's own per-execution budget behind this grant's enforcer.
+enforcedGrantBudget :: EnforcedGrant resource -> Int
+enforcedGrantBudget (EnforcedGrant enforcer _) = enforcerBudgetMib enforcer
+
+-- | Phase 6 Sprint 6.51 — a device-using placement observes the card's free
+-- memory immediately before its engine starts; a placement with no device grant
+-- observes nothing, because it takes no device arena.
+requireDeviceArenaAvailable :: ExecutableModel -> IO (Either Text ())
+requireDeviceArenaAvailable (ExecutableModel _ _ _ resources) =
+  case resources of
+    RuntimeGpuResources _ deviceGrant ->
+      observeDeviceArenaAvailability (enforcedGrantCeiling deviceGrant)
+    _ -> pure (Right ())
+
+watchdogForGrant ::
+  Int ->
+  (Resource -> Int -> Int) ->
+  EnforcedGrant resource ->
+  Either Text SomeWatchdogSpec
+watchdogForGrant declaredMembers effectiveCeiling (EnforcedGrant enforcer grant) =
   case (enforcer, grant) of
     (HostFootprintWatchdogEnforcer _, MemoryGrant (MemoryCeiling ceilingMib)) ->
-      positiveWatchdog ceilingMib AppleFootprintWatchdog
+      positiveWatchdog
+        (effectiveCeiling HostRam ceilingMib)
+        (`AppleFootprintWatchdog` declaredMembers)
     (LinuxProcessGroupRssWatchdogEnforcer _, MemoryGrant (MemoryCeiling ceilingMib)) ->
-      positiveWatchdog ceilingMib LinuxProcessGroupRssWatchdog
+      positiveWatchdog
+        (effectiveCeiling PodRam ceilingMib)
+        (`LinuxProcessGroupRssWatchdog` declaredMembers)
     (NvidiaVramAccountingEnforcer _, MemoryGrant (MemoryCeiling ceilingMib)) ->
-      positiveWatchdog ceilingMib NvidiaVramWatchdog
+      positiveWatchdog
+        (effectiveCeiling NvidiaVram ceilingMib)
+        (`NvidiaVramWatchdog` declaredMembers)
 
-positiveWatchdog :: Int -> (Int -> WatchdogSpec) -> Either Text WatchdogSpec
+positiveWatchdog ::
+  Int ->
+  (Int -> WatchdogSpec resource) ->
+  Either Text SomeWatchdogSpec
 positiveWatchdog ceilingMib constructor
   | ceilingMib <= 0 =
       Left "the executable model carries a non-positive memory ceiling"
   | toInteger ceilingMib * toInteger bytesPerMib > toInteger (maxBound :: Word64) =
       Left "the executable model carries a memory ceiling too large to enforce"
-  | otherwise = Right (constructor ceilingMib)
+  | otherwise = Right (SomeWatchdogSpec (constructor ceilingMib))
 
-withCappedEngine :: [WatchdogSpec] -> EngineCommand -> (forall s. EngineHandle s -> IO result) -> IO result
-withCappedEngine watchdogs command action =
+withCappedEngine :: [SomeWatchdogSpec] -> BoundedEngineLaunch -> (forall s. EngineHandle s -> IO result) -> IO result
+withCappedEngine watchdogs (BoundedEngineLaunch command _) action =
   CappedCleanup.withCappedEngineCleanupBoundary acquire release runInRegion
   where
     -- Keep the rank-2 action monomorphic at the bracketed region's handle.
@@ -1250,9 +1786,19 @@ withCappedEngine watchdogs command action =
             void (waitForProcess processHandle)
             ioError (userError "engine process exited before its process-group identity was observed")
       terminationRef <- newIORef Nothing
+      peakRef <- newIORef Map.empty
       watchdogThreads <-
         mapM
-          (\watchdog -> forkIO (runCeilingWatchdog watchdog processHandle processGroup terminationRef))
+          ( \watchdog ->
+              forkIO
+                ( runCeilingWatchdog
+                    watchdog
+                    processHandle
+                    processGroup
+                    terminationRef
+                    peakRef
+                )
+          )
           watchdogs
       pure
         EngineHandle
@@ -1262,6 +1808,7 @@ withCappedEngine watchdogs command action =
             engineProcess = processHandle,
             engineProcessGroup = processGroup,
             engineTermination = terminationRef,
+            enginePeaks = peakRef,
             engineWatchdogs = watchdogThreads
           }
     release handle = do
@@ -1281,13 +1828,32 @@ withCappedEngine watchdogs command action =
               `catch` \(_ :: SomeException) -> pure ()
         )
 
+-- | Read the peaks this launch's loops recorded and classify the outcome
+-- against the ceiling it installed.
+classifiedEngineOutcome ::
+  ExecutableModel ->
+  BoundedEngineLaunch ->
+  EngineHandle s ->
+  EngineOutcome ->
+  IO EngineOutcome
+classifiedEngineOutcome executableModel launch handle outcome = do
+  peaks <- readIORef (enginePeaks handle)
+  pure
+    ( classifyCeilingRefusal
+        executableModel
+        (boundedEngineLaunchCeiling launch)
+        peaks
+        outcome
+    )
+
 awaitEngineOutcome :: EngineHandle s -> IO EngineOutcome
 awaitEngineOutcome handle = do
   exitCode <- waitForProcess (engineProcess handle)
   termination <- readIORef (engineTermination handle)
   pure $
     case termination of
-      Just (CeilingBreached ceilingMib) -> EngineExceededCeiling ceilingMib
+      Just (CeilingBreached resource ceilingMib observedMib) ->
+        EngineExceededCeiling resource ceilingMib observedMib
       Just (EnforcementUnavailable reason) -> EngineEnforcementUnavailable reason
       Just (OutputLimitExceeded outputStream) ->
         EngineOutputLimitExceeded outputStream
@@ -1295,11 +1861,69 @@ awaitEngineOutcome handle = do
         EngineOutputCaptureFailed outputStream reason
       Nothing -> EngineExited exitCode
 
+-- | Phase 4 Sprint 4.44 — classify a non-zero exit taken under an installed
+-- ceiling.
+--
+-- Neither existing layer catches this failure. The sampled backstop watches
+-- resident footprint and a kernel-refused allocation is never resident, so there
+-- is nothing above the ceiling to observe; the exit-code classifier sees a
+-- non-zero exit and has no evidence distinguishing a ceiling-refused allocation
+-- from an ordinary engine fault. The two demand opposite responses, so the
+-- classification rests on evidence this kernel already holds: the ceiling it
+-- installed and the peak its own sampler observed.
+--
+-- The margin is derived rather than authored. It is the model's own key/value
+-- cache term — the largest allocation the plan still accounts for once the
+-- weights are in place, and in the measured failure exactly the allocation the
+-- engine was refused. A process whose peak came within it of the ceiling was
+-- refused for an allocation the plan itself knew about. A model that declares no
+-- geometry has no such term, so its margin is zero and its peak must have
+-- reached the ceiling outright.
+--
+-- Where the evidence does not support the classification the failure stays a
+-- plain engine failure. Guessing would replace a missing diagnosis with a wrong
+-- one, which is the defect this closes pointing the other way.
+classifyCeilingRefusal ::
+  ExecutableModel ->
+  Ceiling.InstalledCeiling ->
+  Map Resource Int ->
+  EngineOutcome ->
+  EngineOutcome
+classifyCeilingRefusal executableModel installed peaks outcome =
+  case (outcome, Ceiling.installedCeilingStrength installed) of
+    (EngineExited exitCode@(ExitFailure _), Ceiling.CeilingInstalledDataSegment)
+      | Just observedMib <- Map.lookup resource peaks,
+        observedMib + accountedAllocationMarginMib executableModel >= ceilingMib ->
+          EngineRefusedAtCeiling resource ceilingMib observedMib exitCode
+    _ -> outcome
+  where
+    resource = Ceiling.installedCeilingResource installed
+    ceilingMib = Ceiling.installedCeilingMib installed
+
+-- | The largest allocation the plan still accounts for after a model's weights
+-- are in place: its own derived key/value cache term, in whole MiB.
+accountedAllocationMarginMib :: ExecutableModel -> Int
+accountedAllocationMarginMib (ExecutableModel descriptor _ _ _) =
+  case modelGeometry descriptor of
+    Nothing -> 0
+    Just geometry ->
+      modelRequirementBytesToMib
+        ( keyValueCacheBytes
+            geometry
+            (executionContextLength shape)
+            (executionCacheElementWidth shape)
+        )
+  where
+    shape = modelExecutionShape descriptor
+
 engineOutcomeExitCode :: EngineOutcome -> ExitCode
 engineOutcomeExitCode outcome =
   case outcome of
     EngineExited exitCode -> exitCode
-    EngineExceededCeiling _ -> ExitFailure 137
+    -- The refusal did not replace the engine's exit; it explains it, so the
+    -- engine's own code is what this reports.
+    EngineRefusedAtCeiling _ _ _ exitCode -> exitCode
+    EngineExceededCeiling {} -> ExitFailure 137
     EngineEnforcementUnavailable _ -> ExitFailure enforcementUnavailableExitCode
     EngineOutputLimitExceeded _ -> ExitFailure engineOutputFailureExitCode
     EngineOutputCaptureFailed _ _ -> ExitFailure engineOutputFailureExitCode
@@ -1343,46 +1967,181 @@ failMissingPipes :: IO result
 failMissingPipes =
   ioError (userError "capped engine subprocess did not expose the requested stdio pipes")
 
+-- | Phase 4 Sprint 4.40 — one sample, however it is taken.
+--
+-- The three retired loops were the same program written three times: sample,
+-- compare against a ceiling, terminate the group on a breach, settle an exit
+-- window on an absent group, fail closed on unreadable evidence. They differed
+-- only in which quantity the sample reported, and each copy lived behind its own
+-- conditional-compilation wall, so no gate on either platform could see two of
+-- them at once. This record is what the one remaining loop takes instead.
+data WatchdogSampler = WatchdogSampler
+  { -- | The group's total for this resource, or 'Nothing' when a complete
+    -- observation saw no live member.
+    samplerObserveBytes :: CPid -> IO (Either Text (Maybe Word64)),
+    -- | Whether the group still has a live member, for settling the exit
+    -- window without re-taking the full measurement.
+    samplerObservePresence :: CPid -> IO (Either Text Bool),
+    -- | How many live members the group holds, so the tree arithmetic states
+    -- its own premise instead of assuming it.
+    samplerObserveMemberCount :: CPid -> IO (Either Text Int),
+    samplerAbsentGroupReason :: Text
+  }
+
+-- | Phase 4 Sprint 4.44 — the highest complete observation each resource's loop
+-- made, whether or not it ever breached.
+--
+-- A kernel-refused allocation is never resident, so the sampled backstop has
+-- nothing above the ceiling to see and the loop's own peak is the only
+-- observation that exists. Retaining it costs one 'IORef' write per sample and
+-- is the difference between a diagnosis and a bare non-zero exit.
+type EnginePeakObservations = IORef (Map Resource Int)
+
+-- | Merge one observation into the peak record, keeping the larger.
+recordPeakObservation :: EnginePeakObservations -> Resource -> Int -> IO ()
+recordPeakObservation peakRef resource observedMib =
+  atomicModifyIORef'
+    peakRef
+    (\peaks -> (Map.insertWith max resource observedMib peaks, ()))
+
+-- | What the loop acts on: the group it watches, whether the engine has already
+-- terminated, and how to terminate it.
+data WatchdogTarget = WatchdogTarget
+  { targetProcessGroup :: CPid,
+    -- | Terminal evidence for the engine, which the two lanes read
+    -- differently: the Apple loop asks the process handle it owns, and the
+    -- Linux lanes read procfs, because the engine action is the sole reaper and
+    -- a watchdog that also called @getProcessExitCode@ would contend with
+    -- @waitForProcess@ exactly while the leader is a zombie.
+    targetHasTerminated :: IO (Either Text Bool),
+    targetTerminate :: EnforcementTermination -> IO (),
+    targetFailEnforcement :: Text -> IO ()
+  }
+
+-- | The one ceiling loop. Every decision is kept once.
+--
+-- Breach above the ceiling, continue at or below it, settle the exit window
+-- across four fresh observations at the sampling interval, resume on a member
+-- reappearing, complete on a terminal or absent leader, and fail closed on a
+-- stable live leader, on unreadable evidence, or on a group holding more
+-- members than the placement declared.
+runCeilingWatchdogLoop ::
+  Resource ->
+  Int ->
+  Int ->
+  EnginePeakObservations ->
+  WatchdogSampler ->
+  WatchdogTarget ->
+  IO ()
+runCeilingWatchdogLoop resource ceilingMib declaredMembers peakRef sampler target = loop
+  where
+    ceilingBytes = mibToBytes ceilingMib
+    processGroup = targetProcessGroup target
+
+    loop = do
+      sample <- samplerObserveBytes sampler processGroup
+      case sample of
+        Left reason -> targetFailEnforcement target reason
+        Right Nothing ->
+          settleMissingProcessGroupWith
+            (threadDelay watchdogIntervalMicros)
+            missingProcessGroupSettlementRetries
+            (samplerObservePresence sampler processGroup)
+            (targetHasTerminated target)
+            loop
+            (targetFailEnforcement target)
+            (samplerAbsentGroupReason sampler)
+        Right (Just observedBytes) -> do
+          -- Summing a residency field across a process group is sound only
+          -- against a bounded member count. The bound exists in the placement;
+          -- checking it here converts a silent premise into a fail-closed check.
+          memberCount <- samplerObserveMemberCount sampler processGroup
+          case memberCount of
+            Left reason -> targetFailEnforcement target reason
+            Right observedMembers -> do
+              -- Phase 4 Sprint 4.44: every complete observation updates the
+              -- peak, including the ones that neither breach nor fail. A
+              -- kernel-refused allocation is never resident, so these are the
+              -- only observations a refusal at the ceiling leaves behind.
+              recordPeakObservation peakRef resource (bytesToMibCeiling observedBytes)
+              classify observedMembers observedBytes
+
+    classify observedMembers observedBytes
+      | observedMembers > declaredMembers =
+          targetFailEnforcement
+            target
+            ( "the engine process group holds "
+                <> Text.pack (show observedMembers)
+                <> " live members against the "
+                <> Text.pack (show declaredMembers)
+                <> " its placement declares, so the group total is not a bounded sum"
+            )
+      | observedBytes > ceilingBytes =
+          targetTerminate
+            target
+            (CeilingBreached resource ceilingMib (bytesToMibCeiling observedBytes))
+      | otherwise = do
+          terminated <- targetHasTerminated target
+          case terminated of
+            Left reason -> targetFailEnforcement target reason
+            Right True -> pure ()
+            Right False -> do
+              threadDelay watchdogIntervalMicros
+              loop
+
 runCeilingWatchdog ::
-  WatchdogSpec ->
+  SomeWatchdogSpec ->
   ProcessHandle ->
   CPid ->
   IORef (Maybe EnforcementTermination) ->
+  EnginePeakObservations ->
   IO ()
-runCeilingWatchdog watchdog processHandle processGroup terminationRef =
+runCeilingWatchdog (SomeWatchdogSpec watchdog) processHandle processGroup terminationRef peakRef =
   case watchdog of
-    AppleFootprintWatchdog ceilingMib ->
-      runAppleWatchdog ceilingMib processHandle processGroup terminationRef
-    LinuxProcessGroupRssWatchdog ceilingMib ->
-      runLinuxWatchdog ceilingMib processHandle processGroup terminationRef
-    NvidiaVramWatchdog ceilingMib ->
-      runNvidiaWatchdog ceilingMib processHandle processGroup terminationRef
+    AppleFootprintWatchdog ceilingMib declaredMembers ->
+      runAppleWatchdog ceilingMib declaredMembers processHandle processGroup terminationRef peakRef
+    LinuxProcessGroupRssWatchdog ceilingMib declaredMembers ->
+      runLinuxWatchdog ceilingMib declaredMembers processHandle processGroup terminationRef peakRef
+    NvidiaVramWatchdog ceilingMib declaredMembers ->
+      runNvidiaWatchdog ceilingMib declaredMembers processHandle processGroup terminationRef peakRef
+
+#if defined(darwin_HOST_OS)
+-- | The Apple lane's target: the process handle is how this loop learns the
+-- engine exited, because the fixed public-tool observer reports a footprint
+-- rather than group membership.
+appleWatchdogTarget ::
+  ProcessHandle ->
+  CPid ->
+  IORef (Maybe EnforcementTermination) ->
+  WatchdogTarget
+appleWatchdogTarget processHandle processGroup terminationRef =
+  WatchdogTarget
+    { targetProcessGroup = processGroup,
+      targetHasTerminated = Right . Maybe.isJust <$> getProcessExitCode processHandle,
+      targetTerminate = terminateForWatchdog processHandle processGroup terminationRef,
+      targetFailEnforcement = failSamplerIfRunning processHandle processGroup terminationRef
+    }
+#endif
 
 runAppleWatchdog ::
+  Int ->
   Int ->
   ProcessHandle ->
   CPid ->
   IORef (Maybe EnforcementTermination) ->
+  EnginePeakObservations ->
   IO ()
 #if defined(darwin_HOST_OS)
-runAppleWatchdog ceilingMib processHandle processGroup terminationRef = loop
-  where
-    ceilingBytes = mibToBytes ceilingMib
-    loop = do
-      sample <- FixedObserver.processGroupPhysicalFootprintBytes processGroup
-      case sample of
-        Right footprint
-          | footprint > ceilingBytes ->
-              terminateForWatchdog
-                processHandle
-                processGroup
-                terminationRef
-                (CeilingBreached ceilingMib)
-          | otherwise -> continueIfRunning processHandle loop
-        Left reason ->
-          failSamplerIfRunning processHandle processGroup terminationRef reason
+runAppleWatchdog ceilingMib declaredMembers processHandle processGroup terminationRef peakRef =
+  runCeilingWatchdogLoop
+    HostRam
+    ceilingMib
+    declaredMembers
+    peakRef
+    appleFootprintSampler
+    (appleWatchdogTarget processHandle processGroup terminationRef)
 #else
-runAppleWatchdog _ processHandle processGroup terminationRef =
+runAppleWatchdog _ _ processHandle processGroup terminationRef _peakRef =
   failSamplerIfRunning
     processHandle
     processGroup
@@ -1392,130 +2151,189 @@ runAppleWatchdog _ processHandle processGroup terminationRef =
 
 runLinuxWatchdog ::
   Int ->
+  Int ->
   ProcessHandle ->
   CPid ->
   IORef (Maybe EnforcementTermination) ->
+  EnginePeakObservations ->
   IO ()
 #if defined(darwin_HOST_OS)
-runLinuxWatchdog _ processHandle processGroup terminationRef =
+runLinuxWatchdog _ _ processHandle processGroup terminationRef _peakRef =
   failSamplerIfRunning
     processHandle
     processGroup
     terminationRef
-    "Linux /proc process-group RSS enforcement is unavailable on this platform"
+    "Linux /proc process-group anonymous-residency enforcement is unavailable on this platform"
 #else
-runLinuxWatchdog ceilingMib _processHandle =
-  runLinuxWatchdogForGroup ceilingMib
+runLinuxWatchdog ceilingMib declaredMembers _processHandle =
+  runLinuxWatchdogForGroup ceilingMib declaredMembers
 
 runLinuxWatchdogForGroup ::
   Int ->
+  Int ->
   CPid ->
   IORef (Maybe EnforcementTermination) ->
+  EnginePeakObservations ->
   IO ()
-runLinuxWatchdogForGroup ceilingMib processGroup terminationRef = loop
-  where
-    ceilingBytes = mibToBytes ceilingMib
-    loop = do
-      sample <- processGroupRssBytes processGroup
-      case sample of
-        Left reason ->
-          failLinuxSamplerIfTargetLive processGroup terminationRef reason
-        Right Nothing ->
-          -- A complete /proc walk can race a leader's terminal transition.
-          -- Require bounded repeated absence before calling that a lost
-          -- enforcer; a group that becomes visible again resumes measurement,
-          -- while an absent or terminal leader proves ordinary completion.
-          settleMissingProcessGroup
-            processGroup
-            terminationRef
-            (do
-               observed <- processGroupRssBytes processGroup
-               pure $
-                 case observed of
-                   Left reason -> Left reason
-                   Right Nothing -> Right False
-                   Right (Just _) -> Right True
-            )
-            loop
-            "Linux /proc process-group RSS sampler observed no live group member for a running engine"
-        Right (Just footprint)
-          | footprint > ceilingBytes ->
-              terminateForLinuxWatchdog
-                processGroup
-                terminationRef
-                (CeilingBreached ceilingMib)
-          | otherwise -> do
-              threadDelay watchdogIntervalMicros
-              loop
+runLinuxWatchdogForGroup ceilingMib declaredMembers processGroup terminationRef peakRef =
+  runCeilingWatchdogLoop
+    PodRam
+    ceilingMib
+    declaredMembers
+    peakRef
+    linuxAnonymousResidencySampler
+    (linuxWatchdogTarget processGroup terminationRef)
 #endif
 
 runNvidiaWatchdog ::
   Int ->
+  Int ->
   ProcessHandle ->
   CPid ->
   IORef (Maybe EnforcementTermination) ->
+  EnginePeakObservations ->
   IO ()
 #if defined(darwin_HOST_OS)
-runNvidiaWatchdog _ processHandle processGroup terminationRef =
+runNvidiaWatchdog _ _ processHandle processGroup terminationRef _peakRef =
   failSamplerIfRunning
     processHandle
     processGroup
     terminationRef
     "NVIDIA per-process-group VRAM enforcement is unavailable on this platform"
 #else
-runNvidiaWatchdog ceilingMib _processHandle =
-  runNvidiaWatchdogForGroup ceilingMib
+runNvidiaWatchdog ceilingMib declaredMembers _processHandle =
+  runNvidiaWatchdogForGroup ceilingMib declaredMembers
 
 runNvidiaWatchdogForGroup ::
   Int ->
+  Int ->
   CPid ->
   IORef (Maybe EnforcementTermination) ->
+  EnginePeakObservations ->
   IO ()
-runNvidiaWatchdogForGroup ceilingMib processGroup terminationRef = loop
-  where
-    ceilingBytes = mibToBytes ceilingMib
-    loop = do
-      sample <- processGroupVramBytes processGroup
-      case sample of
-        Left reason ->
-          failLinuxSamplerIfTargetLive processGroup terminationRef reason
-        Right Nothing ->
-          settleMissingProcessGroup
-            processGroup
-            terminationRef
-            (do
-               observed <- processGroupMembers processGroup
-               pure $
-                 case observed of
-                   Left reason -> Left reason
-                   Right [] -> Right False
-                   Right (_ : _) -> Right True
-            )
-            loop
-            "NVIDIA VRAM sampler observed no live group member for a running engine"
-        Right (Just vramBytes)
-          | vramBytes > ceilingBytes ->
-              terminateForLinuxWatchdog
-                processGroup
-                terminationRef
-                (CeilingBreached ceilingMib)
-          | otherwise -> do
-              threadDelay watchdogIntervalMicros
-              loop
+runNvidiaWatchdogForGroup ceilingMib declaredMembers processGroup terminationRef peakRef =
+  runCeilingWatchdogLoop
+    NvidiaVram
+    ceilingMib
+    declaredMembers
+    peakRef
+    nvidiaVramSampler
+    (linuxWatchdogTarget processGroup terminationRef)
 #endif
 
--- | Package-test seam for the real Linux watchdog. The seam accepts an
--- already-created grouped child, mints no execution authority, and exposes
--- only the typed terminal classification after the production loop returns.
+-- | Package-test seam for the shared loop, driven over a scripted sequence of
+-- samples with no platform branch, so both lanes' gate sets run the same
+-- assertions.
+scriptedWatchdogOutcomeForTest ::
+  Resource ->
+  Int ->
+  Int ->
+  [Either Text (Maybe Word64)] ->
+  [Either Text Int] ->
+  IO (Maybe EngineOutcome)
+scriptedWatchdogOutcomeForTest resource ceilingMib declaredMembers samples memberCounts =
+  fst
+    <$> runScriptedWatchdog resource ceilingMib declaredMembers samples memberCounts
+
+-- | Phase 4 Sprint 4.44 — the same scripted loop, read for the peak it
+-- recorded rather than for the outcome it reached.
+--
+-- The peak is what a kernel-refused allocation leaves behind, so a loop that
+-- observed samples and retained none of them would make that refusal
+-- undiagnosable. This is the assertion that keeps the recording alive.
+scriptedWatchdogPeakForTest ::
+  Resource ->
+  Int ->
+  Int ->
+  [Either Text (Maybe Word64)] ->
+  [Either Text Int] ->
+  IO (Maybe Int)
+scriptedWatchdogPeakForTest resource ceilingMib declaredMembers samples memberCounts =
+  Map.lookup resource . snd
+    <$> runScriptedWatchdog resource ceilingMib declaredMembers samples memberCounts
+
+runScriptedWatchdog ::
+  Resource ->
+  Int ->
+  Int ->
+  [Either Text (Maybe Word64)] ->
+  [Either Text Int] ->
+  IO (Maybe EngineOutcome, Map Resource Int)
+runScriptedWatchdog resource ceilingMib declaredMembers samples memberCounts = do
+  terminationRef <- newIORef Nothing
+  sampleQueue <- newIORef samples
+  memberQueue <- newIORef memberCounts
+  terminatedRef <- newIORef False
+  let sampler =
+        WatchdogSampler
+          { samplerObserveBytes = \_ -> popScriptedValue sampleQueue (Right Nothing),
+            samplerObservePresence = \_ -> pure (Right False),
+            samplerObserveMemberCount = \_ -> popScriptedValue memberQueue (Right declaredMembers),
+            samplerAbsentGroupReason = "scripted sampler observed no live group member"
+          }
+      target =
+        WatchdogTarget
+          { targetProcessGroup = 0,
+            targetHasTerminated = Right <$> readIORef terminatedRef,
+            targetTerminate = \termination -> do
+              _ <- recordFirstTermination terminationRef termination
+              writeIORef terminatedRef True,
+            targetFailEnforcement = \reason -> do
+              _ <- recordFirstTermination terminationRef (EnforcementUnavailable reason)
+              writeIORef terminatedRef True
+          }
+  peakRef <- newIORef Map.empty
+  runCeilingWatchdogLoop resource ceilingMib declaredMembers peakRef sampler target
+  outcome <- classifyWatchdogTermination <$> readIORef terminationRef
+  peaks <- readIORef peakRef
+  pure (outcome, peaks)
+
+-- | Package-test seam over the ceilings this placement's watchdogs are minted
+-- with, so the agreement between what is installed and what is sampled is a
+-- checked property rather than an inspected one.
+executableWatchdogCeilingsForTest ::
+  Ceiling.InstalledCeiling ->
+  ExecutableModel ->
+  Either Text [(Resource, Int)]
+executableWatchdogCeilingsForTest installed executable =
+  map watchdogResourceCeiling <$> executableWatchdogs installed executable
+
+watchdogResourceCeiling :: SomeWatchdogSpec -> (Resource, Int)
+watchdogResourceCeiling (SomeWatchdogSpec watchdog) =
+  case watchdog of
+    AppleFootprintWatchdog ceilingMib _ -> (HostRam, ceilingMib)
+    LinuxProcessGroupRssWatchdog ceilingMib _ -> (PodRam, ceilingMib)
+    NvidiaVramWatchdog ceilingMib _ -> (NvidiaVram, ceilingMib)
+
+-- | Package-test seam over the pure refusal classification.
+classifyCeilingRefusalForTest ::
+  ExecutableModel ->
+  Ceiling.InstalledCeiling ->
+  [(Resource, Int)] ->
+  EngineOutcome ->
+  EngineOutcome
+classifyCeilingRefusalForTest executableModel installed peaks =
+  classifyCeilingRefusal executableModel installed (Map.fromList peaks)
+
+-- | Package-test seam over the derived classification margin.
+accountedAllocationMarginMibForTest :: ExecutableModel -> Int
+accountedAllocationMarginMibForTest = accountedAllocationMarginMib
+
+popScriptedValue :: IORef [a] -> a -> IO a
+popScriptedValue queueRef exhausted =
+  atomicModifyIORef' queueRef $ \case
+    [] -> ([], exhausted)
+    value : remaining -> (remaining, value)
+
 -- | Package-test seam for the real Apple footprint watchdog.
 --
 -- Phase 4 Sprint 4.32. The Linux and NVIDIA seams take a group alone because
 -- their production loops ignore the 'ProcessHandle'; the Apple loop does not —
--- 'continueIfRunning' is how it stops when the engine exits, and dropping it
--- here would exercise a different loop than production runs. The caller
--- therefore supplies the handle it already owns, and remains the process's
--- single waiter: the breach path signals the group and never reaps, so the
--- fixture's own @waitForProcess@ is the only reaper.
+-- the exit check is how it stops when the engine exits, and dropping it here
+-- would exercise a different loop than production runs. The caller therefore
+-- supplies the handle it already owns, and remains the process's single waiter:
+-- the breach path signals the group and never reaps, so the fixture's own
+-- @waitForProcess@ is the only reaper.
 appleWatchdogOutcomeForTest ::
   Int ->
   ProcessHandle ->
@@ -1524,7 +2342,7 @@ appleWatchdogOutcomeForTest ::
 #if defined(darwin_HOST_OS)
 appleWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
   terminationRef <- newIORef Nothing
-  runAppleWatchdog ceilingMib processHandle processGroup terminationRef
+  runAppleWatchdog ceilingMib defaultEngineMemberBound processHandle processGroup terminationRef
   classifyWatchdogTermination <$> readIORef terminationRef
 #else
 appleWatchdogOutcomeForTest _ _ _ =
@@ -1541,8 +2359,8 @@ appleWatchdogOutcomeForTest _ _ _ =
 classifyWatchdogTermination :: Maybe EnforcementTermination -> Maybe EngineOutcome
 classifyWatchdogTermination termination =
   case termination of
-    Just (CeilingBreached observedCeilingMib) ->
-      Just (EngineExceededCeiling observedCeilingMib)
+    Just (CeilingBreached resource observedCeilingMib observedMib) ->
+      Just (EngineExceededCeiling resource observedCeilingMib observedMib)
     Just (EnforcementUnavailable reason) ->
       Just (EngineEnforcementUnavailable reason)
     Just (OutputLimitExceeded outputStream) ->
@@ -1560,13 +2378,19 @@ linuxWatchdogOutcomeForTest _ _ =
   pure
     ( Just
         ( EngineEnforcementUnavailable
-            "Linux /proc process-group RSS enforcement is unavailable on this platform"
+            "Linux /proc process-group anonymous-residency enforcement is unavailable on this platform"
         )
     )
 #else
 linuxWatchdogOutcomeForTest ceilingMib processGroup = do
   terminationRef <- newIORef Nothing
-  runLinuxWatchdogForGroup ceilingMib processGroup terminationRef
+  peakRef <- newIORef Map.empty
+  runLinuxWatchdogForGroup
+    ceilingMib
+    defaultEngineMemberBound
+    processGroup
+    terminationRef
+    peakRef
   classifyWatchdogTermination <$> readIORef terminationRef
 #endif
 
@@ -1588,43 +2412,73 @@ nvidiaWatchdogOutcomeForTest _ _ =
 #else
 nvidiaWatchdogOutcomeForTest ceilingMib processGroup = do
   terminationRef <- newIORef Nothing
-  runNvidiaWatchdogForGroup ceilingMib processGroup terminationRef
+  peakRef <- newIORef Map.empty
+  runNvidiaWatchdogForGroup
+    ceilingMib
+    defaultEngineMemberBound
+    processGroup
+    terminationRef
+    peakRef
   classifyWatchdogTermination <$> readIORef terminationRef
 #endif
 
 #if defined(darwin_HOST_OS)
-continueIfRunning :: ProcessHandle -> IO () -> IO ()
-continueIfRunning processHandle continue = do
-  maybeExitCode <- getProcessExitCode processHandle
-  case maybeExitCode of
-    Just _ -> pure ()
-    Nothing -> do
-      threadDelay watchdogIntervalMicros
-      continue
+-- | The Apple lane's sampler: the fixed public-tool observer reports the
+-- process group's physical footprint, and it reports no absence of its own, so
+-- an absent group is inferred from the engine having exited.
+appleFootprintSampler :: WatchdogSampler
+appleFootprintSampler =
+  WatchdogSampler
+    { samplerObserveBytes = fmap (fmap Just) . FixedObserver.processGroupPhysicalFootprintBytes,
+      samplerObservePresence = const (pure (Right False)),
+      samplerObserveMemberCount = FixedObserver.processGroupMemberCount,
+      samplerAbsentGroupReason =
+        "Apple physical-footprint sampler observed no live group member for a running engine"
+    }
 #endif
 
 #if !defined(darwin_HOST_OS)
--- | Settle the only ambiguous process-group observation: a complete sample saw
--- no live member, but the leader may only just have entered a terminal state.
--- Four fresh observations at the normal watchdog interval bound the ambiguity
--- to 200 ms. Reappearance resumes the caller's full measurement loop; repeated
--- absence with a still-running leader is enforcement loss and remains terminal.
-settleMissingProcessGroup ::
+-- | The Linux lane's sampler: anonymous residency from @\/proc@, which is the
+-- quantity the installed data-segment ceiling charges.
+linuxAnonymousResidencySampler :: WatchdogSampler
+linuxAnonymousResidencySampler =
+  WatchdogSampler
+    { samplerObserveBytes = processGroupAnonymousResidencyBytes,
+      samplerObservePresence = fmap (fmap (not . null)) . processGroupMembers,
+      samplerObserveMemberCount = fmap (fmap length) . processGroupMembers,
+      samplerAbsentGroupReason =
+        "Linux /proc process-group anonymous-residency sampler observed no live group member for a running engine"
+    }
+
+-- | The device lane's sampler. Membership comes from the same @\/proc@ walk the
+-- resident-set lane already uses, so the device lane spawns one fixed command
+-- per sample and performs no process discovery of its own.
+nvidiaVramSampler :: WatchdogSampler
+nvidiaVramSampler =
+  WatchdogSampler
+    { samplerObserveBytes = processGroupVramBytes,
+      samplerObservePresence = fmap (fmap (not . null)) . processGroupMembers,
+      samplerObserveMemberCount = fmap (fmap length) . processGroupMembers,
+      samplerAbsentGroupReason =
+        "NVIDIA VRAM sampler observed no live group member for a running engine"
+    }
+
+-- | The Linux lanes' target: absence is observed from the group itself, so the
+-- process handle plays no part.
+linuxWatchdogTarget ::
   CPid ->
   IORef (Maybe EnforcementTermination) ->
-  IO (Either Text Bool) ->
-  IO () ->
-  Text ->
-  IO ()
-settleMissingProcessGroup processGroup terminationRef observePresence continue =
-  settleMissingProcessGroupWith
-    (threadDelay watchdogIntervalMicros)
-    missingProcessGroupSettlementRetries
-    observePresence
-    (processLeaderIsTerminal processGroup)
-    continue
-    (failLinuxSamplerIfTargetLive processGroup terminationRef)
+  WatchdogTarget
+linuxWatchdogTarget processGroup terminationRef =
+  WatchdogTarget
+    { targetProcessGroup = processGroup,
+      targetHasTerminated = processLeaderIsTerminal processGroup,
+      targetTerminate = terminateForLinuxWatchdog processGroup terminationRef,
+      targetFailEnforcement = failLinuxSamplerIfTargetLive processGroup terminationRef
+    }
+#endif
 
+#if !defined(darwin_HOST_OS)
 -- | Observe the process-group leader without touching its 'ProcessHandle'.
 -- The engine action is the sole process reaper; a watchdog that also calls
 -- 'getProcessExitCode' can contend with 'waitForProcess' exactly while the
@@ -1811,6 +2665,14 @@ isMissingProcessGroup failure =
 mibToBytes :: Int -> Word64
 mibToBytes mib = fromIntegral mib * bytesPerMib
 
+-- | Phase 6 Sprint 6.50: report an observed footprint in the same unit the
+-- ceiling is declared in. Rounded __up__, so a reported observation never
+-- understates what was measured and a breach never reads as equal to the
+-- ceiling it exceeded.
+bytesToMibCeiling :: Word64 -> Int
+bytesToMibCeiling bytes =
+  fromIntegral ((bytes + bytesPerMib - 1) `div` bytesPerMib)
+
 bytesPerMib :: Word64
 bytesPerMib = 1048576
 
@@ -1835,7 +2697,7 @@ verifyProcessGroupRssSampler = pure False
 #else
 verifyProcessGroupRssSampler = do
   processGroup <- getProcessGroupID
-  sample <- processGroupRssBytes processGroup
+  sample <- processGroupAnonymousResidencyBytes processGroup
   pure $
     case sample of
       Right (Just _) -> True
@@ -1983,8 +2845,8 @@ processGroupMembers processGroup = do
 -- | Sum resident bytes for every live member of the child process group. A
 -- vanished proc entry is an ordinary exit race; permission, enumeration, or
 -- parse failures are enforcement failures and terminate the whole group.
-processGroupRssBytes :: CPid -> IO (Either Text (Maybe Word64))
-processGroupRssBytes processGroup = do
+processGroupAnonymousResidencyBytes :: CPid -> IO (Either Text (Maybe Word64))
+processGroupAnonymousResidencyBytes processGroup = do
   procEntriesResult <- try (Directory.listDirectory "/proc")
   case procEntriesResult of
     Left (ioException :: IOException) ->
@@ -2025,7 +2887,7 @@ processGroupRssBytes processGroup = do
                               foldProcessEntries remaining True nextTotal
 
     -- A task can discard its memory map before procfs publishes its terminal
-    -- state. In that exit window @status@ legitimately has no @VmRSS@ even
+    -- state. In that exit window @status@ legitimately has no @RssAnon@ even
     -- though the earlier @stat@ sample still said live. Re-read both files a
     -- bounded interval and accept zero only after disappearance or explicit
     -- terminal-state evidence. The interval matches the watchdog cadence so a
@@ -2049,7 +2911,7 @@ processGroupRssBytes processGroup = do
                     Right True -> pure (Right 0)
                     Right False
                       | retriesRemaining <= 0 ->
-                          pure (Left (procParseError pidText "status" "missing VmRSS"))
+                          pure (Left (procParseError pidText "status" "missing RssAnon"))
                       | otherwise -> do
                           threadDelay watchdogIntervalMicros
                           nextStatusResult <- readProcFile ("/proc/" <> pidText <> "/status")
@@ -2103,23 +2965,33 @@ data ResidentSample
   | ResidentTerminal
   | ResidentMissing
 
+-- | Phase 4 Sprint 4.40 — the sampled field is @RssAnon@, the anonymous
+-- residency the installed data-segment ceiling charges.
+--
+-- The retired sampler read @VmRSS@, which counts file-backed and shared
+-- resident pages that the ceiling charges for none of. Kernel and sampler were
+-- therefore bounding two different quantities and agreeing only because the
+-- difference was usually small; the mapped weight file is exactly the case where
+-- it is not small, and streaming a model from a mapped artifact is exactly what
+-- this lane does. A @status@ block carrying @VmRSS@ but no @RssAnon@ is an
+-- enforcement failure, not a reason to fall back to the old field.
 parseResidentSample :: ByteString -> Either Text ResidentSample
 parseResidentSample contents =
   case [ kibibytes
        | line <- ByteString8.lines contents,
-         ["VmRSS:", kibibytes, "kB"] <- [words (ByteString8.unpack line)]
+         ["RssAnon:", kibibytes, "kB"] <- [words (ByteString8.unpack line)]
        ] of
     [kibibytesText] ->
       case readWord64 kibibytesText of
         Just kibibytes
           | kibibytes <= maxBound `div` bytesPerKib ->
               Right (ResidentBytes (kibibytes * bytesPerKib))
-          | otherwise -> Left "VmRSS byte conversion overflow"
-        Nothing -> Left "invalid VmRSS quantity"
+          | otherwise -> Left "RssAnon byte conversion overflow"
+        Nothing -> Left "invalid RssAnon quantity"
     []
       | processHasTerminalStatus contents -> Right ResidentTerminal
       | otherwise -> Right ResidentMissing
-    _ -> Left "duplicate VmRSS"
+    _ -> Left "duplicate RssAnon"
 
 parseResidentBytes :: ByteString -> Either Text Word64
 parseResidentBytes contents =
@@ -2127,12 +2999,12 @@ parseResidentBytes contents =
     Left reason -> Left reason
     Right (ResidentBytes residentBytes) -> Right residentBytes
     Right ResidentTerminal -> Right 0
-    Right ResidentMissing -> Left "missing VmRSS"
+    Right ResidentMissing -> Left "missing RssAnon"
 
 -- A process may cross from the live state observed in @stat@ to a zombie or
 -- dead state before its @status@ file is read. Linux then legitimately omits
--- @VmRSS@. That terminal transition contributes zero resident bytes; a live
--- or malformed status without @VmRSS@ remains an enforcement failure.
+-- @RssAnon@. That terminal transition contributes zero resident bytes; a live
+-- or malformed status without @RssAnon@ remains an enforcement failure.
 processHasTerminalStatus :: ByteString -> Bool
 processHasTerminalStatus contents =
   case [ processState
@@ -2148,7 +3020,7 @@ processStateIsTerminal processState =
 
 -- | Pure seam for the bounded exit-race recheck. A vanished task or an
 -- explicitly terminal second @stat@ sample permits zero RSS; a still-live
--- task must be sampled again and eventually fails closed if @VmRSS@ remains
+-- task must be sampled again and eventually fails closed if @RssAnon@ remains
 -- absent.
 missingResidentRecheckForTest :: Maybe ByteString -> Either Text Bool
 missingResidentRecheckForTest Nothing = Right True

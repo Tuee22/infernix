@@ -88,21 +88,39 @@ withTestHostConfig testHostConfig $ \cfg -> do
 
 ## Python (adapters)
 
-The Haskell daemon invokes the adapter via `runHostTool hostConfig HostPoetry [..., adapterScript]`
-and passes the typed JSON config blob on stdin. The adapter parses it once at startup:
+The Haskell worker invokes the adapter by running the pre-materialized per-engine interpreter
+directly — `python/engines/<engine>/.venv/bin/python -m adapters.<module>` — and exchanges typed
+protobuf worker messages over stdio. The adapter decodes one `WorkerRequest` at startup and every
+setting it needs is a field on that message:
 
 ```python
 # BAD: env-var consumption
 import os
 endpoint = os.environ.get("LEGACY_MINIO_ENDPOINT", "http://localhost:9000")
 
-# GOOD: stdin config blob
-import json, sys
-config = json.load(sys.stdin)
-endpoint = config["minio"]["endpoint"]
+# GOOD: typed protobuf worker request on stdin
+import sys
+from infernix.runtime import inference_pb2
+
+request = inference_pb2.WorkerRequest()
+request.ParseFromString(sys.stdin.buffer.read())
+endpoint = request.minio_endpoint
 ```
 
 `os.environ` is never read by adapter code.
+
+The same rule decides how an adapter learns its **memory budget**. The admitted quantities and the
+execution shape they were derived from are decoded fields on that one typed request, applied before
+weights are loaded and acknowledged on the response. This is not an incidental choice of transport:
+the conventional way to shape a framework's arenas, cache sizes, thread counts, and device
+visibility is to set knobs the framework reads out of its process environment, and every one of
+those knobs is an environment read this repository does not have available. Naming one of them here
+would be the same defect as consuming it, so the doctrine names the mechanism instead — a quantity
+the compiler admitted a model against reaches the engine as typed request data, on the same wire and
+under the same rules as every other setting. See
+[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) for the
+admission and enforcement contract, and [python_policy.md](python_policy.md) for the adapter-side
+sequence and the parameters an adapter may not author.
 
 ## Web / Node / Playwright
 
@@ -253,3 +271,6 @@ Run locally: `infernix test lint`.
   Sections T and U.
 - [Managed State Transitions](../architecture/managed_state_transitions.md) — canonical home for the
   typed `SubprocessEnv` and `CommandOutcome` process-execution rules.
+- [python_policy.md](python_policy.md) — the worker-to-adapter contract these Python rules apply to.
+- [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) —
+  canonical home for the memory budget the worker request carries.

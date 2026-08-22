@@ -57,6 +57,7 @@ import Infernix.HostTools qualified as HostTools
 import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryAvailableMib)
 import System.Directory (listDirectory)
 import System.FilePath (takeFileName, (</>))
+import System.IO (readFile')
 import System.Info (os)
 import System.Posix.Process (getProcessID)
 import Text.Read (readMaybe)
@@ -141,7 +142,7 @@ observeDarwinAvailableHostMemoryMib = do
 
 observeLinuxAvailableHostMemoryMib :: IO (Either String Int)
 observeLinuxAvailableHostMemoryMib = do
-  readResult <- try (readFile "/proc/meminfo") :: IO (Either IOException String)
+  readResult <- try (readFile' "/proc/meminfo") :: IO (Either IOException String)
   case readResult of
     Left readError ->
       pure
@@ -344,7 +345,13 @@ observeLinuxProcessTable = do
 readProcessStatus :: FilePath -> IO (Maybe ProcessRow)
 readProcessStatus entry = do
   readResult <-
-    try (readFile ("/proc" </> entry </> "status")) ::
+    -- Strict, because the census walks a directory listing that is stale the
+    -- instant it is taken: a process that exits between the listing and this
+    -- read raises from inside a lazy read's continuation, outside this `try`,
+    -- and a claimant census that dies because a process exited is not a census.
+    -- An entry that vanishes is an absent claimant, which is what `Nothing`
+    -- already means here.
+    try (readFile' ("/proc" </> entry </> "status")) ::
       IO (Either IOException String)
   pure $
     case readResult of

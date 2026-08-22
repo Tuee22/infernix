@@ -45,6 +45,7 @@ import Infernix.HostTools qualified as HostTools
 import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryLimitMib)
 import Infernix.Types qualified as Types
 import Numeric.Natural (Natural)
+import System.IO (readFile')
 import System.Info (os)
 
 -- | Observe this host's physical and effective memory, in MiB.
@@ -132,7 +133,7 @@ resolveLiveBuildMemoryPlan hostConfig = do
 
 observeLinuxHostMemoryFacts :: IO (Either String HostMemoryFacts)
 observeLinuxHostMemoryFacts = do
-  readResult <- try (readFile "/proc/meminfo")
+  readResult <- try (readFile' "/proc/meminfo")
   case readResult :: Either SomeException String of
     Left readError ->
       pure

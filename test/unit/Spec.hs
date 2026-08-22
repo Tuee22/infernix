@@ -120,7 +120,8 @@ import Infernix.CLI
     runtimeConfigRestorePlan,
     writeGeneratedPursContracts,
   )
-import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterFleetEngineDeployments, clusterWorkloadArchitectureForHostArchitecture, finalPhaseDeployments, fleetSlotLabelKey, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reclaimHarnessClusterSlotAt, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderFleetMachineContracts, renderHelmValues, renderKindConfig, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withHarnessClusterSlotAt, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
+import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterFleetEngineDeployments, clusterWorkloadArchitectureForHostArchitecture, finalPhaseDeployments, fleetSlotLabelKey, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, perEngineDeploymentNames, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reclaimHarnessClusterSlotAt, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderFleetMachineContracts, renderHelmValues, renderKindConfig, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withHarnessClusterSlotAt, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
+import Infernix.Cluster qualified as Cluster
 import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
 import Infernix.Cluster.Command qualified as ClusterCommand
 import Infernix.Cluster.Discover
@@ -252,11 +253,12 @@ import Infernix.Lint.Files
     isGeneratedHaskellProtoTextSnapshot,
     nativeSourcePathViolations,
   )
-import Infernix.Lint.HaskellStyle (unboundedDescriptorSpawnViolations, unboundedEngineSpawnViolations, unboundedToolchainSpawnViolations, unsafeNativeBoundaryViolations)
+import Infernix.Lint.HaskellStyle (unboundedCeilingInstallViolations, unboundedDescriptorSpawnViolations, unboundedEngineSpawnViolations, unboundedToolchainSpawnViolations, unsafeNativeBoundaryViolations)
 import Infernix.Lint.Plan
   ( SprintBlock,
     backwardEdgeViolations,
     dualAcceleratorGateViolations,
+    forwardOwnershipViolations,
     ledgerDoubleListingViolations,
     parseSprintBlocks,
     phaseStatusTableViolations,
@@ -267,6 +269,16 @@ import Infernix.Lint.Plan
   )
 import Infernix.MachineContract qualified as MachineContract
 import Infernix.Models
+import Infernix.Models.Artifact
+  ( ArtifactHeader
+      ( artifactHeaderLargestTensorBytes,
+        artifactHeaderPrefixBytes,
+        artifactHeaderPrefixDigest,
+        artifactHeaderWeightBytes
+      ),
+    readArtifactHeader,
+  )
+import Infernix.Models.Requirement (keyValueCacheBytes, modelRequirementBytesToMib)
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
 import Infernix.Objects.Sts qualified as ObjSts
@@ -291,10 +303,13 @@ import Infernix.Routes
     renderReadmeRouteSummarySection,
   )
 import Infernix.Runtime
+import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
 import Infernix.Runtime.CappedEngine.Internal qualified as CappedEngineInternal
+import Infernix.Runtime.CappedEngine.Projection qualified as Projection
 import Infernix.Runtime.Daemon
   ( runProductionDaemon,
   )
+import Infernix.Runtime.Enforcer qualified as Enforcer
 import Infernix.Runtime.Enforcer.Properties qualified as EnforcerProperties
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
@@ -355,6 +370,7 @@ import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
+import Infernix.Types qualified as Types
 import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 qualified as Lens
 import Network.WebSockets qualified as WebSockets
@@ -2126,6 +2142,262 @@ runDescriptorSpaceAssertions = do
       (descriptorSpaceBoundLimit preserved == tighter)
       "establishBoundedDescriptorSpace preserves a tighter host-imposed soft limit"
 
+-- | Phase 4 Sprint 4.39 — the artifact-derived memory requirement.
+--
+-- Every fixture builds its artifact in the test rather than checking in a binary
+-- blob, then mutates one property at a time. Each mutation carries the positive
+-- control that the unmutated artifact derives cleanly, because a negative
+-- fixture that would fail for an unrelated reason proves nothing.
+runArtifactRequirementAssertions :: FilePath -> IO ()
+runArtifactRequirementAssertions unitTestRoot = do
+  let artifactRoot = unitTestRoot </> "artifact-requirements"
+  createDirectoryIfMissing True artifactRoot
+
+  -- The closed cache function, pinned against SmolLM2-135M-Instruct's declared
+  -- geometry: thirty layers, three key/value heads, sixty-four wide heads, two
+  -- bytes per element, keys and values counted separately.
+  let smolGeometry = ModelGeometry 30 3 64 576
+  assert
+    (keyValueCacheBytes smolGeometry 2048 2 == 47185920)
+    "Sprint 4.39: the cache term is exactly 45.0 MiB at a 2048-token context"
+  assert
+    ( keyValueCacheBytes smolGeometry 4096 2
+        == 2 * keyValueCacheBytes smolGeometry 2048 2
+    )
+    "Sprint 4.39: the cache term is exactly linear in context length"
+  assert
+    (modelRequirementBytesToMib 47185920 == 45)
+    "Sprint 4.39: byte quantities round up to whole MiB"
+  assert
+    (modelRequirementBytesToMib (47185920 + 1) == 46)
+    "Sprint 4.39: a rounded requirement never understates what was measured"
+
+  -- The positive control: a well-formed safetensors artifact derives cleanly and
+  -- its weight term is the exact sum over its own tensor table.
+  let cleanPath = artifactRoot </> "clean.safetensors"
+      -- The largest tensor is deliberately neither the first nor the last entry,
+      -- so a reader that reported the head or the tail of its own table rather
+      -- than the maximum over it would fail this fixture instead of passing it.
+      cleanTensors =
+        [ ("model.embed_tokens.weight", "F16", [576, 128] :: [Int]),
+          ("model.layers.0.self_attn.k_proj.weight", "F16", [192, 576]),
+          ("model.layers.0.mlp.down_proj.weight", "F16", [576, 64])
+        ]
+      cleanTensorBytes = [product dims * 2 | (_, _, dims) <- cleanTensors]
+      cleanWeightBytes = sum cleanTensorBytes
+      cleanLargestBytes = maximum cleanTensorBytes
+  BS.writeFile cleanPath (safetensorsArtifactBytes cleanTensors)
+  cleanHeader <- readArtifactHeader cleanPath
+  assert
+    (fmap artifactHeaderWeightBytes cleanHeader == Right (toInteger cleanWeightBytes))
+    "Sprint 4.39: the weight term is the exact sum over the artifact's own tensor table"
+  assert
+    (fmap artifactHeaderLargestTensorBytes cleanHeader == Right (toInteger cleanLargestBytes))
+    "Sprint 4.39: the largest single tensor is reported beside the total"
+  assert
+    (either (const False) ((< 4096) . artifactHeaderPrefixBytes) cleanHeader)
+    "Sprint 4.39: the derivation reads only the header prefix, not the payload"
+
+  -- Each mutation yields no requirement rather than a small one.
+  mapM_
+    (assertArtifactRefusal artifactRoot)
+    [ ( "declared-header-past-file",
+        \bytes -> BS.pack [255, 255, 255, 255, 255, 255, 0, 0] <> BS.drop 8 bytes
+      ),
+      ( "tensor-extent-disagrees-with-shape",
+        mutateSafetensorsTable "[576,128]" "[576,129]"
+      ),
+      ( "offsets-overlap",
+        mutateSafetensorsTable "\"data_offsets\":[147456," "\"data_offsets\":[147455,"
+      ),
+      ( "offsets-leave-a-gap",
+        mutateSafetensorsTable "\"data_offsets\":[147456," "\"data_offsets\":[147457,"
+      )
+    ]
+
+  -- The prefix budget bounds the read even when the artifact adversarially
+  -- declares a header far larger than the budget.
+  let adversarialPath = artifactRoot </> "adversarial-header-length.safetensors"
+  BS.writeFile
+    adversarialPath
+    (BS.pack [0, 0, 0, 0, 0, 0, 0, 255] <> BS.drop 8 (safetensorsArtifactBytes cleanTensors))
+  adversarialHeader <- readArtifactHeader adversarialPath
+  assert
+    (either (const True) (const False) adversarialHeader)
+    "Sprint 4.39: a header length past the prefix budget is refused, never read"
+
+  -- The second reader: a GGUF artifact whose tensors are individually aligned.
+  -- An alignment-blind tiling check would reject every real GGUF file whose
+  -- tensor sizes are not multiples of its alignment, which is most of them, so
+  -- this fixture deliberately uses a size that is not.
+  let ggufPath = artifactRoot </> "clean.gguf"
+      ggufTensors = [("token_embd.weight", 0 :: Int, [100, 4] :: [Int])]
+      ggufWeightBytes = 100 * 4 * 4 :: Int
+  BS.writeFile ggufPath (ggufArtifactBytes ggufTensors)
+  ggufHeader <- readArtifactHeader ggufPath
+  assert
+    (fmap artifactHeaderWeightBytes ggufHeader == Right (toInteger ggufWeightBytes))
+    "Sprint 4.39: the GGUF reader sums its own tensor-info block"
+  assert
+    (either (const False) ((< 4096) . artifactHeaderPrefixBytes) ggufHeader)
+    "Sprint 4.39: the GGUF derivation reads only the header prefix"
+
+  -- The recorded digest is a statement about one exact header: changing a single
+  -- header byte moves it, so a requirement cannot be reattributed to a different
+  -- header at the same path.
+  let renamedPath = artifactRoot </> "renamed-tensor.safetensors"
+      -- Derived from the clean fixture so exactly one thing differs: the first
+      -- tensor's name. A second literal list could drift from it silently and
+      -- turn this into an assertion about two unrelated artifacts.
+      renamedTensors = case cleanTensors of
+        ((name, dtype, dims) : rest) -> (name <> "X", dtype, dims) : rest
+        [] -> []
+  BS.writeFile renamedPath (safetensorsArtifactBytes renamedTensors)
+  renamedHeader <- readArtifactHeader renamedPath
+  assert
+    ( fmap artifactHeaderPrefixDigest cleanHeader
+        /= fmap artifactHeaderPrefixDigest renamedHeader
+    )
+    "Sprint 4.39: the recorded prefix digest changes when the header does"
+
+-- | Assert one mutated artifact is refused, with the unmutated artifact as its
+-- positive control.
+assertArtifactRefusal :: FilePath -> (String, BS.ByteString -> BS.ByteString) -> IO ()
+assertArtifactRefusal artifactRoot (label, mutate) = do
+  let controlTensors =
+        [ ("model.embed_tokens.weight", "F16", [576, 128] :: [Int]),
+          ("model.layers.0.self_attn.k_proj.weight", "F16", [192, 576])
+        ]
+      controlBytes = safetensorsArtifactBytes controlTensors
+      controlPath = artifactRoot </> (label <> "-control.safetensors")
+      mutatedPath = artifactRoot </> (label <> ".safetensors")
+  BS.writeFile controlPath controlBytes
+  BS.writeFile mutatedPath (mutate controlBytes)
+  controlHeader <- readArtifactHeader controlPath
+  mutatedHeader <- readArtifactHeader mutatedPath
+  assert
+    (either (const False) (const True) controlHeader)
+    ("Sprint 4.39: the unmutated control for " <> label <> " derives cleanly")
+  assert
+    (either (const True) (const False) mutatedHeader)
+    ("Sprint 4.39: the " <> label <> " mutation yields no requirement")
+
+-- | Build a safetensors artifact: eight little-endian bytes of header length,
+-- that many bytes of JSON tensor table, then a densely tiled payload.
+safetensorsArtifactBytes :: [(String, String, [Int])] -> BS.ByteString
+safetensorsArtifactBytes tensors =
+  BS.pack (littleEndianEightBytes (length tableJson))
+    <> ByteString8.pack tableJson
+    <> BS.replicate payloadBytes 0
+  where
+    entries = safetensorsEntriesJson tensors
+    tableJson = "{" <> intercalate "," entries <> "}"
+    payloadBytes = sum [product dims * 2 | (_, _, dims) <- tensors]
+
+safetensorsEntriesJson :: [(String, String, [Int])] -> [String]
+safetensorsEntriesJson = go 0
+  where
+    go _ [] = []
+    go offset ((name, dtype, dims) : rest) =
+      let extent = product dims * 2
+          entry =
+            "\""
+              <> name
+              <> "\":{\"dtype\":\""
+              <> dtype
+              <> "\",\"shape\":["
+              <> intercalate "," (map show dims)
+              <> "],\"data_offsets\":["
+              <> show offset
+              <> ","
+              <> show (offset + extent)
+              <> "]}"
+       in entry : go (offset + extent) rest
+
+-- | Build a GGUF artifact: magic, version, tensor count, metadata count, an
+-- empty metadata block, then one tensor-info entry per tensor, then the payload
+-- aligned to the format's own default.
+ggufArtifactBytes :: [(String, Int, [Int])] -> BS.ByteString
+ggufArtifactBytes tensors =
+  BS.concat
+    [ ByteString8.pack "GGUF",
+      BS.pack (littleEndianBytes 4 3),
+      BS.pack (littleEndianEightBytes (length tensors)),
+      BS.pack (littleEndianEightBytes 0),
+      BS.concat (ggufTensorInfoBytes tensors),
+      BS.replicate padding 0,
+      BS.replicate payloadBytes 0
+    ]
+  where
+    infoBytes = sum (map BS.length (ggufTensorInfoBytes tensors))
+    headerBytes = 4 + 4 + 8 + 8 + infoBytes
+    padding = (32 - (headerBytes `mod` 32)) `mod` 32
+    payloadBytes = sum [ggufAlignedSize (product dims * 4) | (_, _, dims) <- tensors]
+
+ggufAlignedSize :: Int -> Int
+ggufAlignedSize value = ((value + 31) `div` 32) * 32
+
+ggufTensorInfoBytes :: [(String, Int, [Int])] -> [BS.ByteString]
+ggufTensorInfoBytes = go 0
+  where
+    go _ [] = []
+    go offset ((name, ggmlType, dims) : rest) =
+      BS.concat
+        [ BS.pack (littleEndianEightBytes (length name)),
+          ByteString8.pack name,
+          BS.pack (littleEndianBytes 4 (length dims)),
+          BS.concat [BS.pack (littleEndianEightBytes dimension) | dimension <- dims],
+          BS.pack (littleEndianBytes 4 ggmlType),
+          BS.pack (littleEndianEightBytes offset)
+        ]
+        : go (offset + ggufAlignedSize (product dims * 4)) rest
+
+littleEndianBytes :: Int -> Int -> [Word8]
+littleEndianBytes width value =
+  [fromIntegral ((value `div` (256 ^ index)) `mod` 256) | index <- [0 .. width - 1]]
+
+littleEndianEightBytes :: Int -> [Word8]
+littleEndianEightBytes value =
+  [fromIntegral ((value `div` (256 ^ index)) `mod` 256) | index <- [0 .. 7 :: Int]]
+
+mutateSafetensorsTable :: String -> String -> BS.ByteString -> BS.ByteString
+mutateSafetensorsTable needle replacement bytes =
+  BS.pack (littleEndianEightBytes (length mutatedTable))
+    <> ByteString8.pack mutatedTable
+    <> BS.drop (8 + originalLength) bytes
+  where
+    originalLength =
+      sum
+        [ fromIntegral byte * (256 ^ index)
+        | (index, byte) <- zip [0 :: Int ..] (BS.unpack (BS.take 8 bytes))
+        ]
+    originalTable = ByteString8.unpack (BS.take originalLength (BS.drop 8 bytes))
+    mutatedTable = replaceFirstSubstring needle replacement originalTable
+
+-- | Phase 6 Sprint 6.50: a measured ceiling breach names the ceiling it
+-- breached __and__ the footprint it observed, and a real breach is strictly
+-- above its ceiling. Written as a named helper because the readability gate
+-- rejects a hanging @case@ inside an assertion.
+--
+-- Phase 4 Sprint 4.37: the reported resource is pinned here too, and the three
+-- facts are pinned together deliberately. Comparing the reported ceiling
+-- against the expected ceiling alone is satisfied by an implementation that
+-- reports its own ceiling back, which is what the retired path did, so in the
+-- failing case that assertion was vacuous. The resource is the only assertion
+-- that distinguishes the two writers of one shared termination reference.
+breachOutcomeExceeds ::
+  Types.Resource ->
+  Int ->
+  Maybe CappedEngineInternal.EngineOutcome ->
+  Bool
+breachOutcomeExceeds expectedResource expectedCeilingMib outcome =
+  case outcome of
+    Just (CappedEngineInternal.EngineExceededCeiling resource ceilingMib observedMib) ->
+      resource == expectedResource
+        && ceilingMib == expectedCeilingMib
+        && observedMib > expectedCeilingMib
+    _ -> False
+
 reapCappedEngineFixture :: String -> CPid -> IO ProcessStatus
 reapCappedEngineFixture fixtureLabel processId = poll 80
   where
@@ -2174,10 +2446,10 @@ runLinuxWatchdogBreachAssertions =
         breachPid
     breachExit <- reapCappedEngineFixture "memory-breach fixture" breachPid
     assert
-      ( breachOutcome == Just (CappedEngineInternal.EngineExceededCeiling 16)
+      ( breachOutcomeExceeds PodRam 16 breachOutcome
           && breachExit /= Exited ExitSuccess
       )
-      "Sprint 4.32: Linux live RSS breach returns the typed ceiling outcome and reaps the grouped engine"
+      "Sprint 4.32: Linux live RSS breach returns the typed ceiling outcome, names the observed footprint, and reaps the grouped engine"
 
     smallPid <-
       startGroupedCappedEngineFixture
@@ -2297,11 +2569,10 @@ runAppleWatchdogBreachAssertions =
         "__infernix_unit_apple_memory_breach_fixture"
         appleBreachCeilingMib
     assert
-      ( fst breachOutcome
-          == Just (CappedEngineInternal.EngineExceededCeiling appleBreachCeilingMib)
+      ( breachOutcomeExceeds HostRam appleBreachCeilingMib (fst breachOutcome)
           && snd breachOutcome /= ExitSuccess
       )
-      "Sprint 4.32: Apple live footprint breach returns the typed ceiling outcome and reaps the grouped engine"
+      "Sprint 4.32: Apple live footprint breach returns the typed ceiling outcome, names the observed footprint, and reaps the grouped engine"
 
     survivorOutcome <-
       runAppleCappedEngineFixture
@@ -2576,8 +2847,7 @@ runLiveNvidiaVramBreachAssertions = do
           breachPid
       breachExit <- reapCappedEngineFixture "CUDA breach fixture" breachPid
       assert
-        ( breachOutcome
-            == Just (CappedEngineInternal.EngineExceededCeiling cudaBreachCeilingMib)
+        ( breachOutcomeExceeds NvidiaVram cudaBreachCeilingMib breachOutcome
             && breachExit /= Exited ExitSuccess
         )
         ( "Sprint 6.44: a live CUDA allocation past the declared ceiling returns the "
@@ -2651,6 +2921,7 @@ main = do
   runNativeArtifactMarkerAssertions
   runAppleRuntimeEnvironmentAssertions
   runBuildMemoryAssertions unitTestRoot
+  runArtifactRequirementAssertions unitTestRoot
   runMissingProcessGroupSettlementAssertions
   runLinuxWatchdogBreachAssertions
   runAppleWatchdogBreachAssertions
@@ -3905,8 +4176,11 @@ main = do
         (inferenceMemoryBudget decodedAppleConfig == appleUnitInferenceMemoryBudget)
         "apple host demo-config preserves the typed inference memory budget"
       assert
-        (all ((> 0) . modelMemoryFootprintMib . modelRamFootprint) (models decodedAppleConfig))
-        "every apple catalog model declares a positive RAM footprint"
+        ( all
+            ((> 0) . executionContextLength . modelExecutionShape)
+            (models decodedAppleConfig)
+        )
+        "every apple catalog model declares a positive execution context length"
       -- Phase 4 Sprint 4.31 — the checked partition rejects oversubscription and
       -- an undersized headroom; the required footprint rejects a non-positive value.
       assert
@@ -3995,11 +4269,57 @@ main = do
         )
         "the concurrent-claim refusal names the overcommitment rather than reporting a bare failure"
       assert
-        (isLeft (mkModelMemoryFootprint 0) && isLeft (mkModelMemoryFootprint (-1)))
-        "mkModelMemoryFootprint rejects a non-positive footprint"
+        (isLeft (mkHostResidentRequirement 0) && isLeft (mkHostResidentRequirement (-1)))
+        "mkHostResidentRequirement rejects a non-positive host-residency quantity"
       assert
-        (isRight (mkModelMemoryFootprint 4096))
-        "mkModelMemoryFootprint accepts a positive footprint"
+        (isRight (mkHostResidentRequirement 4096))
+        "mkHostResidentRequirement accepts a positive host-residency quantity"
+      -- Phase 4 Sprint 4.38: a device-using requirement checks /both/ terms, so
+      -- a model that uses the device while stating nothing about the device is
+      -- not a term rather than a review obligation.
+      assert
+        ( isLeft (mkHostAndDeviceRequirement 4096 0)
+            && isLeft (mkHostAndDeviceRequirement 0 4096)
+        )
+        "mkHostAndDeviceRequirement rejects a non-positive quantity in either term"
+      assert
+        (isRight (mkHostAndDeviceRequirement 4096 2048))
+        "mkHostAndDeviceRequirement accepts two positive quantities"
+      assert
+        ( fmap (isJust . modelDeviceRequirement) (mkHostAndDeviceRequirement 4096 2048)
+            == Right True
+        )
+        "a device-using requirement carries its device term by construction"
+      assert
+        ( fmap (isJust . modelDeviceRequirement) (mkHostResidentRequirement 4096)
+            == Right False
+        )
+        "a host-only requirement carries no device term at all"
+      -- Phase 4 Sprint 4.38: one enumeration names the three physical
+      -- resources, and its codec keeps the wire spellings the retired
+      -- value-level enumeration used. A Haskell-side rename that moved a wire
+      -- spelling would be a contract change with its own regeneration; bundling
+      -- one into the other is how a type cleanup becomes a compatibility break.
+      assert
+        ( map resourceText [HostRam, PodRam, NvidiaVram]
+            == ["unified-host-ram", "pod-ram", "gpu-vram"]
+        )
+        "the merged resource codec renders the unchanged wire spellings"
+      assert
+        ( all
+            (\resource -> parseResource (resourceText resource) == Just resource)
+            [HostRam, PodRam, NvidiaVram]
+        )
+        "every resource round-trips through the merged codec"
+      assert
+        (isNothing (parseResource "unified-host-vram"))
+        "the merged resource codec rejects an unknown resource string"
+      assert
+        ( all
+            (\resource -> Aeson.decode (Aeson.encode resource) == Just resource)
+            [HostRam, PodRam, NvidiaVram]
+        )
+        "every resource round-trips through its JSON codec"
       -- Phase 6 Sprint 6.42 — the engine-spawn capability-gating lint fires on a
       -- raw engine spawn in a guarded production file, exempts the capped-engine
       -- kernel (the sole legitimate engine-spawn surface), and passes a clean line.
@@ -4720,7 +5040,7 @@ main = do
               { inferenceErrorModelId = "image-sdxl-turbo",
                 inferenceErrorRequiredMib = 12288,
                 inferenceErrorAvailableMib = 512,
-                inferenceErrorResource = UnifiedHostRam,
+                inferenceErrorResource = HostRam,
                 inferenceErrorSource = "unit-test"
               }
           memoryErrorResult =
@@ -4817,6 +5137,9 @@ main = do
       transformersEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "transformers" </> "pyproject.toml")
       pytorchEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "pytorch" </> "pyproject.toml")
       pytorchAdapter <- readFile (repoRoot paths </> "python" </> "adapters" </> "pytorch_python.py")
+      transformersAdapter <-
+        readFile (repoRoot paths </> "python" </> "adapters" </> "transformers_python.py")
+      vllmAdapter <- readFile (repoRoot paths </> "python" </> "adapters" </> "vllm_python.py")
       let applePytorchDependencyBlock =
             unlines
               [ "[tool.poetry.group.apple-silicon.dependencies]",
@@ -4847,15 +5170,40 @@ main = do
             && "platform_system == 'Linux'" `isInfixOf` pytorchEnginePyproject
         )
         "Sprint 4.16/Wave I: framework per-engine venvs separate Apple, Linux CPU, and CUDA torch sources"
+      -- Phase 4 Sprint 4.42: the retired form asserted that the literal text
+      -- @model.generate(**inputs, semantic_max_new_tokens=100)@ appeared in the
+      -- adapter's source. That tests the spelling of a line rather than the
+      -- value that reaches the model: reformatting the call broke it while
+      -- changing the bound to any other literal did not. It is retired rather
+      -- than updated; what replaces it is two ordinary assertions, that the
+      -- compiler puts the derived bound on the request and that the adapter
+      -- applies the bound it received. A value that is passed can be checked
+      -- where it is passed.
       assert
         ( "dtype = torch.float16 if device in {\"cuda\", \"mps\"} else torch.float32" `isInfixOf` pytorchAdapter
             && "torch_dtype=dtype" `isInfixOf` pytorchAdapter
             && "model.eval()" `isInfixOf` pytorchAdapter
             && "with torch.inference_mode():" `isInfixOf` pytorchAdapter
-            && "model.generate(**inputs, semantic_max_new_tokens=100)" `isInfixOf` pytorchAdapter
+            && "semantic_max_new_tokens=context.generation_bound" `isInfixOf` pytorchAdapter
             && "audio.to(device=\"cpu\", dtype=torch.float32).numpy().squeeze()" `isInfixOf` pytorchAdapter
         )
-        "Bark bounds real semantic generation under the 8 GiB ceiling, loads accelerator weights in fp16 under inference mode, and converts output to fp32 for WAV encoding"
+        ( "Sprint 4.42: Bark applies the generation bound it received rather "
+            <> "than a literal, loads accelerator weights in fp16 under "
+            <> "inference mode, and converts output to fp32 for WAV encoding"
+        )
+      assert
+        ( not ("MAX_NEW_TOKENS" `isInfixOf` transformersAdapter)
+            && "max_new_tokens=context.generation_bound" `isInfixOf` transformersAdapter
+        )
+        "Sprint 4.42: the Transformers adapter's generation-bound literal is deleted, not defaulted"
+      assert
+        ( not ("gpu_memory_utilization\": 0." `isInfixOf` vllmAdapter)
+            && "_device_arena_fraction(context)" `isInfixOf` vllmAdapter
+            && "max_tokens=context.generation_bound" `isInfixOf` vllmAdapter
+        )
+        ( "Sprint 6.51: the vLLM adapter derives its device arena from the "
+            <> "admitted quantity rather than from a fraction literal"
+        )
       persistInferenceResult paths textPayloadResult
       reloadedResult <- loadInferenceResult paths "req-unit-text"
       assert
@@ -5192,6 +5540,65 @@ main = do
     assert
       (expectedLinuxGpuEngineResources `isInfixOf` linuxGpuFinalValues)
       "linux-gpu final Helm values keep enough engine memory for the routed Wan diffusers row"
+    -- Phase 8 Sprint 8.13 regression guard. Sprint 8.12 made engine member
+    -- identity fail closed, and Sprint 8.11's machine contract declares one
+    -- member per framework engine image on `linux-gpu` plus `native`. The
+    -- shared engine Deployment carried no `--engine-name`, so on that lane it
+    -- could not say which member it was and crash-looped by name, while
+    -- `linux-cpu` — whose contract declares exactly one member — resolved that
+    -- member implicitly and stayed green. The property asserted here is the one
+    -- the deployment needs: for every lane that deploys a shared engine
+    -- workload, the member name the lifecycle renders is a member that lane's
+    -- own machine contract declares, so `resolveMachineMemberId` accepts it.
+    -- Asserting acceptance rather than a literal keeps the guard alive through
+    -- a later rename of either list.
+    let renderedSharedEngineMember laneValues =
+          Text.pack
+            ( concat
+                [ takeWhile (/= '"') (drop 1 (dropWhile (/= '"') line))
+                | line <- lines laneValues,
+                  "  memberName: " `isPrefixOf` line
+                ]
+            )
+        declaredMachineNode laneMode =
+          HostConfig.MachineNode
+            { HostConfig.machineRole = Enums.daemonRoleToDhall Engine,
+              HostConfig.machineMembers =
+                map engineMemberId (engineMembersForFleet laneMode singleEngineMachine),
+              HostConfig.machineModelCacheQuotaBytes = 1,
+              HostConfig.machineSystemContractDigest = "sha256:0"
+            }
+    mapM_
+      ( \(laneMode, laneValues) -> do
+          let renderedMember = renderedSharedEngineMember laneValues
+          assert
+            (not (Text.null renderedMember))
+            ( "the "
+                <> Text.unpack (runtimeModeId laneMode)
+                <> " lifecycle renders a shared engine member name"
+            )
+          assert
+            ( MachineContract.resolveMachineMemberId (declaredMachineNode laneMode) (Just renderedMember)
+                == Right renderedMember
+            )
+            ( "the "
+                <> Text.unpack (runtimeModeId laneMode)
+                <> " shared engine member name is declared by that lane's machine contract"
+            )
+          -- Declared is necessary but not sufficient: naming a framework member
+          -- would point the shared Deployment at an identity whose pools only
+          -- the per-engine image can serve, because the launcher image this
+          -- Deployment runs carries no framework virtual environment.
+          assert
+            (renderedMember `notElem` perEngineDeploymentNames laneMode)
+            ( "the "
+                <> Text.unpack (runtimeModeId laneMode)
+                <> " shared engine member is the one with no per-engine Deployment of its own"
+            )
+      )
+      [ (LinuxGpu, linuxGpuFinalValues),
+        (LinuxCpu, linuxCpuFinalValues)
+      ]
     -- Phase 3 Sprint 3.16 regression guard. The sprint set every infernix role
     -- to `replicaCount: 1` in `chart/values.yaml`, but the generated overlay
     -- supersedes the base values on every phase render, and it still emitted
@@ -15560,7 +15967,7 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
             "per-pool `maxInflightPerMember` knob, which only ever held one supported value"
           ),
           ( "retired-limit-resource",
-            ", resource = < UnifiedHostRam | PodRam | GpuVram >.PodRam\n",
+            ", resource = < HostRam | PodRam | NvidiaVram >.PodRam\n",
             "substrate-limit `resource` field, now derived from the runtime mode and which half of the budget the limit occupies"
           ),
           ( "retired-limit-source",
@@ -15588,6 +15995,17 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
           ( "retired-engine-members",
             ", engineMembers = ([] : List Text)\n",
             "generated `engineMembers` list, now inverted out of the pool graph"
+          ),
+          -- Phase 4 Sprint 4.38: the per-model device flag and the single
+          -- footprint were replaced by one closed requirement union, so a stale
+          -- payload carrying either names the field it still holds.
+          ( "retired-requires-gpu",
+            ", requiresGpu = False\n",
+            "per-model `requiresGpu` field, now derived from the requirement's own arm"
+          ),
+          ( "retired-model-ram-footprint",
+            ", modelRamFootprintMib = 4096\n",
+            "per-model `modelRamFootprintMib` field, replaced by the derived requirement and the declared execution shape"
           )
         ]
   assert
@@ -15622,13 +16040,13 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
     ( forAll (choose (1, 1048576)) $ \mib ->
         either
           (const False)
-          ((== mib) . modelMemoryFootprintMib)
-          (mkModelMemoryFootprint mib)
+          ((== mib) . modelResourceRequirementHostMib)
+          (mkHostResidentRequirement mib)
     )
   runProperty
     "zero and negative model-memory quantities are rejected"
     ( forAll (choose (-1048576, 0)) $ \mib ->
-        isLeft (mkModelMemoryFootprint mib)
+        isLeft (mkHostResidentRequirement mib)
     )
   runProperty
     "fitting host-memory partitions preserve their exact inference capacity"
@@ -15771,22 +16189,34 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
         appleConfig
           { inferenceMemoryBudget = barkConstrainedBudget
           }
-  barkAppleDescriptor <-
+  -- The row must still be in the catalog for the plan fixtures below to place
+  -- it; only the memory constant it used to carry is gone.
+  _barkAppleDescriptor <-
     maybe
       (fail "Apple catalog omitted the Bark model")
       pure
       (findModel AppleSilicon barkModelIdValue)
-  assert
-    (modelMemoryFootprintMib (modelRamFootprint barkAppleDescriptor) == barkRequiredMib)
-    "Bark uses the conservative 8 GiB heavy-PyTorch audio footprint"
+  -- Phase 4 Sprint 4.39: the catalog carries no memory constant any more, so
+  -- what these fixtures pin is the admission arithmetic against a supplied
+  -- requirement rather than the value of a table this repository deleted.
+  barkRequirement <-
+    expectRight
+      "construct the Bark host-residency requirement fixture"
+      (mkHostResidentRequirement barkRequiredMib)
   barkSupportedPlan <-
     expectCompiledExecutionPlan
       root
       "bark-supported-apple-plan"
       barkSupportedConfig
   assert
-    (isNothing (ExecutionPlan.predictedAdmissionRejection barkSupportedPlan barkModelIdValue))
-    "Bark is admitted by the real 10 GiB Apple inference partition"
+    ( isNothing
+        ( ExecutionPlan.predictedAdmissionRejection
+            barkSupportedPlan
+            barkModelIdValue
+            barkRequirement
+        )
+    )
+    "an 8 GiB requirement is admitted by the real 10 GiB Apple inference partition"
   barkConstrainedPlan <-
     expectCompiledExecutionPlan
       root
@@ -15796,18 +16226,22 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     maybe
       (fail "Bark remained admitted by a 5 GiB Apple inference budget")
       pure
-      (ExecutionPlan.predictedAdmissionRejection barkConstrainedPlan barkModelIdValue)
+      ( ExecutionPlan.predictedAdmissionRejection
+          barkConstrainedPlan
+          barkModelIdValue
+          barkRequirement
+      )
   assert
     ( barkConstrainedRejection
         == ModelMemoryLimitExceeded
           { inferenceErrorModelId = barkModelIdValue,
             inferenceErrorRequiredMib = barkRequiredMib,
             inferenceErrorAvailableMib = 5120,
-            inferenceErrorResource = UnifiedHostRam,
+            inferenceErrorResource = HostRam,
             inferenceErrorSource = inferenceMemoryBudgetSource barkConstrainedBudget
           }
     )
-    "Bark is rejected before execution when its 8 GiB footprint exceeds a 5 GiB Apple budget"
+    "an 8 GiB requirement is refused before execution by a 5 GiB Apple budget"
   singleAppleConfig <-
     expectRight
       "derive a single-model execution-plan fixture"
@@ -15867,10 +16301,16 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "model-bootstrap authorization rejects a malformed requestedAt timestamp"
   let unenforceableFootprintMib =
         fromInteger (toInteger (maxBound :: Word64) `div` 1048576 + 1)
-  unenforceableFootprint <-
-    expectRight
-      "construct a positive but unenforceable execution-plan model footprint"
-      (mkModelMemoryFootprint unenforceableFootprintMib)
+      -- Phase 4 Sprint 4.39: the compiler no longer reads an authored footprint,
+      -- so what it can still refuse on every role is the declared execution
+      -- shape the cache term is evaluated against.
+      unenforceableShapeModel =
+        model
+          { modelExecutionShape =
+              (modelExecutionShape model)
+                { executionContextLength = unenforceableFootprintMib
+                }
+          }
   let modelIdValue = modelId model
       poolIdValue = enginePoolId pool
       memberIdValue = engineMemberId member
@@ -15918,11 +16358,16 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
           LinuxCpu
           (podBudget PodRam ClusterEnginePodMemoryLimit 65536)
           singleAppleConfig
+      -- Phase 4 Sprint 4.39: device usage is where the weights live, so a
+      -- device-lane fixture declares a streamed load rather than setting a flag
+      -- beside a host quantity.
+      deviceExecutionShape =
+        (modelExecutionShape model) {executionLoadStrategy = StreamWeightsToDevice}
       linuxCpuGpuModel =
         model
           { runtimeMode = LinuxCpu,
             runtimeLane = KindLinuxCpu,
-            requiresGpu = True
+            modelExecutionShape = deviceExecutionShape
           }
       linuxCpuGpuConfig =
         executionPlanConfigForRuntime
@@ -15933,7 +16378,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
         model
           { runtimeMode = LinuxGpu,
             runtimeLane = KindLinuxGpuGpu,
-            requiresGpu = True
+            modelExecutionShape = deviceExecutionShape
           }
       linuxGpuWithPodBudget =
         executionPlanConfigForRuntime
@@ -15943,7 +16388,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
       linuxGpuWithVramBudget =
         executionPlanConfigForRuntime
           LinuxGpu
-          (podBudget GpuVram LinuxGpuVramBudget 65536)
+          (podBudget NvidiaVram LinuxGpuVramBudget 65536)
           (withCatalog singleAppleConfig [linuxGpuModel])
       invalidIdentifiers =
         [ ("path", "path/segment"),
@@ -16046,9 +16491,9 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     (singleAppleConfig {models = [model {requestShape = []}]})
   assertExecutionPlanError
     root
-    "unenforceable-model-memory-footprint"
-    (ExecutionPlan.UnenforceableModelMemoryFootprint modelIdValue (toInteger unenforceableFootprintMib))
-    (withCatalog singleAppleConfig [model {modelRamFootprint = unenforceableFootprint}])
+    "unenforceable-model-execution-shape"
+    (ExecutionPlan.UnenforceableModelExecutionShape modelIdValue (toInteger unenforceableFootprintMib))
+    (withCatalog singleAppleConfig [unenforceableShapeModel])
   assertExecutionPlanError
     root
     "duplicate-model-id"
@@ -16196,7 +16641,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   assertExecutionPlanError
     root
     "linux-host-budget-mismatch"
-    (ExecutionPlan.RuntimeBudgetMismatch LinuxCpu UnifiedHostRam)
+    (ExecutionPlan.RuntimeBudgetMismatch LinuxCpu HostRam)
     (linuxCpuConfig {inferenceMemoryBudget = inferenceMemoryBudget singleAppleConfig})
   -- Phase 8 Sprint 8.10: which physical resource a substrate limit bounds, and
   -- which policy set it, are derived from the runtime mode and from which half
@@ -16218,18 +16663,21 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     linuxGpuWithPodBudget
   let availableMib = inferenceMemoryBudgetCapacityMib (inferenceMemoryBudget singleAppleConfig)
       requiredMib = availableMib + 1
-  oversizedFootprint <-
+  oversizedRequirement <-
     expectRight
-      "construct an oversized execution-plan model footprint"
-      (mkModelMemoryFootprint requiredMib)
+      "construct an oversized execution-plan model requirement"
+      (mkHostResidentRequirement requiredMib)
+  fundableRequirement <-
+    expectRight
+      "construct a fundable execution-plan model requirement"
+      (mkHostResidentRequirement availableMib)
   -- Phase 4 Sprint 4.34: an all-over-capacity catalog still compiles, because
   -- placement is graph validation and this process is not the machine that will
   -- execute. The refusal it used to raise here now belongs to the engine's
   -- refinement (`NoAdmissiblePlacement`), which is pinned in the
   -- execution-plan-internal suite; what this fixture pins is that the compiler
   -- places the model and predicts its rejection.
-  let allOversizedConfig =
-        withCatalog singleAppleConfig [model {modelRamFootprint = oversizedFootprint}]
+  let allOversizedConfig = withCatalog singleAppleConfig [model]
   allOversizedPlan <-
     expectCompiledExecutionPlan root "no-admissible-placement" allOversizedConfig
   assert
@@ -16240,16 +16688,35 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     )
     "an over-capacity catalog is still placed by the compiler"
   assert
-    (isJust (ExecutionPlan.predictedAdmissionRejection allOversizedPlan modelIdValue))
-    "an over-capacity catalog is predicted to be rejected by the machine that would execute it"
+    ( isJust
+        ( ExecutionPlan.predictedAdmissionRejection
+            allOversizedPlan
+            modelIdValue
+            oversizedRequirement
+        )
+    )
+    ( "an over-capacity requirement is predicted to be rejected by the machine "
+        <> "that would execute it"
+    )
+  -- Phase 4 Sprint 4.39: the prediction takes the requirement, so the same plan
+  -- admits a requirement the machine can fund. A prediction that could not say
+  -- "yes" would be satisfied by an implementation that always refuses.
+  assert
+    ( isNothing
+        ( ExecutionPlan.predictedAdmissionRejection
+            allOversizedPlan
+            modelIdValue
+            fundableRequirement
+        )
+    )
+    "the same plan admits a requirement inside the machine's declared capacity"
   -- The unavailable-model accounting still has to work when *some* model is
   -- admissible, so the fixture pairs the over-capacity model with the original.
   let oversizedModelIdValue = modelIdValue <> "-oversized"
       oversizedModel =
         model
           { modelId = oversizedModelIdValue,
-            matrixRowId = matrixRowId model <> "-oversized",
-            modelRamFootprint = oversizedFootprint
+            matrixRowId = matrixRowId model <> "-oversized"
           }
       oversizedConfig =
         singleAppleConfig
@@ -16274,20 +16741,30 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     )
     "both the fitting and the over-capacity model are placed, because placement is graph validation"
   assert
-    (isNothing (ExecutionPlan.predictedAdmissionRejection oversizedPlan modelIdValue))
-    "the fitting execution-plan model is predicted to be admitted"
+    ( isNothing
+        ( ExecutionPlan.predictedAdmissionRejection
+            oversizedPlan
+            modelIdValue
+            fundableRequirement
+        )
+    )
+    "a fitting requirement is predicted to be admitted"
   oversizedRejection <-
     maybe
       (fail "over-capacity execution-plan model is missing from the predicted admission rejection")
       pure
-      (ExecutionPlan.predictedAdmissionRejection oversizedPlan oversizedModelIdValue)
+      ( ExecutionPlan.predictedAdmissionRejection
+          oversizedPlan
+          oversizedModelIdValue
+          oversizedRequirement
+      )
   assert
     ( oversizedRejection
         == ModelMemoryLimitExceeded
           { inferenceErrorModelId = oversizedModelIdValue,
             inferenceErrorRequiredMib = requiredMib,
             inferenceErrorAvailableMib = availableMib,
-            inferenceErrorResource = UnifiedHostRam,
+            inferenceErrorResource = HostRam,
             inferenceErrorSource = inferenceMemoryBudgetSource (inferenceMemoryBudget singleAppleConfig)
           }
     )
@@ -16298,19 +16775,24 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   assertCompiledExecutionPlanAccounting linuxConfig linuxPlan
   assertCompiledExecutionPlanRoutes linuxConfig linuxPlan
   assertCatalogPlanCoverage LinuxCpu linuxConfig linuxPlan
-  barkLinuxDescriptor <-
+  _barkLinuxDescriptor <-
     maybe
       (fail "Linux CPU catalog omitted the Bark model")
       pure
       (findModel LinuxCpu barkModelIdValue)
-  assert
-    (modelMemoryFootprintMib (modelRamFootprint barkLinuxDescriptor) == barkRequiredMib)
-    "Linux CPU uses the same conservative 8 GiB Bark footprint"
+  barkLinuxRequirement <-
+    expectRight
+      "construct the Linux Bark host-residency requirement fixture"
+      (mkHostResidentRequirement barkRequiredMib)
   barkLinuxRejection <-
     maybe
-      (fail "Linux CPU admitted Bark despite its 4 GiB inference budget")
+      (fail "Linux CPU admitted an 8 GiB requirement despite its 4 GiB inference budget")
       pure
-      (ExecutionPlan.predictedAdmissionRejection linuxPlan barkModelIdValue)
+      ( ExecutionPlan.predictedAdmissionRejection
+          linuxPlan
+          barkModelIdValue
+          barkLinuxRequirement
+      )
   assert
     ( barkLinuxRejection
         == ModelMemoryLimitExceeded
@@ -16326,7 +16808,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   -- remains a hard config error rather than silently admitting device work
   -- against one limit.
   let linuxGpuSingleResourcePath = root </> "execution-plan-linux-gpu-single-resource.dhall"
-      linuxGpuSingleResourceBudget = podBudget GpuVram LinuxGpuVramBudget 65536
+      linuxGpuSingleResourceBudget = podBudget NvidiaVram LinuxGpuVramBudget 65536
   BS.writeFile
     linuxGpuSingleResourcePath
     (renderGeneratedDemoConfigPayload paths LinuxGpu singleEngineMachine False linuxGpuSingleResourceBudget)
@@ -16350,7 +16832,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
       linuxGpuDualCatalogBudget =
         DualEnforcedBudget
           (podLimitFor PodRam ClusterEnginePodMemoryLimit 4096)
-          (podLimitFor GpuVram LinuxGpuVramBudget 4096)
+          (podLimitFor NvidiaVram LinuxGpuVramBudget 4096)
   BS.writeFile
     linuxGpuConfigPath
     (renderGeneratedDemoConfigPayload paths LinuxGpu singleEngineMachine False linuxGpuDualCatalogBudget)
@@ -16359,6 +16841,13 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
       (\errors -> fail ("Linux GPU catalog failed to compile under the dual budget: " <> show (NonEmpty.toList errors)))
       pure
       =<< decodeCompiledRuntimePlanFile linuxGpuConfigPath
+  -- Phase 4 Sprint 4.39: the prediction takes the requirement, so this fixture
+  -- supplies one that exceeds both halves of the dual budget. What it pins is
+  -- which resource a dual-resource refusal names, not a catalog constant.
+  linuxGpuOverCapacityRequirement <-
+    expectRight
+      "construct a Linux GPU requirement past both declared limits"
+      (mkHostAndDeviceRequirement 8192 8192)
   assert
     ( sort (map modelId (ExecutionPlan.compiledPlanConfiguredModels linuxGpuPlan))
         == sort (map modelId (catalogForMode LinuxGpu))
@@ -16376,12 +16865,16 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
               ( \reason ->
                   assert
                     ( not (requiresGpu descriptor)
-                        || inferenceErrorResource reason == GpuVram
+                        || inferenceErrorResource reason == NvidiaVram
                         || inferenceErrorResource reason == PodRam
                     )
                     "Linux GPU capacity rejection names one of the two enforced resources"
               )
-              (ExecutionPlan.predictedAdmissionRejection linuxGpuPlan (modelId descriptor))
+              ( ExecutionPlan.predictedAdmissionRejection
+                  linuxGpuPlan
+                  (modelId descriptor)
+                  linuxGpuOverCapacityRequirement
+              )
     )
     (ExecutionPlan.compiledRuntimePlanPlacements linuxGpuPlan)
 
@@ -16392,7 +16885,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     ( \placement ->
         let descriptor = ExecutionPlan.compiledPlacementDescriptor placement
             expectedResources =
-              if requiresGpu descriptor then [PodRam, GpuVram] else [PodRam]
+              if requiresGpu descriptor then [PodRam, NvidiaVram] else [PodRam]
             enforcedResources =
               ExecutionPlan.compiledPlanPlacementEnforcedResources linuxGpuPlan placement
          in assert
@@ -16681,7 +17174,7 @@ executionPlanConfigErrorTag configError =
     ExecutionPlan.InvalidModelDescriptor _ -> "InvalidModelDescriptor"
     ExecutionPlan.InvalidModelId _ -> "InvalidModelId"
     ExecutionPlan.InvalidMatrixRowId _ -> "InvalidMatrixRowId"
-    ExecutionPlan.UnenforceableModelMemoryFootprint _ _ -> "UnenforceableModelMemoryFootprint"
+    ExecutionPlan.UnenforceableModelExecutionShape _ _ -> "UnenforceableModelExecutionShape"
     ExecutionPlan.DuplicateModelId _ -> "DuplicateModelId"
     ExecutionPlan.DuplicateMatrixRowId _ -> "DuplicateMatrixRowId"
     ExecutionPlan.DuplicatePoolId _ -> "DuplicatePoolId"
@@ -18337,9 +18830,19 @@ assertLinuxHostBatchForwarding paths = do
   -- the coordinator apply the executing machine's verdict on its behalf, which
   -- is exactly the veto the admission split removes.
   let unavailableModelId = "audio-demucs-htdemucs"
+  demucsOverCapacityRequirement <-
+    expectRight
+      "construct a Demucs requirement past the Linux CPU budget"
+      (mkHostResidentRequirement 8192)
   assert
-    (isJust (ExecutionPlan.predictedAdmissionRejection compiledPlan unavailableModelId))
-    "filesystem-forwarding plan places the oversized Demucs model but predicts its rejection"
+    ( isJust
+        ( ExecutionPlan.predictedAdmissionRejection
+            compiledPlan
+            unavailableModelId
+            demucsOverCapacityRequirement
+        )
+    )
+    "filesystem-forwarding plan places the Demucs model but predicts an over-capacity rejection"
   unavailablePool <-
     maybe
       (fail "generated Linux CPU pools omitted the oversized Demucs model")
@@ -18664,7 +19167,7 @@ linuxGpuUnitInferenceMemoryBudget =
         podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
       }
     PodMemoryLimit
-      { podMemoryLimitResource = GpuVram,
+      { podMemoryLimitResource = NvidiaVram,
         podMemoryLimitSource = LinuxGpuVramBudget,
         podMemoryLimitMib = linuxEngineInferenceVramBudgetMib
       }
@@ -18735,8 +19238,8 @@ retiredGeneratedWireFields =
     "pythonNative",
     "AppleSiliconHost",
     "KindLinuxCpu",
-    "UnifiedHostRam",
-    "GpuVram",
+    "HostRam",
+    "NvidiaVram",
     "ClusterEnginePodMemoryLimit",
     "LinuxGpuVramBudget"
   ]
@@ -21585,8 +22088,6 @@ runNativeArtifactArgumentAssertions = do
         == Right
           [ "--model",
             "/var/lib/infernix/models/test-model/payload",
-            "--prompt",
-            "test prompt",
             "--n-predict",
             "32",
             "--ctx-size",
@@ -21595,6 +22096,8 @@ runNativeArtifactArgumentAssertions = do
             "1",
             "--gpu-layers",
             "0",
+            "--prompt",
+            "test prompt",
             "--no-display-prompt",
             "--single-turn",
             "--simple-io"
@@ -21697,7 +22200,25 @@ runNativeArtifactArgumentAssertions = do
               "Name:\ttarget\n"
           )
     )
-    "Sprint 1.20: a live or malformed /proc status without VmRSS still fails closed"
+    "Sprint 1.20: a live or malformed /proc status without RssAnon still fails closed"
+  -- Phase 4 Sprint 4.40: the sampled field is the anonymous residency the
+  -- installed data-segment ceiling charges, not the resident-set total that
+  -- also counts file-backed and shared pages the ceiling charges for none of.
+  assert
+    ( CappedEngineInternal.parseResidentBytesForTest
+        "Name:\ttarget\nState:\tS (sleeping)\nVmRSS:\t  409600 kB\nRssAnon:\t  102400 kB\nRssFile:\t  307200 kB\n"
+        == Right (102400 * 1024)
+    )
+    "Sprint 4.40: the Linux sampler reads RssAnon, not the resident-set total"
+  assert
+    ( isLeftResult
+        ( CappedEngineInternal.parseResidentBytesForTest
+            "Name:\ttarget\nState:\tS (sleeping)\nVmRSS:\t  409600 kB\nRssFile:\t  307200 kB\n"
+        )
+    )
+    ( "Sprint 4.40: a status block carrying VmRSS but no RssAnon is an "
+        <> "enforcement failure, not a fallback to the retired field"
+    )
   assert
     ( CappedEngineInternal.missingResidentRecheckForTest Nothing == Right True
         && CappedEngineInternal.missingResidentRecheckForTest
@@ -21707,7 +22228,7 @@ runNativeArtifactArgumentAssertions = do
           (Just "885 (target) X 1 885\n")
           == Right True
     )
-    "Sprint 1.20: the missing-VmRSS recheck accepts only vanished or terminal tasks"
+    "Sprint 1.20: the missing-RssAnon recheck accepts only vanished or terminal tasks"
   assert
     ( CappedEngineInternal.missingResidentRecheckForTest
         (Just "885 (target) R 1 885\n")
@@ -21717,7 +22238,485 @@ runNativeArtifactArgumentAssertions = do
               (Just "malformed stat\n")
           )
     )
-    "Sprint 1.20: the missing-VmRSS recheck retries live tasks and rejects malformed stat evidence"
+    "Sprint 1.20: the missing-RssAnon recheck retries live tasks and rejects malformed stat evidence"
+  runSharedWatchdogLoopAssertions
+  runInstalledCeilingAssertions
+  runEngineProjectionAssertions
+  runHarnessConfigRecoveryAssertions
+
+-- | Phase 4 Sprint 4.43 — the engine's own projection, and the ceiling it
+-- widens.
+--
+-- The defect this closes was measured rather than argued: a derived requirement
+-- of roughly 471 MiB refused an 11 MiB key/value cache allocation on a host with
+-- 124 GiB free, because the derivation models the artifact's weights and cache
+-- and cannot model the engine's own compute buffers. The projection is the
+-- engine answering that question about itself.
+runEngineProjectionAssertions :: IO ()
+runEngineProjectionAssertions = do
+  let payloadPath = "/var/lib/infernix/models/test-model/payload"
+      execution =
+        Projection.LlamaNativeExecution
+          { Projection.llamaExecutionContextLength = 512,
+            Projection.llamaExecutionGenerationBound = 32,
+            Projection.llamaExecutionThreads = 1,
+            Projection.llamaExecutionGpuLayers = 0
+          }
+      llamaProbe =
+        Projection.engineProjectionRequest "llama-cpp-cli" payloadPath execution
+      sharedOperands =
+        Projection.llamaNativeExecutionArguments payloadPath execution
+      renderedEngineArguments =
+        fromRight
+          []
+          ( CappedEngineInternal.renderNativeArtifactArgumentsForTest
+              "llama-cpp-cli"
+              Nothing
+              Nothing
+          )
+  -- The load-bearing property: the probe and the engine render the same
+  -- execution operands from one value, so a projection can never describe a
+  -- different execution than the one that runs.
+  assert
+    ( fmap
+        (take (length sharedOperands) . Projection.projectionArguments)
+        llamaProbe
+        == Just sharedOperands
+        && take (length sharedOperands) renderedEngineArguments == sharedOperands
+    )
+    ( "Sprint 4.43: the projection probe and the engine invocation render the "
+        <> "same execution operands from one value"
+    )
+  assert
+    ( fmap Projection.projectionExecutableName llamaProbe
+        == Just "llama-fit-params"
+        && fmap
+          (drop (length sharedOperands) . Projection.projectionArguments)
+          llamaProbe
+          == Just ["-fitp", "on"]
+    )
+    ( "Sprint 4.43: the probe is the upstream projection tool asked to print its "
+        <> "estimate, named as a sibling file rather than as a path"
+    )
+  -- A family with no projection tool is a positive statement, not an omission.
+  assert
+    ( all
+        ( \adapterId ->
+            isNothing
+              (Projection.engineProjectionRequest adapterId payloadPath execution)
+        )
+        [ "whisper-cpp-cli",
+          "jvm-native",
+          "onnx-runtime-native",
+          "ctranslate2-native",
+          "mlx-native",
+          "coreml-native"
+        ]
+    )
+    ( "Sprint 4.43: an engine family that ships no projection tool declares none, "
+        <> "and its ceiling is the artifact-derived quantity"
+    )
+  -- The parser, against the tool's real output shape.
+  assert
+    (Projection.parseEngineProjectionMib "Host 426 11 70 \n" == Right 507)
+    "Sprint 4.43: a host row's model, context, and compute estimates sum to the projection"
+  assert
+    ( Projection.parseEngineProjectionMib "CUDA0 4200 90 310\nHost 426 11 70\n"
+        == Right 507
+    )
+    ( "Sprint 4.43: a device row is read and deliberately not summed into a host "
+        <> "ceiling, which charges no device buffer"
+    )
+  assert
+    ( isLeftResult (Projection.parseEngineProjectionMib "")
+        && isLeftResult (Projection.parseEngineProjectionMib "loading model...\n")
+        && isLeftResult (Projection.parseEngineProjectionMib "CUDA0 4200 90 310\n")
+        && isLeftResult (Projection.parseEngineProjectionMib "Host 426 eleven 70\n")
+        && isLeftResult (Projection.parseEngineProjectionMib "Host 0 0 0\n")
+    )
+    ( "Sprint 4.43: an unreadable, host-less, or non-positive projection is a "
+        <> "reason rather than a small number"
+    )
+  -- The installed quantity is the greater of the two, and the derivation stays
+  -- authoritative wherever it is larger.
+  let derivedOnly =
+        Ceiling.resolveEngineCeiling LinuxCpu PodRam 471 Ceiling.NoEngineProjection
+      widened =
+        Ceiling.resolveEngineCeiling LinuxCpu PodRam 471 (Ceiling.EngineProjectedMib 507)
+      underReported =
+        Ceiling.resolveEngineCeiling LinuxCpu PodRam 471 (Ceiling.EngineProjectedMib 64)
+  assert
+    ( Ceiling.installedCeilingMib widened == 507
+        && Ceiling.installedCeilingDerivedMib widened == 471
+        && Ceiling.installedCeilingProvenance widened
+          == Ceiling.CeilingFromArtifactAndProjection 507
+    )
+    ( "Sprint 4.43: a projection above the derived requirement widens the "
+        <> "installed ceiling and both quantities are retained"
+    )
+  assert
+    ( Ceiling.installedCeilingMib underReported == 471
+        && Ceiling.installedCeilingProvenance underReported
+          == Ceiling.CeilingFromArtifactAndProjection 64
+    )
+    ( "Sprint 4.43: an engine that under-reports cannot widen its own bound below "
+        <> "what its weights and cache provably need"
+    )
+  assert
+    ( Ceiling.installedCeilingMib derivedOnly == 471
+        && Ceiling.installedCeilingProvenance derivedOnly == Ceiling.CeilingFromArtifact
+    )
+    ( "Sprint 4.43: a ceiling derived from the artifact alone says so in its own "
+        <> "provenance rather than implying a projection was consulted"
+    )
+  -- The prefix binds the installed quantity, not the derived one; installing a
+  -- ceiling the projection widened and then rendering the narrower number would
+  -- reintroduce the defect at the one site that matters.
+  assert
+    ( Ceiling.installedCeilingArgumentPrefix widened
+        == ["/usr/bin/prlimit", "--data=531628032:531628032", "--"]
+    )
+    ( "Sprint 4.43: the launch prefix lowers both limits to the quantity actually "
+        <> "installed"
+    )
+  -- The probe cannot be bounded by the quantity it exists to correct. Measured
+  -- against the pinned payload, the upstream projection tool needs roughly 48
+  -- MiB whatever model it is asked about, while a device-streaming placement's
+  -- derived host term is the largest single tensor, which is 52 MiB for the row
+  -- that produced this sprint and smaller for a smaller model.
+  -- Phase 4 Sprint 4.43: a model is staged one of two ways and the cold-cache
+  -- derivation has to read both. Asking only for the single-file `payload` key
+  -- reported every snapshot-layout model as having no staged object at all,
+  -- which named the wrong proposition: the object was there under a name this
+  -- reader never asked for.
+  assert
+    ( Enforcer.selectStagedCheckpointKeyForTest
+        ["llm-tinyllama-gguf/payload", "llm-tinyllama-gguf/.ready"]
+        == Right "llm-tinyllama-gguf/payload"
+    )
+    "Sprint 4.43: the single-file staging layout still selects its payload object"
+  assert
+    ( Enforcer.selectStagedCheckpointKeyForTest
+        [ "llm-smollm2-safetensors/config.json",
+          "llm-smollm2-safetensors/model.safetensors",
+          "llm-smollm2-safetensors/tokenizer.json",
+          "llm-smollm2-safetensors/.ready"
+        ]
+        == Right "llm-smollm2-safetensors/model.safetensors"
+    )
+    ( "Sprint 4.43: a mirrored repository's checkpoint is selected among the "
+        <> "upstream file names it was staged under"
+    )
+  assert
+    ( isLeftResult (Enforcer.selectStagedCheckpointKeyForTest [])
+        && isLeftResult
+          ( Enforcer.selectStagedCheckpointKeyForTest
+              ["audio-basic-pitch-onnx/model.onnx", "audio-basic-pitch-onnx/.ready"]
+          )
+    )
+    ( "Sprint 4.43: an empty prefix and a prefix holding no readable checkpoint "
+        <> "are both refusals, and they say different things"
+    )
+  -- The load-bearing negative: a sharded snapshot is refused rather than
+  -- under-derived from one shard's tensor table.
+  assert
+    ( isLeftResult
+        ( Enforcer.selectStagedCheckpointKeyForTest
+            [ "llm-sharded/model-00001-of-00002.safetensors",
+              "llm-sharded/model-00002-of-00002.safetensors"
+            ]
+        )
+    )
+    ( "Sprint 4.43: a sharded snapshot is refused, because a requirement summed "
+        <> "from one shard understates the rest"
+    )
+  let probeCeiling = Ceiling.projectionProbeCeiling PodRam 52
+  assert
+    ( Ceiling.installedCeilingStrength probeCeiling == Ceiling.CeilingDetectionOnly
+        && null (Ceiling.installedCeilingArgumentPrefix probeCeiling)
+        && Ceiling.installedCeilingDerivedMib probeCeiling == 52
+    )
+    ( "Sprint 4.43: the projection probe installs nothing and still carries the "
+        <> "quantity the plan would have installed"
+    )
+
+-- | Phase 4 Sprint 4.40 — the shared sampling kernel, driven over scripted
+-- sample sequences with no platform branch, so both lanes' gate sets run the
+-- same assertions. None of these decisions was reachable from a unit suite
+-- while the loop lived inside conditional compilation, which is the mechanical
+-- reason three copies of one algorithm were allowed to differ.
+runSharedWatchdogLoopAssertions :: IO ()
+runSharedWatchdogLoopAssertions = do
+  breach <-
+    CappedEngineInternal.scriptedWatchdogOutcomeForTest
+      PodRam
+      16
+      2
+      [Right (Just (24 * 1024 * 1024))]
+      [Right 1]
+  assert
+    (breachOutcomeExceeds PodRam 16 breach)
+    "Sprint 4.40: the shared loop breaches above its ceiling and names the resource"
+  -- The ceiling is a bound the engine may reach, not one it may not touch:
+  -- the loop breaches on @observed > ceiling@, so a sample landing exactly on
+  -- it has to be survivable.
+  --
+  -- The outcome asserted is deliberately not @Nothing@. This harness cannot
+  -- produce @Nothing@ at all: its target only reports termination once
+  -- something has already recorded one, so an empty termination is
+  -- unreachable and asserting it would be a test that can never pass. What
+  -- distinguishes the boundary is *which* outcome ends the watch. Continuing
+  -- past the at-ceiling sample lets the scripted group disappearance end it;
+  -- had the comparison been @>=@, the first sample would have breached and
+  -- this assertion would fail on a @CeilingBreached@ instead.
+  atCeiling <-
+    CappedEngineInternal.scriptedWatchdogOutcomeForTest
+      PodRam
+      16
+      2
+      [Right (Just (16 * 1024 * 1024)), Right Nothing]
+      [Right 1]
+  assert
+    (enforcementUnavailableNames "no live group member" atCeiling)
+    ( "Sprint 4.40: a sample exactly at the ceiling does not breach; the loop "
+        <> "continues past it and only the scripted group disappearance ends the watch"
+    )
+  -- Phase 4 Sprint 4.44: the loop retains the highest complete observation it
+  -- made, including observations that neither breach nor fail. A kernel-refused
+  -- allocation is never resident, so this peak is the only observation such a
+  -- refusal leaves behind, and a loop that discarded it would make the refusal
+  -- undiagnosable from its own output.
+  recordedPeak <-
+    CappedEngineInternal.scriptedWatchdogPeakForTest
+      PodRam
+      64
+      2
+      [ Right (Just (12 * 1024 * 1024)),
+        Right (Just (61 * 1024 * 1024)),
+        Right (Just (30 * 1024 * 1024)),
+        Right Nothing
+      ]
+      [Right 1]
+  assert
+    (recordedPeak == Just 61)
+    ( "Sprint 4.44: the loop keeps the highest observation it made, not the last "
+        <> "one, so a peak that has since fallen back is still reported"
+    )
+  noSamplePeak <-
+    CappedEngineInternal.scriptedWatchdogPeakForTest
+      PodRam
+      64
+      2
+      [Right Nothing]
+      [Right 1]
+  assert
+    (isNothing noSamplePeak)
+    ( "Sprint 4.44: a loop that completed no observation records none, so a "
+        <> "refusal cannot be classified from a peak that was never taken"
+    )
+  unreadable <-
+    CappedEngineInternal.scriptedWatchdogOutcomeForTest
+      PodRam
+      16
+      2
+      [Left "scripted sampler could not read its evidence"]
+      [Right 1]
+  assert
+    (enforcementUnavailableNames "could not read its evidence" unreadable)
+    "Sprint 4.40: unreadable evidence is a terminal enforcement failure naming its reason"
+  overMembers <-
+    CappedEngineInternal.scriptedWatchdogOutcomeForTest
+      PodRam
+      4096
+      2
+      [Right (Just 1024)]
+      [Right 5]
+  assert
+    ( enforcementUnavailableNames "5 live members" overMembers
+        && enforcementUnavailableNames "2 its placement declares" overMembers
+    )
+    ( "Sprint 4.40: a group holding more members than its placement declared "
+        <> "terminates as an enforcement failure naming both numbers"
+    )
+  absentGroup <-
+    CappedEngineInternal.scriptedWatchdogOutcomeForTest
+      PodRam
+      4096
+      2
+      [Right Nothing]
+      [Right 1]
+  assert
+    (enforcementUnavailableNames "no live group member" absentGroup)
+    ( "Sprint 4.40: an absent group with a leader that never terminated settles "
+        <> "and then fails closed"
+    )
+  deviceBreach <-
+    CappedEngineInternal.scriptedWatchdogOutcomeForTest
+      NvidiaVram
+      64
+      2
+      [Right (Just (96 * 1024 * 1024))]
+      [Right 1]
+  assert
+    (breachOutcomeExceeds NvidiaVram 64 deviceBreach)
+    "Sprint 4.40: the same loop reports the device resource when it samples the device"
+  hostBreach <-
+    CappedEngineInternal.scriptedWatchdogOutcomeForTest
+      HostRam
+      64
+      2
+      [Right (Just (96 * 1024 * 1024))]
+      [Right 1]
+  assert
+    (breachOutcomeExceeds HostRam 64 hostBreach)
+    "Sprint 4.40: the same loop reports unified host RAM when it samples the Apple lane"
+
+-- | Phase 4 Sprint 4.41 — the installed ceiling.
+runInstalledCeilingAssertions :: IO ()
+runInstalledCeilingAssertions = do
+  let linuxCeiling =
+        Ceiling.resolveEngineCeiling LinuxCpu PodRam 4096 Ceiling.NoEngineProjection
+      appleCeiling =
+        Ceiling.resolveEngineCeiling AppleSilicon HostRam 4096 Ceiling.NoEngineProjection
+      deviceCeiling =
+        Ceiling.resolveEngineCeiling LinuxGpu NvidiaVram 4096 Ceiling.NoEngineProjection
+  assert
+    ( Ceiling.installedCeilingArgumentPrefix linuxCeiling
+        == ["/usr/bin/prlimit", "--data=4294967296:4294967296", "--"]
+    )
+    ( "Sprint 4.41: the launch prefix is exactly the pinned enforcement tool, "
+        <> "both limits lowered to the admitted quantity, and the argument "
+        <> "terminator"
+    )
+  assert
+    (Ceiling.ceilingEnforcementTool == "/usr/bin/prlimit")
+    "Sprint 4.41: the enforcement tool is a pinned absolute literal, not a manifest field"
+  assert
+    ( Ceiling.installedCeilingStrength linuxCeiling
+        == Ceiling.CeilingInstalledDataSegment
+    )
+    "Sprint 4.41: the Linux lane installs a kernel data-segment ceiling"
+  -- The Apple arm is total: no admitted quantity, on any lane pairing, makes it
+  -- claim prevention.
+  assert
+    ( all
+        ( \ceilingMib ->
+            Ceiling.installedCeilingStrength
+              ( Ceiling.resolveEngineCeiling
+                  AppleSilicon
+                  HostRam
+                  ceilingMib
+                  Ceiling.NoEngineProjection
+              )
+              == Ceiling.CeilingDetectionOnly
+        )
+        [1, 4096, 65536, 1048576]
+    )
+    "Sprint 4.41: no input makes the Apple arm claim prevention"
+  assert
+    (null (Ceiling.installedCeilingArgumentPrefix appleCeiling))
+    "Sprint 4.41: a detection-only lane installs no launch prefix at all"
+  -- The device column reads detection for a different reason than a host column
+  -- does, and the two are kept distinct.
+  assert
+    (Ceiling.installedCeilingStrength deviceCeiling == Ceiling.CeilingDetectionOnly)
+    ( "Sprint 6.51: no kernel mechanism bounds device memory on any lane, so "
+        <> "the device column is admission and arena sizing plus detection"
+    )
+  assert
+    (Ceiling.ceilingReadBackMatches linuxCeiling 4294967296 4294967296 == Right ())
+    "Sprint 4.41: matching soft and hard read-back values proceed"
+  assert
+    ( isLeftResult (Ceiling.ceilingReadBackMatches linuxCeiling 4294967295 4294967296)
+        && isLeftResult (Ceiling.ceilingReadBackMatches linuxCeiling 4294967296 8589934592)
+    )
+    ( "Sprint 4.41: either read-back value disagreeing with the installed "
+        <> "quantity is a typed terminal failure"
+    )
+  assert
+    (Ceiling.ceilingReadBackMatches appleCeiling 0 0 == Right ())
+    "Sprint 4.41: a detection-only lane demands no read-back it cannot install"
+  -- The capability-gating lint fires on an engine spawn that skips the region
+  -- and passes a file that reaches it.
+  assert
+    ( not
+        ( null
+            ( unboundedCeilingInstallViolations
+                "src/Infernix/Runtime/Daemon.hs"
+                [(1, "      withCappedEngine watchdogs launch action")]
+            )
+        )
+    )
+    "Sprint 4.41: unboundedCeilingInstallViolations fires on a spawn that skips the region"
+  assert
+    ( null
+        ( unboundedCeilingInstallViolations
+            "src/Infernix/Runtime/Daemon.hs"
+            [ (1, "      withEngineCeilingInstalled ceiling command $ \\launch ->"),
+              (2, "        withCappedEngine watchdogs launch action")
+            ]
+        )
+    )
+    "Sprint 4.41: a spawn that reaches the installation region passes the lint"
+
+-- | Phase 6 Sprint 6.52 — a restore-pending transaction whose subject
+-- filesystem is gone must be reclaimable, and one whose subject is ours must
+-- not be.
+--
+-- The reservation is durable while the config it describes is not: on the
+-- container lane `/workspace` belongs to the image, so a killed launcher leaves
+-- a record naming a config no host-side process can see. The retired arm refused
+-- unconditionally, which made the slot unreclaimable by the supported
+-- dead-owner path — found by executing the `linux-gpu` cohort.
+runHarnessConfigRecoveryAssertions :: IO ()
+runHarnessConfigRecoveryAssertions = do
+  assert
+    ( Cluster.classifyAbsentConfigRecovery Cluster.RecordedNamespaceIsForeign
+        == Cluster.AbsentConfigReclaimable
+    )
+    ( "Sprint 6.52: a restore-pending transaction recorded in a foreign PID "
+        <> "namespace is reclaimable, because its config and backup lived in a "
+        <> "filesystem this process cannot see"
+    )
+  -- The two fail-closed arms are the point of the fix, not an afterthought: a
+  -- reclamation rule that fired on our own namespace would silently swallow the
+  -- operator's lost config, which is the failure the retired arm existed to
+  -- prevent.
+  assert
+    (isUnrecoverableConfigRecovery Cluster.RecordedNamespaceMatches)
+    ( "Sprint 6.52: a restore-pending transaction in our own namespace with "
+        <> "both files absent is real config loss and stays fail-closed"
+    )
+  assert
+    (isUnrecoverableConfigRecovery Cluster.RecordedNamespaceCannotBeCompared)
+    ( "Sprint 6.52: a namespace that cannot be compared is not evidence the "
+        <> "subject is foreign, so it stays fail-closed"
+    )
+  assert
+    ( recoveryReasonMentions
+        Cluster.RecordedNamespaceCannotBeCompared
+        "cannot be compared"
+    )
+    "Sprint 6.52: the incomparable-namespace refusal names why it refused"
+
+isUnrecoverableConfigRecovery :: Cluster.RecordedNamespaceRelation -> Bool
+isUnrecoverableConfigRecovery relation =
+  case Cluster.classifyAbsentConfigRecovery relation of
+    Cluster.AbsentConfigUnrecoverable _ -> True
+    Cluster.AbsentConfigReclaimable -> False
+
+recoveryReasonMentions :: Cluster.RecordedNamespaceRelation -> String -> Bool
+recoveryReasonMentions relation needle =
+  case Cluster.classifyAbsentConfigRecovery relation of
+    Cluster.AbsentConfigUnrecoverable reason -> needle `isInfixOf` reason
+    Cluster.AbsentConfigReclaimable -> False
+
+enforcementUnavailableNames :: String -> Maybe CappedEngineInternal.EngineOutcome -> Bool
+enforcementUnavailableNames needle outcome =
+  case outcome of
+    Just (CappedEngineInternal.EngineEnforcementUnavailable reason) ->
+      needle `isInfixOf` Text.unpack reason
+    _ -> False
 
 runClosureBoundAssertions :: IO ()
 runClosureBoundAssertions = do
@@ -22467,6 +23466,117 @@ runArtifactGenerationIdentityAssertions = do
         == ArtifactInternal.portableImageTargetEvidenceForTest unpackedEvidence
     )
     "Sprint 1.20: OCI-assigned device/inode and unused loader-cache changes do not invalidate portable image evidence"
+  -- Phase 6 Sprint 6.50. The case above is an *unused* cache. The `linux-gpu`
+  -- cohort hit the used one: the NVIDIA container runtime runs `ldconfig` at
+  -- container start to register the driver libraries it injects, so a GPU
+  -- engine pod sees a different `/etc/ld.so.cache` — different digest, different
+  -- size, and shifted entry ordinals — than the image the artifact was baked in,
+  -- and every native artifact whose closure resolved through the cache was
+  -- rejected. What must survive that rewrite is the artifact's own identity;
+  -- what must not survive is a soname resolving somewhere else, or the same
+  -- path holding different bytes.
+  let cacheUsingLoader cacheDigest cacheSize entryIndex resolvedPath objectDigest =
+        ArtifactTarget.NativeArtifactLoaderEvidence
+          { ArtifactTarget.loaderEvidenceEntryObject =
+              "/opt/infernix/native-payloads/llama.cpp/llama-completion",
+            ArtifactTarget.loaderEvidenceCache =
+              Just
+                ArtifactTarget.NativeArtifactLoaderFileEvidence
+                  { ArtifactTarget.loaderFileConfiguredPath = "/etc/ld.so.cache",
+                    ArtifactTarget.loaderFileConfiguredDeviceId = 66,
+                    ArtifactTarget.loaderFileConfiguredFileId = 3333,
+                    ArtifactTarget.loaderFileConfiguredMode = 0o100644,
+                    ArtifactTarget.loaderFileConfiguredSize = cacheSize,
+                    ArtifactTarget.loaderFileCanonicalPath = "/etc/ld.so.cache",
+                    ArtifactTarget.loaderFileCanonicalDeviceId = 66,
+                    ArtifactTarget.loaderFileCanonicalFileId = 3333,
+                    ArtifactTarget.loaderFileCanonicalMode = 0o100644,
+                    ArtifactTarget.loaderFileCanonicalSize = cacheSize,
+                    ArtifactTarget.loaderFileDigest = cacheDigest
+                  },
+            ArtifactTarget.loaderEvidenceObjects =
+              [ ArtifactTarget.NativeArtifactLoaderObjectEvidence
+                  { ArtifactTarget.loaderObjectConfiguredPath = resolvedPath,
+                    ArtifactTarget.loaderObjectConfiguredDeviceId = 66,
+                    ArtifactTarget.loaderObjectConfiguredFileId = 4444,
+                    ArtifactTarget.loaderObjectConfiguredMode = 0o100644,
+                    ArtifactTarget.loaderObjectConfiguredSize = 2048,
+                    ArtifactTarget.loaderObjectCanonicalPath = resolvedPath,
+                    ArtifactTarget.loaderObjectCanonicalDeviceId = 66,
+                    ArtifactTarget.loaderObjectCanonicalFileId = 4444,
+                    ArtifactTarget.loaderObjectCanonicalMode = 0o100644,
+                    ArtifactTarget.loaderObjectCanonicalSize = 2048,
+                    ArtifactTarget.loaderObjectDigest = objectDigest,
+                    ArtifactTarget.loaderObjectClassBits = 64,
+                    ArtifactTarget.loaderObjectEndian = "little",
+                    ArtifactTarget.loaderObjectMachine = 62,
+                    ArtifactTarget.loaderObjectInterpreter = Nothing,
+                    ArtifactTarget.loaderObjectSoname = Just "libm.so.6",
+                    ArtifactTarget.loaderObjectNeeded = [],
+                    ArtifactTarget.loaderObjectRPath = [],
+                    ArtifactTarget.loaderObjectRunPath = []
+                  }
+              ],
+            ArtifactTarget.loaderEvidenceResolutions =
+              [ ArtifactTarget.NativeArtifactLoaderResolutionEvidence
+                  { ArtifactTarget.loaderResolutionRequester =
+                      "/opt/infernix/native-payloads/llama.cpp/llama-completion",
+                    ArtifactTarget.loaderResolutionNeeded = "libm.so.6",
+                    ArtifactTarget.loaderResolutionSearchDirectories = ["/lib/x86_64-linux-gnu"],
+                    ArtifactTarget.loaderResolutionUsedCache = True,
+                    ArtifactTarget.loaderResolutionCacheEntryIndex = Just entryIndex,
+                    ArtifactTarget.loaderResolutionConfiguredPath = resolvedPath,
+                    ArtifactTarget.loaderResolutionCanonicalPath = resolvedPath
+                  }
+              ],
+            ArtifactTarget.loaderEvidenceMaximumDepth = 1
+          }
+      withLoader loader =
+        originalEvidence {ArtifactTarget.targetEvidenceLoader = Just loader}
+      bakedLoader =
+        cacheUsingLoader
+          (canonicalTestDigest '1')
+          43851
+          17
+          "/lib/x86_64-linux-gnu/libm.so.6"
+          (canonicalTestDigest 'a')
+      -- The same artifact observed inside a pod the NVIDIA runtime prepared.
+      injectedLoader =
+        cacheUsingLoader
+          (canonicalTestDigest '2')
+          47027
+          42
+          "/lib/x86_64-linux-gnu/libm.so.6"
+          (canonicalTestDigest 'a')
+      relocatedLoader =
+        cacheUsingLoader
+          (canonicalTestDigest '2')
+          47027
+          42
+          "/opt/impostor/libm.so.6"
+          (canonicalTestDigest 'a')
+      substitutedLoader =
+        cacheUsingLoader
+          (canonicalTestDigest '2')
+          47027
+          42
+          "/lib/x86_64-linux-gnu/libm.so.6"
+          (canonicalTestDigest 'b')
+  assert
+    ( ArtifactInternal.portableImageTargetEvidenceForTest (withLoader bakedLoader)
+        == ArtifactInternal.portableImageTargetEvidenceForTest (withLoader injectedLoader)
+    )
+    "Sprint 6.50: an injected-driver ld.so.cache rewrite does not invalidate an unchanged artifact"
+  assert
+    ( ArtifactInternal.portableImageTargetEvidenceForTest (withLoader bakedLoader)
+        /= ArtifactInternal.portableImageTargetEvidenceForTest (withLoader relocatedLoader)
+    )
+    "Sprint 6.50: a soname that resolves to a different path still fails closed"
+  assert
+    ( ArtifactInternal.portableImageTargetEvidenceForTest (withLoader bakedLoader)
+        /= ArtifactInternal.portableImageTargetEvidenceForTest (withLoader substitutedLoader)
+    )
+    "Sprint 6.50: the same resolved path holding different bytes still fails closed"
   assert
     (linuxIdentity /= Right payloadDigest)
     "Sprint 1.20: a linux-native generation identity is never its payload digest, so the superseded candidate equality refused every Linux generation"
@@ -22665,6 +23775,33 @@ runPlanStandardsScanAssertions = do
         )
     )
     "plan backward-edge scan reports a dependency phrased from the dependee's side"
+  -- Section Q scan 8. The forward-edge scan reads `Blocked by` lines, so it is
+  -- structurally blind to the form the violation actually takes: a sentence
+  -- placing an obligation with a later sprint. Asserted in both directions, plus
+  -- the exclusion that keeps a closed sprint's sanctioned forward pointer legal.
+  assert
+    ( not
+        ( null
+            ( forwardOwnershipViolations
+                [(planPhaseDocumentPath 4, "the broker-side claim is owned by Phase 8 Sprint 8.12\n")]
+            )
+        )
+        && null
+          ( forwardOwnershipViolations
+              [(planPhaseDocumentPath 8, "the broker-side claim is owned by Phase 4 Sprint 4.34\n")]
+          )
+        && not
+          ( null
+              ( forwardOwnershipViolations
+                  [(planPhaseDocumentPath 1, "the producer is re-homed to Phase 6 Sprint 6.12\n")]
+              )
+          )
+        && null
+          ( forwardOwnershipViolations
+              [(planPhaseDocumentPath 4, "**Supersession note**: Phase 8 Sprint 8.12 owns the successor\n")]
+          )
+    )
+    "plan forward-ownership scan reports an obligation placed with a later sprint, ignores one placed with an earlier sprint, and exempts a closed sprint's supersession pointer"
   assert
     ( not
         ( null

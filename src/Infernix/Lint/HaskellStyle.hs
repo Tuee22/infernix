@@ -12,6 +12,7 @@ module Infernix.Lint.HaskellStyle
     nativeArtifactInvocationKernelOwnershipViolations,
     provisioningKernelOwnershipViolations,
     unsafeNativeBoundaryViolations,
+    unboundedCeilingInstallViolations,
     unboundedDescriptorSpawnViolations,
     unboundedToolchainSpawnViolations,
     unboundedEngineSpawnViolations,
@@ -854,6 +855,7 @@ capabilityGatingViolations sourceFile numberedLines =
     <> emptySubprocessEnvViolations sourceFile numberedLines
     <> unboundedExecViolations sourceFile numberedLines
     <> unboundedEngineSpawnViolations sourceFile numberedLines
+    <> unboundedCeilingInstallViolations sourceFile numberedLines
     <> unboundedDescriptorSpawnViolations sourceFile numberedLines
     <> unboundedToolchainSpawnViolations sourceFile numberedLines
     <> unboundedHttpViolations sourceFile numberedLines
@@ -1283,6 +1285,49 @@ unboundedDescriptorSpawnViolations sourceFile numberedLines
       any
         (containsToken "requireBoundedDescriptorSpace" . snd)
         codeLines
+
+-- | Phase 4 Sprint 4.41 — an engine spawn must reach the ceiling installation
+-- region.
+--
+-- The sibling of 'unboundedDescriptorSpawnViolations', and it exists for the
+-- same reason that one does: the bound is established at one site and required
+-- at another, so a new engine-spawn surface added later would compile perfectly
+-- while observing neither. A ceiling that is installed everywhere except on the
+-- one path someone added last week is not a ceiling, and the failing case is
+-- silent until a cohort run — which is exactly the cost this repository has
+-- already paid twice. Canonical doctrine:
+-- documents/architecture/bounded_inference_memory.md.
+unboundedCeilingInstallViolations :: FilePath -> [(Int, String)] -> [String]
+unboundedCeilingInstallViolations sourceFile numberedLines
+  | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
+  | sourceFile `elem` unboundedCeilingInstallExemptedFiles = []
+  | installsCeiling = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": engine spawn without a preceding Infernix.Runtime.CappedEngine.Ceiling installation region; a ceiling installed before the engine's first allocation is what makes the launch bounded, and a spawn surface that skips the region is an unbounded launch that compiles (see documents/architecture/bounded_inference_memory.md)"
+      | (lineNumber, _) <- engineSpawnSites
+      ]
+  where
+    codeLines =
+      [ (lineNumber, lineValue)
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue)
+      ]
+    engineSpawnSites =
+      [ (lineNumber, lineValue)
+      | (lineNumber, lineValue) <- codeLines,
+        containsToken "withCappedEngine" lineValue
+      ]
+    installsCeiling =
+      any
+        (containsToken "withEngineCeilingInstalled" . snd)
+        codeLines
+
+-- | The ceiling-install rule exempts the module that owns the region (it names
+-- both tokens by definition) and this lint module (it names both as literals).
+unboundedCeilingInstallExemptedFiles :: [FilePath]
+unboundedCeilingInstallExemptedFiles =
+  [ "src/Infernix/Lint/HaskellStyle.hs"
+  ]
 
 -- | The descriptor-bound rule exempts only the module that owns the bound (it
 -- names the primitive it exports) and this lint module (it names both tokens as

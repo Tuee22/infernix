@@ -132,7 +132,6 @@ import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.Either (fromLeft, fromRight)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.Int (Int32)
 import Data.List (find, intercalate, sort)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict (Map)
@@ -213,7 +212,17 @@ import Infernix.Runtime.CappedEngine
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.SecretsConfig qualified as Secrets
-import Infernix.Storage (formatTimestamp, parseTimestamp, readPulsarHttpPortMaybe)
+-- Phase 4 Sprint 4.39: the result-payload error codec is imported rather than
+-- re-implemented. Two encoders for one wire are two chances to disagree, which
+-- is the same objection that collapsed the two resource enumerations, and the
+-- second copy here was already one arm behind.
+import Infernix.Storage
+  ( formatTimestamp,
+    inferenceErrorFromProto,
+    inferenceErrorToProto,
+    parseTimestamp,
+    readPulsarHttpPortMaybe,
+  )
 import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
@@ -6154,41 +6163,6 @@ protoPayloadToDomain protoPayload =
       ResultPayload Nothing Nothing . Just <$> inferenceErrorFromProto errorValue
     Nothing ->
       Just (ResultPayload {inlineOutput = Just "", objectRef = Nothing, inferenceError = Nothing})
-
-inferenceErrorToProto :: InferenceError -> ProtoInference.InferenceError
-inferenceErrorToProto errorValue =
-  case errorValue of
-    ModelMemoryLimitExceeded {} ->
-      set (field @"modelMemoryLimitExceeded") (modelMemoryLimitExceededToProto errorValue) defMessage
-
-modelMemoryLimitExceededToProto :: InferenceError -> ProtoInference.ModelMemoryLimitExceeded
-modelMemoryLimitExceededToProto errorValue =
-  case errorValue of
-    ModelMemoryLimitExceeded {inferenceErrorModelId, inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} ->
-      set (field @"modelId") inferenceErrorModelId $
-        set (field @"requiredMib") (fromIntegral inferenceErrorRequiredMib :: Int32) $
-          set (field @"availableMib") (fromIntegral inferenceErrorAvailableMib :: Int32) $
-            set (field @"resource") (inferenceMemoryBudgetResourceText inferenceErrorResource) $
-              set (field @"source") inferenceErrorSource defMessage
-
-inferenceErrorFromProto :: ProtoInference.InferenceError -> Maybe InferenceError
-inferenceErrorFromProto protoValue =
-  case view ProtoInferenceFields.maybe'error protoValue of
-    Just (ProtoInference.InferenceError'ModelMemoryLimitExceeded memoryError) ->
-      modelMemoryLimitExceededFromProto memoryError
-    Nothing -> Nothing
-
-modelMemoryLimitExceededFromProto :: ProtoInference.ModelMemoryLimitExceeded -> Maybe InferenceError
-modelMemoryLimitExceededFromProto protoValue = do
-  resource <- parseInferenceMemoryResource (view ProtoInferenceFields.resource protoValue)
-  pure
-    ModelMemoryLimitExceeded
-      { inferenceErrorModelId = view ProtoInferenceFields.modelId protoValue,
-        inferenceErrorRequiredMib = fromIntegral (view ProtoInferenceFields.requiredMib protoValue :: Int32),
-        inferenceErrorAvailableMib = fromIntegral (view ProtoInferenceFields.availableMib protoValue :: Int32),
-        inferenceErrorResource = resource,
-        inferenceErrorSource = view ProtoInferenceFields.source protoValue
-      }
 
 writeInferenceRequestFile :: FilePath -> ProtoInference.InferenceRequest -> IO ()
 writeInferenceRequestFile filePath value = do

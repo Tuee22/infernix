@@ -119,6 +119,19 @@ download URLs, and model footprints are system facts: a second copy on a second 
 opportunity to disagree, and a disagreement about a topic string is silent — the publisher writes
 somewhere nobody reads, and no component errors.
 
+The footprint case is the strongest form of that rule rather than an exception to it, because the
+fact is the **artifact plus the execution shape**, not an authored number. A model's memory
+requirement is derived from the artifact's own tensor table and from the context length, batch,
+generation bound, and load strategy the engine will run under, so there is no per-family constant for
+a second copy to drift from — a derived quantity cannot be written down differently on two machines,
+which is why moving the requirement into the artifact strengthens the shared-contract rule instead of
+weakening it. The execution shape belongs in the system contract for exactly that reason: it is an
+input to a requirement every machine must agree on, and it is the same value the engine is started
+with. Its counterpart stays off the contract for the mirror-image reason: what a machine can *offer*,
+and which enforcement mechanism it can install for each resource, are observed per machine and never
+travel — which is why the memory budget is deliberately outside the contract digest below. Canonical
+home: [bounded_inference_memory.md](bounded_inference_memory.md).
+
 The rule is the same one that shapes the memory-budget union: **carry exactly
 one representative of each fact and derive the rest.** A machine does not restate a topic and does
 not restate the pool graph. What a machine authors is only what is true of that machine: which role

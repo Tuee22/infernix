@@ -168,7 +168,9 @@ def _generate_bark(context: AdapterContext) -> ArtifactResult:
         for key, value in inputs.items()
     }
     with torch.inference_mode():
-        audio = model.generate(**inputs, semantic_max_new_tokens=100)
+        audio = model.generate(
+            **inputs, semantic_max_new_tokens=context.generation_bound
+        )
     sample_rate = int(model.generation_config.sample_rate)
     buffer = io.BytesIO()
     audio_array = audio.to(device="cpu", dtype=torch.float32).numpy().squeeze()

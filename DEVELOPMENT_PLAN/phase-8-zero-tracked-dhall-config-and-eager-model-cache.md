@@ -4,9 +4,13 @@
 blocker a single engine machine could not reach rather than waiting it out: the fleet validation
 topology is a `linux-cpu` multi-worker Kind cluster the lifecycle generates from the system
 contract's own machine count, not a second physical host, and it closed on a live two-machine fleet
-plus the paired single-machine run. The two sprints still open — 8.9 and 8.10 — are code-side closed
-and hold a **supported-lane validation blocker**: both consume Phase 6 Sprint 6.44's `linux-gpu` plus
-`linux-cpu` wave, which needs a CUDA-capable Linux host this cohort does not have.
+plus the paired single-machine run. Three sprints remain open — 8.9, 8.10, and 8.13 — all code-side
+closed, all consuming Phase 6 Sprint 6.44's `linux-gpu` plus `linux-cpu` wave rather than a wave of
+their own. Sprint 8.13 was **found by executing that wave**: the shared engine Deployment carried no
+`--engine-name`, which is invisible on `linux-cpu` (one declared member resolves with no selection)
+and refuses by name on `linux-gpu` (four declared members, one per framework engine image plus
+`native`). Sprint 8.12's fail-closed identity was working; the shared Deployment simply never
+declared one.
 
 **Historical implementation state (superseded by the header above).** Active. Sprint 8.9 and Sprint 8.10 are both
 validation-only, sharing the `linux-gpu` plus `linux-cpu` rebuild. Sprint 8.10 (delete the derivable
@@ -426,9 +430,9 @@ so a fault can never masquerade as absence. This consumes the Sprint 1.18 observ
 
 None.
 
-## Sprint 8.9: Generated Proper-Union Execution Plan [Active]
+## Sprint 8.9: Generated Proper-Union Execution Plan [Done]
 
-**Status**: Active — **code-side closed**. The whole generated execution-plan language is
+**Status**: Done. The whole generated execution-plan language is
 union-typed: the budget union landed first, and the five items it named as explicit follow-on work
 are closed. Behavioral evidence is consumed from the Phase 6 Sprint 6.44 cohort, per this sprint's
 own validation rule that it must not create a dual-accelerator gate of its own.
@@ -436,6 +440,11 @@ own validation rule that it must not create a dual-accelerator gate of its own.
 (`cabal build all --enable-tests`, `infernix-unit`, `infernix-execution-plan-internal`,
 `infernix-capped-engine-observer`, `infernix-compile-fail`, `infernix-haskell-style`, and
 `lint files|chart|proto|docs` plus `docs check`).
+**Cohort gate**: [Wave Z](cohort-validation-waves.md) — met. Both lanes exited 0 against one frozen
+source, each decoding a freshly generated union payload end to end, and the browser-side over-budget
+reader ran on `linux-gpu` for the first time rather than returning null for every budget on that lane.
+This sprint opened no wave of its own, because its own validation rule forbids it from creating a
+dual-accelerator gate; it consumed Phase 6 Sprint 6.44's.
 **Blocked by**: nothing. Phase 6 Sprint 6.44's dual RAM/VRAM capability surface landed the third
 union arm this sprint's language needed.
 **Implementation**: `src/Infernix/Substrate/Internal.hs`, `src/Infernix/Types.hs`,
@@ -594,26 +603,25 @@ retired flat encoding when one is supplied.
 
 ### Remaining Work
 
-1. **Cohort evidence** is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus `linux-cpu` wave.
-   The `linux-gpu` half now carries real weight for this sprint: the browser-side over-budget
-   assertion runs on that lane for the first time.
+None; closed by the Phase 6 Sprint 6.44 wave.
 
 ---
 
-## Sprint 8.10: Delete The Derivable Wire Fields [Active]
+## Sprint 8.10: Delete The Derivable Wire Fields [Done]
 
-**Status**: Active. Code-side closed, once Phase 4 Sprint 4.34's admission move landed and the
+**Status**: Done. Code-side closure came once Phase 4 Sprint 4.34's admission move landed and the
 reduced contract could be built on the corrected shape rather than on the defect. The blocker it
 carried is discharged: the substrate limit's `resource` / `source` and the partition's headroom term
 are the budget's own shape, and deleting them while the coordinator still admitted from a plan-global
 budget would have hidden the veto instead of removing it.
 **Code-side closure**: clean on the machine-independent gate set — `cabal build all --enable-tests`
-under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`, `infernix-compile-fail`
-(6 positive / 87 negative), `infernix-execution-plan-internal`, `infernix-capped-engine-observer`,
+under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`, `infernix-compile-fail`,
+`infernix-execution-plan-internal`, `infernix-capped-engine-observer`,
 `infernix-artifact-transaction`, `infernix-apple-materializer`, `poetry run check-code`,
 `infernix lint files|chart|proto|docs`, `infernix docs check`.
-**Cohort gate**: the shared `linux-gpu` plus `linux-cpu` rebuild — the reduced wire changes every
-generated payload, so a cluster lane must decode one.
+**Cohort gate**: [Wave Z](cohort-validation-waves.md) — met. The shared `linux-gpu` plus `linux-cpu`
+rebuild decoded the reduced payload on both lanes: every generated `.dhall` in the wave's closing run
+was written by the binary at the reduced shape and read back by a cluster daemon.
 **Implementation**: `src/Infernix/Substrate/Internal.hs`, `src/Infernix/Types.hs`,
 `src/Infernix/EngineRouting.hs`, `src/Infernix/Models.hs`, `src/Infernix/ExecutionPlan.hs`,
 `src/Infernix/DemoConfig/Internal.hs`, `test/unit/Spec.hs`
@@ -686,7 +694,7 @@ regenerated it.
 
 ### Remaining Work
 
-None code-side. The cohort rebuild is the residual named above.
+None. The cohort rebuild named above landed with the wave's closing run.
 
 ---
 
@@ -1088,6 +1096,89 @@ before the readiness sentinel and every pool subscription, which is the ordering
 ### Remaining Work
 
 None — the fleet lane and its paired single-machine run closed on 2026-08-18 under [Wave AB](cohort-validation-waves.md).
+
+---
+
+## Sprint 8.13: Shared Engine Deployment Member Identity [Done]
+
+**Status**: Done. The shared engine Deployment names the member it is on every lane. Behavioral evidence is the [Wave Z](cohort-validation-waves.md) `linux-gpu` plus
+`linux-cpu` cohort this sprint's defect blocked, so it consumes that wave rather than opening one of
+its own.
+**Code-side closure**: complete. The machine-independent gate set passes —
+`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`,
+`infernix-haskell-style` (`haskell-style-check: ok`, `cabal-format-check: ok`), and
+`lint files|chart|proto|docs|plan` plus `docs check` all at zero.
+**Cohort gate**: the shared `linux-gpu` plus `linux-cpu` rebuild in Wave Z — met. The
+`infernix-engine` Deployment became ready on the four-member `linux-gpu` contract, which is exactly
+what attempt 6 could not get past, and on the single-member `linux-cpu` contract, and both lanes then
+served real inference through it.
+**Blocked by**: nothing. Sprint 8.12 landed the fail-closed member identity this completes.
+**Implementation**: `src/Infernix/Cluster.hs`, `chart/values.yaml`,
+`chart/templates/deployment-engine.yaml`, `test/unit/Spec.hs`
+**Docs to update**: [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) (updated — the per-engine-image section now states that a `linux-gpu` machine contract declares more than one member and that the shared Deployment names its own)
+
+### Objective
+
+Give the shared `infernix-engine` Deployment the member identity Sprint 8.12 made every engine
+daemon declare.
+
+### Deliverables
+
+- the lifecycle renders the shared engine workload's member identity into the Helm values
+- the shared engine Deployment passes `--engine-name` on every lane that deploys one
+- a machine-independent guard ties that rendered identity to the machine contract the same lane
+  generates
+
+### Landed Implementation
+
+Sprint 8.12 made engine member identity fail closed: a daemon that cannot say which member it is
+refuses to start rather than adopting a default. Sprint 8.11's machine contract is what it reads
+that identity from. Neither sprint gave the **shared** engine Deployment a name, and on `linux-cpu`
+that was invisible, because that lane's contract declares exactly one member (`linux-cpu-engine`)
+and `resolveMachineMemberId` resolves a single declared member with no selection. `linux-gpu`
+declares four — `native` plus one per framework engine image — so the same template refused by name
+and crash-looped:
+
+```text
+this machine contract declares 4 engine member identities
+("native", "vllm", "pytorch", "diffusers"); pass `--engine-name` to name which one this process is
+```
+
+That is the fail-closed rule working, not a defect in it. The defect is the missing name.
+
+1. **The identity is derived, not written down a third time.** `sharedEngineMemberId` in
+   `Infernix.Cluster` subtracts `perEngineDeploymentNames` from the lane's declared members. Two
+   lists that already exist decide it; a per-mode literal would have been a third copy of the same
+   fact, which is the permanent illegal-state shape Sprint 8.10 deleted from the wire. It resolves
+   to `native` on `linux-gpu` and `linux-cpu-engine` on `linux-cpu`.
+2. **The subtraction is the operational rule, not a convenience.** The shared Deployment runs the
+   launcher image, and that image carries the native engine payloads and **none** of the framework
+   virtual environments — verified in both rebuilt images rather than assumed. The framework
+   members' pools can only be served by their own per-engine images, which is why the harness
+   already scales the shared Deployment to zero whenever it activates one of them.
+3. **Every lane declares.** `engine.memberName` is rendered by the lifecycle on every lane and the
+   template emits `--engine-name` whenever it is non-empty, so a single-member lane now names its
+   member explicitly instead of relying on the count. The static chart default stays empty, so an
+   operator values file for a single-member contract keeps resolving that member implicitly.
+
+### Validation
+
+- the rendered shared engine member is accepted by `resolveMachineMemberId` against the machine
+  contract that same lane generates, asserted for **both** `linux-gpu` and `linux-cpu` — **passing**.
+  Asserting acceptance rather than a literal keeps the guard alive through a later rename of either
+  list
+- the rendered shared engine member is **not** one of that lane's per-engine deployment names —
+  **passing**. Declared is necessary but not sufficient: naming a framework member would point the
+  shared Deployment at pools only the per-engine image can serve
+- both halves are negative-tested and fail by name — rendering an empty identity fails
+  `the linux-gpu lifecycle renders a shared engine member name`, and rendering a framework member
+  fails `the linux-gpu shared engine member is the one with no per-engine Deployment of its own`
+- machine-independent gates pass
+- selected `linux-gpu` plus `linux-cpu` full-suite gate against one frozen state — **passed**
+
+### Remaining Work
+
+None; closed by the Wave Z run that cleared it.
 
 ---
 

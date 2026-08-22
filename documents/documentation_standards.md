@@ -245,14 +245,26 @@ status exception.
   `CLAUDE.md`
   mirror with `documents/development/assistant_workflow.md`, and the relevant phase document in the
   same change
-- when the inference-memory-safety contract changes (the `MemoryGrant` / capped-engine chokepoint, the
-  `HostMemoryPartition`, the required `ModelMemoryFootprint`, the enforcer-typed `InferenceMemoryBudget`,
-  or the admission policy), update `documents/architecture/bounded_inference_memory.md`,
+- when the inference-memory-safety contract changes, update
+  `documents/architecture/bounded_inference_memory.md`,
   `documents/architecture/bounded_host_memory.md`,
   `documents/architecture/typed_execution_plan.md`,
   `documents/architecture/runtime_modes.md`, `documents/architecture/daemon_topology.md`,
+  `documents/architecture/model_catalog.md`,
   `documents/operations/apple_silicon_runbook.md`, the `documents/architecture/realness_contract.md`
-  admission cross-reference, and the relevant phase document in the same change
+  admission cross-reference, the three-way `README.md` / `AGENTS.md` / `CLAUDE.md` mirror with
+  `documents/development/assistant_workflow.md`, and the relevant phase document in the same change.
+  The trigger is named by what changes, not by which types currently express it: how a model's
+  requirement is established, which physical resources it is admitted against, the mechanism that
+  bounds a launched engine, where that mechanism is installed relative to the engine's first
+  allocation, or the statement of what that mechanism does not cover. A trigger written as a list of
+  type names stops firing the moment those types are renamed, which is precisely when the rule is
+  needed most
+- when the worker-to-adapter contract changes (the fields carried on the protobuf worker request or
+  response, how many messages the exchange contains, or what an adapter must apply before it loads
+  weights), update `documents/development/python_policy.md`,
+  `documents/engineering/model_lifecycle.md`, `documents/development/no_env_vars.md`,
+  `documents/engineering/object_storage.md`, and the relevant phase document in the same change
 - when the generated execution-plan language changes (its Dhall unions, raw-to-compiled boundary,
   runtime refinement evidence, command policies, model-placement graph, or resource-indexed
   enforcers), update `documents/architecture/typed_execution_plan.md`,

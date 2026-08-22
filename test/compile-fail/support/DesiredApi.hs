@@ -11,7 +11,8 @@ module DesiredApi
     HostMemoryPartition,
     MemoryCeiling,
     MemoryGrant,
-    ModelMemoryFootprint,
+    ModelMemoryRequirement,
+    ModelResourceRequirement (..),
     RawRuntimeConfig,
     Resource (..),
     RuntimePlan,
@@ -34,5 +35,6 @@ import Infernix.ExecutionPlan
   )
 import Infernix.Types
   ( HostMemoryPartition,
-    ModelMemoryFootprint,
+    ModelMemoryRequirement,
+    ModelResourceRequirement (..),
   )

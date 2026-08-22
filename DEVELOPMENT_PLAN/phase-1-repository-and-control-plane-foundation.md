@@ -991,8 +991,9 @@ and `documents/architecture/runtime_modes.md`
 
 Introduce resource-indexed Haskell execution alternatives, confine raw decoded configuration, compile
 the validated graph into an opaque `CompiledRuntimePlan`, and allow only package-owned live
-observations to refine it into `RuntimePlan` / `ExecutableModel`. Phase 8 Sprint 8.9 owns the final
-proper-union generated-Dhall wire migration.
+observations to refine it into `RuntimePlan` / `ExecutableModel`. The generated-Dhall wire's own
+union migration is a separate subject in the configuration-substrate line of work; this sprint's
+closure does not wait on it.
 
 ### Deliverables
 
@@ -1105,8 +1106,9 @@ Closure evidence on the Apple Silicon development host:
 - `git diff --check`
 - a final adversarial source review with no remaining Phase 1 production blocker
 
-Phase 4 Sprint 4.32 owns the ordered substrate implementation/behavioral proof after Phase 2
-closes; NVIDIA per-process accounting remains fail-closed until its later GPU phase.
+This sprint closes on the gates named above and on nothing later. The ordered substrate
+implementation and its behavioural proof are a separate subject that follows, and NVIDIA per-process
+accounting stays fail-closed until a lane exists that can exercise it.
 
 ---
 

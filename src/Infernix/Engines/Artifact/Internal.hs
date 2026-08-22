@@ -151,7 +151,6 @@ import Infernix.Engines.Artifact.Recipe
 import Infernix.Engines.Artifact.Snapshot qualified as Snapshot
 import Infernix.Engines.Artifact.Target
   ( NativeArtifactLoaderEvidence (..),
-    NativeArtifactLoaderFileEvidence (..),
     NativeArtifactLoaderObjectEvidence (..),
     NativeArtifactLoaderResolutionEvidence (..),
     NativeArtifactTarget,
@@ -501,21 +500,32 @@ portableImageTargetEvidenceForTest evidence =
         { targetClosureDeviceId = 0,
           targetClosureFileId = 0
         }
+    -- Phase 6 Sprint 6.50: @/etc/ld.so.cache@ is loader configuration the
+    -- platform maintains, not artifact content, and on @linux-gpu@ the NVIDIA
+    -- container runtime rewrites it at container start to register the driver
+    -- libraries it injects. Its bytes therefore differ between the image the
+    -- artifact was baked in and every GPU engine pod that runs it, while
+    -- nothing about the artifact changed. Dropping the cache file and the
+    -- positional cache-entry index from the compared projection costs no
+    -- integrity, because the property the cache was standing in for is
+    -- recorded directly and is still compared: validation re-walks the closure
+    -- through the /live/ cache, and every @DT_NEEDED@ name keeps its own
+    -- resolution record naming the configured and canonical path it resolved
+    -- to, with that path's own mode, size, digest, and ELF metadata in
+    -- 'loaderEvidenceObjects'. A cache rewritten to resolve a soname elsewhere
+    -- moves the canonical path; a substituted file at the same path moves the
+    -- digest. Both still fail closed. Only the entry's ordinal, which shifts
+    -- when injection inserts driver entries, and the index file's own bytes
+    -- stop participating in identity.
     portableLoader loader =
       loader
-        { loaderEvidenceCache =
-            if any loaderResolutionUsedCache (loaderEvidenceResolutions loader)
-              then portableLoaderFile <$> loaderEvidenceCache loader
-              else Nothing,
-          loaderEvidenceObjects = map portableLoaderObject (loaderEvidenceObjects loader)
+        { loaderEvidenceCache = Nothing,
+          loaderEvidenceObjects = map portableLoaderObject (loaderEvidenceObjects loader),
+          loaderEvidenceResolutions =
+            map portableLoaderResolution (loaderEvidenceResolutions loader)
         }
-    portableLoaderFile loaderFile =
-      loaderFile
-        { loaderFileConfiguredDeviceId = 0,
-          loaderFileConfiguredFileId = 0,
-          loaderFileCanonicalDeviceId = 0,
-          loaderFileCanonicalFileId = 0
-        }
+    portableLoaderResolution resolution =
+      resolution {loaderResolutionCacheEntryIndex = Nothing}
     portableLoaderObject loaderObject =
       loaderObject
         { loaderObjectConfiguredDeviceId = 0,
@@ -2187,6 +2197,8 @@ forceArtifactTerminalOutcome terminalOutcome =
       terminalOutcome
     ArtifactTerminalRejected ->
       terminalOutcome
+    ArtifactTerminalProjectionRefused reason ->
+      Text.length reason `seq` terminalOutcome
     ArtifactTerminalProcess
       processOutcome
       exitCode
@@ -2202,7 +2214,10 @@ forceArtifactProcessOutcome :: ArtifactProcessOutcome -> ()
 forceArtifactProcessOutcome processOutcome =
   case processOutcome of
     ArtifactProcessExited exitCode -> exitCode `seq` ()
-    ArtifactProcessExceededCeiling observedBytes -> observedBytes `seq` ()
+    ArtifactProcessExceededCeiling resource ceilingMib observedMib ->
+      resource `seq` ceilingMib `seq` observedMib `seq` ()
+    ArtifactProcessRefusedAtCeiling resource ceilingMib observedMib exitCode ->
+      resource `seq` ceilingMib `seq` observedMib `seq` exitCode `seq` ()
     ArtifactProcessEnforcementUnavailable reason -> Text.length reason `seq` ()
     ArtifactProcessOutputLimitExceeded outputStream -> outputStream `seq` ()
     ArtifactProcessOutputCaptureFailed outputStream reason ->

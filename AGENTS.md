@@ -59,7 +59,10 @@ Read first:
   `foreign import` is forbidden throughout repo-owned Haskell, including observer code. Darwin
   process birth identity is registry-backed Haskell state protected by `filelock`; Apple footprint
   observation is a fixed, bounded public-tool kernel over `/usr/bin/top` and
-  `/usr/bin/footprint`, with no caller-supplied command specification. The nonblocking
+  `/usr/bin/footprint`, with no caller-supplied command specification, and the same shape governs
+  every fixed enforcement tool: an observer or a ceiling installer that follows a caller-supplied or
+  operator-editable path is redirectable, so those executables are pinned literals behind a closed
+  unexported specification rather than resolved from the host manifest. The nonblocking
   exclusive `filelock` token remains enclosed by the rank-2 `Lease s ClusterMutationLocked` region.
   For bounded commands, the parent starts one self-exec anchor through public `System.Process` with
   `close_fds = True`, `create_group = True`, an explicit environment, and ordinary standard-stream
@@ -114,16 +117,23 @@ Read first:
   `steady-state`; the test-harness `./infernix.dhall` swap reconciles a leftover `.harness-backup` on
   entry so a crash cannot leave the operator's config clobbered. Canonical doctrine:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
-- memory-safety by construction rests on the generated typed execution plan: compilation
-  mints a resource-indexed `MemoryGrant`, package-owned live observations pair it with the matching
-  `Enforcer`, and an inference subprocess can launch only from the resulting opaque
-  `ExecutableModel`. The capped-engine kernel bounds actual resident memory to its
-  `MemoryCeiling`; a measured breach is a clean `status=failed` `ModelMemoryLimitExceeded`, not a
-  fabricated result. The execution authority remains inside the opaque engine capability so
-  concurrent reuse is unrepresentable; Apple/Linux CPU observers enforce resident-memory ceilings,
-  and Linux GPU execution requires independently indexed RAM and VRAM grants and observers.
-  Physical host RAM is a checked `HostMemoryPartition`, every model declares a required positive
-  `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its enforcer.
+- memory-safety by construction rests on the generated typed execution plan, and a model's
+  requirement is **derived from its artifact, never authored**: the tensor table in a checkpoint
+  header gives exact weight bytes from a bounded prefix read, and the model's geometry plus the
+  declared execution shape gives exact cache bytes. The requirement is resource-indexed, so host and
+  device are different formulas rather than one scalar admitted twice — where weights stream to a
+  device, the model-size term is absent from the host formula entirely. Compilation mints one grant
+  per resource a placement consumes, live observations pair each with its matching enforcer, and an
+  inference subprocess can launch only from the resulting opaque executable capability. Enforcement is
+  three layers that are not interchangeable: a kernel limit **installed before the engine's first
+  allocation** on the lanes that can install one, a sampled backstop over the residue that limit
+  provably does not cover, and the engine reporting back the limit it actually received. A breach
+  names the resource it breached and the footprint it observed, and is a clean `status=failed`
+  `ModelMemoryLimitExceeded`, never a fabricated result. The execution authority remains inside the
+  opaque engine capability so concurrent reuse is unrepresentable. **A lane declares the strength it
+  has**: the mechanism is part of the type, an uncalibrated lane declares detection only, and no
+  kernel mechanism bounds device memory on any lane. What this makes unrepresentable is an unbounded
+  launch, per lane and per resource — not a host out-of-memory condition.
   Canonical doctrine:
   [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
   and [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
@@ -132,9 +142,12 @@ Read first:
   compiler phase is `jobs × compilerHeap + (jobs + 1) × controlHeap`: one fixed control/helper slot
   per compiler worker plus the live Cabal driver. Native compiler helpers occupy those declared
   slots; on Darwin that reserve is arithmetic and sampled evidence, not a kernel-enforced native
-  heap bound. The web dependency install and unit run, the routed end-to-end browser, the Python
-  provisioning and adapter images, and the host inference daemon are started by the same validation
-  surface and carry no toolchain ceiling; they are host-reserve claimants.
+  heap bound. The web dependency install and unit run, the routed end-to-end browser, and the Python
+  provisioning and adapter images are started by the same validation surface and carry no toolchain
+  ceiling; they are host-reserve claimants. The host inference daemon is a host-reserve claimant on
+  the same terms, but the engine executions it starts carry a ceiling of their own on the lanes that
+  can install one — carrying no *toolchain* ceiling is not the same as carrying none, and the two
+  rows bound different quantities by different mechanisms.
   Inference is one claimant on host RAM; the toolchain is another, and an uncapped `cabal build`
   exhausted a 124.94 GiB development host while the kernel, which selects per process
   and ranked the build below every cluster pod, destroyed 111 pod processes and never touched it.
@@ -146,7 +159,7 @@ Read first:
   aggregate on the Linux container lane, while Darwin has no cgroups and no installable
   address-space ceiling, so no operating-system bound is engaged on that lane at all and what
   remains is Haskell heap caps, bounded concurrency, claimant arithmetic, and sampled evidence.
-  The shipped operator CLI and its fixed observer tools are not
+  The shipped operator CLI and its fixed observer and enforcement-installation tools are not
   toolchain claimants; they remain in the host reserve and outside the sampled Cabal group. One
   opaque authority serializes its own package-owned child lifecycles, which is narrower than the
   host, so the account is admitted against an observation of available host memory and a census
@@ -158,7 +171,10 @@ Read first:
   impossible — native-helper growth beyond its measured
   slot, page cache, kernel slab, the OOM-protected container runtime, and every process infernix did
   not start remain outside the enforced bound, a named foreign claimant is attributed rather than
-  measured, and a transient peak between samples is unobserved — and the doctrine names what it does
+  measured, and a transient peak between samples is unobserved wherever a sampled account is all
+  there is. Where an inference ceiling is installed the sampling gap closes for the memory that
+  ceiling charges, and stays open for the memory it does not: shared and pinned host mappings, and
+  device memory on every lane. The doctrine names what it does
   not bound rather than overstating the guarantee. Canonical doctrine:
   [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
 - per-machine fleet topology: the supported shape is multiple machines, each running **exactly one**

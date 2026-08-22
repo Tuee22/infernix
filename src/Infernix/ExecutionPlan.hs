@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Infernix.ExecutionPlan
   ( CompiledDaemon,
@@ -55,9 +56,9 @@ module Infernix.ExecutionPlan
     executableModelDescriptor,
     executableModelEngine,
     executableModelGpuVramCeilingMib,
+    executableModelGpuVramArenaMib,
     executableModelId,
     executableModelResidentCeilingMib,
-    executableModelResidentResource,
     executableModelRoutes,
     linuxOuterEnvelopeHeadroomMib,
     lookupCompiledPlacement,
@@ -98,6 +99,7 @@ import Infernix.ExecutionPlan.Internal
     ExecutableModel (..),
     MemoryCeiling (..),
     MemoryGrant (..),
+    ModelRequirementObservation (..),
     PlacementEnforcementShape (..),
     PlacementObservation (..),
     RawRuntimeConfig (..),
@@ -106,6 +108,7 @@ import Infernix.ExecutionPlan.Internal
     RuntimePlan (..),
     RuntimeResources (..),
     UnavailableModel (..),
+    enforcerBudgetMib,
   )
 import Infernix.Types
   ( ConsumerSubscriptionType (ConsumerShared),
@@ -117,8 +120,10 @@ import Infernix.Types
     EnginePool (..),
     InferenceError (..),
     InferenceMemoryBudget (..),
-    InferenceMemoryResource,
+    KnownResource (resourceValue),
     ModelDescriptor (..),
+    ModelExecutionShape (..),
+    ModelResourceRequirement (..),
     PodMemoryLimit (..),
     PulsarConnectionMode (..),
     RequestField (..),
@@ -129,7 +134,9 @@ import Infernix.Types
     inferenceMemoryBudgetPodLimits,
     inferenceMemoryBudgetResource,
     inferenceMemoryBudgetSource,
-    modelMemoryFootprintMib,
+    modelHostResidencyRequirement,
+    modelMemoryRequirementMib,
+    requiresGpu,
   )
 import Infernix.Types qualified as Types
 
@@ -150,7 +157,7 @@ data ConfigError
   | InvalidModelDescriptor Text
   | InvalidModelId Text
   | InvalidMatrixRowId Text
-  | UnenforceableModelMemoryFootprint Text Integer
+  | UnenforceableModelExecutionShape Text Integer
   | DuplicateModelId Text
   | DuplicateMatrixRowId Text
   | DuplicatePoolId Text
@@ -177,7 +184,7 @@ data ConfigError
   | ModelWithoutEligibleMember Text
   | DuplicateDerivedRouteTopic Text [(Text, Text)]
   | TopicFamilyCollision Text [Text]
-  | RuntimeBudgetMismatch RuntimeMode InferenceMemoryResource
+  | RuntimeBudgetMismatch RuntimeMode Resource
   | GpuDualResourceBudgetRequired
   | GpuModelWithoutVramEnforcer Text
   | InvalidMemoryEnforcer Text
@@ -354,21 +361,13 @@ placementEnforcementShape runtimeModeValue budget model =
     -- VRAM grant it would never consume is not evidence of anything.
     (LinuxGpu, DualEnforcedBudget podLimit vramLimit)
       | podMemoryLimitResource podLimit == Types.PodRam,
-        podMemoryLimitResource vramLimit == Types.GpuVram ->
+        podMemoryLimitResource vramLimit == Types.NvidiaVram ->
           Just
             ( if requiresGpu model
                 then GpuEnforcementShape podLimit vramLimit
                 else PodEnforcementShape podLimit
             )
     _ -> Nothing
-
--- | The physical resources an enforcement shape binds, in enforcement order.
-placementShapeEnforcedResources :: PlacementEnforcementShape -> [InferenceMemoryResource]
-placementShapeEnforcedResources shape =
-  case shape of
-    HostEnforcementShape {} -> [Types.UnifiedHostRam]
-    PodEnforcementShape {} -> [Types.PodRam]
-    GpuEnforcementShape {} -> [Types.PodRam, Types.GpuVram]
 
 -- | Admit one placement against the declared capacity of the machine that will
 -- execute it. Reachable only from 'refineRuntimePlan', which needs a
@@ -378,79 +377,133 @@ admitPlacementResources ::
   RuntimeMode ->
   InferenceMemoryBudget ->
   ModelDescriptor ->
+  ModelResourceRequirement ->
   Either InferenceError CompiledResources
-admitPlacementResources runtimeModeValue budget model =
-  case placementEnforcementShape runtimeModeValue budget model of
-    Just (HostEnforcementShape partition) ->
+admitPlacementResources runtimeModeValue budget model requirement =
+  case (placementEnforcementShape runtimeModeValue budget model, requirement) of
+    (Just (HostEnforcementShape partition), _) ->
       CompiledHostResources
         (HostFootprintWatchdogPlan partition)
         <$> admitGrant
           HostRamWitness
           (inferenceMemoryBudgetSource budget)
           model
+          (modelHostResidencyRequirement requirement)
           (hostPartitionInferenceCapacityMib partition)
-    Just (PodEnforcementShape podLimit) ->
+    (Just (PodEnforcementShape podLimit), _) ->
       CompiledPodResources
         (LinuxProcessGroupRssWatchdogPlan podLimit)
         <$> admitGrant
           PodRamWitness
           (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
           model
+          (modelHostResidencyRequirement requirement)
           (podMemoryLimitMib podLimit)
-    Just (GpuEnforcementShape podLimit vramLimit) ->
+    -- Phase 4 Sprint 4.38: the device arm reads its requirement from a value
+    -- that is present by construction. The retired form consulted a @Bool@ and
+    -- admitted whatever single scalar had been authored beside it, so a
+    -- device-using placement carrying no device requirement was constructible.
+    (Just (GpuEnforcementShape podLimit vramLimit), HostAndDeviceRequirement hostRequirement deviceRequirement) ->
       CompiledGpuResources
         (LinuxProcessGroupRssWatchdogPlan podLimit)
         <$> admitGrant
           PodRamWitness
           (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
           model
+          (podRequirementOf hostRequirement)
           (podMemoryLimitMib podLimit)
         <*> pure (NvidiaVramAccountingPlan vramLimit)
         <*> admitGrant
           NvidiaVramWitness
           (Types.podMemoryLimitSourceText (podMemoryLimitSource vramLimit))
           model
+          deviceRequirement
           (podMemoryLimitMib vramLimit)
-    Nothing ->
-      Left
-        ModelMemoryLimitExceeded
-          { inferenceErrorModelId = modelId model,
-            inferenceErrorRequiredMib = modelMemoryFootprintMib (modelRamFootprint model),
-            inferenceErrorAvailableMib = 0,
-            inferenceErrorResource = inferenceMemoryBudgetResource budget,
-            inferenceErrorSource = "runtime-memory-enforcer-mismatch"
-          }
+    -- 'placementEnforcementShape' selects the device shape only for a model
+    -- whose requirement carries a device term, and 'requiresGpu' is that arm.
+    -- The pair is therefore unreachable, and it fails closed rather than
+    -- admitting a device placement against a host quantity.
+    (Just (GpuEnforcementShape {}), HostResidentRequirement {}) ->
+      Left (enforcerMismatchRejection budget model)
+    (Nothing, _) -> Left (enforcerMismatchRejection budget model)
 
--- | Admit one resource. The rejection payload names the resource the witness
--- indexes and the source of the limit that rejected it, so a dual-resource
--- placement reports which of its two independent limits was exceeded instead of
--- collapsing both onto one budget-wide source string.
+-- | Phase 4 Sprint 4.39 — a declared execution shape whose own quantities are
+-- non-positive, or whose cache term could never be enforced.
+--
+-- The retired check compared an authored footprint against the enforceable
+-- range. There is no authored footprint any more, so what a compiler running on
+-- every role can still check is the shape the cache term is evaluated against: a
+-- context length, batch, generation bound, or cache element width that is not
+-- positive makes the derivation's own arithmetic meaningless, and a context
+-- length past the enforceable range makes its result unenforceable no matter
+-- what the artifact says.
+unenforceableShapeQuantities :: ModelExecutionShape -> [Integer]
+unenforceableShapeQuantities shape =
+  [ toInteger quantity
+  | quantity <- declaredQuantities,
+    quantity <= 0 || toInteger quantity > maxEnforceableMemoryMib
+  ]
+  where
+    declaredQuantities =
+      [ executionContextLength shape,
+        executionBatchSize shape,
+        executionGenerationBound shape,
+        executionCacheElementWidth shape
+      ]
+
+-- | Re-index a host-residency requirement for the pod lane. Both indices are
+-- 'Types.HostResidentResource' names for one physical quantity — bytes resident
+-- on the executing machine — so this is a lane rename, not a substitution
+-- across resources: the device index is not an instance and cannot be reached.
+podRequirementOf ::
+  Types.ModelMemoryRequirement 'HostRam ->
+  Types.ModelMemoryRequirement 'PodRam
+podRequirementOf =
+  modelHostResidencyRequirement . HostResidentRequirement
+
+-- | The refusal for a mode/budget pair that names no enforcement mechanism.
+-- 'compilerErrors' already rejects that pair, so it is unreachable from a
+-- compiled plan; admission still fails closed on it rather than assuming a lane.
+enforcerMismatchRejection :: InferenceMemoryBudget -> ModelDescriptor -> InferenceError
+enforcerMismatchRejection budget model =
+  ModelMemoryLimitExceeded
+    { inferenceErrorModelId = modelId model,
+      inferenceErrorRequiredMib = 0,
+      inferenceErrorAvailableMib = 0,
+      inferenceErrorResource = inferenceMemoryBudgetResource budget,
+      inferenceErrorSource = "runtime-memory-enforcer-mismatch"
+    }
+
+-- | Admit one resource against the executing machine's declared capacity for
+-- that resource.
+--
+-- The requirement is indexed by the same resource the witness indexes, so the
+-- quantity compared against a capacity is a quantity about that capacity's
+-- resource. The rejection payload names the resource and the source of the limit
+-- that rejected it, so a dual-resource placement reports which of its two
+-- independent limits was exceeded instead of collapsing both onto one
+-- budget-wide source string.
 admitGrant ::
+  (KnownResource resource) =>
   ResourceWitness resource ->
   Text ->
   ModelDescriptor ->
+  Types.ModelMemoryRequirement resource ->
   Int ->
   Either InferenceError (MemoryGrant resource)
-admitGrant witness limitSource model availableMib
+admitGrant witness limitSource model required availableMib
   | requiredMib > availableMib =
       Left
         ModelMemoryLimitExceeded
           { inferenceErrorModelId = modelId model,
             inferenceErrorRequiredMib = requiredMib,
             inferenceErrorAvailableMib = availableMib,
-            inferenceErrorResource = witnessInferenceResource witness,
+            inferenceErrorResource = resourceValue witness,
             inferenceErrorSource = limitSource
           }
   | otherwise = Right (MemoryGrant (MemoryCeiling requiredMib))
   where
-    requiredMib = modelMemoryFootprintMib (modelRamFootprint model)
-
-witnessInferenceResource :: ResourceWitness resource -> InferenceMemoryResource
-witnessInferenceResource witness =
-  case witness of
-    HostRamWitness -> Types.UnifiedHostRam
-    PodRamWitness -> Types.PodRam
-    NvidiaVramWitness -> Types.GpuVram
+    requiredMib = modelMemoryRequirementMib required
 
 compilerErrors :: DemoConfig -> [ConfigError]
 compilerErrors config =
@@ -533,12 +586,9 @@ compilerErrors config =
            ]
         <> [InvalidModelId (modelId model) | model <- models config, not (canonicalIdentifier (modelId model))]
         <> [InvalidMatrixRowId (matrixRowId model) | model <- models config, not (canonicalIdentifier (matrixRowId model))]
-        <> [ UnenforceableModelMemoryFootprint
-               (modelId model)
-               (toInteger (modelMemoryFootprintMib (modelRamFootprint model)))
+        <> [ UnenforceableModelExecutionShape (modelId model) declared
            | model <- models config,
-             toInteger (modelMemoryFootprintMib (modelRamFootprint model))
-               > maxEnforceableMemoryMib
+             declared <- unenforceableShapeQuantities (modelExecutionShape model)
            ]
     invalidModel model =
       any
@@ -661,7 +711,7 @@ compilerErrors config =
            | configRuntimeMode config == LinuxGpu,
              model <- models config,
              requiresGpu model,
-             Types.GpuVram
+             Types.NvidiaVram
                `notElem` map
                  podMemoryLimitResource
                  (inferenceMemoryBudgetPodLimits (inferenceMemoryBudget config))
@@ -690,7 +740,7 @@ runtimeBudgetErrors runtimeModeValue budget =
       | podMemoryLimitResource podLimit == Types.PodRam -> []
     (LinuxGpu, DualEnforcedBudget podLimit vramLimit)
       | podMemoryLimitResource podLimit == Types.PodRam,
-        podMemoryLimitResource vramLimit == Types.GpuVram ->
+        podMemoryLimitResource vramLimit == Types.NvidiaVram ->
           []
     -- A @linux-gpu@ budget that names only one resource cannot enforce the
     -- other, so it is rejected as a config error rather than silently admitting
@@ -714,7 +764,7 @@ refineRuntimePlan ::
   RuntimeObservation ->
   CompiledRuntimePlan ->
   Either RefinementErrors RuntimePlan
-refineRuntimePlan (RuntimeObservation observations) compiledPlan =
+refineRuntimePlan (RuntimeObservation observations requirementObservations) compiledPlan =
   case refinementErrors of
     [] ->
       Right
@@ -727,19 +777,51 @@ refineRuntimePlan (RuntimeObservation observations) compiledPlan =
   where
     runtimeModeValue = compiledPlanRuntimeMode compiledPlan
     budget = inferenceMemoryBudget (compiledConfig compiledPlan)
+    missingDerivationReason =
+      "this machine derived no memory requirement for the model, so it was never admitted"
+
+    -- Phase 4 Sprint 4.39: the requirement is derived from the model's own
+    -- artifact on the machine that will execute, so it arrives with the
+    -- observation rather than off the descriptor. A row whose derivation failed
+    -- — or one this machine holds no derivation for at all — is retained as an
+    -- explicit unavailable placement naming the reason, because a row that
+    -- cannot state what it needs is not a row that can be safely admitted, and
+    -- an explicit unavailable placement is visible and actionable where a
+    -- constant is neither.
+    derivedRequirements =
+      Map.fromList
+        [ (requirementId, derivation)
+        | ModelRequirementObservation requirementId derivation <- requirementObservations
+        ]
     admitted =
       [ ( placementId,
-          case admitPlacementResources runtimeModeValue budget (placementDescriptor placement) of
-            Left admissionError ->
-              Left
-                UnavailableModel
-                  { unavailableDescriptor = placementDescriptor placement,
-                    unavailableReason = admissionError
-                  }
-            Right resources -> Right resources
+          admitOnePlacement placementId (placementDescriptor placement)
         )
       | (placementId, placement) <- Map.toList (compiledPlacements compiledPlan)
       ]
+    admitOnePlacement placementId descriptor =
+      case Map.lookup placementId derivedRequirements of
+        Nothing -> Left (underivableModel descriptor missingDerivationReason)
+        Just (Left derivationReason) -> Left (underivableModel descriptor derivationReason)
+        Just (Right requirement) ->
+          case admitPlacementResources runtimeModeValue budget descriptor requirement of
+            Left admissionError ->
+              Left
+                UnavailableModel
+                  { unavailableDescriptor = descriptor,
+                    unavailableReason = admissionError
+                  }
+            Right resources -> Right resources
+    underivableModel descriptor derivationReason =
+      UnavailableModel
+        { unavailableDescriptor = descriptor,
+          unavailableReason =
+            ModelRequirementUnderivable
+              { inferenceErrorModelId = modelId descriptor,
+                inferenceErrorArtifactType = artifactType descriptor,
+                inferenceErrorReason = derivationReason
+              }
+        }
     unavailableEntries =
       [(placementId, unavailable) | (placementId, Left unavailable) <- admitted]
     admittedResources =
@@ -912,14 +994,25 @@ compiledRuntimePlanPlacements = Map.elems . compiledPlacements
 -- 'predictedAdmissionViolations' in "Infernix.Lint.HaskellStyle" enforces that.
 -- Once the machine contract carries each box's own capacity, this prediction is
 -- only as good as the contract the caller happens to hold.
-predictedAdmissionRejection :: CompiledRuntimePlan -> Text -> Maybe InferenceError
-predictedAdmissionRejection compiledPlan modelIdValue = do
+--
+-- Phase 4 Sprint 4.39: the requirement is now supplied by the caller rather than
+-- read off the descriptor, because it is derived from the model's own artifact
+-- on the machine that holds it. A harness with no artifact has no requirement,
+-- and that is the honest shape: this function predicts what admission would say
+-- /given/ a requirement, and cannot invent one.
+predictedAdmissionRejection ::
+  CompiledRuntimePlan ->
+  Text ->
+  ModelResourceRequirement ->
+  Maybe InferenceError
+predictedAdmissionRejection compiledPlan modelIdValue requirement = do
   placement <- lookupCompiledPlacement modelIdValue compiledPlan
   either Just (const Nothing) $
     admitPlacementResources
       (compiledPlanRuntimeMode compiledPlan)
       (inferenceMemoryBudget (compiledConfig compiledPlan))
       (placementDescriptor placement)
+      requirement
 
 lookupRuntimeUnavailableModel :: Text -> RuntimePlan -> Maybe UnavailableModel
 lookupRuntimeUnavailableModel modelIdValue = Map.lookup modelIdValue . runtimeUnavailable
@@ -1062,27 +1155,77 @@ compiledPlanPlacementEnforcementShape compiledPlan placement =
 compiledPlanPlacementEnforcedResources ::
   CompiledRuntimePlan ->
   CompiledPlacement ->
-  [InferenceMemoryResource]
-compiledPlanPlacementEnforcedResources compiledPlan =
-  maybe [] placementShapeEnforcedResources
-    . compiledPlanPlacementEnforcementShape compiledPlan
+  [Types.Resource]
+compiledPlanPlacementEnforcedResources compiledPlan placement =
+  case compiledPlanPlacementEnforcementShape compiledPlan placement of
+    Nothing -> []
+    Just (HostEnforcementShape partition) ->
+      [resourceValue (HostFootprintWatchdogPlan partition)]
+    Just (PodEnforcementShape podLimit) ->
+      [resourceValue (LinuxProcessGroupRssWatchdogPlan podLimit)]
+    Just (GpuEnforcementShape podLimit vramLimit) ->
+      [ resourceValue (LinuxProcessGroupRssWatchdogPlan podLimit),
+        resourceValue (NvidiaVramAccountingPlan vramLimit)
+      ]
 
-executableModelResidentResource :: ExecutableModel -> InferenceMemoryResource
-executableModelResidentResource executable =
-  case executableResources executable of
-    RuntimeHostResources _ -> Types.UnifiedHostRam
-    RuntimePodResources _ -> Types.PodRam
-    RuntimeGpuResources _ _ -> Types.PodRam
-
+-- | Phase 4 Sprint 4.43 — the device quantity an engine is sized by.
+--
+-- It is the same question the host ceiling answers and it has the same answer,
+-- for the same reason. A framework engine's device runtime is resident before a
+-- single weight is read — a CUDA context alone is roughly half a gigabyte on
+-- this class of hardware — and no term of it appears in a checkpoint's tensor
+-- table. Sizing a framework arena from the model's derived device requirement
+-- therefore hands a small model an arena its runtime cannot initialize in, which
+-- refuses a model that would have run. Until a framework family offers a way to
+-- ask what it will need, the quantity it is sized by is the lane's own
+-- per-execution device budget. The derived requirement is unchanged as the
+-- quantity admission compared against the device's capacity; what changes is
+-- only what the engine is sized by.
+--
+-- A native runner keeps the derived quantity, because its device use is its
+-- weights and its cache and nothing else.
 executableModelGpuVramCeilingMib :: ExecutableModel -> Maybe Int
 executableModelGpuVramCeilingMib executable =
   case executableResources executable of
     RuntimeGpuResources _ grant -> Just (enforcedGrantCeilingMib grant)
     _ -> Nothing
 
+-- | The device quantity an engine is /sized by/, which is not always the
+-- quantity it was admitted against.
+--
+-- It is the same question the installed host ceiling answers and it has the
+-- same answer, for the same reason. A framework engine's device runtime is
+-- resident before a single weight is read — a CUDA context alone is roughly
+-- half a gigabyte on this class of hardware — and no term of it appears in a
+-- checkpoint's tensor table. Sizing a framework arena from the model's derived
+-- device requirement hands a small model an arena its runtime cannot initialize
+-- in, which refuses a model that would have run. Until a framework family offers
+-- a way to ask what it will need, the quantity it is sized by is the lane's own
+-- per-execution device budget.
+--
+-- A native runner keeps the derived quantity, because its device use is its
+-- weights and its cache and nothing else. And the admitted grant is untouched:
+-- 'executableModelGpuVramCeilingMib' still reports what admission compared
+-- against the device's capacity, so refinement is still checkable against it.
+executableModelGpuVramArenaMib :: ExecutableModel -> Maybe Int
+executableModelGpuVramArenaMib executable =
+  case executableResources executable of
+    RuntimeGpuResources _ grant -> Just (arenaFor grant)
+    _ -> Nothing
+  where
+    arenaFor :: forall resource. EnforcedGrant resource -> Int
+    arenaFor grant =
+      case engineBindingAdapterType (executableEngine executable) of
+        Types.NativeProcessRunner -> enforcedGrantCeilingMib grant
+        Types.PythonStdio ->
+          max (enforcedGrantCeilingMib grant) (enforcedGrantBudgetMib grant)
+
 enforcedGrantCeilingMib :: EnforcedGrant resource -> Int
 enforcedGrantCeilingMib (EnforcedGrant _ grant) =
   memoryCeilingMib (grantCeiling grant)
+
+enforcedGrantBudgetMib :: EnforcedGrant resource -> Int
+enforcedGrantBudgetMib (EnforcedGrant enforcer _) = enforcerBudgetMib enforcer
 
 engineRoutePoolId :: EngineRoute -> Text
 engineRoutePoolId = routePoolId

@@ -125,6 +125,10 @@ spec = do
       roundtripJson "ConversationInferenceResultEvent"
         (ConversationInferenceResultEvent sampleInferenceResultPayload)
       roundtripJson "InferenceError.ModelMemoryLimitExceeded" sampleInferenceError
+      -- Phase 4 Sprint 4.39: the second refusal arm round-trips too. Without
+      -- this the browser mirror could carry an arm the wire never exercises.
+      roundtripJson "InferenceError.ModelRequirementUnderivable"
+        sampleUnderivableRequirementError
       it "decodes a Haskell wire ModelMemoryLimitExceeded server patch" do
         case (JSON.readJSON rawMemoryLimitServerPatch :: _ WsServerMessage) of
           Right (ServerConversationPatch record) ->
@@ -280,6 +284,15 @@ sampleInferenceError =
     , modelMemoryLimitExceededAvailableMib: 512
     , modelMemoryLimitExceededResource: "unified-host-ram"
     , modelMemoryLimitExceededSource: "unit-test"
+    }
+
+sampleUnderivableRequirementError :: InferenceError
+sampleUnderivableRequirementError =
+  ModelRequirementUnderivable
+    { modelRequirementUnderivableModelId: "audio-demucs-htdemucs"
+    , modelRequirementUnderivableArtifactType: "PyTorch checkpoint"
+    , modelRequirementUnderivableReason:
+        "no checkpoint-header reader is present for the PyTorch checkpoint artifact family"
     }
 
 rawMemoryLimitServerPatch :: String

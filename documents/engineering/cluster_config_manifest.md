@@ -14,9 +14,13 @@ The execution-related portion of this manifest is governed by
 [Typed Execution Plan](../architecture/typed_execution_plan.md). Startup compiles the hidden raw
 decode into an opaque `CompiledRuntimePlan`;
 coordinator routing projects only compiled placements and daemon capabilities, while engine startup
-pairs live enforcer observations with compiled grants to refine a `RuntimePlan` of
-`ExecutableModel` capabilities. Raw decoded records do not flow directly into routing or process
-launch. The wire schema uses proper Dhall unions and `Natural` quantities.
+pairs live enforcer observations with the grants compilation minted — one per physical resource the
+placement consumes, from a requirement derived from the model's own artifact rather than from any
+field of this record — to refine a `RuntimePlan` of `ExecutableModel` capabilities that carry the
+execution shape the engine is started with. Raw decoded records do not flow directly into routing or
+process launch, and no mounted value can raise the ceiling an execution runs under; that contract is
+owned by [Bounded Inference Memory](../architecture/bounded_inference_memory.md). The wire schema
+uses proper Dhall unions and `Natural` quantities.
 
 - The `ClusterConfig` Haskell type (rendered by the binary at `cluster up` from
   `defaultClusterConfig`) is the typed source of truth for every in-cluster wiring value that

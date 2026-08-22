@@ -55,6 +55,7 @@ common artifact-fixture
         filelock >=0.1.1.9 && <0.2,
         filepath >=1.4 && <1.6,
         text >=2.0 && <2.2,
+        time >=1.12 && <1.15,
         unix >=2.8 && <2.9
     other-modules:
         Infernix.Cluster.LifecycleLock
@@ -69,6 +70,7 @@ common artifact-fixture
         Infernix.Engines.MaterializationLock
         Infernix.Engines.MaterializationLock.Internal
         Infernix.Error
+        Infernix.Types
 
 common artifact-capability-fixture
     default-language: GHC2021
@@ -86,6 +88,7 @@ common artifact-capability-fixture
         filelock >=0.1.1.9 && <0.2,
         filepath >=1.4 && <1.6,
         text >=2.0 && <2.2,
+        time >=1.12 && <1.15,
         unix >=2.8 && <2.9
     other-modules:
         Infernix.Cluster.LifecycleLock
@@ -94,6 +97,7 @@ common artifact-capability-fixture
         Infernix.Engines.MaterializationLock
         Infernix.Engines.MaterializationLock.Internal
         Infernix.Error
+        Infernix.Types
 
 executable pass-matching-host
     import: fixture
@@ -186,9 +190,9 @@ executable fail-cannot-read-host-memory-partition
         support
     other-modules: DesiredApi
 
-executable fail-cannot-read-model-memory-footprint
+executable fail-cannot-read-model-memory-requirement
     import: fixture
-    main-is: CannotReadModelMemoryFootprint.hs
+    main-is: CannotReadModelMemoryRequirement.hs
     hs-source-dirs:
         fail
         support
@@ -223,6 +227,30 @@ executable fail-cannot-coerce-enforcer-plan-resource
     main-is: CannotCoerceEnforcerPlanResource.hs
     hs-source-dirs:
         fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-coerce-model-memory-requirement-resource
+    import: fixture
+    main-is: CannotCoerceModelMemoryRequirementResource.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-supply-host-requirement-for-device
+    import: fixture
+    main-is: CannotSupplyHostRequirementForDevice.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable pass-matching-requirement
+    import: fixture
+    main-is: MatchingRequirement.hs
+    hs-source-dirs:
+        pass
         support
     other-modules: DesiredApi
 

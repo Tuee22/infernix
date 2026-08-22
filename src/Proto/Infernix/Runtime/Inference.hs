@@ -4,11 +4,17 @@
 {-# OPTIONS_GHC -Wno-duplicate-exports#-}
 {-# OPTIONS_GHC -Wno-dodgy-exports#-}
 module Proto.Infernix.Runtime.Inference (
-        CatalogEntry(), EngineBinding(), ErrorResponse(),
-        GeneratedCatalog(), InferenceError(), InferenceError'Error(..),
-        _InferenceError'ModelMemoryLimitExceeded, InferenceRequest(),
-        InferenceResult(), ModelMemoryLimitExceeded(), RequestField(),
-        ResultPayload(), ResultPayload'Output(..),
+        CatalogEntry(), CeilingAcknowledgement(), EngineBinding(),
+        ErrorResponse(), GeneratedCatalog(), HostAndDeviceClaim(),
+        HostResidentClaim(), InferenceError(), InferenceError'Error(..),
+        _InferenceError'ModelMemoryLimitExceeded,
+        _InferenceError'ModelRequirementUnderivable,
+        InferenceMemoryBudget(), InferenceMemoryBudget'Claim(..),
+        _InferenceMemoryBudget'HostResident,
+        _InferenceMemoryBudget'HostAndDevice, InferenceRequest(),
+        InferenceResult(), ModelExecutionShape(),
+        ModelMemoryLimitExceeded(), ModelRequirementUnderivable(),
+        RequestField(), ResultPayload(), ResultPayload'Output(..),
         _ResultPayload'InlineOutput, _ResultPayload'ObjectRef,
         _ResultPayload'InferenceError, WorkerRequest(), WorkerResponse()
     ) where
@@ -837,6 +843,161 @@ instance Control.DeepSeq.NFData CatalogEntry where
                                                     (_CatalogEntry'requiresGpu x__)
                                                     (Control.DeepSeq.deepseq
                                                        (_CatalogEntry'notes x__) ()))))))))))))))
+{- | Fields :
+     
+         * 'Proto.Infernix.Runtime.Inference_Fields.softBytes' @:: Lens' CeilingAcknowledgement Data.Int.Int64@
+         * 'Proto.Infernix.Runtime.Inference_Fields.hardBytes' @:: Lens' CeilingAcknowledgement Data.Int.Int64@ -}
+data CeilingAcknowledgement
+  = CeilingAcknowledgement'_constructor {_CeilingAcknowledgement'softBytes :: !Data.Int.Int64,
+                                         _CeilingAcknowledgement'hardBytes :: !Data.Int.Int64,
+                                         _CeilingAcknowledgement'_unknownFields :: !Data.ProtoLens.FieldSet}
+  deriving stock (Prelude.Eq, Prelude.Ord)
+instance Prelude.Show CeilingAcknowledgement where
+  showsPrec _ __x __s
+    = Prelude.showChar
+        '{'
+        (Prelude.showString
+           (Data.ProtoLens.showMessageShort __x) (Prelude.showChar '}' __s))
+instance Data.ProtoLens.Field.HasField CeilingAcknowledgement "softBytes" Data.Int.Int64 where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _CeilingAcknowledgement'softBytes
+           (\ x__ y__ -> x__ {_CeilingAcknowledgement'softBytes = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField CeilingAcknowledgement "hardBytes" Data.Int.Int64 where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _CeilingAcknowledgement'hardBytes
+           (\ x__ y__ -> x__ {_CeilingAcknowledgement'hardBytes = y__}))
+        Prelude.id
+instance Data.ProtoLens.Message CeilingAcknowledgement where
+  messageName _
+    = Data.Text.pack "infernix.runtime.CeilingAcknowledgement"
+  packedMessageDescriptor _
+    = "\n\
+      \\SYNCeilingAcknowledgement\DC2\GS\n\
+      \\n\
+      \soft_bytes\CAN\SOH \SOH(\ETXR\tsoftBytes\DC2\GS\n\
+      \\n\
+      \hard_bytes\CAN\STX \SOH(\ETXR\thardBytes"
+  packedFileDescriptor _ = packedFileDescriptor
+  fieldsByTag
+    = let
+        softBytes__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "soft_bytes"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.Int64Field ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Int.Int64)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"softBytes")) ::
+              Data.ProtoLens.FieldDescriptor CeilingAcknowledgement
+        hardBytes__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "hard_bytes"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.Int64Field ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Int.Int64)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"hardBytes")) ::
+              Data.ProtoLens.FieldDescriptor CeilingAcknowledgement
+      in
+        Data.Map.fromList
+          [(Data.ProtoLens.Tag 1, softBytes__field_descriptor),
+           (Data.ProtoLens.Tag 2, hardBytes__field_descriptor)]
+  unknownFields
+    = Lens.Family2.Unchecked.lens
+        _CeilingAcknowledgement'_unknownFields
+        (\ x__ y__ -> x__ {_CeilingAcknowledgement'_unknownFields = y__})
+  defMessage
+    = CeilingAcknowledgement'_constructor
+        {_CeilingAcknowledgement'softBytes = Data.ProtoLens.fieldDefault,
+         _CeilingAcknowledgement'hardBytes = Data.ProtoLens.fieldDefault,
+         _CeilingAcknowledgement'_unknownFields = []}
+  parseMessage
+    = let
+        loop ::
+          CeilingAcknowledgement
+          -> Data.ProtoLens.Encoding.Bytes.Parser CeilingAcknowledgement
+        loop x
+          = do end <- Data.ProtoLens.Encoding.Bytes.atEnd
+               if end then
+                   do (let missing = []
+                       in
+                         if Prelude.null missing then
+                             Prelude.return ()
+                         else
+                             Prelude.fail
+                               ((Prelude.++)
+                                  "Missing required fields: "
+                                  (Prelude.show (missing :: [Prelude.String]))))
+                      Prelude.return
+                        (Lens.Family2.over
+                           Data.ProtoLens.unknownFields (\ !t -> Prelude.reverse t) x)
+               else
+                   do tag <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                      case tag of
+                        8 -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          Prelude.fromIntegral
+                                          Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "soft_bytes"
+                                loop
+                                  (Lens.Family2.set (Data.ProtoLens.Field.field @"softBytes") y x)
+                        16
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          Prelude.fromIntegral
+                                          Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "hard_bytes"
+                                loop
+                                  (Lens.Family2.set (Data.ProtoLens.Field.field @"hardBytes") y x)
+                        wire
+                          -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
+                                        wire
+                                loop
+                                  (Lens.Family2.over
+                                     Data.ProtoLens.unknownFields (\ !t -> (:) y t) x)
+      in
+        (Data.ProtoLens.Encoding.Bytes.<?>)
+          (do loop Data.ProtoLens.defMessage) "CeilingAcknowledgement"
+  buildMessage
+    = \ _x
+        -> (Data.Monoid.<>)
+             (let
+                _v = Lens.Family2.view (Data.ProtoLens.Field.field @"softBytes") _x
+              in
+                if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                    Data.Monoid.mempty
+                else
+                    (Data.Monoid.<>)
+                      (Data.ProtoLens.Encoding.Bytes.putVarInt 8)
+                      ((Prelude..)
+                         Data.ProtoLens.Encoding.Bytes.putVarInt Prelude.fromIntegral _v))
+             ((Data.Monoid.<>)
+                (let
+                   _v = Lens.Family2.view (Data.ProtoLens.Field.field @"hardBytes") _x
+                 in
+                   if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                       Data.Monoid.mempty
+                   else
+                       (Data.Monoid.<>)
+                         (Data.ProtoLens.Encoding.Bytes.putVarInt 16)
+                         ((Prelude..)
+                            Data.ProtoLens.Encoding.Bytes.putVarInt Prelude.fromIntegral _v))
+                (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                   (Lens.Family2.view Data.ProtoLens.unknownFields _x)))
+instance Control.DeepSeq.NFData CeilingAcknowledgement where
+  rnf
+    = \ x__
+        -> Control.DeepSeq.deepseq
+             (_CeilingAcknowledgement'_unknownFields x__)
+             (Control.DeepSeq.deepseq
+                (_CeilingAcknowledgement'softBytes x__)
+                (Control.DeepSeq.deepseq
+                   (_CeilingAcknowledgement'hardBytes x__) ()))
 {- | Fields :
      
          * 'Proto.Infernix.Runtime.Inference_Fields.engine' @:: Lens' EngineBinding Data.Text.Text@
@@ -1910,9 +2071,269 @@ instance Control.DeepSeq.NFData GeneratedCatalog where
                                            (_GeneratedCatalog'engines x__) ()))))))))))
 {- | Fields :
      
+         * 'Proto.Infernix.Runtime.Inference_Fields.hostMib' @:: Lens' HostAndDeviceClaim Data.Int.Int64@
+         * 'Proto.Infernix.Runtime.Inference_Fields.deviceMib' @:: Lens' HostAndDeviceClaim Data.Int.Int64@ -}
+data HostAndDeviceClaim
+  = HostAndDeviceClaim'_constructor {_HostAndDeviceClaim'hostMib :: !Data.Int.Int64,
+                                     _HostAndDeviceClaim'deviceMib :: !Data.Int.Int64,
+                                     _HostAndDeviceClaim'_unknownFields :: !Data.ProtoLens.FieldSet}
+  deriving stock (Prelude.Eq, Prelude.Ord)
+instance Prelude.Show HostAndDeviceClaim where
+  showsPrec _ __x __s
+    = Prelude.showChar
+        '{'
+        (Prelude.showString
+           (Data.ProtoLens.showMessageShort __x) (Prelude.showChar '}' __s))
+instance Data.ProtoLens.Field.HasField HostAndDeviceClaim "hostMib" Data.Int.Int64 where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _HostAndDeviceClaim'hostMib
+           (\ x__ y__ -> x__ {_HostAndDeviceClaim'hostMib = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField HostAndDeviceClaim "deviceMib" Data.Int.Int64 where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _HostAndDeviceClaim'deviceMib
+           (\ x__ y__ -> x__ {_HostAndDeviceClaim'deviceMib = y__}))
+        Prelude.id
+instance Data.ProtoLens.Message HostAndDeviceClaim where
+  messageName _
+    = Data.Text.pack "infernix.runtime.HostAndDeviceClaim"
+  packedMessageDescriptor _
+    = "\n\
+      \\DC2HostAndDeviceClaim\DC2\EM\n\
+      \\bhost_mib\CAN\SOH \SOH(\ETXR\ahostMib\DC2\GS\n\
+      \\n\
+      \device_mib\CAN\STX \SOH(\ETXR\tdeviceMib"
+  packedFileDescriptor _ = packedFileDescriptor
+  fieldsByTag
+    = let
+        hostMib__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "host_mib"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.Int64Field ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Int.Int64)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional (Data.ProtoLens.Field.field @"hostMib")) ::
+              Data.ProtoLens.FieldDescriptor HostAndDeviceClaim
+        deviceMib__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "device_mib"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.Int64Field ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Int.Int64)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"deviceMib")) ::
+              Data.ProtoLens.FieldDescriptor HostAndDeviceClaim
+      in
+        Data.Map.fromList
+          [(Data.ProtoLens.Tag 1, hostMib__field_descriptor),
+           (Data.ProtoLens.Tag 2, deviceMib__field_descriptor)]
+  unknownFields
+    = Lens.Family2.Unchecked.lens
+        _HostAndDeviceClaim'_unknownFields
+        (\ x__ y__ -> x__ {_HostAndDeviceClaim'_unknownFields = y__})
+  defMessage
+    = HostAndDeviceClaim'_constructor
+        {_HostAndDeviceClaim'hostMib = Data.ProtoLens.fieldDefault,
+         _HostAndDeviceClaim'deviceMib = Data.ProtoLens.fieldDefault,
+         _HostAndDeviceClaim'_unknownFields = []}
+  parseMessage
+    = let
+        loop ::
+          HostAndDeviceClaim
+          -> Data.ProtoLens.Encoding.Bytes.Parser HostAndDeviceClaim
+        loop x
+          = do end <- Data.ProtoLens.Encoding.Bytes.atEnd
+               if end then
+                   do (let missing = []
+                       in
+                         if Prelude.null missing then
+                             Prelude.return ()
+                         else
+                             Prelude.fail
+                               ((Prelude.++)
+                                  "Missing required fields: "
+                                  (Prelude.show (missing :: [Prelude.String]))))
+                      Prelude.return
+                        (Lens.Family2.over
+                           Data.ProtoLens.unknownFields (\ !t -> Prelude.reverse t) x)
+               else
+                   do tag <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                      case tag of
+                        8 -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          Prelude.fromIntegral
+                                          Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "host_mib"
+                                loop (Lens.Family2.set (Data.ProtoLens.Field.field @"hostMib") y x)
+                        16
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          Prelude.fromIntegral
+                                          Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "device_mib"
+                                loop
+                                  (Lens.Family2.set (Data.ProtoLens.Field.field @"deviceMib") y x)
+                        wire
+                          -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
+                                        wire
+                                loop
+                                  (Lens.Family2.over
+                                     Data.ProtoLens.unknownFields (\ !t -> (:) y t) x)
+      in
+        (Data.ProtoLens.Encoding.Bytes.<?>)
+          (do loop Data.ProtoLens.defMessage) "HostAndDeviceClaim"
+  buildMessage
+    = \ _x
+        -> (Data.Monoid.<>)
+             (let
+                _v = Lens.Family2.view (Data.ProtoLens.Field.field @"hostMib") _x
+              in
+                if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                    Data.Monoid.mempty
+                else
+                    (Data.Monoid.<>)
+                      (Data.ProtoLens.Encoding.Bytes.putVarInt 8)
+                      ((Prelude..)
+                         Data.ProtoLens.Encoding.Bytes.putVarInt Prelude.fromIntegral _v))
+             ((Data.Monoid.<>)
+                (let
+                   _v = Lens.Family2.view (Data.ProtoLens.Field.field @"deviceMib") _x
+                 in
+                   if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                       Data.Monoid.mempty
+                   else
+                       (Data.Monoid.<>)
+                         (Data.ProtoLens.Encoding.Bytes.putVarInt 16)
+                         ((Prelude..)
+                            Data.ProtoLens.Encoding.Bytes.putVarInt Prelude.fromIntegral _v))
+                (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                   (Lens.Family2.view Data.ProtoLens.unknownFields _x)))
+instance Control.DeepSeq.NFData HostAndDeviceClaim where
+  rnf
+    = \ x__
+        -> Control.DeepSeq.deepseq
+             (_HostAndDeviceClaim'_unknownFields x__)
+             (Control.DeepSeq.deepseq
+                (_HostAndDeviceClaim'hostMib x__)
+                (Control.DeepSeq.deepseq (_HostAndDeviceClaim'deviceMib x__) ()))
+{- | Fields :
+     
+         * 'Proto.Infernix.Runtime.Inference_Fields.hostMib' @:: Lens' HostResidentClaim Data.Int.Int64@ -}
+data HostResidentClaim
+  = HostResidentClaim'_constructor {_HostResidentClaim'hostMib :: !Data.Int.Int64,
+                                    _HostResidentClaim'_unknownFields :: !Data.ProtoLens.FieldSet}
+  deriving stock (Prelude.Eq, Prelude.Ord)
+instance Prelude.Show HostResidentClaim where
+  showsPrec _ __x __s
+    = Prelude.showChar
+        '{'
+        (Prelude.showString
+           (Data.ProtoLens.showMessageShort __x) (Prelude.showChar '}' __s))
+instance Data.ProtoLens.Field.HasField HostResidentClaim "hostMib" Data.Int.Int64 where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _HostResidentClaim'hostMib
+           (\ x__ y__ -> x__ {_HostResidentClaim'hostMib = y__}))
+        Prelude.id
+instance Data.ProtoLens.Message HostResidentClaim where
+  messageName _ = Data.Text.pack "infernix.runtime.HostResidentClaim"
+  packedMessageDescriptor _
+    = "\n\
+      \\DC1HostResidentClaim\DC2\EM\n\
+      \\bhost_mib\CAN\SOH \SOH(\ETXR\ahostMib"
+  packedFileDescriptor _ = packedFileDescriptor
+  fieldsByTag
+    = let
+        hostMib__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "host_mib"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.Int64Field ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Int.Int64)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional (Data.ProtoLens.Field.field @"hostMib")) ::
+              Data.ProtoLens.FieldDescriptor HostResidentClaim
+      in
+        Data.Map.fromList
+          [(Data.ProtoLens.Tag 1, hostMib__field_descriptor)]
+  unknownFields
+    = Lens.Family2.Unchecked.lens
+        _HostResidentClaim'_unknownFields
+        (\ x__ y__ -> x__ {_HostResidentClaim'_unknownFields = y__})
+  defMessage
+    = HostResidentClaim'_constructor
+        {_HostResidentClaim'hostMib = Data.ProtoLens.fieldDefault,
+         _HostResidentClaim'_unknownFields = []}
+  parseMessage
+    = let
+        loop ::
+          HostResidentClaim
+          -> Data.ProtoLens.Encoding.Bytes.Parser HostResidentClaim
+        loop x
+          = do end <- Data.ProtoLens.Encoding.Bytes.atEnd
+               if end then
+                   do (let missing = []
+                       in
+                         if Prelude.null missing then
+                             Prelude.return ()
+                         else
+                             Prelude.fail
+                               ((Prelude.++)
+                                  "Missing required fields: "
+                                  (Prelude.show (missing :: [Prelude.String]))))
+                      Prelude.return
+                        (Lens.Family2.over
+                           Data.ProtoLens.unknownFields (\ !t -> Prelude.reverse t) x)
+               else
+                   do tag <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                      case tag of
+                        8 -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          Prelude.fromIntegral
+                                          Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "host_mib"
+                                loop (Lens.Family2.set (Data.ProtoLens.Field.field @"hostMib") y x)
+                        wire
+                          -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
+                                        wire
+                                loop
+                                  (Lens.Family2.over
+                                     Data.ProtoLens.unknownFields (\ !t -> (:) y t) x)
+      in
+        (Data.ProtoLens.Encoding.Bytes.<?>)
+          (do loop Data.ProtoLens.defMessage) "HostResidentClaim"
+  buildMessage
+    = \ _x
+        -> (Data.Monoid.<>)
+             (let
+                _v = Lens.Family2.view (Data.ProtoLens.Field.field @"hostMib") _x
+              in
+                if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                    Data.Monoid.mempty
+                else
+                    (Data.Monoid.<>)
+                      (Data.ProtoLens.Encoding.Bytes.putVarInt 8)
+                      ((Prelude..)
+                         Data.ProtoLens.Encoding.Bytes.putVarInt Prelude.fromIntegral _v))
+             (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                (Lens.Family2.view Data.ProtoLens.unknownFields _x))
+instance Control.DeepSeq.NFData HostResidentClaim where
+  rnf
+    = \ x__
+        -> Control.DeepSeq.deepseq
+             (_HostResidentClaim'_unknownFields x__)
+             (Control.DeepSeq.deepseq (_HostResidentClaim'hostMib x__) ())
+{- | Fields :
+     
          * 'Proto.Infernix.Runtime.Inference_Fields.maybe'error' @:: Lens' InferenceError (Prelude.Maybe InferenceError'Error)@
          * 'Proto.Infernix.Runtime.Inference_Fields.maybe'modelMemoryLimitExceeded' @:: Lens' InferenceError (Prelude.Maybe ModelMemoryLimitExceeded)@
-         * 'Proto.Infernix.Runtime.Inference_Fields.modelMemoryLimitExceeded' @:: Lens' InferenceError ModelMemoryLimitExceeded@ -}
+         * 'Proto.Infernix.Runtime.Inference_Fields.modelMemoryLimitExceeded' @:: Lens' InferenceError ModelMemoryLimitExceeded@
+         * 'Proto.Infernix.Runtime.Inference_Fields.maybe'modelRequirementUnderivable' @:: Lens' InferenceError (Prelude.Maybe ModelRequirementUnderivable)@
+         * 'Proto.Infernix.Runtime.Inference_Fields.modelRequirementUnderivable' @:: Lens' InferenceError ModelRequirementUnderivable@ -}
 data InferenceError
   = InferenceError'_constructor {_InferenceError'error :: !(Prelude.Maybe InferenceError'Error),
                                  _InferenceError'_unknownFields :: !Data.ProtoLens.FieldSet}
@@ -1924,7 +2345,8 @@ instance Prelude.Show InferenceError where
         (Prelude.showString
            (Data.ProtoLens.showMessageShort __x) (Prelude.showChar '}' __s))
 data InferenceError'Error
-  = InferenceError'ModelMemoryLimitExceeded !ModelMemoryLimitExceeded
+  = InferenceError'ModelMemoryLimitExceeded !ModelMemoryLimitExceeded |
+    InferenceError'ModelRequirementUnderivable !ModelRequirementUnderivable
   deriving stock (Prelude.Show, Prelude.Eq, Prelude.Ord)
 instance Data.ProtoLens.Field.HasField InferenceError "maybe'error" (Prelude.Maybe InferenceError'Error) where
   fieldOf _
@@ -1963,12 +2385,43 @@ instance Data.ProtoLens.Field.HasField InferenceError "modelMemoryLimitExceeded"
               (\ _ y__
                  -> Prelude.fmap InferenceError'ModelMemoryLimitExceeded y__))
            (Data.ProtoLens.maybeLens Data.ProtoLens.defMessage))
+instance Data.ProtoLens.Field.HasField InferenceError "maybe'modelRequirementUnderivable" (Prelude.Maybe ModelRequirementUnderivable) where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _InferenceError'error
+           (\ x__ y__ -> x__ {_InferenceError'error = y__}))
+        (Lens.Family2.Unchecked.lens
+           (\ x__
+              -> case x__ of
+                   (Prelude.Just (InferenceError'ModelRequirementUnderivable x__val))
+                     -> Prelude.Just x__val
+                   _otherwise -> Prelude.Nothing)
+           (\ _ y__
+              -> Prelude.fmap InferenceError'ModelRequirementUnderivable y__))
+instance Data.ProtoLens.Field.HasField InferenceError "modelRequirementUnderivable" ModelRequirementUnderivable where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _InferenceError'error
+           (\ x__ y__ -> x__ {_InferenceError'error = y__}))
+        ((Prelude..)
+           (Lens.Family2.Unchecked.lens
+              (\ x__
+                 -> case x__ of
+                      (Prelude.Just (InferenceError'ModelRequirementUnderivable x__val))
+                        -> Prelude.Just x__val
+                      _otherwise -> Prelude.Nothing)
+              (\ _ y__
+                 -> Prelude.fmap InferenceError'ModelRequirementUnderivable y__))
+           (Data.ProtoLens.maybeLens Data.ProtoLens.defMessage))
 instance Data.ProtoLens.Message InferenceError where
   messageName _ = Data.Text.pack "infernix.runtime.InferenceError"
   packedMessageDescriptor _
     = "\n\
       \\SOInferenceError\DC2k\n\
-      \\ESCmodel_memory_limit_exceeded\CAN\SOH \SOH(\v2*.infernix.runtime.ModelMemoryLimitExceededH\NULR\CANmodelMemoryLimitExceededB\a\n\
+      \\ESCmodel_memory_limit_exceeded\CAN\SOH \SOH(\v2*.infernix.runtime.ModelMemoryLimitExceededH\NULR\CANmodelMemoryLimitExceeded\DC2s\n\
+      \\GSmodel_requirement_underivable\CAN\STX \SOH(\v2-.infernix.runtime.ModelRequirementUnderivableH\NULR\ESCmodelRequirementUnderivableB\a\n\
       \\ENQerror"
   packedFileDescriptor _ = packedFileDescriptor
   fieldsByTag
@@ -1981,10 +2434,21 @@ instance Data.ProtoLens.Message InferenceError where
               (Data.ProtoLens.OptionalField
                  (Data.ProtoLens.Field.field @"maybe'modelMemoryLimitExceeded")) ::
               Data.ProtoLens.FieldDescriptor InferenceError
+        modelRequirementUnderivable__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "model_requirement_underivable"
+              (Data.ProtoLens.MessageField Data.ProtoLens.MessageType ::
+                 Data.ProtoLens.FieldTypeDescriptor ModelRequirementUnderivable)
+              (Data.ProtoLens.OptionalField
+                 (Data.ProtoLens.Field.field
+                    @"maybe'modelRequirementUnderivable")) ::
+              Data.ProtoLens.FieldDescriptor InferenceError
       in
         Data.Map.fromList
           [(Data.ProtoLens.Tag 1, 
-            modelMemoryLimitExceeded__field_descriptor)]
+            modelMemoryLimitExceeded__field_descriptor),
+           (Data.ProtoLens.Tag 2, 
+            modelRequirementUnderivable__field_descriptor)]
   unknownFields
     = Lens.Family2.Unchecked.lens
         _InferenceError'_unknownFields
@@ -2025,6 +2489,16 @@ instance Data.ProtoLens.Message InferenceError where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"modelMemoryLimitExceeded") y x)
+                        18
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.isolate
+                                             (Prelude.fromIntegral len) Data.ProtoLens.parseMessage)
+                                       "model_requirement_underivable"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"modelRequirementUnderivable") y
+                                     x)
                         wire
                           -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
                                         wire
@@ -2050,6 +2524,16 @@ instance Data.ProtoLens.Message InferenceError where
                                   (Data.ProtoLens.Encoding.Bytes.putVarInt
                                      (Prelude.fromIntegral (Data.ByteString.length bs)))
                                   (Data.ProtoLens.Encoding.Bytes.putBytes bs))
+                          Data.ProtoLens.encodeMessage v)
+                (Prelude.Just (InferenceError'ModelRequirementUnderivable v))
+                  -> (Data.Monoid.<>)
+                       (Data.ProtoLens.Encoding.Bytes.putVarInt 18)
+                       ((Prelude..)
+                          (\ bs
+                             -> (Data.Monoid.<>)
+                                  (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                     (Prelude.fromIntegral (Data.ByteString.length bs)))
+                                  (Data.ProtoLens.Encoding.Bytes.putBytes bs))
                           Data.ProtoLens.encodeMessage v))
              (Data.ProtoLens.Encoding.Wire.buildFieldSet
                 (Lens.Family2.view Data.ProtoLens.unknownFields _x))
@@ -2062,6 +2546,8 @@ instance Control.DeepSeq.NFData InferenceError where
 instance Control.DeepSeq.NFData InferenceError'Error where
   rnf (InferenceError'ModelMemoryLimitExceeded x__)
     = Control.DeepSeq.rnf x__
+  rnf (InferenceError'ModelRequirementUnderivable x__)
+    = Control.DeepSeq.rnf x__
 _InferenceError'ModelMemoryLimitExceeded ::
   Data.ProtoLens.Prism.Prism' InferenceError'Error ModelMemoryLimitExceeded
 _InferenceError'ModelMemoryLimitExceeded
@@ -2070,7 +2556,250 @@ _InferenceError'ModelMemoryLimitExceeded
       (\ p__
          -> case p__ of
               (InferenceError'ModelMemoryLimitExceeded p__val)
-                -> Prelude.Just p__val)
+                -> Prelude.Just p__val
+              _otherwise -> Prelude.Nothing)
+_InferenceError'ModelRequirementUnderivable ::
+  Data.ProtoLens.Prism.Prism' InferenceError'Error ModelRequirementUnderivable
+_InferenceError'ModelRequirementUnderivable
+  = Data.ProtoLens.Prism.prism'
+      InferenceError'ModelRequirementUnderivable
+      (\ p__
+         -> case p__ of
+              (InferenceError'ModelRequirementUnderivable p__val)
+                -> Prelude.Just p__val
+              _otherwise -> Prelude.Nothing)
+{- | Fields :
+     
+         * 'Proto.Infernix.Runtime.Inference_Fields.maybe'claim' @:: Lens' InferenceMemoryBudget (Prelude.Maybe InferenceMemoryBudget'Claim)@
+         * 'Proto.Infernix.Runtime.Inference_Fields.maybe'hostResident' @:: Lens' InferenceMemoryBudget (Prelude.Maybe HostResidentClaim)@
+         * 'Proto.Infernix.Runtime.Inference_Fields.hostResident' @:: Lens' InferenceMemoryBudget HostResidentClaim@
+         * 'Proto.Infernix.Runtime.Inference_Fields.maybe'hostAndDevice' @:: Lens' InferenceMemoryBudget (Prelude.Maybe HostAndDeviceClaim)@
+         * 'Proto.Infernix.Runtime.Inference_Fields.hostAndDevice' @:: Lens' InferenceMemoryBudget HostAndDeviceClaim@ -}
+data InferenceMemoryBudget
+  = InferenceMemoryBudget'_constructor {_InferenceMemoryBudget'claim :: !(Prelude.Maybe InferenceMemoryBudget'Claim),
+                                        _InferenceMemoryBudget'_unknownFields :: !Data.ProtoLens.FieldSet}
+  deriving stock (Prelude.Eq, Prelude.Ord)
+instance Prelude.Show InferenceMemoryBudget where
+  showsPrec _ __x __s
+    = Prelude.showChar
+        '{'
+        (Prelude.showString
+           (Data.ProtoLens.showMessageShort __x) (Prelude.showChar '}' __s))
+data InferenceMemoryBudget'Claim
+  = InferenceMemoryBudget'HostResident !HostResidentClaim |
+    InferenceMemoryBudget'HostAndDevice !HostAndDeviceClaim
+  deriving stock (Prelude.Show, Prelude.Eq, Prelude.Ord)
+instance Data.ProtoLens.Field.HasField InferenceMemoryBudget "maybe'claim" (Prelude.Maybe InferenceMemoryBudget'Claim) where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _InferenceMemoryBudget'claim
+           (\ x__ y__ -> x__ {_InferenceMemoryBudget'claim = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField InferenceMemoryBudget "maybe'hostResident" (Prelude.Maybe HostResidentClaim) where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _InferenceMemoryBudget'claim
+           (\ x__ y__ -> x__ {_InferenceMemoryBudget'claim = y__}))
+        (Lens.Family2.Unchecked.lens
+           (\ x__
+              -> case x__ of
+                   (Prelude.Just (InferenceMemoryBudget'HostResident x__val))
+                     -> Prelude.Just x__val
+                   _otherwise -> Prelude.Nothing)
+           (\ _ y__ -> Prelude.fmap InferenceMemoryBudget'HostResident y__))
+instance Data.ProtoLens.Field.HasField InferenceMemoryBudget "hostResident" HostResidentClaim where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _InferenceMemoryBudget'claim
+           (\ x__ y__ -> x__ {_InferenceMemoryBudget'claim = y__}))
+        ((Prelude..)
+           (Lens.Family2.Unchecked.lens
+              (\ x__
+                 -> case x__ of
+                      (Prelude.Just (InferenceMemoryBudget'HostResident x__val))
+                        -> Prelude.Just x__val
+                      _otherwise -> Prelude.Nothing)
+              (\ _ y__ -> Prelude.fmap InferenceMemoryBudget'HostResident y__))
+           (Data.ProtoLens.maybeLens Data.ProtoLens.defMessage))
+instance Data.ProtoLens.Field.HasField InferenceMemoryBudget "maybe'hostAndDevice" (Prelude.Maybe HostAndDeviceClaim) where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _InferenceMemoryBudget'claim
+           (\ x__ y__ -> x__ {_InferenceMemoryBudget'claim = y__}))
+        (Lens.Family2.Unchecked.lens
+           (\ x__
+              -> case x__ of
+                   (Prelude.Just (InferenceMemoryBudget'HostAndDevice x__val))
+                     -> Prelude.Just x__val
+                   _otherwise -> Prelude.Nothing)
+           (\ _ y__ -> Prelude.fmap InferenceMemoryBudget'HostAndDevice y__))
+instance Data.ProtoLens.Field.HasField InferenceMemoryBudget "hostAndDevice" HostAndDeviceClaim where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _InferenceMemoryBudget'claim
+           (\ x__ y__ -> x__ {_InferenceMemoryBudget'claim = y__}))
+        ((Prelude..)
+           (Lens.Family2.Unchecked.lens
+              (\ x__
+                 -> case x__ of
+                      (Prelude.Just (InferenceMemoryBudget'HostAndDevice x__val))
+                        -> Prelude.Just x__val
+                      _otherwise -> Prelude.Nothing)
+              (\ _ y__ -> Prelude.fmap InferenceMemoryBudget'HostAndDevice y__))
+           (Data.ProtoLens.maybeLens Data.ProtoLens.defMessage))
+instance Data.ProtoLens.Message InferenceMemoryBudget where
+  messageName _
+    = Data.Text.pack "infernix.runtime.InferenceMemoryBudget"
+  packedMessageDescriptor _
+    = "\n\
+      \\NAKInferenceMemoryBudget\DC2J\n\
+      \\rhost_resident\CAN\SOH \SOH(\v2#.infernix.runtime.HostResidentClaimH\NULR\fhostResident\DC2N\n\
+      \\SIhost_and_device\CAN\STX \SOH(\v2$.infernix.runtime.HostAndDeviceClaimH\NULR\rhostAndDeviceB\a\n\
+      \\ENQclaim"
+  packedFileDescriptor _ = packedFileDescriptor
+  fieldsByTag
+    = let
+        hostResident__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "host_resident"
+              (Data.ProtoLens.MessageField Data.ProtoLens.MessageType ::
+                 Data.ProtoLens.FieldTypeDescriptor HostResidentClaim)
+              (Data.ProtoLens.OptionalField
+                 (Data.ProtoLens.Field.field @"maybe'hostResident")) ::
+              Data.ProtoLens.FieldDescriptor InferenceMemoryBudget
+        hostAndDevice__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "host_and_device"
+              (Data.ProtoLens.MessageField Data.ProtoLens.MessageType ::
+                 Data.ProtoLens.FieldTypeDescriptor HostAndDeviceClaim)
+              (Data.ProtoLens.OptionalField
+                 (Data.ProtoLens.Field.field @"maybe'hostAndDevice")) ::
+              Data.ProtoLens.FieldDescriptor InferenceMemoryBudget
+      in
+        Data.Map.fromList
+          [(Data.ProtoLens.Tag 1, hostResident__field_descriptor),
+           (Data.ProtoLens.Tag 2, hostAndDevice__field_descriptor)]
+  unknownFields
+    = Lens.Family2.Unchecked.lens
+        _InferenceMemoryBudget'_unknownFields
+        (\ x__ y__ -> x__ {_InferenceMemoryBudget'_unknownFields = y__})
+  defMessage
+    = InferenceMemoryBudget'_constructor
+        {_InferenceMemoryBudget'claim = Prelude.Nothing,
+         _InferenceMemoryBudget'_unknownFields = []}
+  parseMessage
+    = let
+        loop ::
+          InferenceMemoryBudget
+          -> Data.ProtoLens.Encoding.Bytes.Parser InferenceMemoryBudget
+        loop x
+          = do end <- Data.ProtoLens.Encoding.Bytes.atEnd
+               if end then
+                   do (let missing = []
+                       in
+                         if Prelude.null missing then
+                             Prelude.return ()
+                         else
+                             Prelude.fail
+                               ((Prelude.++)
+                                  "Missing required fields: "
+                                  (Prelude.show (missing :: [Prelude.String]))))
+                      Prelude.return
+                        (Lens.Family2.over
+                           Data.ProtoLens.unknownFields (\ !t -> Prelude.reverse t) x)
+               else
+                   do tag <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                      case tag of
+                        10
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.isolate
+                                             (Prelude.fromIntegral len) Data.ProtoLens.parseMessage)
+                                       "host_resident"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"hostResident") y x)
+                        18
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.isolate
+                                             (Prelude.fromIntegral len) Data.ProtoLens.parseMessage)
+                                       "host_and_device"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"hostAndDevice") y x)
+                        wire
+                          -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
+                                        wire
+                                loop
+                                  (Lens.Family2.over
+                                     Data.ProtoLens.unknownFields (\ !t -> (:) y t) x)
+      in
+        (Data.ProtoLens.Encoding.Bytes.<?>)
+          (do loop Data.ProtoLens.defMessage) "InferenceMemoryBudget"
+  buildMessage
+    = \ _x
+        -> (Data.Monoid.<>)
+             (case
+                  Lens.Family2.view (Data.ProtoLens.Field.field @"maybe'claim") _x
+              of
+                Prelude.Nothing -> Data.Monoid.mempty
+                (Prelude.Just (InferenceMemoryBudget'HostResident v))
+                  -> (Data.Monoid.<>)
+                       (Data.ProtoLens.Encoding.Bytes.putVarInt 10)
+                       ((Prelude..)
+                          (\ bs
+                             -> (Data.Monoid.<>)
+                                  (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                     (Prelude.fromIntegral (Data.ByteString.length bs)))
+                                  (Data.ProtoLens.Encoding.Bytes.putBytes bs))
+                          Data.ProtoLens.encodeMessage v)
+                (Prelude.Just (InferenceMemoryBudget'HostAndDevice v))
+                  -> (Data.Monoid.<>)
+                       (Data.ProtoLens.Encoding.Bytes.putVarInt 18)
+                       ((Prelude..)
+                          (\ bs
+                             -> (Data.Monoid.<>)
+                                  (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                     (Prelude.fromIntegral (Data.ByteString.length bs)))
+                                  (Data.ProtoLens.Encoding.Bytes.putBytes bs))
+                          Data.ProtoLens.encodeMessage v))
+             (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                (Lens.Family2.view Data.ProtoLens.unknownFields _x))
+instance Control.DeepSeq.NFData InferenceMemoryBudget where
+  rnf
+    = \ x__
+        -> Control.DeepSeq.deepseq
+             (_InferenceMemoryBudget'_unknownFields x__)
+             (Control.DeepSeq.deepseq (_InferenceMemoryBudget'claim x__) ())
+instance Control.DeepSeq.NFData InferenceMemoryBudget'Claim where
+  rnf (InferenceMemoryBudget'HostResident x__)
+    = Control.DeepSeq.rnf x__
+  rnf (InferenceMemoryBudget'HostAndDevice x__)
+    = Control.DeepSeq.rnf x__
+_InferenceMemoryBudget'HostResident ::
+  Data.ProtoLens.Prism.Prism' InferenceMemoryBudget'Claim HostResidentClaim
+_InferenceMemoryBudget'HostResident
+  = Data.ProtoLens.Prism.prism'
+      InferenceMemoryBudget'HostResident
+      (\ p__
+         -> case p__ of
+              (InferenceMemoryBudget'HostResident p__val) -> Prelude.Just p__val
+              _otherwise -> Prelude.Nothing)
+_InferenceMemoryBudget'HostAndDevice ::
+  Data.ProtoLens.Prism.Prism' InferenceMemoryBudget'Claim HostAndDeviceClaim
+_InferenceMemoryBudget'HostAndDevice
+  = Data.ProtoLens.Prism.prism'
+      InferenceMemoryBudget'HostAndDevice
+      (\ p__
+         -> case p__ of
+              (InferenceMemoryBudget'HostAndDevice p__val) -> Prelude.Just p__val
+              _otherwise -> Prelude.Nothing)
 {- | Fields :
      
          * 'Proto.Infernix.Runtime.Inference_Fields.requestId' @:: Lens' InferenceRequest Data.Text.Text@
@@ -3360,6 +4089,299 @@ instance Control.DeepSeq.NFData InferenceResult where
                                               (_InferenceResult'contextId x__) ())))))))))))
 {- | Fields :
      
+         * 'Proto.Infernix.Runtime.Inference_Fields.contextLength' @:: Lens' ModelExecutionShape Data.Int.Int64@
+         * 'Proto.Infernix.Runtime.Inference_Fields.batchSize' @:: Lens' ModelExecutionShape Data.Int.Int64@
+         * 'Proto.Infernix.Runtime.Inference_Fields.generationBound' @:: Lens' ModelExecutionShape Data.Int.Int64@
+         * 'Proto.Infernix.Runtime.Inference_Fields.cacheElementWidth' @:: Lens' ModelExecutionShape Data.Int.Int64@
+         * 'Proto.Infernix.Runtime.Inference_Fields.streamWeightsToDevice' @:: Lens' ModelExecutionShape Prelude.Bool@ -}
+data ModelExecutionShape
+  = ModelExecutionShape'_constructor {_ModelExecutionShape'contextLength :: !Data.Int.Int64,
+                                      _ModelExecutionShape'batchSize :: !Data.Int.Int64,
+                                      _ModelExecutionShape'generationBound :: !Data.Int.Int64,
+                                      _ModelExecutionShape'cacheElementWidth :: !Data.Int.Int64,
+                                      _ModelExecutionShape'streamWeightsToDevice :: !Prelude.Bool,
+                                      _ModelExecutionShape'_unknownFields :: !Data.ProtoLens.FieldSet}
+  deriving stock (Prelude.Eq, Prelude.Ord)
+instance Prelude.Show ModelExecutionShape where
+  showsPrec _ __x __s
+    = Prelude.showChar
+        '{'
+        (Prelude.showString
+           (Data.ProtoLens.showMessageShort __x) (Prelude.showChar '}' __s))
+instance Data.ProtoLens.Field.HasField ModelExecutionShape "contextLength" Data.Int.Int64 where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ModelExecutionShape'contextLength
+           (\ x__ y__ -> x__ {_ModelExecutionShape'contextLength = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField ModelExecutionShape "batchSize" Data.Int.Int64 where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ModelExecutionShape'batchSize
+           (\ x__ y__ -> x__ {_ModelExecutionShape'batchSize = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField ModelExecutionShape "generationBound" Data.Int.Int64 where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ModelExecutionShape'generationBound
+           (\ x__ y__ -> x__ {_ModelExecutionShape'generationBound = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField ModelExecutionShape "cacheElementWidth" Data.Int.Int64 where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ModelExecutionShape'cacheElementWidth
+           (\ x__ y__ -> x__ {_ModelExecutionShape'cacheElementWidth = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField ModelExecutionShape "streamWeightsToDevice" Prelude.Bool where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ModelExecutionShape'streamWeightsToDevice
+           (\ x__ y__
+              -> x__ {_ModelExecutionShape'streamWeightsToDevice = y__}))
+        Prelude.id
+instance Data.ProtoLens.Message ModelExecutionShape where
+  messageName _
+    = Data.Text.pack "infernix.runtime.ModelExecutionShape"
+  packedMessageDescriptor _
+    = "\n\
+      \\DC3ModelExecutionShape\DC2%\n\
+      \\SOcontext_length\CAN\SOH \SOH(\ETXR\rcontextLength\DC2\GS\n\
+      \\n\
+      \batch_size\CAN\STX \SOH(\ETXR\tbatchSize\DC2)\n\
+      \\DLEgeneration_bound\CAN\ETX \SOH(\ETXR\SIgenerationBound\DC2.\n\
+      \\DC3cache_element_width\CAN\EOT \SOH(\ETXR\DC1cacheElementWidth\DC27\n\
+      \\CANstream_weights_to_device\CAN\ENQ \SOH(\bR\NAKstreamWeightsToDevice"
+  packedFileDescriptor _ = packedFileDescriptor
+  fieldsByTag
+    = let
+        contextLength__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "context_length"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.Int64Field ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Int.Int64)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"contextLength")) ::
+              Data.ProtoLens.FieldDescriptor ModelExecutionShape
+        batchSize__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "batch_size"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.Int64Field ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Int.Int64)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"batchSize")) ::
+              Data.ProtoLens.FieldDescriptor ModelExecutionShape
+        generationBound__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "generation_bound"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.Int64Field ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Int.Int64)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"generationBound")) ::
+              Data.ProtoLens.FieldDescriptor ModelExecutionShape
+        cacheElementWidth__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "cache_element_width"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.Int64Field ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Int.Int64)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"cacheElementWidth")) ::
+              Data.ProtoLens.FieldDescriptor ModelExecutionShape
+        streamWeightsToDevice__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "stream_weights_to_device"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.BoolField ::
+                 Data.ProtoLens.FieldTypeDescriptor Prelude.Bool)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"streamWeightsToDevice")) ::
+              Data.ProtoLens.FieldDescriptor ModelExecutionShape
+      in
+        Data.Map.fromList
+          [(Data.ProtoLens.Tag 1, contextLength__field_descriptor),
+           (Data.ProtoLens.Tag 2, batchSize__field_descriptor),
+           (Data.ProtoLens.Tag 3, generationBound__field_descriptor),
+           (Data.ProtoLens.Tag 4, cacheElementWidth__field_descriptor),
+           (Data.ProtoLens.Tag 5, streamWeightsToDevice__field_descriptor)]
+  unknownFields
+    = Lens.Family2.Unchecked.lens
+        _ModelExecutionShape'_unknownFields
+        (\ x__ y__ -> x__ {_ModelExecutionShape'_unknownFields = y__})
+  defMessage
+    = ModelExecutionShape'_constructor
+        {_ModelExecutionShape'contextLength = Data.ProtoLens.fieldDefault,
+         _ModelExecutionShape'batchSize = Data.ProtoLens.fieldDefault,
+         _ModelExecutionShape'generationBound = Data.ProtoLens.fieldDefault,
+         _ModelExecutionShape'cacheElementWidth = Data.ProtoLens.fieldDefault,
+         _ModelExecutionShape'streamWeightsToDevice = Data.ProtoLens.fieldDefault,
+         _ModelExecutionShape'_unknownFields = []}
+  parseMessage
+    = let
+        loop ::
+          ModelExecutionShape
+          -> Data.ProtoLens.Encoding.Bytes.Parser ModelExecutionShape
+        loop x
+          = do end <- Data.ProtoLens.Encoding.Bytes.atEnd
+               if end then
+                   do (let missing = []
+                       in
+                         if Prelude.null missing then
+                             Prelude.return ()
+                         else
+                             Prelude.fail
+                               ((Prelude.++)
+                                  "Missing required fields: "
+                                  (Prelude.show (missing :: [Prelude.String]))))
+                      Prelude.return
+                        (Lens.Family2.over
+                           Data.ProtoLens.unknownFields (\ !t -> Prelude.reverse t) x)
+               else
+                   do tag <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                      case tag of
+                        8 -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          Prelude.fromIntegral
+                                          Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "context_length"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"contextLength") y x)
+                        16
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          Prelude.fromIntegral
+                                          Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "batch_size"
+                                loop
+                                  (Lens.Family2.set (Data.ProtoLens.Field.field @"batchSize") y x)
+                        24
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          Prelude.fromIntegral
+                                          Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "generation_bound"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"generationBound") y x)
+                        32
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          Prelude.fromIntegral
+                                          Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "cache_element_width"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"cacheElementWidth") y x)
+                        40
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (Prelude.fmap
+                                          ((Prelude./=) 0) Data.ProtoLens.Encoding.Bytes.getVarInt)
+                                       "stream_weights_to_device"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"streamWeightsToDevice") y x)
+                        wire
+                          -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
+                                        wire
+                                loop
+                                  (Lens.Family2.over
+                                     Data.ProtoLens.unknownFields (\ !t -> (:) y t) x)
+      in
+        (Data.ProtoLens.Encoding.Bytes.<?>)
+          (do loop Data.ProtoLens.defMessage) "ModelExecutionShape"
+  buildMessage
+    = \ _x
+        -> (Data.Monoid.<>)
+             (let
+                _v
+                  = Lens.Family2.view
+                      (Data.ProtoLens.Field.field @"contextLength") _x
+              in
+                if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                    Data.Monoid.mempty
+                else
+                    (Data.Monoid.<>)
+                      (Data.ProtoLens.Encoding.Bytes.putVarInt 8)
+                      ((Prelude..)
+                         Data.ProtoLens.Encoding.Bytes.putVarInt Prelude.fromIntegral _v))
+             ((Data.Monoid.<>)
+                (let
+                   _v = Lens.Family2.view (Data.ProtoLens.Field.field @"batchSize") _x
+                 in
+                   if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                       Data.Monoid.mempty
+                   else
+                       (Data.Monoid.<>)
+                         (Data.ProtoLens.Encoding.Bytes.putVarInt 16)
+                         ((Prelude..)
+                            Data.ProtoLens.Encoding.Bytes.putVarInt Prelude.fromIntegral _v))
+                ((Data.Monoid.<>)
+                   (let
+                      _v
+                        = Lens.Family2.view
+                            (Data.ProtoLens.Field.field @"generationBound") _x
+                    in
+                      if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                          Data.Monoid.mempty
+                      else
+                          (Data.Monoid.<>)
+                            (Data.ProtoLens.Encoding.Bytes.putVarInt 24)
+                            ((Prelude..)
+                               Data.ProtoLens.Encoding.Bytes.putVarInt Prelude.fromIntegral _v))
+                   ((Data.Monoid.<>)
+                      (let
+                         _v
+                           = Lens.Family2.view
+                               (Data.ProtoLens.Field.field @"cacheElementWidth") _x
+                       in
+                         if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                             Data.Monoid.mempty
+                         else
+                             (Data.Monoid.<>)
+                               (Data.ProtoLens.Encoding.Bytes.putVarInt 32)
+                               ((Prelude..)
+                                  Data.ProtoLens.Encoding.Bytes.putVarInt Prelude.fromIntegral _v))
+                      ((Data.Monoid.<>)
+                         (let
+                            _v
+                              = Lens.Family2.view
+                                  (Data.ProtoLens.Field.field @"streamWeightsToDevice") _x
+                          in
+                            if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                                Data.Monoid.mempty
+                            else
+                                (Data.Monoid.<>)
+                                  (Data.ProtoLens.Encoding.Bytes.putVarInt 40)
+                                  ((Prelude..)
+                                     Data.ProtoLens.Encoding.Bytes.putVarInt
+                                     (\ b -> if b then 1 else 0) _v))
+                         (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                            (Lens.Family2.view Data.ProtoLens.unknownFields _x))))))
+instance Control.DeepSeq.NFData ModelExecutionShape where
+  rnf
+    = \ x__
+        -> Control.DeepSeq.deepseq
+             (_ModelExecutionShape'_unknownFields x__)
+             (Control.DeepSeq.deepseq
+                (_ModelExecutionShape'contextLength x__)
+                (Control.DeepSeq.deepseq
+                   (_ModelExecutionShape'batchSize x__)
+                   (Control.DeepSeq.deepseq
+                      (_ModelExecutionShape'generationBound x__)
+                      (Control.DeepSeq.deepseq
+                         (_ModelExecutionShape'cacheElementWidth x__)
+                         (Control.DeepSeq.deepseq
+                            (_ModelExecutionShape'streamWeightsToDevice x__) ())))))
+{- | Fields :
+     
          * 'Proto.Infernix.Runtime.Inference_Fields.modelId' @:: Lens' ModelMemoryLimitExceeded Data.Text.Text@
          * 'Proto.Infernix.Runtime.Inference_Fields.requiredMib' @:: Lens' ModelMemoryLimitExceeded Data.Int.Int32@
          * 'Proto.Infernix.Runtime.Inference_Fields.availableMib' @:: Lens' ModelMemoryLimitExceeded Data.Int.Int32@
@@ -3652,6 +4674,217 @@ instance Control.DeepSeq.NFData ModelMemoryLimitExceeded where
                          (_ModelMemoryLimitExceeded'resource x__)
                          (Control.DeepSeq.deepseq
                             (_ModelMemoryLimitExceeded'source x__) ())))))
+{- | Fields :
+     
+         * 'Proto.Infernix.Runtime.Inference_Fields.modelId' @:: Lens' ModelRequirementUnderivable Data.Text.Text@
+         * 'Proto.Infernix.Runtime.Inference_Fields.artifactType' @:: Lens' ModelRequirementUnderivable Data.Text.Text@
+         * 'Proto.Infernix.Runtime.Inference_Fields.reason' @:: Lens' ModelRequirementUnderivable Data.Text.Text@ -}
+data ModelRequirementUnderivable
+  = ModelRequirementUnderivable'_constructor {_ModelRequirementUnderivable'modelId :: !Data.Text.Text,
+                                              _ModelRequirementUnderivable'artifactType :: !Data.Text.Text,
+                                              _ModelRequirementUnderivable'reason :: !Data.Text.Text,
+                                              _ModelRequirementUnderivable'_unknownFields :: !Data.ProtoLens.FieldSet}
+  deriving stock (Prelude.Eq, Prelude.Ord)
+instance Prelude.Show ModelRequirementUnderivable where
+  showsPrec _ __x __s
+    = Prelude.showChar
+        '{'
+        (Prelude.showString
+           (Data.ProtoLens.showMessageShort __x) (Prelude.showChar '}' __s))
+instance Data.ProtoLens.Field.HasField ModelRequirementUnderivable "modelId" Data.Text.Text where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ModelRequirementUnderivable'modelId
+           (\ x__ y__ -> x__ {_ModelRequirementUnderivable'modelId = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField ModelRequirementUnderivable "artifactType" Data.Text.Text where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ModelRequirementUnderivable'artifactType
+           (\ x__ y__
+              -> x__ {_ModelRequirementUnderivable'artifactType = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField ModelRequirementUnderivable "reason" Data.Text.Text where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ModelRequirementUnderivable'reason
+           (\ x__ y__ -> x__ {_ModelRequirementUnderivable'reason = y__}))
+        Prelude.id
+instance Data.ProtoLens.Message ModelRequirementUnderivable where
+  messageName _
+    = Data.Text.pack "infernix.runtime.ModelRequirementUnderivable"
+  packedMessageDescriptor _
+    = "\n\
+      \\ESCModelRequirementUnderivable\DC2\EM\n\
+      \\bmodel_id\CAN\SOH \SOH(\tR\amodelId\DC2#\n\
+      \\rartifact_type\CAN\STX \SOH(\tR\fartifactType\DC2\SYN\n\
+      \\ACKreason\CAN\ETX \SOH(\tR\ACKreason"
+  packedFileDescriptor _ = packedFileDescriptor
+  fieldsByTag
+    = let
+        modelId__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "model_id"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.StringField ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Text.Text)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional (Data.ProtoLens.Field.field @"modelId")) ::
+              Data.ProtoLens.FieldDescriptor ModelRequirementUnderivable
+        artifactType__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "artifact_type"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.StringField ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Text.Text)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"artifactType")) ::
+              Data.ProtoLens.FieldDescriptor ModelRequirementUnderivable
+        reason__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "reason"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.StringField ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Text.Text)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional (Data.ProtoLens.Field.field @"reason")) ::
+              Data.ProtoLens.FieldDescriptor ModelRequirementUnderivable
+      in
+        Data.Map.fromList
+          [(Data.ProtoLens.Tag 1, modelId__field_descriptor),
+           (Data.ProtoLens.Tag 2, artifactType__field_descriptor),
+           (Data.ProtoLens.Tag 3, reason__field_descriptor)]
+  unknownFields
+    = Lens.Family2.Unchecked.lens
+        _ModelRequirementUnderivable'_unknownFields
+        (\ x__ y__
+           -> x__ {_ModelRequirementUnderivable'_unknownFields = y__})
+  defMessage
+    = ModelRequirementUnderivable'_constructor
+        {_ModelRequirementUnderivable'modelId = Data.ProtoLens.fieldDefault,
+         _ModelRequirementUnderivable'artifactType = Data.ProtoLens.fieldDefault,
+         _ModelRequirementUnderivable'reason = Data.ProtoLens.fieldDefault,
+         _ModelRequirementUnderivable'_unknownFields = []}
+  parseMessage
+    = let
+        loop ::
+          ModelRequirementUnderivable
+          -> Data.ProtoLens.Encoding.Bytes.Parser ModelRequirementUnderivable
+        loop x
+          = do end <- Data.ProtoLens.Encoding.Bytes.atEnd
+               if end then
+                   do (let missing = []
+                       in
+                         if Prelude.null missing then
+                             Prelude.return ()
+                         else
+                             Prelude.fail
+                               ((Prelude.++)
+                                  "Missing required fields: "
+                                  (Prelude.show (missing :: [Prelude.String]))))
+                      Prelude.return
+                        (Lens.Family2.over
+                           Data.ProtoLens.unknownFields (\ !t -> Prelude.reverse t) x)
+               else
+                   do tag <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                      case tag of
+                        10
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.getText
+                                             (Prelude.fromIntegral len))
+                                       "model_id"
+                                loop (Lens.Family2.set (Data.ProtoLens.Field.field @"modelId") y x)
+                        18
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.getText
+                                             (Prelude.fromIntegral len))
+                                       "artifact_type"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"artifactType") y x)
+                        26
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.getText
+                                             (Prelude.fromIntegral len))
+                                       "reason"
+                                loop (Lens.Family2.set (Data.ProtoLens.Field.field @"reason") y x)
+                        wire
+                          -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
+                                        wire
+                                loop
+                                  (Lens.Family2.over
+                                     Data.ProtoLens.unknownFields (\ !t -> (:) y t) x)
+      in
+        (Data.ProtoLens.Encoding.Bytes.<?>)
+          (do loop Data.ProtoLens.defMessage) "ModelRequirementUnderivable"
+  buildMessage
+    = \ _x
+        -> (Data.Monoid.<>)
+             (let
+                _v = Lens.Family2.view (Data.ProtoLens.Field.field @"modelId") _x
+              in
+                if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                    Data.Monoid.mempty
+                else
+                    (Data.Monoid.<>)
+                      (Data.ProtoLens.Encoding.Bytes.putVarInt 10)
+                      ((Prelude..)
+                         (\ bs
+                            -> (Data.Monoid.<>)
+                                 (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                    (Prelude.fromIntegral (Data.ByteString.length bs)))
+                                 (Data.ProtoLens.Encoding.Bytes.putBytes bs))
+                         Data.Text.Encoding.encodeUtf8 _v))
+             ((Data.Monoid.<>)
+                (let
+                   _v
+                     = Lens.Family2.view (Data.ProtoLens.Field.field @"artifactType") _x
+                 in
+                   if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                       Data.Monoid.mempty
+                   else
+                       (Data.Monoid.<>)
+                         (Data.ProtoLens.Encoding.Bytes.putVarInt 18)
+                         ((Prelude..)
+                            (\ bs
+                               -> (Data.Monoid.<>)
+                                    (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                       (Prelude.fromIntegral (Data.ByteString.length bs)))
+                                    (Data.ProtoLens.Encoding.Bytes.putBytes bs))
+                            Data.Text.Encoding.encodeUtf8 _v))
+                ((Data.Monoid.<>)
+                   (let
+                      _v = Lens.Family2.view (Data.ProtoLens.Field.field @"reason") _x
+                    in
+                      if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                          Data.Monoid.mempty
+                      else
+                          (Data.Monoid.<>)
+                            (Data.ProtoLens.Encoding.Bytes.putVarInt 26)
+                            ((Prelude..)
+                               (\ bs
+                                  -> (Data.Monoid.<>)
+                                       (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                          (Prelude.fromIntegral (Data.ByteString.length bs)))
+                                       (Data.ProtoLens.Encoding.Bytes.putBytes bs))
+                               Data.Text.Encoding.encodeUtf8 _v))
+                   (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                      (Lens.Family2.view Data.ProtoLens.unknownFields _x))))
+instance Control.DeepSeq.NFData ModelRequirementUnderivable where
+  rnf
+    = \ x__
+        -> Control.DeepSeq.deepseq
+             (_ModelRequirementUnderivable'_unknownFields x__)
+             (Control.DeepSeq.deepseq
+                (_ModelRequirementUnderivable'modelId x__)
+                (Control.DeepSeq.deepseq
+                   (_ModelRequirementUnderivable'artifactType x__)
+                   (Control.DeepSeq.deepseq
+                      (_ModelRequirementUnderivable'reason x__) ())))
 {- | Fields :
      
          * 'Proto.Infernix.Runtime.Inference_Fields.name' @:: Lens' RequestField Data.Text.Text@
@@ -4173,7 +5406,11 @@ _ResultPayload'InferenceError
          * 'Proto.Infernix.Runtime.Inference_Fields.minioRegion' @:: Lens' WorkerRequest Data.Text.Text@
          * 'Proto.Infernix.Runtime.Inference_Fields.minioAccessKey' @:: Lens' WorkerRequest Data.Text.Text@
          * 'Proto.Infernix.Runtime.Inference_Fields.minioSecretKey' @:: Lens' WorkerRequest Data.Text.Text@
-         * 'Proto.Infernix.Runtime.Inference_Fields.generatedOutputObjectPrefix' @:: Lens' WorkerRequest Data.Text.Text@ -}
+         * 'Proto.Infernix.Runtime.Inference_Fields.generatedOutputObjectPrefix' @:: Lens' WorkerRequest Data.Text.Text@
+         * 'Proto.Infernix.Runtime.Inference_Fields.memoryBudget' @:: Lens' WorkerRequest InferenceMemoryBudget@
+         * 'Proto.Infernix.Runtime.Inference_Fields.maybe'memoryBudget' @:: Lens' WorkerRequest (Prelude.Maybe InferenceMemoryBudget)@
+         * 'Proto.Infernix.Runtime.Inference_Fields.executionShape' @:: Lens' WorkerRequest ModelExecutionShape@
+         * 'Proto.Infernix.Runtime.Inference_Fields.maybe'executionShape' @:: Lens' WorkerRequest (Prelude.Maybe ModelExecutionShape)@ -}
 data WorkerRequest
   = WorkerRequest'_constructor {_WorkerRequest'requestModelId :: !Data.Text.Text,
                                 _WorkerRequest'inputText :: !Data.Text.Text,
@@ -4195,6 +5432,8 @@ data WorkerRequest
                                 _WorkerRequest'minioAccessKey :: !Data.Text.Text,
                                 _WorkerRequest'minioSecretKey :: !Data.Text.Text,
                                 _WorkerRequest'generatedOutputObjectPrefix :: !Data.Text.Text,
+                                _WorkerRequest'memoryBudget :: !(Prelude.Maybe InferenceMemoryBudget),
+                                _WorkerRequest'executionShape :: !(Prelude.Maybe ModelExecutionShape),
                                 _WorkerRequest'_unknownFields :: !Data.ProtoLens.FieldSet}
   deriving stock (Prelude.Eq, Prelude.Ord)
 instance Prelude.Show WorkerRequest where
@@ -4344,6 +5583,34 @@ instance Data.ProtoLens.Field.HasField WorkerRequest "generatedOutputObjectPrefi
            (\ x__ y__
               -> x__ {_WorkerRequest'generatedOutputObjectPrefix = y__}))
         Prelude.id
+instance Data.ProtoLens.Field.HasField WorkerRequest "memoryBudget" InferenceMemoryBudget where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerRequest'memoryBudget
+           (\ x__ y__ -> x__ {_WorkerRequest'memoryBudget = y__}))
+        (Data.ProtoLens.maybeLens Data.ProtoLens.defMessage)
+instance Data.ProtoLens.Field.HasField WorkerRequest "maybe'memoryBudget" (Prelude.Maybe InferenceMemoryBudget) where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerRequest'memoryBudget
+           (\ x__ y__ -> x__ {_WorkerRequest'memoryBudget = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField WorkerRequest "executionShape" ModelExecutionShape where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerRequest'executionShape
+           (\ x__ y__ -> x__ {_WorkerRequest'executionShape = y__}))
+        (Data.ProtoLens.maybeLens Data.ProtoLens.defMessage)
+instance Data.ProtoLens.Field.HasField WorkerRequest "maybe'executionShape" (Prelude.Maybe ModelExecutionShape) where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerRequest'executionShape
+           (\ x__ y__ -> x__ {_WorkerRequest'executionShape = y__}))
+        Prelude.id
 instance Data.ProtoLens.Message WorkerRequest where
   messageName _ = Data.Text.pack "infernix.runtime.WorkerRequest"
   packedMessageDescriptor _
@@ -4371,7 +5638,9 @@ instance Data.ProtoLens.Message WorkerRequest where
       \\fminio_region\CAN\DC1 \SOH(\tR\vminioRegion\DC2(\n\
       \\DLEminio_access_key\CAN\DC2 \SOH(\tR\SOminioAccessKey\DC2(\n\
       \\DLEminio_secret_key\CAN\DC3 \SOH(\tR\SOminioSecretKey\DC2C\n\
-      \\RSgenerated_output_object_prefix\CAN\DC4 \SOH(\tR\ESCgeneratedOutputObjectPrefix"
+      \\RSgenerated_output_object_prefix\CAN\DC4 \SOH(\tR\ESCgeneratedOutputObjectPrefix\DC2L\n\
+      \\rmemory_budget\CAN\NAK \SOH(\v2'.infernix.runtime.InferenceMemoryBudgetR\fmemoryBudget\DC2N\n\
+      \\SIexecution_shape\CAN\SYN \SOH(\v2%.infernix.runtime.ModelExecutionShapeR\SOexecutionShape"
   packedFileDescriptor _ = packedFileDescriptor
   fieldsByTag
     = let
@@ -4554,6 +5823,22 @@ instance Data.ProtoLens.Message WorkerRequest where
                  Data.ProtoLens.Optional
                  (Data.ProtoLens.Field.field @"generatedOutputObjectPrefix")) ::
               Data.ProtoLens.FieldDescriptor WorkerRequest
+        memoryBudget__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "memory_budget"
+              (Data.ProtoLens.MessageField Data.ProtoLens.MessageType ::
+                 Data.ProtoLens.FieldTypeDescriptor InferenceMemoryBudget)
+              (Data.ProtoLens.OptionalField
+                 (Data.ProtoLens.Field.field @"maybe'memoryBudget")) ::
+              Data.ProtoLens.FieldDescriptor WorkerRequest
+        executionShape__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "execution_shape"
+              (Data.ProtoLens.MessageField Data.ProtoLens.MessageType ::
+                 Data.ProtoLens.FieldTypeDescriptor ModelExecutionShape)
+              (Data.ProtoLens.OptionalField
+                 (Data.ProtoLens.Field.field @"maybe'executionShape")) ::
+              Data.ProtoLens.FieldDescriptor WorkerRequest
       in
         Data.Map.fromList
           [(Data.ProtoLens.Tag 1, requestModelId__field_descriptor),
@@ -4577,7 +5862,9 @@ instance Data.ProtoLens.Message WorkerRequest where
            (Data.ProtoLens.Tag 18, minioAccessKey__field_descriptor),
            (Data.ProtoLens.Tag 19, minioSecretKey__field_descriptor),
            (Data.ProtoLens.Tag 20, 
-            generatedOutputObjectPrefix__field_descriptor)]
+            generatedOutputObjectPrefix__field_descriptor),
+           (Data.ProtoLens.Tag 21, memoryBudget__field_descriptor),
+           (Data.ProtoLens.Tag 22, executionShape__field_descriptor)]
   unknownFields
     = Lens.Family2.Unchecked.lens
         _WorkerRequest'_unknownFields
@@ -4604,6 +5891,8 @@ instance Data.ProtoLens.Message WorkerRequest where
          _WorkerRequest'minioAccessKey = Data.ProtoLens.fieldDefault,
          _WorkerRequest'minioSecretKey = Data.ProtoLens.fieldDefault,
          _WorkerRequest'generatedOutputObjectPrefix = Data.ProtoLens.fieldDefault,
+         _WorkerRequest'memoryBudget = Prelude.Nothing,
+         _WorkerRequest'executionShape = Prelude.Nothing,
          _WorkerRequest'_unknownFields = []}
   parseMessage
     = let
@@ -4798,6 +6087,24 @@ instance Data.ProtoLens.Message WorkerRequest where
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"generatedOutputObjectPrefix") y
                                      x)
+                        170
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.isolate
+                                             (Prelude.fromIntegral len) Data.ProtoLens.parseMessage)
+                                       "memory_budget"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"memoryBudget") y x)
+                        178
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.isolate
+                                             (Prelude.fromIntegral len) Data.ProtoLens.parseMessage)
+                                       "execution_shape"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"executionShape") y x)
                         wire
                           -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
                                         wire
@@ -5237,10 +6544,58 @@ instance Data.ProtoLens.Message WorkerRequest where
                                                                                              bs))
                                                                                   Data.Text.Encoding.encodeUtf8
                                                                                   _v))
-                                                                      (Data.ProtoLens.Encoding.Wire.buildFieldSet
-                                                                         (Lens.Family2.view
-                                                                            Data.ProtoLens.unknownFields
-                                                                            _x)))))))))))))))))))))
+                                                                      ((Data.Monoid.<>)
+                                                                         (case
+                                                                              Lens.Family2.view
+                                                                                (Data.ProtoLens.Field.field
+                                                                                   @"maybe'memoryBudget")
+                                                                                _x
+                                                                          of
+                                                                            Prelude.Nothing
+                                                                              -> Data.Monoid.mempty
+                                                                            (Prelude.Just _v)
+                                                                              -> (Data.Monoid.<>)
+                                                                                   (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                      170)
+                                                                                   ((Prelude..)
+                                                                                      (\ bs
+                                                                                         -> (Data.Monoid.<>)
+                                                                                              (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                                 (Prelude.fromIntegral
+                                                                                                    (Data.ByteString.length
+                                                                                                       bs)))
+                                                                                              (Data.ProtoLens.Encoding.Bytes.putBytes
+                                                                                                 bs))
+                                                                                      Data.ProtoLens.encodeMessage
+                                                                                      _v))
+                                                                         ((Data.Monoid.<>)
+                                                                            (case
+                                                                                 Lens.Family2.view
+                                                                                   (Data.ProtoLens.Field.field
+                                                                                      @"maybe'executionShape")
+                                                                                   _x
+                                                                             of
+                                                                               Prelude.Nothing
+                                                                                 -> Data.Monoid.mempty
+                                                                               (Prelude.Just _v)
+                                                                                 -> (Data.Monoid.<>)
+                                                                                      (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                         178)
+                                                                                      ((Prelude..)
+                                                                                         (\ bs
+                                                                                            -> (Data.Monoid.<>)
+                                                                                                 (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                                    (Prelude.fromIntegral
+                                                                                                       (Data.ByteString.length
+                                                                                                          bs)))
+                                                                                                 (Data.ProtoLens.Encoding.Bytes.putBytes
+                                                                                                    bs))
+                                                                                         Data.ProtoLens.encodeMessage
+                                                                                         _v))
+                                                                            (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                                                                               (Lens.Family2.view
+                                                                                  Data.ProtoLens.unknownFields
+                                                                                  _x)))))))))))))))))))))))
 instance Control.DeepSeq.NFData WorkerRequest where
   rnf
     = \ x__
@@ -5290,18 +6645,27 @@ instance Control.DeepSeq.NFData WorkerRequest where
                                                                       (Control.DeepSeq.deepseq
                                                                          (_WorkerRequest'generatedOutputObjectPrefix
                                                                             x__)
-                                                                         ()))))))))))))))))))))
+                                                                         (Control.DeepSeq.deepseq
+                                                                            (_WorkerRequest'memoryBudget
+                                                                               x__)
+                                                                            (Control.DeepSeq.deepseq
+                                                                               (_WorkerRequest'executionShape
+                                                                                  x__)
+                                                                               ()))))))))))))))))))))))
 {- | Fields :
      
          * 'Proto.Infernix.Runtime.Inference_Fields.outputText' @:: Lens' WorkerResponse Data.Text.Text@
          * 'Proto.Infernix.Runtime.Inference_Fields.errorCode' @:: Lens' WorkerResponse Data.Text.Text@
          * 'Proto.Infernix.Runtime.Inference_Fields.errorMessage' @:: Lens' WorkerResponse Data.Text.Text@
-         * 'Proto.Infernix.Runtime.Inference_Fields.objectRef' @:: Lens' WorkerResponse Data.Text.Text@ -}
+         * 'Proto.Infernix.Runtime.Inference_Fields.objectRef' @:: Lens' WorkerResponse Data.Text.Text@
+         * 'Proto.Infernix.Runtime.Inference_Fields.ceilingAcknowledgement' @:: Lens' WorkerResponse CeilingAcknowledgement@
+         * 'Proto.Infernix.Runtime.Inference_Fields.maybe'ceilingAcknowledgement' @:: Lens' WorkerResponse (Prelude.Maybe CeilingAcknowledgement)@ -}
 data WorkerResponse
   = WorkerResponse'_constructor {_WorkerResponse'outputText :: !Data.Text.Text,
                                  _WorkerResponse'errorCode :: !Data.Text.Text,
                                  _WorkerResponse'errorMessage :: !Data.Text.Text,
                                  _WorkerResponse'objectRef :: !Data.Text.Text,
+                                 _WorkerResponse'ceilingAcknowledgement :: !(Prelude.Maybe CeilingAcknowledgement),
                                  _WorkerResponse'_unknownFields :: !Data.ProtoLens.FieldSet}
   deriving stock (Prelude.Eq, Prelude.Ord)
 instance Prelude.Show WorkerResponse where
@@ -5338,6 +6702,20 @@ instance Data.ProtoLens.Field.HasField WorkerResponse "objectRef" Data.Text.Text
            _WorkerResponse'objectRef
            (\ x__ y__ -> x__ {_WorkerResponse'objectRef = y__}))
         Prelude.id
+instance Data.ProtoLens.Field.HasField WorkerResponse "ceilingAcknowledgement" CeilingAcknowledgement where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerResponse'ceilingAcknowledgement
+           (\ x__ y__ -> x__ {_WorkerResponse'ceilingAcknowledgement = y__}))
+        (Data.ProtoLens.maybeLens Data.ProtoLens.defMessage)
+instance Data.ProtoLens.Field.HasField WorkerResponse "maybe'ceilingAcknowledgement" (Prelude.Maybe CeilingAcknowledgement) where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerResponse'ceilingAcknowledgement
+           (\ x__ y__ -> x__ {_WorkerResponse'ceilingAcknowledgement = y__}))
+        Prelude.id
 instance Data.ProtoLens.Message WorkerResponse where
   messageName _ = Data.Text.pack "infernix.runtime.WorkerResponse"
   packedMessageDescriptor _
@@ -5349,7 +6727,8 @@ instance Data.ProtoLens.Message WorkerResponse where
       \error_code\CAN\STX \SOH(\tR\terrorCode\DC2#\n\
       \\rerror_message\CAN\ETX \SOH(\tR\ferrorMessage\DC2\GS\n\
       \\n\
-      \object_ref\CAN\EOT \SOH(\tR\tobjectRef"
+      \object_ref\CAN\EOT \SOH(\tR\tobjectRef\DC2a\n\
+      \\ETBceiling_acknowledgement\CAN\ENQ \SOH(\v2(.infernix.runtime.CeilingAcknowledgementR\SYNceilingAcknowledgement"
   packedFileDescriptor _ = packedFileDescriptor
   fieldsByTag
     = let
@@ -5389,12 +6768,21 @@ instance Data.ProtoLens.Message WorkerResponse where
                  Data.ProtoLens.Optional
                  (Data.ProtoLens.Field.field @"objectRef")) ::
               Data.ProtoLens.FieldDescriptor WorkerResponse
+        ceilingAcknowledgement__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "ceiling_acknowledgement"
+              (Data.ProtoLens.MessageField Data.ProtoLens.MessageType ::
+                 Data.ProtoLens.FieldTypeDescriptor CeilingAcknowledgement)
+              (Data.ProtoLens.OptionalField
+                 (Data.ProtoLens.Field.field @"maybe'ceilingAcknowledgement")) ::
+              Data.ProtoLens.FieldDescriptor WorkerResponse
       in
         Data.Map.fromList
           [(Data.ProtoLens.Tag 1, outputText__field_descriptor),
            (Data.ProtoLens.Tag 2, errorCode__field_descriptor),
            (Data.ProtoLens.Tag 3, errorMessage__field_descriptor),
-           (Data.ProtoLens.Tag 4, objectRef__field_descriptor)]
+           (Data.ProtoLens.Tag 4, objectRef__field_descriptor),
+           (Data.ProtoLens.Tag 5, ceilingAcknowledgement__field_descriptor)]
   unknownFields
     = Lens.Family2.Unchecked.lens
         _WorkerResponse'_unknownFields
@@ -5405,6 +6793,7 @@ instance Data.ProtoLens.Message WorkerResponse where
          _WorkerResponse'errorCode = Data.ProtoLens.fieldDefault,
          _WorkerResponse'errorMessage = Data.ProtoLens.fieldDefault,
          _WorkerResponse'objectRef = Data.ProtoLens.fieldDefault,
+         _WorkerResponse'ceilingAcknowledgement = Prelude.Nothing,
          _WorkerResponse'_unknownFields = []}
   parseMessage
     = let
@@ -5462,6 +6851,15 @@ instance Data.ProtoLens.Message WorkerResponse where
                                        "object_ref"
                                 loop
                                   (Lens.Family2.set (Data.ProtoLens.Field.field @"objectRef") y x)
+                        42
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.isolate
+                                             (Prelude.fromIntegral len) Data.ProtoLens.parseMessage)
+                                       "ceiling_acknowledgement"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"ceilingAcknowledgement") y x)
                         wire
                           -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
                                         wire
@@ -5539,8 +6937,24 @@ instance Data.ProtoLens.Message WorkerResponse where
                                              (Prelude.fromIntegral (Data.ByteString.length bs)))
                                           (Data.ProtoLens.Encoding.Bytes.putBytes bs))
                                   Data.Text.Encoding.encodeUtf8 _v))
-                      (Data.ProtoLens.Encoding.Wire.buildFieldSet
-                         (Lens.Family2.view Data.ProtoLens.unknownFields _x)))))
+                      ((Data.Monoid.<>)
+                         (case
+                              Lens.Family2.view
+                                (Data.ProtoLens.Field.field @"maybe'ceilingAcknowledgement") _x
+                          of
+                            Prelude.Nothing -> Data.Monoid.mempty
+                            (Prelude.Just _v)
+                              -> (Data.Monoid.<>)
+                                   (Data.ProtoLens.Encoding.Bytes.putVarInt 42)
+                                   ((Prelude..)
+                                      (\ bs
+                                         -> (Data.Monoid.<>)
+                                              (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                 (Prelude.fromIntegral (Data.ByteString.length bs)))
+                                              (Data.ProtoLens.Encoding.Bytes.putBytes bs))
+                                      Data.ProtoLens.encodeMessage _v))
+                         (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                            (Lens.Family2.view Data.ProtoLens.unknownFields _x))))))
 instance Control.DeepSeq.NFData WorkerResponse where
   rnf
     = \ x__
@@ -5552,7 +6966,10 @@ instance Control.DeepSeq.NFData WorkerResponse where
                    (_WorkerResponse'errorCode x__)
                    (Control.DeepSeq.deepseq
                       (_WorkerResponse'errorMessage x__)
-                      (Control.DeepSeq.deepseq (_WorkerResponse'objectRef x__) ()))))
+                      (Control.DeepSeq.deepseq
+                         (_WorkerResponse'objectRef x__)
+                         (Control.DeepSeq.deepseq
+                            (_WorkerResponse'ceilingAcknowledgement x__) ())))))
 packedFileDescriptor :: Data.ByteString.ByteString
 packedFileDescriptor
   = "\n\
@@ -5615,7 +7032,7 @@ packedFileDescriptor
     \prefixHash\DC2\GS\n\
     \\n\
     \causal_ref\CAN\v \SOH(\tR\tcausalRef\DC2(\n\
-    \\DLEinput_object_ref\CAN\f \SOH(\tR\SOinputObjectRef\"\211\ACK\n\
+    \\DLEinput_object_ref\CAN\f \SOH(\tR\SOinputObjectRef\"\241\a\n\
     \\rWorkerRequest\DC2(\n\
     \\DLErequest_model_id\CAN\SOH \SOH(\tR\SOrequestModelId\DC2\GS\n\
     \\n\
@@ -5639,7 +7056,26 @@ packedFileDescriptor
     \\fminio_region\CAN\DC1 \SOH(\tR\vminioRegion\DC2(\n\
     \\DLEminio_access_key\CAN\DC2 \SOH(\tR\SOminioAccessKey\DC2(\n\
     \\DLEminio_secret_key\CAN\DC3 \SOH(\tR\SOminioSecretKey\DC2C\n\
-    \\RSgenerated_output_object_prefix\CAN\DC4 \SOH(\tR\ESCgeneratedOutputObjectPrefix\"\148\SOH\n\
+    \\RSgenerated_output_object_prefix\CAN\DC4 \SOH(\tR\ESCgeneratedOutputObjectPrefix\DC2L\n\
+    \\rmemory_budget\CAN\NAK \SOH(\v2'.infernix.runtime.InferenceMemoryBudgetR\fmemoryBudget\DC2N\n\
+    \\SIexecution_shape\CAN\SYN \SOH(\v2%.infernix.runtime.ModelExecutionShapeR\SOexecutionShape\"\188\SOH\n\
+    \\NAKInferenceMemoryBudget\DC2J\n\
+    \\rhost_resident\CAN\SOH \SOH(\v2#.infernix.runtime.HostResidentClaimH\NULR\fhostResident\DC2N\n\
+    \\SIhost_and_device\CAN\STX \SOH(\v2$.infernix.runtime.HostAndDeviceClaimH\NULR\rhostAndDeviceB\a\n\
+    \\ENQclaim\".\n\
+    \\DC1HostResidentClaim\DC2\EM\n\
+    \\bhost_mib\CAN\SOH \SOH(\ETXR\ahostMib\"N\n\
+    \\DC2HostAndDeviceClaim\DC2\EM\n\
+    \\bhost_mib\CAN\SOH \SOH(\ETXR\ahostMib\DC2\GS\n\
+    \\n\
+    \device_mib\CAN\STX \SOH(\ETXR\tdeviceMib\"\239\SOH\n\
+    \\DC3ModelExecutionShape\DC2%\n\
+    \\SOcontext_length\CAN\SOH \SOH(\ETXR\rcontextLength\DC2\GS\n\
+    \\n\
+    \batch_size\CAN\STX \SOH(\ETXR\tbatchSize\DC2)\n\
+    \\DLEgeneration_bound\CAN\ETX \SOH(\ETXR\SIgenerationBound\DC2.\n\
+    \\DC3cache_element_width\CAN\EOT \SOH(\ETXR\DC1cacheElementWidth\DC27\n\
+    \\CANstream_weights_to_device\CAN\ENQ \SOH(\bR\NAKstreamWeightsToDevice\"\247\SOH\n\
     \\SOWorkerResponse\DC2\US\n\
     \\voutput_text\CAN\SOH \SOH(\tR\n\
     \outputText\DC2\GS\n\
@@ -5647,16 +7083,27 @@ packedFileDescriptor
     \error_code\CAN\STX \SOH(\tR\terrorCode\DC2#\n\
     \\rerror_message\CAN\ETX \SOH(\tR\ferrorMessage\DC2\GS\n\
     \\n\
-    \object_ref\CAN\EOT \SOH(\tR\tobjectRef\"\174\SOH\n\
+    \object_ref\CAN\EOT \SOH(\tR\tobjectRef\DC2a\n\
+    \\ETBceiling_acknowledgement\CAN\ENQ \SOH(\v2(.infernix.runtime.CeilingAcknowledgementR\SYNceilingAcknowledgement\"V\n\
+    \\SYNCeilingAcknowledgement\DC2\GS\n\
+    \\n\
+    \soft_bytes\CAN\SOH \SOH(\ETXR\tsoftBytes\DC2\GS\n\
+    \\n\
+    \hard_bytes\CAN\STX \SOH(\ETXR\thardBytes\"\174\SOH\n\
     \\rResultPayload\DC2%\n\
     \\rinline_output\CAN\SOH \SOH(\tH\NULR\finlineOutput\DC2\US\n\
     \\n\
     \object_ref\CAN\STX \SOH(\tH\NULR\tobjectRef\DC2K\n\
     \\SIinference_error\CAN\ETX \SOH(\v2 .infernix.runtime.InferenceErrorH\NULR\SOinferenceErrorB\b\n\
-    \\ACKoutput\"\134\SOH\n\
+    \\ACKoutput\"\251\SOH\n\
     \\SOInferenceError\DC2k\n\
-    \\ESCmodel_memory_limit_exceeded\CAN\SOH \SOH(\v2*.infernix.runtime.ModelMemoryLimitExceededH\NULR\CANmodelMemoryLimitExceededB\a\n\
-    \\ENQerror\"\177\SOH\n\
+    \\ESCmodel_memory_limit_exceeded\CAN\SOH \SOH(\v2*.infernix.runtime.ModelMemoryLimitExceededH\NULR\CANmodelMemoryLimitExceeded\DC2s\n\
+    \\GSmodel_requirement_underivable\CAN\STX \SOH(\v2-.infernix.runtime.ModelRequirementUnderivableH\NULR\ESCmodelRequirementUnderivableB\a\n\
+    \\ENQerror\"u\n\
+    \\ESCModelRequirementUnderivable\DC2\EM\n\
+    \\bmodel_id\CAN\SOH \SOH(\tR\amodelId\DC2#\n\
+    \\rartifact_type\CAN\STX \SOH(\tR\fartifactType\DC2\SYN\n\
+    \\ACKreason\CAN\ETX \SOH(\tR\ACKreason\"\177\SOH\n\
     \\CANModelMemoryLimitExceeded\DC2\EM\n\
     \\bmodel_id\CAN\SOH \SOH(\tR\amodelId\DC2!\n\
     \\frequired_mib\CAN\STX \SOH(\ENQR\vrequiredMib\DC2#\n\
@@ -5683,8 +7130,8 @@ packedFileDescriptor
     \\rErrorResponse\DC2\GS\n\
     \\n\
     \error_code\CAN\SOH \SOH(\tR\terrorCode\DC2\CAN\n\
-    \\amessage\CAN\STX \SOH(\tR\amessageJ\177C\n\
-    \\a\DC2\ENQ\NUL\NUL\181\SOH\SOH\n\
+    \\amessage\CAN\STX \SOH(\tR\amessageJ\171]\n\
+    \\a\DC2\ENQ\NUL\NUL\253\SOH\SOH\n\
     \\b\n\
     \\SOH\f\DC2\ETX\NUL\NUL\DC2\n\
     \\b\n\
@@ -6107,7 +7554,7 @@ packedFileDescriptor
     \\ENQ\EOT\EOT\STX\v\ETX\DC2\ETXH\FS\RS\n\
     \\n\
     \\n\
-    \\STX\EOT\ENQ\DC2\EOTK\NULp\SOH\n\
+    \\STX\EOT\ENQ\DC2\EOTK\NULv\SOH\n\
     \\n\
     \\n\
     \\ETX\EOT\ENQ\SOH\DC2\ETXK\b\NAK\n\
@@ -6291,271 +7738,465 @@ packedFileDescriptor
     \\ENQ\EOT\ENQ\STX\DC3\SOH\DC2\ETXo\t'\n\
     \\f\n\
     \\ENQ\EOT\ENQ\STX\DC3\ETX\DC2\ETXo*,\n\
+    \\255\SOH\n\
+    \\EOT\EOT\ENQ\STX\DC4\DC2\ETXt\STX+\SUB\241\SOH Phase 4 Sprint 4.42: the admitted quantities and the execution shape the\n\
+    \ compiler admitted this model against, carried on the message the engine\n\
+    \ already reads. An adapter receives its memory-shaping parameters rather\n\
+    \ than choosing them.\n\
     \\n\
-    \\n\
-    \\STX\EOT\ACK\DC2\EOTr\NUL}\SOH\n\
-    \\n\
-    \\n\
-    \\ETX\EOT\ACK\SOH\DC2\ETXr\b\SYN\n\
+    \\f\n\
+    \\ENQ\EOT\ENQ\STX\DC4\ACK\DC2\ETXt\STX\ETB\n\
+    \\f\n\
+    \\ENQ\EOT\ENQ\STX\DC4\SOH\DC2\ETXt\CAN%\n\
+    \\f\n\
+    \\ENQ\EOT\ENQ\STX\DC4\ETX\DC2\ETXt(*\n\
     \\v\n\
-    \\EOT\EOT\ACK\STX\NUL\DC2\ETXs\STX\EM\n\
+    \\EOT\EOT\ENQ\STX\NAK\DC2\ETXu\STX+\n\
     \\f\n\
-    \\ENQ\EOT\ACK\STX\NUL\ENQ\DC2\ETXs\STX\b\n\
+    \\ENQ\EOT\ENQ\STX\NAK\ACK\DC2\ETXu\STX\NAK\n\
     \\f\n\
-    \\ENQ\EOT\ACK\STX\NUL\SOH\DC2\ETXs\t\DC4\n\
+    \\ENQ\EOT\ENQ\STX\NAK\SOH\DC2\ETXu\SYN%\n\
     \\f\n\
-    \\ENQ\EOT\ACK\STX\NUL\ETX\DC2\ETXs\ETB\CAN\n\
+    \\ENQ\EOT\ENQ\STX\NAK\ETX\DC2\ETXu(*\n\
+    \\166\STX\n\
+    \\STX\EOT\ACK\DC2\ENQ}\NUL\130\SOH\SOH\SUB\152\STX Phase 4 Sprint 4.42: exactly one device route is populated, never both.\n\
+    \\n\
+    \ A discriminated alternative makes the choice the sender already made visible\n\
+    \ to the receiver. Two independent optional fields would let a caller populate\n\
+    \ both and let a decoder guess which one meant it.\n\
+    \\n\
+    \\n\
+    \\n\
+    \\ETX\EOT\ACK\SOH\DC2\ETX}\b\GS\n\
+    \\r\n\
+    \\EOT\EOT\ACK\b\NUL\DC2\ENQ~\STX\129\SOH\ETX\n\
+    \\f\n\
+    \\ENQ\EOT\ACK\b\NUL\SOH\DC2\ETX~\b\r\n\
     \\v\n\
-    \\EOT\EOT\ACK\STX\SOH\DC2\ETXt\STX\CAN\n\
+    \\EOT\EOT\ACK\STX\NUL\DC2\ETX\DEL\EOT(\n\
     \\f\n\
-    \\ENQ\EOT\ACK\STX\SOH\ENQ\DC2\ETXt\STX\b\n\
+    \\ENQ\EOT\ACK\STX\NUL\ACK\DC2\ETX\DEL\EOT\NAK\n\
     \\f\n\
-    \\ENQ\EOT\ACK\STX\SOH\SOH\DC2\ETXt\t\DC3\n\
+    \\ENQ\EOT\ACK\STX\NUL\SOH\DC2\ETX\DEL\SYN#\n\
     \\f\n\
-    \\ENQ\EOT\ACK\STX\SOH\ETX\DC2\ETXt\SYN\ETB\n\
+    \\ENQ\EOT\ACK\STX\NUL\ETX\DC2\ETX\DEL&'\n\
+    \\f\n\
+    \\EOT\EOT\ACK\STX\SOH\DC2\EOT\128\SOH\EOT+\n\
+    \\r\n\
+    \\ENQ\EOT\ACK\STX\SOH\ACK\DC2\EOT\128\SOH\EOT\SYN\n\
+    \\r\n\
+    \\ENQ\EOT\ACK\STX\SOH\SOH\DC2\EOT\128\SOH\ETB&\n\
+    \\r\n\
+    \\ENQ\EOT\ACK\STX\SOH\ETX\DC2\EOT\128\SOH)*\n\
+    \\f\n\
+    \\STX\EOT\a\DC2\ACK\132\SOH\NUL\134\SOH\SOH\n\
     \\v\n\
-    \\EOT\EOT\ACK\STX\STX\DC2\ETXu\STX\ESC\n\
+    \\ETX\EOT\a\SOH\DC2\EOT\132\SOH\b\EM\n\
     \\f\n\
-    \\ENQ\EOT\ACK\STX\STX\ENQ\DC2\ETXu\STX\b\n\
+    \\EOT\EOT\a\STX\NUL\DC2\EOT\133\SOH\STX\NAK\n\
+    \\r\n\
+    \\ENQ\EOT\a\STX\NUL\ENQ\DC2\EOT\133\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\a\STX\NUL\SOH\DC2\EOT\133\SOH\b\DLE\n\
+    \\r\n\
+    \\ENQ\EOT\a\STX\NUL\ETX\DC2\EOT\133\SOH\DC3\DC4\n\
     \\f\n\
-    \\ENQ\EOT\ACK\STX\STX\SOH\DC2\ETXu\t\SYN\n\
+    \\STX\EOT\b\DC2\ACK\136\SOH\NUL\139\SOH\SOH\n\
+    \\v\n\
+    \\ETX\EOT\b\SOH\DC2\EOT\136\SOH\b\SUB\n\
     \\f\n\
-    \\ENQ\EOT\ACK\STX\STX\ETX\DC2\ETXu\EM\SUB\n\
-    \\223\STX\n\
-    \\EOT\EOT\ACK\STX\ETX\DC2\ETX|\STX\CAN\SUB\209\STX Phase 4 Sprint 4.15: artifact families (source separation,\n\
+    \\EOT\EOT\b\STX\NUL\DC2\EOT\137\SOH\STX\NAK\n\
+    \\r\n\
+    \\ENQ\EOT\b\STX\NUL\ENQ\DC2\EOT\137\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\b\STX\NUL\SOH\DC2\EOT\137\SOH\b\DLE\n\
+    \\r\n\
+    \\ENQ\EOT\b\STX\NUL\ETX\DC2\EOT\137\SOH\DC3\DC4\n\
+    \\f\n\
+    \\EOT\EOT\b\STX\SOH\DC2\EOT\138\SOH\STX\ETB\n\
+    \\r\n\
+    \\ENQ\EOT\b\STX\SOH\ENQ\DC2\EOT\138\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\b\STX\SOH\SOH\DC2\EOT\138\SOH\b\DC2\n\
+    \\r\n\
+    \\ENQ\EOT\b\STX\SOH\ETX\DC2\EOT\138\SOH\NAK\SYN\n\
+    \\204\SOH\n\
+    \\STX\EOT\t\DC2\ACK\144\SOH\NUL\150\SOH\SOH\SUB\189\SOH The shape the cache term was computed from, carried to the engine so it runs\n\
+    \ the execution the model was admitted against rather than a number that was\n\
+    \ never compared against a machine.\n\
+    \\n\
+    \\v\n\
+    \\ETX\EOT\t\SOH\DC2\EOT\144\SOH\b\ESC\n\
+    \\f\n\
+    \\EOT\EOT\t\STX\NUL\DC2\EOT\145\SOH\STX\ESC\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\NUL\ENQ\DC2\EOT\145\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\NUL\SOH\DC2\EOT\145\SOH\b\SYN\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\NUL\ETX\DC2\EOT\145\SOH\EM\SUB\n\
+    \\f\n\
+    \\EOT\EOT\t\STX\SOH\DC2\EOT\146\SOH\STX\ETB\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\SOH\ENQ\DC2\EOT\146\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\SOH\SOH\DC2\EOT\146\SOH\b\DC2\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\SOH\ETX\DC2\EOT\146\SOH\NAK\SYN\n\
+    \\f\n\
+    \\EOT\EOT\t\STX\STX\DC2\EOT\147\SOH\STX\GS\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\STX\ENQ\DC2\EOT\147\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\STX\SOH\DC2\EOT\147\SOH\b\CAN\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\STX\ETX\DC2\EOT\147\SOH\ESC\FS\n\
+    \\f\n\
+    \\EOT\EOT\t\STX\ETX\DC2\EOT\148\SOH\STX \n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\ETX\ENQ\DC2\EOT\148\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\ETX\SOH\DC2\EOT\148\SOH\b\ESC\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\ETX\ETX\DC2\EOT\148\SOH\RS\US\n\
+    \\f\n\
+    \\EOT\EOT\t\STX\EOT\DC2\EOT\149\SOH\STX$\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\EOT\ENQ\DC2\EOT\149\SOH\STX\ACK\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\EOT\SOH\DC2\EOT\149\SOH\a\US\n\
+    \\r\n\
+    \\ENQ\EOT\t\STX\EOT\ETX\DC2\EOT\149\SOH\"#\n\
+    \\f\n\
+    \\STX\EOT\n\
+    \\DC2\ACK\152\SOH\NUL\173\SOH\SOH\n\
+    \\v\n\
+    \\ETX\EOT\n\
+    \\SOH\DC2\EOT\152\SOH\b\SYN\n\
+    \\f\n\
+    \\EOT\EOT\n\
+    \\STX\NUL\DC2\EOT\153\SOH\STX\EM\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\NUL\ENQ\DC2\EOT\153\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\NUL\SOH\DC2\EOT\153\SOH\t\DC4\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\NUL\ETX\DC2\EOT\153\SOH\ETB\CAN\n\
+    \\f\n\
+    \\EOT\EOT\n\
+    \\STX\SOH\DC2\EOT\154\SOH\STX\CAN\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\SOH\ENQ\DC2\EOT\154\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\SOH\SOH\DC2\EOT\154\SOH\t\DC3\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\SOH\ETX\DC2\EOT\154\SOH\SYN\ETB\n\
+    \\f\n\
+    \\EOT\EOT\n\
+    \\STX\STX\DC2\EOT\155\SOH\STX\ESC\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\STX\ENQ\DC2\EOT\155\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\STX\SOH\DC2\EOT\155\SOH\t\SYN\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\STX\ETX\DC2\EOT\155\SOH\EM\SUB\n\
+    \\224\STX\n\
+    \\EOT\EOT\n\
+    \\STX\ETX\DC2\EOT\162\SOH\STX\CAN\SUB\209\STX Phase 4 Sprint 4.15: artifact families (source separation,\n\
     \ audio-to-MIDI, music transcription, image, video, audio generation,\n\
     \ OMR) write their generated bytes to the infernix-demo-objects MinIO\n\
     \ bucket and return the object reference (bucket/key) here. Text\n\
     \ families (LLM, speech transcription) leave it empty and use\n\
     \ output_text.\n\
     \\n\
-    \\f\n\
-    \\ENQ\EOT\ACK\STX\ETX\ENQ\DC2\ETX|\STX\b\n\
-    \\f\n\
-    \\ENQ\EOT\ACK\STX\ETX\SOH\DC2\ETX|\t\DC3\n\
-    \\f\n\
-    \\ENQ\EOT\ACK\STX\ETX\ETX\DC2\ETX|\SYN\ETB\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\ETX\ENQ\DC2\EOT\162\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\ETX\SOH\DC2\EOT\162\SOH\t\DC3\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\ETX\ETX\DC2\EOT\162\SOH\SYN\ETB\n\
+    \\154\EOT\n\
+    \\EOT\EOT\n\
+    \\STX\EOT\DC2\EOT\172\SOH\STX5\SUB\139\EOT Phase 4 Sprint 4.42: the conformance acknowledgement.\n\
+    \\n\
+    \ A limit that was set and a limit the running image fits under are different\n\
+    \ claims, and only the second is evidence that this execution is bounded. The\n\
+    \ acknowledgement rides this response rather than becoming a handshake: an\n\
+    \ adapter that announced its installed limit and waited for permission would\n\
+    \ turn a process with exactly one failure mode into one with a protocol state\n\
+    \ machine, a second deadline, and a partial-exchange state neither side can\n\
+    \ classify.\n\
+    \\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\EOT\ACK\DC2\EOT\172\SOH\STX\CAN\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\EOT\SOH\DC2\EOT\172\SOH\EM0\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\EOT\ETX\DC2\EOT\172\SOH34\n\
+    \\241\ETX\n\
+    \\STX\EOT\v\DC2\ACK\183\SOH\NUL\186\SOH\SOH\SUB\226\ETX Phase 4 Sprint 4.42: the two values the engine read back from inside the\n\
+    \ process the limit binds, and deliberately nothing else.\n\
+    \\n\
+    \ The resource is not carried. The only consumer is the worker, which already\n\
+    \ holds it in the `InstalledCeiling` it installed, so a field here would be a\n\
+    \ second copy of a fact one side derives \226\128\148 and the adapter cannot produce it\n\
+    \ without duplicating the lane's resource naming in Python, which is the\n\
+    \ two-enumerations defect Sprint 4.38 deleted.\n\
+    \\n\
     \\v\n\
-    \\STX\EOT\a\DC2\ENQ\DEL\NUL\133\SOH\SOH\n\
-    \\n\
-    \\n\
-    \\ETX\EOT\a\SOH\DC2\ETX\DEL\b\NAK\n\
+    \\ETX\EOT\v\SOH\DC2\EOT\183\SOH\b\RS\n\
+    \\f\n\
+    \\EOT\EOT\v\STX\NUL\DC2\EOT\184\SOH\STX\ETB\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\NUL\ENQ\DC2\EOT\184\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\NUL\SOH\DC2\EOT\184\SOH\b\DC2\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\NUL\ETX\DC2\EOT\184\SOH\NAK\SYN\n\
+    \\f\n\
+    \\EOT\EOT\v\STX\SOH\DC2\EOT\185\SOH\STX\ETB\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\SOH\ENQ\DC2\EOT\185\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\SOH\SOH\DC2\EOT\185\SOH\b\DC2\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\SOH\ETX\DC2\EOT\185\SOH\NAK\SYN\n\
+    \\f\n\
+    \\STX\EOT\f\DC2\ACK\188\SOH\NUL\194\SOH\SOH\n\
+    \\v\n\
+    \\ETX\EOT\f\SOH\DC2\EOT\188\SOH\b\NAK\n\
     \\SO\n\
-    \\EOT\EOT\a\b\NUL\DC2\ACK\128\SOH\STX\132\SOH\ETX\n\
+    \\EOT\EOT\f\b\NUL\DC2\ACK\189\SOH\STX\193\SOH\ETX\n\
     \\r\n\
-    \\ENQ\EOT\a\b\NUL\SOH\DC2\EOT\128\SOH\b\SO\n\
+    \\ENQ\EOT\f\b\NUL\SOH\DC2\EOT\189\SOH\b\SO\n\
     \\f\n\
-    \\EOT\EOT\a\STX\NUL\DC2\EOT\129\SOH\EOT\GS\n\
+    \\EOT\EOT\f\STX\NUL\DC2\EOT\190\SOH\EOT\GS\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\NUL\ENQ\DC2\EOT\129\SOH\EOT\n\
+    \\ENQ\EOT\f\STX\NUL\ENQ\DC2\EOT\190\SOH\EOT\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\NUL\SOH\DC2\EOT\129\SOH\v\CAN\n\
+    \\ENQ\EOT\f\STX\NUL\SOH\DC2\EOT\190\SOH\v\CAN\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\NUL\ETX\DC2\EOT\129\SOH\ESC\FS\n\
+    \\ENQ\EOT\f\STX\NUL\ETX\DC2\EOT\190\SOH\ESC\FS\n\
     \\f\n\
-    \\EOT\EOT\a\STX\SOH\DC2\EOT\130\SOH\EOT\SUB\n\
+    \\EOT\EOT\f\STX\SOH\DC2\EOT\191\SOH\EOT\SUB\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\SOH\ENQ\DC2\EOT\130\SOH\EOT\n\
+    \\ENQ\EOT\f\STX\SOH\ENQ\DC2\EOT\191\SOH\EOT\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\SOH\SOH\DC2\EOT\130\SOH\v\NAK\n\
+    \\ENQ\EOT\f\STX\SOH\SOH\DC2\EOT\191\SOH\v\NAK\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\SOH\ETX\DC2\EOT\130\SOH\CAN\EM\n\
+    \\ENQ\EOT\f\STX\SOH\ETX\DC2\EOT\191\SOH\CAN\EM\n\
     \\f\n\
-    \\EOT\EOT\a\STX\STX\DC2\EOT\131\SOH\EOT'\n\
+    \\EOT\EOT\f\STX\STX\DC2\EOT\192\SOH\EOT'\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\STX\ACK\DC2\EOT\131\SOH\EOT\DC2\n\
+    \\ENQ\EOT\f\STX\STX\ACK\DC2\EOT\192\SOH\EOT\DC2\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\STX\SOH\DC2\EOT\131\SOH\DC3\"\n\
+    \\ENQ\EOT\f\STX\STX\SOH\DC2\EOT\192\SOH\DC3\"\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\STX\ETX\DC2\EOT\131\SOH%&\n\
+    \\ENQ\EOT\f\STX\STX\ETX\DC2\EOT\192\SOH%&\n\
     \\f\n\
-    \\STX\EOT\b\DC2\ACK\135\SOH\NUL\139\SOH\SOH\n\
+    \\STX\EOT\r\DC2\ACK\196\SOH\NUL\205\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\b\SOH\DC2\EOT\135\SOH\b\SYN\n\
+    \\ETX\EOT\r\SOH\DC2\EOT\196\SOH\b\SYN\n\
     \\SO\n\
-    \\EOT\EOT\b\b\NUL\DC2\ACK\136\SOH\STX\138\SOH\ETX\n\
+    \\EOT\EOT\r\b\NUL\DC2\ACK\197\SOH\STX\204\SOH\ETX\n\
     \\r\n\
-    \\ENQ\EOT\b\b\NUL\SOH\DC2\EOT\136\SOH\b\r\n\
+    \\ENQ\EOT\r\b\NUL\SOH\DC2\EOT\197\SOH\b\r\n\
     \\f\n\
-    \\EOT\EOT\b\STX\NUL\DC2\EOT\137\SOH\EOT=\n\
+    \\EOT\EOT\r\STX\NUL\DC2\EOT\198\SOH\EOT=\n\
     \\r\n\
-    \\ENQ\EOT\b\STX\NUL\ACK\DC2\EOT\137\SOH\EOT\FS\n\
+    \\ENQ\EOT\r\STX\NUL\ACK\DC2\EOT\198\SOH\EOT\FS\n\
     \\r\n\
-    \\ENQ\EOT\b\STX\NUL\SOH\DC2\EOT\137\SOH\GS8\n\
+    \\ENQ\EOT\r\STX\NUL\SOH\DC2\EOT\198\SOH\GS8\n\
     \\r\n\
-    \\ENQ\EOT\b\STX\NUL\ETX\DC2\EOT\137\SOH;<\n\
+    \\ENQ\EOT\r\STX\NUL\ETX\DC2\EOT\198\SOH;<\n\
+    \\151\STX\n\
+    \\EOT\EOT\r\STX\SOH\DC2\EOT\203\SOH\EOTB\SUB\136\STX Phase 4 Sprint 4.39: a model whose memory requirement could not be\n\
+    \ derived from its own artifact is a distinct terminal outcome from one\n\
+    \ whose requirement exceeded a limit. It carries no quantity, because the\n\
+    \ quantity is exactly what could not be established.\n\
+    \\n\
+    \\r\n\
+    \\ENQ\EOT\r\STX\SOH\ACK\DC2\EOT\203\SOH\EOT\US\n\
+    \\r\n\
+    \\ENQ\EOT\r\STX\SOH\SOH\DC2\EOT\203\SOH =\n\
+    \\r\n\
+    \\ENQ\EOT\r\STX\SOH\ETX\DC2\EOT\203\SOH@A\n\
     \\f\n\
-    \\STX\EOT\t\DC2\ACK\141\SOH\NUL\147\SOH\SOH\n\
+    \\STX\EOT\SO\DC2\ACK\207\SOH\NUL\211\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\t\SOH\DC2\EOT\141\SOH\b \n\
+    \\ETX\EOT\SO\SOH\DC2\EOT\207\SOH\b#\n\
     \\f\n\
-    \\EOT\EOT\t\STX\NUL\DC2\EOT\142\SOH\STX\SYN\n\
+    \\EOT\EOT\SO\STX\NUL\DC2\EOT\208\SOH\STX\SYN\n\
     \\r\n\
-    \\ENQ\EOT\t\STX\NUL\ENQ\DC2\EOT\142\SOH\STX\b\n\
+    \\ENQ\EOT\SO\STX\NUL\ENQ\DC2\EOT\208\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\t\STX\NUL\SOH\DC2\EOT\142\SOH\t\DC1\n\
+    \\ENQ\EOT\SO\STX\NUL\SOH\DC2\EOT\208\SOH\t\DC1\n\
     \\r\n\
-    \\ENQ\EOT\t\STX\NUL\ETX\DC2\EOT\142\SOH\DC4\NAK\n\
+    \\ENQ\EOT\SO\STX\NUL\ETX\DC2\EOT\208\SOH\DC4\NAK\n\
     \\f\n\
-    \\EOT\EOT\t\STX\SOH\DC2\EOT\143\SOH\STX\EM\n\
+    \\EOT\EOT\SO\STX\SOH\DC2\EOT\209\SOH\STX\ESC\n\
     \\r\n\
-    \\ENQ\EOT\t\STX\SOH\ENQ\DC2\EOT\143\SOH\STX\a\n\
+    \\ENQ\EOT\SO\STX\SOH\ENQ\DC2\EOT\209\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\t\STX\SOH\SOH\DC2\EOT\143\SOH\b\DC4\n\
+    \\ENQ\EOT\SO\STX\SOH\SOH\DC2\EOT\209\SOH\t\SYN\n\
     \\r\n\
-    \\ENQ\EOT\t\STX\SOH\ETX\DC2\EOT\143\SOH\ETB\CAN\n\
+    \\ENQ\EOT\SO\STX\SOH\ETX\DC2\EOT\209\SOH\EM\SUB\n\
     \\f\n\
-    \\EOT\EOT\t\STX\STX\DC2\EOT\144\SOH\STX\SUB\n\
+    \\EOT\EOT\SO\STX\STX\DC2\EOT\210\SOH\STX\DC4\n\
     \\r\n\
-    \\ENQ\EOT\t\STX\STX\ENQ\DC2\EOT\144\SOH\STX\a\n\
+    \\ENQ\EOT\SO\STX\STX\ENQ\DC2\EOT\210\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\t\STX\STX\SOH\DC2\EOT\144\SOH\b\NAK\n\
+    \\ENQ\EOT\SO\STX\STX\SOH\DC2\EOT\210\SOH\t\SI\n\
     \\r\n\
-    \\ENQ\EOT\t\STX\STX\ETX\DC2\EOT\144\SOH\CAN\EM\n\
+    \\ENQ\EOT\SO\STX\STX\ETX\DC2\EOT\210\SOH\DC2\DC3\n\
     \\f\n\
-    \\EOT\EOT\t\STX\ETX\DC2\EOT\145\SOH\STX\SYN\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\ETX\ENQ\DC2\EOT\145\SOH\STX\b\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\ETX\SOH\DC2\EOT\145\SOH\t\DC1\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\ETX\ETX\DC2\EOT\145\SOH\DC4\NAK\n\
-    \\f\n\
-    \\EOT\EOT\t\STX\EOT\DC2\EOT\146\SOH\STX\DC4\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\EOT\ENQ\DC2\EOT\146\SOH\STX\b\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\EOT\SOH\DC2\EOT\146\SOH\t\SI\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\EOT\ETX\DC2\EOT\146\SOH\DC2\DC3\n\
-    \\f\n\
-    \\STX\EOT\n\
-    \\DC2\ACK\149\SOH\NUL\176\SOH\SOH\n\
+    \\STX\EOT\SI\DC2\ACK\213\SOH\NUL\219\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\n\
-    \\SOH\DC2\EOT\149\SOH\b\ETB\n\
+    \\ETX\EOT\SI\SOH\DC2\EOT\213\SOH\b \n\
     \\f\n\
-    \\EOT\EOT\n\
-    \\STX\NUL\DC2\EOT\150\SOH\STX\CAN\n\
+    \\EOT\EOT\SI\STX\NUL\DC2\EOT\214\SOH\STX\SYN\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\NUL\ENQ\DC2\EOT\150\SOH\STX\b\n\
+    \\ENQ\EOT\SI\STX\NUL\ENQ\DC2\EOT\214\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\NUL\SOH\DC2\EOT\150\SOH\t\DC3\n\
+    \\ENQ\EOT\SI\STX\NUL\SOH\DC2\EOT\214\SOH\t\DC1\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\NUL\ETX\DC2\EOT\150\SOH\SYN\ETB\n\
+    \\ENQ\EOT\SI\STX\NUL\ETX\DC2\EOT\214\SOH\DC4\NAK\n\
     \\f\n\
-    \\EOT\EOT\n\
-    \\STX\SOH\DC2\EOT\151\SOH\STX\GS\n\
+    \\EOT\EOT\SI\STX\SOH\DC2\EOT\215\SOH\STX\EM\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\SOH\ENQ\DC2\EOT\151\SOH\STX\b\n\
+    \\ENQ\EOT\SI\STX\SOH\ENQ\DC2\EOT\215\SOH\STX\a\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\SOH\SOH\DC2\EOT\151\SOH\t\CAN\n\
+    \\ENQ\EOT\SI\STX\SOH\SOH\DC2\EOT\215\SOH\b\DC4\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\SOH\ETX\DC2\EOT\151\SOH\ESC\FS\n\
+    \\ENQ\EOT\SI\STX\SOH\ETX\DC2\EOT\215\SOH\ETB\CAN\n\
     \\f\n\
-    \\EOT\EOT\n\
-    \\STX\STX\DC2\EOT\152\SOH\STX\ESC\n\
+    \\EOT\EOT\SI\STX\STX\DC2\EOT\216\SOH\STX\SUB\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\STX\ENQ\DC2\EOT\152\SOH\STX\b\n\
+    \\ENQ\EOT\SI\STX\STX\ENQ\DC2\EOT\216\SOH\STX\a\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\STX\SOH\DC2\EOT\152\SOH\t\SYN\n\
+    \\ENQ\EOT\SI\STX\STX\SOH\DC2\EOT\216\SOH\b\NAK\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\STX\ETX\DC2\EOT\152\SOH\EM\SUB\n\
+    \\ENQ\EOT\SI\STX\STX\ETX\DC2\EOT\216\SOH\CAN\EM\n\
     \\f\n\
-    \\EOT\EOT\n\
-    \\STX\ETX\DC2\EOT\153\SOH\STX\SUB\n\
+    \\EOT\EOT\SI\STX\ETX\DC2\EOT\217\SOH\STX\SYN\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ETX\ENQ\DC2\EOT\153\SOH\STX\b\n\
+    \\ENQ\EOT\SI\STX\ETX\ENQ\DC2\EOT\217\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ETX\SOH\DC2\EOT\153\SOH\t\NAK\n\
+    \\ENQ\EOT\SI\STX\ETX\SOH\DC2\EOT\217\SOH\t\DC1\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ETX\ETX\DC2\EOT\153\SOH\CAN\EM\n\
+    \\ENQ\EOT\SI\STX\ETX\ETX\DC2\EOT\217\SOH\DC4\NAK\n\
     \\f\n\
-    \\EOT\EOT\n\
-    \\STX\EOT\DC2\EOT\154\SOH\STX\GS\n\
+    \\EOT\EOT\SI\STX\EOT\DC2\EOT\218\SOH\STX\DC4\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\EOT\ENQ\DC2\EOT\154\SOH\STX\b\n\
+    \\ENQ\EOT\SI\STX\EOT\ENQ\DC2\EOT\218\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\EOT\SOH\DC2\EOT\154\SOH\t\CAN\n\
+    \\ENQ\EOT\SI\STX\EOT\SOH\DC2\EOT\218\SOH\t\SI\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\EOT\ETX\DC2\EOT\154\SOH\ESC\FS\n\
+    \\ENQ\EOT\SI\STX\EOT\ETX\DC2\EOT\218\SOH\DC2\DC3\n\
+    \\f\n\
+    \\STX\EOT\DLE\DC2\ACK\221\SOH\NUL\248\SOH\SOH\n\
+    \\v\n\
+    \\ETX\EOT\DLE\SOH\DC2\EOT\221\SOH\b\ETB\n\
+    \\f\n\
+    \\EOT\EOT\DLE\STX\NUL\DC2\EOT\222\SOH\STX\CAN\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\NUL\ENQ\DC2\EOT\222\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\NUL\SOH\DC2\EOT\222\SOH\t\DC3\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\NUL\ETX\DC2\EOT\222\SOH\SYN\ETB\n\
+    \\f\n\
+    \\EOT\EOT\DLE\STX\SOH\DC2\EOT\223\SOH\STX\GS\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\SOH\ENQ\DC2\EOT\223\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\SOH\SOH\DC2\EOT\223\SOH\t\CAN\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\SOH\ETX\DC2\EOT\223\SOH\ESC\FS\n\
+    \\f\n\
+    \\EOT\EOT\DLE\STX\STX\DC2\EOT\224\SOH\STX\ESC\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\STX\ENQ\DC2\EOT\224\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\STX\SOH\DC2\EOT\224\SOH\t\SYN\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\STX\ETX\DC2\EOT\224\SOH\EM\SUB\n\
+    \\f\n\
+    \\EOT\EOT\DLE\STX\ETX\DC2\EOT\225\SOH\STX\SUB\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\ETX\ENQ\DC2\EOT\225\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\ETX\SOH\DC2\EOT\225\SOH\t\NAK\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\ETX\ETX\DC2\EOT\225\SOH\CAN\EM\n\
+    \\f\n\
+    \\EOT\EOT\DLE\STX\EOT\DC2\EOT\226\SOH\STX\GS\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\EOT\ENQ\DC2\EOT\226\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\EOT\SOH\DC2\EOT\226\SOH\t\CAN\n\
+    \\r\n\
+    \\ENQ\EOT\DLE\STX\EOT\ETX\DC2\EOT\226\SOH\ESC\FS\n\
     \\246\SOH\n\
-    \\EOT\EOT\n\
-    \\STX\ENQ\DC2\EOT\159\SOH\STX\DC4\SUB\231\SOH Supported status values: \"Completed\", \"Failed\", \"Cancelled\" (Phase 7\n\
+    \\EOT\EOT\DLE\STX\ENQ\DC2\EOT\231\SOH\STX\DC4\SUB\231\SOH Supported status values: \"Completed\", \"Failed\", \"Cancelled\" (Phase 7\n\
     \ Sprint 7.8 adds Cancelled). Engine emits Cancelled when the bridge\n\
     \ observes a ConversationCancelEvent in the conversation log before the\n\
     \ inference completes.\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ENQ\ENQ\DC2\EOT\159\SOH\STX\b\n\
+    \\ENQ\EOT\DLE\STX\ENQ\ENQ\DC2\EOT\231\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ENQ\SOH\DC2\EOT\159\SOH\t\SI\n\
+    \\ENQ\EOT\DLE\STX\ENQ\SOH\DC2\EOT\231\SOH\t\SI\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ENQ\ETX\DC2\EOT\159\SOH\DC2\DC3\n\
+    \\ENQ\EOT\DLE\STX\ENQ\ETX\DC2\EOT\231\SOH\DC2\DC3\n\
     \\f\n\
-    \\EOT\EOT\n\
-    \\STX\ACK\DC2\EOT\160\SOH\STX\FS\n\
+    \\EOT\EOT\DLE\STX\ACK\DC2\EOT\232\SOH\STX\FS\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ACK\ACK\DC2\EOT\160\SOH\STX\SI\n\
+    \\ENQ\EOT\DLE\STX\ACK\ACK\DC2\EOT\232\SOH\STX\SI\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ACK\SOH\DC2\EOT\160\SOH\DLE\ETB\n\
+    \\ENQ\EOT\DLE\STX\ACK\SOH\DC2\EOT\232\SOH\DLE\ETB\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ACK\ETX\DC2\EOT\160\SOH\SUB\ESC\n\
+    \\ENQ\EOT\DLE\STX\ACK\ETX\DC2\EOT\232\SOH\SUB\ESC\n\
     \\f\n\
-    \\EOT\EOT\n\
-    \\STX\a\DC2\EOT\161\SOH\STX\CAN\n\
+    \\EOT\EOT\DLE\STX\a\DC2\EOT\233\SOH\STX\CAN\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\a\ENQ\DC2\EOT\161\SOH\STX\b\n\
+    \\ENQ\EOT\DLE\STX\a\ENQ\DC2\EOT\233\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\a\SOH\DC2\EOT\161\SOH\t\DC3\n\
+    \\ENQ\EOT\DLE\STX\a\SOH\DC2\EOT\233\SOH\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\a\ETX\DC2\EOT\161\SOH\SYN\ETB\n\
+    \\ENQ\EOT\DLE\STX\a\ETX\DC2\EOT\233\SOH\SYN\ETB\n\
     \\186\STX\n\
-    \\EOT\EOT\n\
-    \\STX\b\DC2\EOT\167\SOH\STX\CAN\SUB\171\STX Phase 7 Sprint 7.8: causal reference back to the user prompt message id\n\
+    \\EOT\EOT\DLE\STX\b\DC2\EOT\239\SOH\STX\CAN\SUB\171\STX Phase 7 Sprint 7.8: causal reference back to the user prompt message id\n\
     \ that this result resolves. Used by the result-bridge to write a\n\
     \ ConversationInferenceResultEvent back to the per-context conversation\n\
     \ topic; producer-side dedup on the inference.result.<mode> topic is keyed\n\
     \ by this value.\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\b\ENQ\DC2\EOT\167\SOH\STX\b\n\
+    \\ENQ\EOT\DLE\STX\b\ENQ\DC2\EOT\239\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\b\SOH\DC2\EOT\167\SOH\t\DC3\n\
+    \\ENQ\EOT\DLE\STX\b\SOH\DC2\EOT\239\SOH\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\b\ETX\DC2\EOT\167\SOH\SYN\ETB\n\
+    \\ENQ\EOT\DLE\STX\b\ETX\DC2\EOT\239\SOH\SYN\ETB\n\
     \\252\STX\n\
-    \\EOT\EOT\n\
-    \\STX\t\DC2\EOT\174\SOH\STX\SYN\SUB\237\STX Phase 7 Sprint 7.8: per-context routing for the result-bridge. The\n\
+    \\EOT\EOT\DLE\STX\t\DC2\EOT\246\SOH\STX\SYN\SUB\237\STX Phase 7 Sprint 7.8: per-context routing for the result-bridge. The\n\
     \ bridge consumes inference.result.<mode> with a Failover subscription\n\
     \ and writes a ConversationInferenceResultEvent to the per-context\n\
     \ conversation topic; user_id + context_id are the fields the bridge\n\
@@ -6563,47 +8204,40 @@ packedFileDescriptor
     \ separate request-id cache.\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\t\ENQ\DC2\EOT\174\SOH\STX\b\n\
+    \\ENQ\EOT\DLE\STX\t\ENQ\DC2\EOT\246\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\t\SOH\DC2\EOT\174\SOH\t\DLE\n\
+    \\ENQ\EOT\DLE\STX\t\SOH\DC2\EOT\246\SOH\t\DLE\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\t\ETX\DC2\EOT\174\SOH\DC3\NAK\n\
+    \\ENQ\EOT\DLE\STX\t\ETX\DC2\EOT\246\SOH\DC3\NAK\n\
     \\f\n\
-    \\EOT\EOT\n\
-    \\STX\n\
-    \\DC2\EOT\175\SOH\STX\EM\n\
+    \\EOT\EOT\DLE\STX\n\
+    \\DC2\EOT\247\SOH\STX\EM\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\n\
-    \\ENQ\DC2\EOT\175\SOH\STX\b\n\
+    \\ENQ\EOT\DLE\STX\n\
+    \\ENQ\DC2\EOT\247\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\n\
-    \\SOH\DC2\EOT\175\SOH\t\DC3\n\
+    \\ENQ\EOT\DLE\STX\n\
+    \\SOH\DC2\EOT\247\SOH\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\n\
-    \\ETX\DC2\EOT\175\SOH\SYN\CAN\n\
+    \\ENQ\EOT\DLE\STX\n\
+    \\ETX\DC2\EOT\247\SOH\SYN\CAN\n\
     \\f\n\
-    \\STX\EOT\v\DC2\ACK\178\SOH\NUL\181\SOH\SOH\n\
+    \\STX\EOT\DC1\DC2\ACK\250\SOH\NUL\253\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\v\SOH\DC2\EOT\178\SOH\b\NAK\n\
+    \\ETX\EOT\DC1\SOH\DC2\EOT\250\SOH\b\NAK\n\
     \\f\n\
-    \\EOT\EOT\v\STX\NUL\DC2\EOT\179\SOH\STX\CAN\n\
+    \\EOT\EOT\DC1\STX\NUL\DC2\EOT\251\SOH\STX\CAN\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\NUL\ENQ\DC2\EOT\179\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\NUL\ENQ\DC2\EOT\251\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\NUL\SOH\DC2\EOT\179\SOH\t\DC3\n\
+    \\ENQ\EOT\DC1\STX\NUL\SOH\DC2\EOT\251\SOH\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\NUL\ETX\DC2\EOT\179\SOH\SYN\ETB\n\
+    \\ENQ\EOT\DC1\STX\NUL\ETX\DC2\EOT\251\SOH\SYN\ETB\n\
     \\f\n\
-    \\EOT\EOT\v\STX\SOH\DC2\EOT\180\SOH\STX\NAK\n\
+    \\EOT\EOT\DC1\STX\SOH\DC2\EOT\252\SOH\STX\NAK\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\SOH\ENQ\DC2\EOT\180\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\SOH\ENQ\DC2\EOT\252\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\SOH\SOH\DC2\EOT\180\SOH\t\DLE\n\
+    \\ENQ\EOT\DC1\STX\SOH\SOH\DC2\EOT\252\SOH\t\DLE\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\SOH\ETX\DC2\EOT\180\SOH\DC3\DC4b\ACKproto3"
+    \\ENQ\EOT\DC1\STX\SOH\ETX\DC2\EOT\252\SOH\DC3\DC4b\ACKproto3"

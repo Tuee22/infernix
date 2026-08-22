@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import os
+import resource
 import subprocess
 import sys
 import tempfile
@@ -117,6 +118,34 @@ class AdapterContext:
     generated_output_object_prefix: str
     bootstrap_ready: bool
     bootstrap_manifest_path: str
+    # Phase 4 Sprint 4.42: the admitted quantities and the execution shape the
+    # compiler admitted this model against. An adapter receives its
+    # memory-shaping parameters rather than choosing them; the literals that
+    # stood in for them are deleted rather than defaulted, because a default is
+    # a number that was never compared against a machine.
+    host_residency_mib: int
+    device_mib: int | None
+    context_length: int
+    batch_size: int
+    generation_bound: int
+    cache_element_width: int
+    stream_weights_to_device: bool
+
+    def require_device_mib(self) -> int:
+        """Phase 4 Sprint 4.42 — the admitted device quantity, or a refusal.
+
+        A device-using placement that reached an adapter with no admitted
+        quantity is a construction defect. A literal fallback would convert that
+        defect into a silently unbounded launch, which is the single state this
+        whole contract exists to make unrepresentable.
+        """
+        if self.device_mib is None:
+            raise RuntimeError(
+                f"model {self.model_id} needs a device arena but its request "
+                "carries no admitted device quantity; the placement that "
+                "produced it is malformed"
+            )
+        return self.device_mib
 
 
 def _decode_request() -> inference_pb2.WorkerRequest:
@@ -234,18 +263,35 @@ def normalized_input_text(value: str) -> str:
 def run_context_adapter(transform: Callable[[AdapterContext], str]) -> int:
     request = _decode_request()
     _isolate_protobuf_stdout()
+    # Phase 4 Sprint 4.42: the limit is read back before any weight loads —
+    # earlier than the model-cache configuration that follows — because a
+    # framework that has already sized an arena cannot be retroactively bounded,
+    # and a ceiling read after the first large allocation reports a fact rather
+    # than establishing one.
+    acknowledgement = _ceiling_acknowledgement()
     try:
         _configure_model_cache_from_request(request)
         output_text = transform(load_adapter_context(request))
     except Exception as exc:  # pragma: no cover - surfaced through worker tests
+        # Phase 4 Sprint 4.42: the acknowledgement rides every response, not
+        # only a successful one. It is a fact about this process -- the limit it
+        # was started under -- and is read before the transform runs, so it is
+        # equally true when the transform fails. Omitting it made a failed
+        # adapter report no limit at all, and the worker's conformance check
+        # then replaced the adapter's own typed error with a ceiling mismatch:
+        # the one message that says nothing about why the engine failed.
         error_response = inference_pb2.WorkerResponse(
             error_code=_adapter_error_code(exc),
             error_message=_adapter_error_message(exc),
+            ceiling_acknowledgement=acknowledgement,
         )
         _write_response(error_response)
         _cleanup_adapter_log()
         return 0
-    response = inference_pb2.WorkerResponse(output_text=output_text)
+    response = inference_pb2.WorkerResponse(
+        output_text=output_text,
+        ceiling_acknowledgement=acknowledgement,
+    )
     _write_response(response)
     _cleanup_adapter_log()
     return 0
@@ -275,6 +321,7 @@ def run_artifact_adapter(transform: Callable[[AdapterContext], ArtifactResult]) 
     """
     request = _decode_request()
     _isolate_protobuf_stdout()
+    acknowledgement = _ceiling_acknowledgement()
     try:
         _configure_model_cache_from_request(request)
         context = load_adapter_context(request)
@@ -286,14 +333,25 @@ def run_artifact_adapter(transform: Callable[[AdapterContext], ArtifactResult]) 
             )
         object_ref = _upload_demo_object(context, artifact)
     except Exception as exc:  # pragma: no cover - surfaced through worker tests
+        # Phase 4 Sprint 4.42: the acknowledgement rides every response, not
+        # only a successful one. It is a fact about this process -- the limit it
+        # was started under -- and is read before the transform runs, so it is
+        # equally true when the transform fails. Omitting it made a failed
+        # adapter report no limit at all, and the worker's conformance check
+        # then replaced the adapter's own typed error with a ceiling mismatch:
+        # the one message that says nothing about why the engine failed.
         error_response = inference_pb2.WorkerResponse(
             error_code=_adapter_error_code(exc),
             error_message=_adapter_error_message(exc),
+            ceiling_acknowledgement=acknowledgement,
         )
         _write_response(error_response)
         _cleanup_adapter_log()
         return 0
-    response = inference_pb2.WorkerResponse(object_ref=object_ref)
+    response = inference_pb2.WorkerResponse(
+        object_ref=object_ref,
+        ceiling_acknowledgement=acknowledgement,
+    )
     _write_response(response)
     _cleanup_adapter_log()
     return 0
@@ -960,7 +1018,58 @@ def load_adapter_context(request: inference_pb2.WorkerRequest) -> AdapterContext
         ),
         bootstrap_ready=bootstrap_ready,
         bootstrap_manifest_path=str(bootstrap_path),
+        host_residency_mib=_request_host_residency_mib(request),
+        device_mib=_request_device_mib(request),
+        context_length=int(request.execution_shape.context_length),
+        batch_size=int(request.execution_shape.batch_size),
+        generation_bound=int(request.execution_shape.generation_bound),
+        cache_element_width=int(request.execution_shape.cache_element_width),
+        stream_weights_to_device=bool(request.execution_shape.stream_weights_to_device),
     )
+
+
+def _request_host_residency_mib(request: inference_pb2.WorkerRequest) -> int:
+    claim = request.memory_budget.WhichOneof("claim")
+    if claim == "host_and_device":
+        return int(request.memory_budget.host_and_device.host_mib)
+    return int(request.memory_budget.host_resident.host_mib)
+
+
+def _request_device_mib(request: inference_pb2.WorkerRequest) -> int | None:
+    if request.memory_budget.WhichOneof("claim") == "host_and_device":
+        return int(request.memory_budget.host_and_device.device_mib)
+    return None
+
+
+def _read_data_segment_limit() -> tuple[int, int]:
+    """Phase 4 Sprint 4.42 — the engine's own data-segment limit, read back
+    from inside the process the limit binds.
+
+    A limit that was set and a limit the running image fits under are different
+    claims, and only the second is evidence that this execution is bounded.
+    Nothing else in the pipeline can produce it, because nothing else is this
+    process. Read before any weight loads, so the value describes the image the
+    engine will allocate in rather than one it has already allocated in.
+    """
+    soft, hard = resource.getrlimit(resource.RLIMIT_DATA)
+    return (
+        0 if soft == resource.RLIM_INFINITY else int(soft),
+        0 if hard == resource.RLIM_INFINITY else int(hard),
+    )
+
+
+def _ceiling_acknowledgement() -> Any:
+    """Phase 4 Sprint 4.42 — report only what this process actually observed.
+
+    The two values are read from inside the process the limit binds, which is
+    the whole point of the acknowledgement. The resource they bound is
+    deliberately not reported: the worker already holds it in the ceiling it
+    installed, and naming it here would mean duplicating the lane's resource
+    naming in Python -- a second enumeration that can disagree with the first,
+    which is exactly what Sprint 4.38 deleted.
+    """
+    soft, hard = _read_data_segment_limit()
+    return inference_pb2.CeilingAcknowledgement(soft_bytes=soft, hard_bytes=hard)
 
 
 def short_digest(value: str) -> str:

@@ -372,6 +372,17 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
           requestContextId = Just requestContextIdValue
         }
   maybeResult <- waitForPublishedResult paths compiledPlan requestIdValue
+  -- Per-model evidence for the cohort log: without it the run records only
+  -- that the per-model step started, and a failure names one model while the
+  -- other fifteen outcomes go unrecorded.
+  forM_ maybeResult $ \observed ->
+    putStrLn
+      ( "integration-model: "
+          <> modelIdValue
+          <> " -> status="
+          <> Text.unpack (status observed)
+          <> failurePayloadSuffix (payload observed)
+      )
   case maybeResult of
     -- Phase 6 Sprint 6.37: a missing result on apple-silicon is the OS-OOM-kill
     -- symptom (the on-host daemon died before publishing). The Phase 4 Sprint
@@ -393,18 +404,40 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
       assert
         (resultRuntimeMode resultValue == runtimeMode)
         ("service daemon preserves the runtime mode in published results for " <> modelIdValue)
-      -- Phase 4 Sprint 4.34: admission now happens on the engine, so the
-      -- harness states its expectation as a prediction from the declared
-      -- budget and holds the engine's published result to it. The engine, not
-      -- this process, is the authority on whether the model fits.
-      case ExecutionPlan.predictedAdmissionRejection compiledPlan (Text.pack modelIdValue) of
-        Just expectedError -> do
+      -- Phase 4 Sprint 4.34: admission happens on the engine, and Sprint 4.39
+      -- made the quantity it admits against derive from the model's own
+      -- artifact. This harness therefore states no prediction at all: it holds
+      -- the engine's published result to the shape a refusal must have. The
+      -- retired form predicted an exact payload from a declared budget, which is
+      -- only possible while the requirement is a constant this process can read.
+      case status resultValue of
+        "failed" -> do
+          -- Name the model and show the payload. A bare label says only that
+          -- \*some* model among the configured set published an untyped failure,
+          -- which is not enough to act on: the run tears its cluster down before
+          -- the result files can be read, so whatever this message omits is
+          -- gone. The sibling assertions below already append 'modelIdValue'.
+          --
+          -- The condition stays strict on purpose. A published failure is either
+          -- a refusal, which carries its typed cause, or an execution failure,
+          -- which means a configured model cannot run on this lane -- and on a
+          -- validation cohort that has to surface rather than pass.
           assert
-            (status resultValue == "failed")
-            "a model the executing machine cannot fund publishes a failed terminal result"
+            (isJust (inferenceError (payload resultValue)))
+            ( "a model the executing machine cannot fund publishes a typed "
+                <> "terminal error, but "
+                <> modelIdValue
+                <> " published status=failed with no typed inferenceError"
+                <> failurePayloadSuffix (payload resultValue)
+            )
           assert
-            (inferenceError (payload resultValue) == Just expectedError)
-            "a model the executing machine cannot fund publishes the engine's typed admission error"
+            (typedRefusalIsWellFormed (inferenceError (payload resultValue)))
+            ( "the typed refusal for "
+                <> modelIdValue
+                <> " names its own cause: a limit-exceeded refusal reports an "
+                <> "observation strictly above the limit it names, and an "
+                <> "underivable requirement names the artifact family and the reason"
+            )
           assert
             (isNothing (inlineOutput (payload resultValue)) && isNothing (objectRef (payload resultValue)))
             "a model the executing machine cannot fund does not masquerade as real output"
@@ -412,9 +445,9 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
             ( "resource memory admission fail-closed for "
                 <> modelIdValue
                 <> ": "
-                <> show expectedError
+                <> show (inferenceError (payload resultValue))
             )
-        Nothing -> do
+        _ -> do
           assert
             (status resultValue == "completed")
             ( "inference completes for "
@@ -2201,6 +2234,45 @@ testRootPath :: FilePath -> IO FilePath
 testRootPath suiteName = do
   paths <- Config.discoverPaths
   pure (repoRoot paths </> ".build" </> ("test-" <> suiteName))
+
+-- | Phase 4 Sprint 4.39 — the shape a typed refusal must have, whichever arm it
+-- takes.
+--
+-- A limit-exceeded refusal reports an observation strictly above the limit it
+-- names, because required equal to available is the one proposition a breach
+-- establishes is false. An underivable requirement names the artifact family
+-- whose reader is absent and the reason, and carries no quantity at all, because
+-- the quantity is exactly what could not be established.
+-- | Phase 4 Sprint 4.44 — a limit-exceeded refusal has two shapes and the
+-- predicate has to know which one it is looking at.
+--
+-- A /sampled overrun/ reports an observation strictly above the ceiling it
+-- breached, and the retired form of this predicate required that of every
+-- payload. A /kernel refusal at the boundary/ cannot: the allocation was refused
+-- so the memory never became resident, and the payload reports the ceiling that
+-- was installed beside the peak that was actually observed, which is at or below
+-- it. Requiring the overrun's inequality of both shapes would force the refusal
+-- path to invent a number above the limit, which is the fabrication the breach
+-- path was corrected for. The source is what distinguishes them, so it is read
+-- rather than merely required to be non-empty.
+typedRefusalIsWellFormed :: Maybe InferenceError -> Bool
+typedRefusalIsWellFormed maybeError =
+  case maybeError of
+    Nothing -> False
+    Just
+      ModelMemoryLimitExceeded
+        { inferenceErrorRequiredMib = requiredMib,
+          inferenceErrorAvailableMib = availableMib,
+          inferenceErrorSource = sourceValue
+        }
+        | sourceValue == cappedEngineRefusedAtCeilingSource ->
+            requiredMib <= availableMib && availableMib > 0
+        | otherwise -> requiredMib > availableMib && not (Text.null sourceValue)
+    Just
+      ModelRequirementUnderivable
+        { inferenceErrorArtifactType = artifactTypeValue,
+          inferenceErrorReason = reasonValue
+        } -> not (Text.null artifactTypeValue) && not (Text.null reasonValue)
 
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()

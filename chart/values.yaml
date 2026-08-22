@@ -178,6 +178,15 @@ engine:
   # admits work independently against the machine's whole observed capacity.
   # Scale the fleet by adding machines, never by raising this number.
   replicaCount: 1
+  # Phase 8 Sprint 8.13: which engine member identity the shared engine
+  # Deployment is. Sprint 8.12 made member identity fail closed, so a machine
+  # contract that declares more than one member — every `linux-gpu` contract,
+  # which declares one member per framework engine image plus `native` — leaves
+  # a shared Deployment carrying no `--engine-name` unable to say which member
+  # it is, and it refuses to start. The lifecycle always renders this; the
+  # static default is empty so an operator values file for a single-member
+  # contract keeps resolving that member implicitly.
+  memberName: ""
   image:
     repository: infernix-linux-cpu
     tag: local

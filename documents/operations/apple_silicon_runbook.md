@@ -8,7 +8,11 @@
 ## Supported Host Contract
 
 The host-memory partition and the fixed, bounded `/usr/bin/top` plus `/usr/bin/footprint` watchdog
-are defense-in-depth without direct FFI. Startup verifies the footprint probe and refines the
+are this lane's whole memory enforcement, and they use no direct FFI. This host installs **no kernel
+ceiling** on an engine execution, so the lane declares detection rather than prevention — see
+[Inference Memory Budget and Host-Memory Admission](#inference-memory-budget-and-host-memory-admission)
+for why, and [Bounded Inference Memory](../architecture/bounded_inference_memory.md) for the contract
+that makes a lane's strength part of its type. Startup verifies the footprint probe and refines the
 generated execution plan into an opaque Apple enforcer before an engine member becomes ready — see
 [Typed Execution Plan](../architecture/typed_execution_plan.md).
 
@@ -337,8 +341,9 @@ and admits each model against the Apple `InferenceMemoryBudget` — a `HostEnfor
 checked `HostMemoryPartition` (host physical RAM split into the Colima VM pledge, the
 `minHostHeadroomMib` headroom, and the remaining `inferenceCapacity`; see the "Inference Memory Budget
 and Host-Memory Admission" section). A full per-model `infernix test integration` run over the generated
-catalog either completes or fails cleanly per model: an over-budget model publishes typed
-`ModelMemoryLimitExceeded` with `requiredMib` and `availableMib`. That clean failure is a
+catalog either completes or fails cleanly per model: a model whose derived requirement exceeds the
+resolved capacity publishes typed `ModelMemoryLimitExceeded` carrying `requiredMib`, `availableMib`,
+and the `resource` the refusal is about. That clean failure is a
 product-contract outcome, not a VM-envelope reconcile — growing the Docker VM memory envelope does not
 change host-RAM admission. To admit a larger model, raise the resolved `inferenceCapacity` by freeing
 host headroom (for example, lowering the Colima memory pledge, which shrinks `vmReserve`), then re-run
@@ -347,54 +352,93 @@ host headroom (for example, lowering the Colima memory pledge, which shrinks `vm
 ## Inference Memory Budget and Host-Memory Admission
 
 On `apple-silicon`, model weights load into host physical RAM (the unified-memory / CPU path),
-so the on-host `infernix service` daemon admits inference against a resolved memory budget.
-`infernix init` and `cluster up` compute that budget from live host measurements: the
+so the on-host `infernix service` daemon admits inference against a resolved memory budget. There is
+no separate device residency on this lane to split the account with: unified memory means the host
+formula carries the weight term in full — which is precisely the term that is *absent* from the host
+formula where weights stream to a device and host residency is bounded by the staging window
+instead. Both formulas are owned by
+[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
+
+`infernix init` and `cluster up` compute what the host offers from live host measurements: the
 `resolveAppleHostMemoryPartitionBudget` resolver (`src/Infernix/DemoConfig.hs`) builds a
 `HostEnforcedBudget` over a checked `HostMemoryPartition` minted by
 `mkHostMemoryPartition physicalMib vmReserveMib headroomMib`. Physical RAM (`sysctl -n hw.memsize`) is
 split into `vmReserve` (the Colima VM's pledged memory, `colima list --json`), a `hostHeadroom` fixed
 at `minHostHeadroomMib` = 6144 MiB (covering the OS, the control-plane binary, the routed end-to-end
-Playwright browser, and worst-case watchdog overshoot), and the remaining `inferenceCapacity` =
-physical − vmReserve − headroom. The smart constructor **rejects** oversubscription (capacity < 0) and
-a headroom below `minHostHeadroomMib`, so an over-pledged host or a browser-starving headroom is not
-constructible. A fixed reserve that omits the routed browser does not satisfy this contract.
-`headroom` covers the four co-tenants named above and **not** the Haskell toolchain. The toolchain is
-not a headroom tenant and is not an additional slice of this partition: it draws its account from the
-same non-virtual-machine pool this partition already divides, so the two are alternative occupants
-admitted one at a time by the exclusive host claim under
-[bounded host memory](../architecture/bounded_host_memory.md). On
-a 64 GiB host with a 48 GiB Colima pledge, `inferenceCapacity` = 65536 − 49152 − 6144 = 10240 MiB —
-which with the 6144 MiB headroom accounts for the whole 16384 MiB pool, leaving no residue a
-concurrent toolchain account could be drawn from — so
-the heavy diffusion rows (`image-*` footprint 12288, `video-*` footprint 28672) fail-close cleanly at
-admission rather than racing the watchdog.
+Playwright browser, and worst-case inter-poll watchdog overshoot), and the remaining
+`inferenceCapacity` = physical − vmReserve − headroom. The smart constructor **rejects**
+oversubscription (capacity < 0) and a headroom below `minHostHeadroomMib`, so an over-pledged host or
+a browser-starving headroom is not constructible. A fixed reserve that omits the routed browser does
+not satisfy this contract. `headroom` covers the four co-tenants named above and **not** the Haskell
+toolchain. The toolchain is not a headroom tenant and is not an additional slice of this partition:
+it draws its account from the same non-virtual-machine pool this partition already divides, so the
+two are alternative occupants admitted one at a time by the exclusive host claim under
+[bounded host memory](../architecture/bounded_host_memory.md). On a 64 GiB host with a 48 GiB Colima
+pledge, `inferenceCapacity` = 65536 − 49152 − 6144 = 10240 MiB — which with the 6144 MiB headroom
+accounts for the whole 16384 MiB pool, leaving no residue a concurrent toolchain account could be
+drawn from.
+
+**What a model requires is not written down anywhere.** It is derived from the model's own artifact:
+the weight term is summed from the tensor table in the artifact header under a bounded prefix read,
+without loading the model, and the key/value cache term is the closed function of the model's
+declared geometry and the execution shape — context length, batch, generation bound, and load
+strategy — the engine is actually started with. An artifact whose header overruns its file, whose
+tensor extents disagree with their declared shapes, whose offsets do not tile densely, or whose
+geometry disagrees with its own header yields no requirement at all rather than a small one. This is
+why the operator-facing arithmetic here is a *comparison* rather than a table of per-family
+constants: the left side comes from the artifact on disk and the right side comes from this machine,
+and neither is a number an operator or a catalog author supplies.
+
+So the operator's question — why is this row unavailable on this host — has one answer: **its derived
+requirement exceeds the resolved `inferenceCapacity`**, and on a host that has pledged most of its
+RAM to the Colima VM the heavy diffusion rows are the ones most likely to exceed it. That is a clean
+classification at admission, not a launch that races the watchdog.
 
 - `validateDemoConfig` may report capacity diagnostics, but it must not fail the daemon solely
-because one catalog model's declared `ModelMemoryFootprint` (wire field `modelRamFootprintMib`,
-required and positive) exceeds the resolved Apple `inferenceCapacity`. Smaller configured models
-must still serve. - At startup, `compileRuntimePlan` classifies each configured model against the
-resolved partition. A model that exceeds the available capacity remains in the compiled plan as an
-`UnavailableModel`; smaller placements remain routable. Live Apple observations then pair each
-admitted, resource-indexed grant with its matching enforcer inside an opaque `ExecutableModel`.
-Public engine launch accepts only that complete capability and derives the process command from its
-compiled binding. The Apple capped-engine kernel discovers exact process-group members with fixed
-`/usr/bin/top`, samples exact physical bytes with fixed `/usr/bin/footprint`, and kills the child
-process group on a ceiling breach. Both commands run under one total deadline, bounded captures, an
-explicit environment, and exhaustive group cleanup; callers cannot provide a raw observer
-specification. The single-flight authority remains inside the opaque engine capability, and an
-adversarial ceiling breach must leave the daemon alive with a typed failure. Canonical home:
-[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md). - To run
-a larger model whose footprint exceeds the current budget, free host headroom so the resolved
-`inferenceCapacity` rises. The most direct lever is lowering the Colima VM memory pledge, which
-raises host physical RAM minus Colima pledge; re-run `infernix init` / `cluster up` afterward to
-re-resolve the partition from the new measurements. The partition makes this the *explicit* choice:
-a host cannot both pledge most of its RAM to the VM and admit a model larger than the remaining
-capacity — it fails that model closed rather than over-committing physical RAM.
+  because one configured model's derived requirement exceeds the resolved Apple
+  `inferenceCapacity`. Smaller configured models must still serve.
+- At startup, `compileRuntimePlan` classifies each configured model against the resolved partition.
+  A model that exceeds the available capacity remains in the compiled plan as an `UnavailableModel`;
+  smaller placements remain routable. Live Apple observations then pair each admitted,
+  resource-indexed grant with its matching enforcer inside an opaque `ExecutableModel`. Public engine
+  launch accepts only that complete capability, derives the process command from its compiled
+  binding, and carries to the engine the same execution shape the cache term was computed from
+  rather than letting the adapter restate it.
+- To run a larger model whose requirement exceeds the current capacity, free host headroom so the
+  resolved `inferenceCapacity` rises. The most direct lever is lowering the Colima VM memory pledge,
+  which raises host physical RAM minus Colima pledge; re-run `infernix init` / `cluster up`
+  afterward to re-resolve the partition from the new measurements. The partition makes this the
+  *explicit* choice: a host cannot both pledge most of its RAM to the VM and admit a model larger
+  than the remaining capacity — it fails that model closed rather than over-committing physical RAM.
+
+**This lane detects; it installs no kernel ceiling.** Apple Silicon puts no limit in force before the
+engine's first allocation, and this runbook says so rather than implying a bound the host does not
+provide: unified memory means an accelerator allocation draws on the same pool as everything else,
+Darwin has no cgroups, and its address-space limit is aliased to an advisory limit that reports
+itself infinite and rejects every finite ceiling written against it. With nothing installed there is
+also nothing for the engine to read back from inside the process that allocates. The lane therefore
+declares detection rather than prevention, and it declares it in the type: a contract that requires a
+kernel ceiling refuses readiness here instead of quietly accepting a sampler in its place.
+
+Detection is the sampled backstop, and it is the whole enforcement story on this lane. The Apple
+capped-engine kernel discovers exact process-group members with fixed `/usr/bin/top`, samples exact
+physical bytes with fixed `/usr/bin/footprint`, and kills the child process group when a sample
+exceeds the ceiling. Both commands run under one total deadline, bounded captures, an explicit
+environment, and exhaustive group cleanup; callers cannot provide a raw observer specification. The
+single-flight authority remains inside the opaque engine capability, and an adversarial breach must
+leave the daemon alive with a typed failure that **names the resource it breached and the footprint
+it observed**, because a refusal that cannot say which resource it is about cannot be acted on.
+Sampling on a fixed cadence terminates a breach rather than refusing the allocation that caused it,
+so a peak between two samples is unobserved and the partition's headroom is what absorbs the
+overshoot. What this makes unrepresentable is an unbounded launch on this lane; it does not make a
+host out-of-memory condition impossible, and that scope statement is owned by
+[bounded host memory](../architecture/bounded_host_memory.md).
 
 Linux CPU uses the same compile/refine boundary with the engine pod memory limit as its declared
-outer envelope and a verified per-invocation process-group RSS observer. Linux GPU requires
-independently indexed host-RAM and GPU-VRAM grants and observers; a single-resource plan fails
-compilation closed with `GpuDualResourceBudgetRequired`.
+outer envelope and a verified per-invocation process-group RSS observer, and adds prevention over
+private writable mappings once its ceiling has been calibrated against a real engine on that lane.
+Linux GPU requires independently indexed host-RAM and GPU-VRAM grants and observers; a
+single-resource plan fails compilation closed with `GpuDualResourceBudgetRequired`.
 
 ## Harbor Host-Port Conflicts
 

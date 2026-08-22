@@ -120,6 +120,17 @@ lowers only its soft limit across the complete Cabal leader lifecycle so later n
 does not inherit the build ceiling. Neither form is engaged on the Apple lane, which has no
 address-space ceiling to lower.
 
+The rule that a one-way limit belongs only to a process image dedicated to a single job is a rule
+about *lifetime*, not about *builds*. The inference row satisfies it the same way and for the same
+reason: an engine execution is started through a launch prefix that lowers both limits and is then
+replaced by the engine image, so the limit binds exactly one execution and the daemon that started it
+inherits nothing. The two rows also bound **different quantities** — the toolchain row lowers an
+address-space limit against a compiler whose reservation it has already reduced, while the inference
+row lowers a data-segment limit precisely because a device runtime's address-space reservation cannot
+be reduced and must not be charged. Reading the two as one mechanism is the misreading this paragraph
+exists to prevent; the inference half is owned by
+[bounded_inference_memory.md](bounded_inference_memory.md).
+
 The shipped operator image declares its own bounded reservation for the same reason, and that
 reservation is sized for the host reserve rather than for a toolchain slot. It is address space
 rather than resident memory, but it is also the only thing bounding that image's heap growth,
@@ -233,10 +244,19 @@ Concretely outside the bound, and deliberately not claimed:
   unavailable to an unprivileged process, so a refusal reports the coarser figure the fixed process
   observer supplies. That is enough to name a claimant and not enough to account for one.
 - **Processes this repository starts outside the toolchain account.** The web dependency install and
-  unit run, the browser the routed end-to-end lane drives, the Python provisioning and adapter
-  images, and the host inference daemon are all started by the governed validation surface and carry
-  no toolchain heap ceiling. They are host-reserve claimants, and the reserve is a declared share
-  rather than a per-process bound.
+  unit run, the browser the routed end-to-end lane drives, and the Python provisioning and adapter
+  images are all started by the governed validation surface and carry no toolchain heap ceiling. They
+  are host-reserve claimants, and the reserve is a declared share rather than a per-process bound. The
+  host inference daemon is a host-reserve claimant on the same terms, but the engine executions it
+  starts carry a ceiling of their own on the lanes that can install one; carrying no *toolchain*
+  ceiling is not the same as carrying none.
+- **The memory an installed inference ceiling does not charge.** A data-segment limit bounds private
+  writable mappings of one process. Shared mappings are outside it, and a device driver's pinned and
+  managed host memory is mapped shared — unswappable, unreclaimable, and charged to the enclosing
+  cgroup, which makes it the class most able to end the daemon and the class the ceiling cannot see.
+  It is carried as its own term in the inference account and left to the sampled backstop. A
+  per-process limit also says nothing about a tree total, which is arithmetic plus a checked member
+  count rather than a kernel aggregate.
 - **Normal Cabal completion is leader-scoped.** The trusted scheduler leader is reaped normally and
   its owned group is killed/reaped only on an exception before that point. There is no portable
   post-reap descendant proof, and a hard-killed owner may leave descendants outside this lifecycle.

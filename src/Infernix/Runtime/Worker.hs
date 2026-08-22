@@ -4,14 +4,19 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Infernix.Runtime.Worker
-  ( WorkerModelCacheConfig (..),
+  ( WorkerFailure (..),
+    WorkerModelCacheConfig (..),
     buildWorkerRequest,
     loadWorkerModelCacheConfig,
+    modelCeilingBreachError,
+    modelCeilingRefusalError,
     nativeArtifactMarkerPathsForTest,
     nativeModelCacheObjectKeys,
     pythonEngineBootstrapManifestRequiredForTest,
     requireHydratedNativeModelCache,
     runExecutableInferenceWorker,
+    workerFailureResponse,
+    workerObjectUploadConfig,
     workerRequestModelCacheConfig,
   )
 where
@@ -20,10 +25,12 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, throwIO, try)
 import Control.Monad (filterM, unless, when)
 import Crypto.Hash.SHA256 qualified as SHA256
+import Data.Bifunctor (first)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
+import Data.Int (Int64)
 import Data.List (dropWhileEnd)
 import Data.Maybe (fromMaybe)
 import Data.ProtoLens (decodeMessage, defMessage, encodeMessage)
@@ -41,7 +48,9 @@ import Infernix.ExecutionPlan
   ( ExecutableModel,
     executableModelDescriptor,
     executableModelEngine,
+    executableModelGpuVramArenaMib,
     executableModelId,
+    executableModelResidentCeilingMib,
   )
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models (resultFamilyForDescriptor)
@@ -54,7 +63,8 @@ import Infernix.Runtime.CappedEngine
         EngineExceededCeiling,
         EngineExited,
         EngineOutputCaptureFailed,
-        EngineOutputLimitExceeded
+        EngineOutputLimitExceeded,
+        EngineRefusedAtCeiling
       ),
     EngineOutputStream (EngineStandardError, EngineStandardOutput),
     NativeArtifactCache,
@@ -62,6 +72,7 @@ import Infernix.Runtime.CappedEngine
       ( NativeArtifactBusy,
         NativeArtifactInvocationRejected,
         NativeArtifactLaunched,
+        NativeArtifactProjectionRefused,
         NativeArtifactRejected,
         NativeArtifactUnavailable,
         NativeArtifactUnsupported,
@@ -71,11 +82,13 @@ import Infernix.Runtime.CappedEngine
       ( PythonWorkerInvocationRejected,
         PythonWorkerLaunched
       ),
+    executableEngineCeiling,
     nativeArtifactCache,
     nativeArtifactInvocation,
     runExecutableNativeArtifact,
     runExecutablePythonWorker,
   )
+import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Storage (readClusterStateFile)
@@ -103,6 +116,29 @@ data WorkerModelCacheConfig = WorkerModelCacheConfig
   }
   deriving (Eq, Show)
 
+-- | Phase 4 Sprint 4.37 — the worker's terminal failure channel.
+--
+-- A measured ceiling breach is carried as the typed 'InferenceError' the
+-- sampler's own measurement produced; every other failure is the ordinary
+-- operator-facing 'ErrorResponse'. The retired shape returned one
+-- 'ErrorResponse' for both, so the layer above matched a reserved error code,
+-- discarded the response whole, and rebuilt the payload from the
+-- 'ExecutableModel' — which is how a device breach was published as a pod-RAM
+-- breach. Re-parsing the rendered message instead was rejected twice over: the
+-- doctrine's retry-containment obligation is that a measured breach maps
+-- directly to a typed terminal failure and never through a string
+-- classification, and this repository has already paid for a predicate that
+-- searched a rendered string for text that value never contains.
+-- | Phase 4 Sprint 4.43: the typed arm carries any 'InferenceError' the worker
+-- established, not only a measured ceiling breach. A projection that could not
+-- be obtained is a 'ModelRequirementUnderivable', and naming the constructor
+-- after one of its two inhabitants is how a value starts being re-derived at the
+-- next boundary.
+data WorkerFailure
+  = WorkerTypedInferenceFailure !InferenceError
+  | WorkerError !ErrorResponse
+  deriving (Eq, Show)
+
 -- | Production engine dispatch. The selected model, engine binding, and memory
 -- grant are projected from one opaque 'ExecutableModel', so a caller cannot
 -- combine independently decoded or mismatched values at the launch boundary.
@@ -111,10 +147,10 @@ runExecutableInferenceWorker ::
   ExecutableModel ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
-  IO (Either ErrorResponse Text)
+  IO (Either WorkerFailure Text)
 runExecutableInferenceWorker paths executableModel request cacheObservation
   | requestModelId request /= executableModelId executableModel =
-      pure (Left (requestModelMismatchError executableModel request))
+      pure (workerFailed (requestModelMismatchError executableModel request))
   | otherwise =
       -- Phase 8 Sprint 8.9: the adapter type is a closed sum, so this dispatch
       -- is total and the former "unsupported engine runner" arm is gone. It
@@ -143,21 +179,127 @@ requestModelMismatchError executableModel request =
           <> "."
     }
 
--- | Phase 4 Sprint 4.30 — the 'ErrorResponse' the capped-engine kernel raises on
--- a runtime ceiling breach. The runtime rebuilds this into a typed
--- 'ModelMemoryLimitExceeded' result; the resident footprint that breached the
--- ceiling is named for the operator log.
-modelCeilingBreachError :: ModelDescriptor -> Int -> ErrorResponse
-modelCeilingBreachError model ceilingMib =
-  ErrorResponse
-    { errorCode = modelMemoryLimitExceededErrorCode,
-      message =
-        "inference for "
-          <> modelId model
-          <> " breached its admitted resident-memory ceiling of "
-          <> Text.pack (show ceilingMib)
-          <> " MiB and was terminated by the capped-engine kernel"
+-- | Phase 4 Sprint 4.37 — the typed breach, built from the measurement rather
+-- than from the executable model.
+--
+-- The retired form built a 'ModelMemoryLimitExceeded' out of the
+-- 'ExecutableModel' alone: the resource came from the resident placement arm,
+-- which answers pod RAM for every device placement by construction, and
+-- required and available were both the resident ceiling — a limit-exceeded
+-- error asserting that the requirement /is/ the limit, which is the one
+-- proposition a breach establishes is false. Here @availableMib@ is the
+-- ceiling installed for the resource that breached and @requiredMib@ is the
+-- footprint observed above it, a lower bound on what the model actually
+-- needed, so required strictly exceeds available on every breach.
+modelCeilingBreachError ::
+  ModelDescriptor ->
+  Resource ->
+  Int ->
+  Int ->
+  InferenceError
+modelCeilingBreachError model resource ceilingMib observedMib =
+  ModelMemoryLimitExceeded
+    { inferenceErrorModelId = modelId model,
+      inferenceErrorRequiredMib = observedMib,
+      inferenceErrorAvailableMib = ceilingMib,
+      inferenceErrorResource = resource,
+      inferenceErrorSource = cappedEngineResidentCeilingSource
     }
+
+-- | Phase 4 Sprint 4.44 — the payload for a /kernel refusal at the boundary/,
+-- which is a different shape from a sampled overrun above it.
+--
+-- Both numbers are ones that were measured: @availableMib@ is the ceiling that
+-- was installed, and @requiredMib@ is the peak the sampler actually observed,
+-- which for a refused allocation is at or below that ceiling rather than above
+-- it. Sprint 4.37's invariant that required strictly exceeds available belongs
+-- to 'modelCeilingBreachError' and is left there rather than weakened: inventing
+-- a number above the limit to satisfy it here would be the same fabrication the
+-- breach path was corrected for. The source names which shape this is.
+modelCeilingRefusalError ::
+  ModelDescriptor ->
+  Resource ->
+  Int ->
+  Int ->
+  InferenceError
+modelCeilingRefusalError model resource ceilingMib observedMib =
+  ModelMemoryLimitExceeded
+    { inferenceErrorModelId = modelId model,
+      inferenceErrorRequiredMib = observedMib,
+      inferenceErrorAvailableMib = ceilingMib,
+      inferenceErrorResource = resource,
+      inferenceErrorSource = cappedEngineRefusedAtCeilingSource
+    }
+
+-- | Phase 4 Sprint 4.37 — the one rendering of a worker failure into the
+-- operator-facing response. A typed failure's log line is derived from the same
+-- typed value the result payload carries, so the two cannot disagree, and the
+-- resource is named in both.
+--
+-- Phase 4 Sprints 4.43 and 4.44 make this a total case over 'InferenceError':
+-- an underivable requirement and a refusal at the boundary are distinct
+-- outcomes from an overrun, and a rendering that assumed one shape's fields
+-- would have read a quantity out of a payload that deliberately carries none.
+workerFailureResponse :: WorkerFailure -> ErrorResponse
+workerFailureResponse failure =
+  case failure of
+    WorkerError response -> response
+    WorkerTypedInferenceFailure typedFailure ->
+      case typedFailure of
+        ModelRequirementUnderivable
+          { inferenceErrorModelId,
+            inferenceErrorArtifactType,
+            inferenceErrorReason
+          } ->
+            ErrorResponse
+              { errorCode = modelRequirementUnderivableErrorCode,
+                message =
+                  "no memory requirement could be established for "
+                    <> inferenceErrorModelId
+                    <> " ("
+                    <> inferenceErrorArtifactType
+                    <> "): "
+                    <> inferenceErrorReason
+              }
+        ModelMemoryLimitExceeded
+          { inferenceErrorModelId,
+            inferenceErrorRequiredMib,
+            inferenceErrorAvailableMib,
+            inferenceErrorResource,
+            inferenceErrorSource
+          }
+            | inferenceErrorSource == cappedEngineRefusedAtCeilingSource ->
+                ErrorResponse
+                  { errorCode = modelMemoryLimitExceededErrorCode,
+                    message =
+                      "inference for "
+                        <> inferenceErrorModelId
+                        <> " was refused an allocation at its installed "
+                        <> resourceText inferenceErrorResource
+                        <> " ceiling of "
+                        <> Text.pack (show inferenceErrorAvailableMib)
+                        <> " MiB (peak observed "
+                        <> Text.pack (show inferenceErrorRequiredMib)
+                        <> " MiB), so the engine exited without allocating it"
+                  }
+            | otherwise ->
+                ErrorResponse
+                  { errorCode = modelMemoryLimitExceededErrorCode,
+                    message =
+                      "inference for "
+                        <> inferenceErrorModelId
+                        <> " breached its admitted "
+                        <> resourceText inferenceErrorResource
+                        <> " ceiling of "
+                        <> Text.pack (show inferenceErrorAvailableMib)
+                        <> " MiB (observed "
+                        <> Text.pack (show inferenceErrorRequiredMib)
+                        <> " MiB) and was terminated by the capped-engine kernel"
+                  }
+
+-- | A non-breach worker failure in the 'WorkerFailure' channel.
+workerFailed :: ErrorResponse -> Either WorkerFailure a
+workerFailed = Left . WorkerError
 
 modelEnforcementUnavailableError :: ModelDescriptor -> Text -> ErrorResponse
 modelEnforcementUnavailableError model reason =
@@ -214,29 +356,32 @@ runPythonWorker ::
   ExecutableModel ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
-  IO (Either ErrorResponse Text)
+  IO (Either WorkerFailure Text)
 runPythonWorker readAuthority paths executableModel request _cacheObservation = do
   maybeModelCacheConfig <- loadWorkerModelCacheConfig paths modelRuntimeMode
   let workerRequest = encodeMessage (buildWorkerRequest paths maybeModelCacheConfig executableModel request)
   workerResult <- runWorkerInvocation readAuthority paths executableModel model workerRequest
-  pure (workerResultToOutput workerResult)
+  pure (workerResultToOutput executableModel workerResult)
   where
     model = executableModelDescriptor executableModel
     modelRuntimeMode = runtimeMode model
 
-workerResultToOutput :: Either ErrorResponse ByteString8.ByteString -> Either ErrorResponse Text
-workerResultToOutput workerResult =
+workerResultToOutput ::
+  ExecutableModel ->
+  Either WorkerFailure ByteString8.ByteString ->
+  Either WorkerFailure Text
+workerResultToOutput executableModel workerResult =
   case workerResult of
     Right encodedResponse ->
-      decodedWorkerOutput encodedResponse
-    -- The typed `ErrorResponse` (a ceiling breach carrying
-    -- `modelMemoryLimitExceededErrorCode`, or a plain `worker_failed`) passes
-    -- through unchanged so the runtime can discriminate on `errorCode`.
-    Left errResponse ->
-      Left errResponse
+      first WorkerError (decodedWorkerOutput executableModel encodedResponse)
+    -- Phase 4 Sprint 4.37: a measured ceiling breach passes through as the
+    -- typed 'InferenceError' the sampler produced, not as a reserved error
+    -- code the layer above has to re-classify.
+    Left failure ->
+      Left failure
 
-decodedWorkerOutput :: ByteString8.ByteString -> Either ErrorResponse Text
-decodedWorkerOutput encodedResponse =
+decodedWorkerOutput :: ExecutableModel -> ByteString8.ByteString -> Either ErrorResponse Text
+decodedWorkerOutput executableModel encodedResponse =
   case decodeMessage encodedResponse of
     Left decodeError ->
       Left
@@ -245,7 +390,53 @@ decodedWorkerOutput encodedResponse =
             message = Text.pack ("Unable to decode worker response: " <> decodeError)
           }
     Right workerResponse ->
-      workerOutputFromResponse workerResponse
+      case ceilingAcknowledgementFailure executableModel workerResponse of
+        Just conformanceFailure -> Left conformanceFailure
+        Nothing -> workerOutputFromResponse workerResponse
+
+-- | Phase 4 Sprint 4.42 — compare the engine's read-back against the quantity
+-- its plan installed.
+--
+-- The ceiling comes from 'executableEngineCeiling', the same function the launch
+-- region itself installs from, so there is one derivation rather than two. An
+-- earlier form recomputed it here and passed a hardcoded @PodRam@, which is the
+-- wrong resource on the Apple lane — it resolved to the right /strength/ only
+-- because the Apple arm short-circuits regardless of resource, so the value was
+-- a lie that happened not to change behaviour. That is the shape Sprint 4.37
+-- exists to remove, and it does not get to return through the conformance path.
+--
+-- A mismatch is a typed terminal failure and never a retryable transient: a
+-- conformance failure laundered into a redelivery is an unbounded launch
+-- repeated.
+ceilingAcknowledgementFailure ::
+  ExecutableModel ->
+  ProtoInference.WorkerResponse ->
+  Maybe ErrorResponse
+ceilingAcknowledgementFailure executableModel workerResponse =
+  case Ceiling.installedCeilingStrength installed of
+    Ceiling.CeilingDetectionOnly -> Nothing
+    Ceiling.CeilingInstalledDataSegment ->
+      case Ceiling.ceilingReadBackMatches installed reportedSoft reportedHard of
+        Right () -> Nothing
+        Left reason ->
+          Just
+            ErrorResponse
+              { errorCode = "engine_ceiling_conformance_failed",
+                message =
+                  "inference for "
+                    <> modelId (executableModelDescriptor executableModel)
+                    <> " could not confirm its installed ceiling: "
+                    <> reason
+              }
+  where
+    -- The acknowledgement path is the Python-stdio lane's: a native runner is an
+    -- upstream program that writes no worker response. That lane declares no
+    -- projection, so the quantity compared here is the one its launch installed.
+    installed =
+      executableEngineCeiling Ceiling.NoEngineProjection executableModel
+    acknowledgement = view ProtoInferenceFields.ceilingAcknowledgement workerResponse
+    reportedSoft = toInteger (view ProtoInferenceFields.softBytes acknowledgement)
+    reportedHard = toInteger (view ProtoInferenceFields.hardBytes acknowledgement)
 
 withPythonEngineSetupReady ::
   Paths ->
@@ -297,11 +488,11 @@ pythonEngineBootstrapManifestRequiredForTest =
 -- output is exercised on cohort hardware (Wave I Stage 2); here the
 -- dispatch wiring and the binary-by-absolute-path contract compile and
 -- unit-check.
-runNativeWorker :: Paths -> ExecutableModel -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either ErrorResponse Text)
+runNativeWorker :: Paths -> ExecutableModel -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either WorkerFailure Text)
 runNativeWorker paths executableModel request _cacheObservation = do
   preparation <- prepareNativeArtifactInvocation
   case preparation of
-    Left preparationError -> pure (Left preparationError)
+    Left preparationError -> pure (workerFailed preparationError)
     Right (maybeModelCacheConfig, invocation, processEnvironment) -> do
       launchOutcome <-
         runExecutableNativeArtifact
@@ -312,7 +503,7 @@ runNativeWorker paths executableModel request _cacheObservation = do
       case launchOutcome of
         NativeArtifactUnsupported unsupportedAdapter ->
           pure
-            ( Left
+            ( workerFailed
                 ErrorResponse
                   { errorCode = "unsupported_engine_runner",
                     message =
@@ -323,7 +514,7 @@ runNativeWorker paths executableModel request _cacheObservation = do
             )
         NativeArtifactUnavailable ->
           pure
-            ( Left
+            ( workerFailed
                 ErrorResponse
                   { errorCode = "engine_binary_missing",
                     message =
@@ -332,19 +523,23 @@ runNativeWorker paths executableModel request _cacheObservation = do
                         <> "; materialize it for the active substrate (Apple: infernix internal materialize-metal-engines; Linux: bake the native runner into the substrate image under /opt/infernix/engines) before running."
                   }
             )
-        NativeArtifactRejected ->
+        NativeArtifactRejected rejectedRoot rejectionReason ->
           pure
-            ( Left
+            ( workerFailed
                 ErrorResponse
                   { errorCode = "engine_artifact_invalid",
                     message =
                       "native engine artifact validation failed for "
                         <> engineBindingAdapterId engineBinding
+                        <> " at "
+                        <> Text.pack rejectedRoot
+                        <> ": "
+                        <> Text.pack rejectionReason
                   }
             )
         NativeArtifactBusy ->
           pure
-            ( Left
+            ( workerFailed
                 ErrorResponse
                   { errorCode = "engine_artifact_busy",
                     message =
@@ -354,7 +549,7 @@ runNativeWorker paths executableModel request _cacheObservation = do
             )
         NativeArtifactInvocationRejected failure ->
           pure
-            ( Left
+            ( workerFailed
                 ErrorResponse
                   { errorCode = "engine_invocation_invalid",
                     message =
@@ -366,7 +561,7 @@ runNativeWorker paths executableModel request _cacheObservation = do
             )
         NativeArtifactUseValidationFailed ->
           pure
-            ( Left
+            ( workerFailed
                 ErrorResponse
                   { errorCode = "engine_artifact_invalid",
                     message =
@@ -374,28 +569,58 @@ runNativeWorker paths executableModel request _cacheObservation = do
                         <> engineBindingAdapterId engineBinding
                   }
             )
+        -- Phase 4 Sprint 4.43: a projection that could not be obtained is a
+        -- typed refusal naming the model and the reason, in the same shape an
+        -- artifact whose header no reader understands already uses. It does not
+        -- fall back to the derived quantity and it does not launch unbounded.
+        NativeArtifactProjectionRefused reason ->
+          pure
+            ( Left
+                ( WorkerTypedInferenceFailure
+                    ModelRequirementUnderivable
+                      { inferenceErrorModelId = modelId model,
+                        inferenceErrorArtifactType = artifactType model,
+                        inferenceErrorReason = reason
+                      }
+                )
+            )
         NativeArtifactLaunched outcome exitCode stdoutOutput stderrOutput ->
           case outcome of
-            EngineExceededCeiling ceilingMib ->
-              pure (Left (modelCeilingBreachError model ceilingMib))
-            EngineEnforcementUnavailable reason ->
-              pure (Left (modelEnforcementUnavailableError model reason))
-            EngineOutputLimitExceeded outputStream ->
-              pure (Left (modelOutputLimitExceededError model outputStream))
-            EngineOutputCaptureFailed outputStream reason ->
+            EngineExceededCeiling resource ceilingMib observedMib ->
               pure
                 ( Left
+                    ( WorkerTypedInferenceFailure
+                        (modelCeilingBreachError model resource ceilingMib observedMib)
+                    )
+                )
+            -- Phase 4 Sprint 4.44: a kernel refusal at the installed ceiling is
+            -- a typed memory outcome, not an unclassified engine fault.
+            EngineRefusedAtCeiling resource ceilingMib observedMib _refusedExitCode ->
+              pure
+                ( Left
+                    ( WorkerTypedInferenceFailure
+                        (modelCeilingRefusalError model resource ceilingMib observedMib)
+                    )
+                )
+            EngineEnforcementUnavailable reason ->
+              pure (workerFailed (modelEnforcementUnavailableError model reason))
+            EngineOutputLimitExceeded outputStream ->
+              pure (workerFailed (modelOutputLimitExceededError model outputStream))
+            EngineOutputCaptureFailed outputStream reason ->
+              pure
+                ( workerFailed
                     (modelOutputCaptureFailedError model outputStream reason)
                 )
             EngineExited _ ->
-              nativeRunnerResult
-                model
-                engineBinding
-                request
-                maybeModelCacheConfig
-                exitCode
-                stdoutOutput
-                stderrOutput
+              first WorkerError
+                <$> nativeRunnerResult
+                  model
+                  engineBinding
+                  request
+                  maybeModelCacheConfig
+                  exitCode
+                  stdoutOutput
+                  stderrOutput
   where
     model = executableModelDescriptor executableModel
     modelRuntimeMode = runtimeMode model
@@ -1036,7 +1261,7 @@ runWorkerInvocation ::
   ExecutableModel ->
   ModelDescriptor ->
   ByteString.ByteString ->
-  IO (Either ErrorResponse ByteString.ByteString)
+  IO (Either WorkerFailure ByteString.ByteString)
 runWorkerInvocation readAuthority paths executableModel model inputPayload = do
   processEnvironment <- Subprocess.clusterSubprocessEnv paths
   launchOutcome <-
@@ -1049,7 +1274,7 @@ runWorkerInvocation readAuthority paths executableModel model inputPayload = do
   pure $
     case launchOutcome of
       PythonWorkerInvocationRejected reason ->
-        Left
+        workerFailed
           ErrorResponse
             { errorCode = "engine_invocation_invalid",
               message =
@@ -1060,23 +1285,30 @@ runWorkerInvocation readAuthority paths executableModel model inputPayload = do
             }
       PythonWorkerLaunched outcome _exitCode stdoutOutput stderrOutput ->
         case outcome of
-          -- A ceiling breach carries the reserved
-          -- `modelMemoryLimitExceededErrorCode` in the `ErrorResponse` (via
-          -- `modelCeilingBreachError`), exactly like the native path, so the
-          -- runtime rebuilds the typed `ModelMemoryLimitExceeded` result rather
-          -- than a generic worker failure.
-          EngineExceededCeiling ceilingMib ->
-            Left (modelCeilingBreachError model ceilingMib)
+          -- Phase 4 Sprint 4.37: a measured ceiling breach travels as the typed
+          -- 'InferenceError' the sampler produced, exactly like the native
+          -- path, so the runtime consumes it instead of rebuilding a payload
+          -- from the executable model.
+          EngineExceededCeiling resource ceilingMib observedMib ->
+            Left
+              ( WorkerTypedInferenceFailure
+                  (modelCeilingBreachError model resource ceilingMib observedMib)
+              )
+          EngineRefusedAtCeiling resource ceilingMib observedMib _refusedExitCode ->
+            Left
+              ( WorkerTypedInferenceFailure
+                  (modelCeilingRefusalError model resource ceilingMib observedMib)
+              )
           EngineEnforcementUnavailable reason ->
-            Left (modelEnforcementUnavailableError model reason)
+            workerFailed (modelEnforcementUnavailableError model reason)
           EngineOutputLimitExceeded outputStream ->
-            Left (modelOutputLimitExceededError model outputStream)
+            workerFailed (modelOutputLimitExceededError model outputStream)
           EngineOutputCaptureFailed outputStream reason ->
-            Left (modelOutputCaptureFailedError model outputStream reason)
+            workerFailed (modelOutputCaptureFailedError model outputStream reason)
           EngineExited ExitSuccess ->
             Right stdoutOutput
           EngineExited _ ->
-            Left
+            workerFailed
               ErrorResponse
                 { errorCode = "worker_failed",
                   message =
@@ -1140,10 +1372,52 @@ buildWorkerRequest paths maybeModelCacheConfig executableModel request =
                     set (field @"inputObjectRef") (fromMaybe "" (inputObjectRef request)) $
                       set (field @"generatedOutputObjectPrefix") (fromMaybe "" (generatedOutputObjectPrefixForRequest request)) $
                         set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) $
-                          setWorkerModelCacheFields maybeModelCacheConfig defMessage
+                          set (field @"memoryBudget") (workerMemoryBudget executableModel) $
+                            set (field @"executionShape") (workerExecutionShape model) $
+                              setWorkerModelCacheFields maybeModelCacheConfig defMessage
   where
     model = executableModelDescriptor executableModel
     engineBinding = executableModelEngine executableModel
+
+-- | Phase 4 Sprint 4.42 — the admitted quantities, exactly one device route
+-- populated.
+--
+-- The device arm is present for exactly the placements carrying a device grant;
+-- a shared-lane placement carries none, because a VRAM quantity a model would
+-- never consume is not evidence of anything. An adapter that needs a device
+-- arena and finds the field absent refuses by name rather than falling back to a
+-- literal, because a literal fallback converts a construction defect into a
+-- silently unbounded launch.
+workerMemoryBudget :: ExecutableModel -> ProtoInference.InferenceMemoryBudget
+workerMemoryBudget executableModel =
+  case executableModelGpuVramArenaMib executableModel of
+    Nothing ->
+      set
+        (field @"hostResident")
+        (set (field @"hostMib") residentMib defMessage)
+        defMessage
+    Just deviceCeilingMib ->
+      set
+        (field @"hostAndDevice")
+        ( set (field @"hostMib") residentMib $
+            set (field @"deviceMib") (fromIntegral deviceCeilingMib :: Int64) defMessage
+        )
+        defMessage
+  where
+    residentMib =
+      fromIntegral (executableModelResidentCeilingMib executableModel) :: Int64
+
+-- | Phase 4 Sprint 4.42 — the shape the cache term was computed from, carried
+-- rather than restated. One value, two consumers.
+workerExecutionShape :: ModelDescriptor -> ProtoInference.ModelExecutionShape
+workerExecutionShape model =
+  set (field @"contextLength") (fromIntegral (executionContextLength shape) :: Int64) $
+    set (field @"batchSize") (fromIntegral (executionBatchSize shape) :: Int64) $
+      set (field @"generationBound") (fromIntegral (executionGenerationBound shape) :: Int64) $
+        set (field @"cacheElementWidth") (fromIntegral (executionCacheElementWidth shape) :: Int64) $
+          set (field @"streamWeightsToDevice") (requiresGpu model) defMessage
+  where
+    shape = modelExecutionShape model
 
 generatedOutputObjectPrefixForRequest :: InferenceRequest -> Maybe Text
 generatedOutputObjectPrefixForRequest request = do

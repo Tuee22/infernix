@@ -67,19 +67,36 @@
   failure. `ClusterLifecycle` persists `ClusterMutating`; `cluster status` reports
   mutation-incomplete rather than `steady-state`; and the next `cluster up` reconciles drained nodes
   and deployment scale.
-- Resource exhaustion is distinct from both stall and clean lifecycle failure. Every active model
-  carries `ModelDescriptor.modelRamFootprintMib`, and each substrate resolves a typed
-  `InferenceMemoryBudget` before launch. Compilation mints a resource-indexed grant only for a
-  fitting model and retains an oversized row as `UnavailableModel`; live refinement must pair the
-  grant with its matching enforcer before producing `ExecutableModel`.
+- Resource exhaustion is distinct from both stall and clean lifecycle failure. Every active model's
+  memory requirement is derived from its own artifact rather than authored — weight bytes from the
+  tensor table in a bounded header read, cache bytes from the declared geometry plus the execution
+  shape the engine will run under — and it is derived once per physical resource, because host
+  residency and device residency are different formulas rather than one scalar reused. Each
+  substrate resolves a typed `InferenceMemoryBudget` naming an enforcer per resource before launch.
+  Compilation mints a resource-indexed grant only for a fitting model and retains an oversized row
+  as `UnavailableModel`; live refinement must pair each grant with the enforcer for the same
+  resource before producing `ExecutableModel`. An artifact that misdescribes itself yields no
+  requirement rather than a small one, so a derivation refusal is a capacity refusal and never a
+  quiet admission.
 - A Linux GPU plan without independent host-RAM and GPU-VRAM enforcement fails compilation with
   `GpuDualResourceBudgetRequired`. An over-budget model publishes a real terminal `status=failed`
   `InferenceResult` carrying
   `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` without
   launching the engine. Smaller rows remain usable and must honor their per-family real-output
-  contract. The integration classifier distinguishes this typed capacity result from a missing
-  result (including an OS-OOM kill) and from a fabricated pass. Canonical doctrine:
+  contract. Canonical doctrine:
   [Bounded Inference Memory](../architecture/bounded_inference_memory.md).
+- The classifier separates **four** outcomes, and conflating any two of them is exactly the confusion
+  the [realness contract](../architecture/realness_contract.md) forbids. A **typed capacity refusal**
+  is decided before launch: the row never ran, and the published result names the resource and the
+  quantities that refused it. An **in-run allocation refusal** is decided inside a live engine on a
+  lane that prevents: the process started, the kernel ceiling installed before its first allocation
+  refused an allocation, and the row ends as a clean terminal `status=failed` naming the resource it
+  breached and the footprint it observed. A **missing result** — including an OS out-of-memory kill,
+  and any stall that publishes no terminal event at all — is the pipeline failing rather than a
+  decision the pipeline made. A **fabricated pass** is a realness violation whatever memory did.
+  Reading the second class as a crash is the specific error to avoid: an allocation the kernel
+  refused is the mechanism doing its job, while a row that dies with no terminal event is the
+  mechanism absent.
 
 ## Canonical Entry Points
 

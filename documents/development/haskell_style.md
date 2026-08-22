@@ -56,8 +56,12 @@
   Haskell modules may instead encapsulate public APIs from packages such as `filelock`, `process`,
   and `unix`. Direct `foreign import` is forbidden throughout repository-owned Haskell, including
   read-only observers. Darwin process-birth observation uses the registry-backed Haskell
-  implementation, and Apple engine-footprint observation uses the fixed bounded
-  `/usr/bin/top` plus `/usr/bin/footprint` kernel.
+  implementation, and the fixed bounded public-tool kernel covers enforcement installation as well as
+  observation: Apple engine-footprint observation runs `/usr/bin/top` plus `/usr/bin/footprint`, and
+  an engine ceiling is installed by a fixed launch prefix that lowers the limit and then replaces
+  itself with the engine image. Neither shape accepts a caller-supplied executable, argument vector,
+  environment, or working directory, because an enforcement tool selected by its caller is
+  redirectable and therefore enforces nothing.
 - `Typed control flow:` prefer ADTs, records, and pattern matching over stringly mode switches,
   sentinel values, or silently ignored cases. The type-driven enforcement mechanisms of the managed
   state transitions doctrine — hidden-constructor newtypes via GHC export lists, one honest mint,
@@ -153,9 +157,13 @@
   engine subprocess spawn — `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` —
   outside the capped-engine kernel `Infernix.Runtime.CappedEngine` and a shrinking exemption list,
   routing public engine launch through an opaque `ExecutableModel` whose compiled, resource-indexed
-  grant has been paired with its matching live enforcer; the package-internal capped-engine region
-  applies the resulting resident-memory ceiling). Their canonical doctrine is
-  [Managed State Transitions](../architecture/managed_state_transitions.md); the engine-spawn rule's
+  grant has been paired with the live enforcer for the same resource; the package-internal
+  capped-engine region owns the resulting ceiling). That rule has a sibling: an engine spawn is
+  reachable only through the ceiling-installation region, so a new spawn surface cannot skip the
+  install the way one could once skip the descriptor-space bound. The two are separate rules because
+  they forbid separate mistakes — one forbids spawning outside the kernel, the other forbids
+  spawning inside it without first installing the ceiling. Their canonical doctrine is
+  [Managed State Transitions](../architecture/managed_state_transitions.md); the engine-spawn rules'
   canonical home is [Bounded Inference Memory](../architecture/bounded_inference_memory.md)
 - `appleArtifactProvisioningViolations` rejects `System.Process`, raw spawn/wait functions,
   legacy `ensurePoetryExecutable` / `ensurePoetryProjectReady` delegation, and direct

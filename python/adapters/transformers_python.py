@@ -5,8 +5,6 @@ from typing import Any, cast
 from adapters.common import AdapterContext, run_context_adapter, run_setup_from_argv
 from adapters.model_cache import get_model_path
 
-MAX_NEW_TOKENS = 32
-
 
 def transform(context: AdapterContext) -> str:
     # Phase 4 Sprint 4.7: real Transformers + PyTorch generation over a
@@ -38,7 +36,7 @@ def transform(context: AdapterContext) -> str:
     with torch.no_grad():
         generated = model.generate(
             **inputs,
-            max_new_tokens=MAX_NEW_TOKENS,
+            max_new_tokens=context.generation_bound,
             do_sample=False,
             pad_token_id=tokenizer.eos_token_id,
         )

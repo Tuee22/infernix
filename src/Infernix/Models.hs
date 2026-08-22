@@ -22,7 +22,6 @@ module Infernix.Models
     engineBindingForSelectedEngine,
     engineBindingsForMode,
     encodeDemoConfig,
-    conservativeRamFootprintMibForRow,
     defaultInferenceRamBudgetMib,
     linuxEngineInferenceRamBudgetMib,
     linuxEngineInferenceVramBudgetMib,
@@ -661,57 +660,81 @@ descriptorForMode runtimeMode row = do
           ],
         runtimeMode = runtimeMode,
         runtimeLane = runtimeLaneForMode runtimeMode (bindingRequiresGpu binding),
-        requiresGpu = bindingRequiresGpu binding,
         notes = rowNotes row,
-        modelRamFootprint = conservativeModelMemoryFootprint row binding
+        modelExecutionShape = executionShapeForRow row binding,
+        modelGeometry = rowGeometry row
       }
 
--- | Phase 4 Sprint 4.26 — conservative peak host-resident memory
--- footprint (MiB) for one serialized inference of a catalog row on the
--- unified-memory / CPU path. Keyed on the model family plus the selected
--- engine so heavy families (image/video diffusion, source separation)
--- carry a large footprint while compact GGUF/whisper.cpp rows carry a
--- small one. These are deliberately conservative per-engine defaults —
--- biased high — until a measured peak-RSS pass on Apple hardware
--- (Phase 6 Sprint 6.37 / Wave R) refines them. The on-host
--- 'apple-silicon' admission control rejects any model whose footprint
--- exceeds the active 'InferenceMemoryBudget', so an under-estimate is the
--- only unsafe direction. Bark shares the 8 GiB heavy-PyTorch audio tier after
--- live Apple evidence proved that its former 5 GiB declaration was below peak
--- resident memory; its adapter also closes semantic generation at 100 tokens,
--- because the upstream 768-token default is not bounded by that declaration.
--- | Phase 4 Sprint 4.31 — the catalog footprint as a required
--- 'ModelMemoryFootprint'. Every 'conservativeRamFootprintMibForRow' branch is a
--- positive constant, so the smart-constructor rejection is statically
--- unreachable; the @error@ guards the invariant if a branch ever regresses to a
--- non-positive value.
-conservativeModelMemoryFootprint :: MatrixRow -> ModeBinding -> ModelMemoryFootprint
-conservativeModelMemoryFootprint row binding =
-  case mkModelMemoryFootprint (conservativeRamFootprintMibForRow row binding) of
-    Right footprint -> footprint
-    Left footprintError -> error ("internal: catalog RAM footprint must be positive: " <> footprintError)
+-- | Phase 4 Sprint 4.39 — the execution shape a catalog row runs under.
+--
+-- This is the second input to the derived requirement's cache term, and the
+-- only memory-shaping declaration left in the catalog. It is policy rather than
+-- measurement: how long a context this deployment runs is a decision, and the
+-- artifact has no opinion about it. The quantities the retired table carried —
+-- one conservative MiB constant per family, keyed on nothing the artifact
+-- states — are gone entirely rather than demoted to a fallback, because a
+-- fallback constant is consulted exactly when the derivation failed, which is
+-- the one moment the artifact is known not to describe itself.
+executionShapeForRow :: MatrixRow -> ModeBinding -> ModelExecutionShape
+executionShapeForRow row binding =
+  ModelExecutionShape
+    { executionContextLength = contextLengthForRow row,
+      executionBatchSize = 1,
+      executionGenerationBound = generationBoundForRow row,
+      executionCacheElementWidth = 2,
+      executionLoadStrategy =
+        if bindingRequiresGpu binding
+          then StreamWeightsToDevice
+          else LoadResidentHost
+    }
 
-conservativeRamFootprintMibForRow :: MatrixRow -> ModeBinding -> Int
-conservativeRamFootprintMibForRow row binding =
+-- | The context window one serialized inference runs under.
+--
+-- A row whose engine keeps no key/value cache still declares one, because the
+-- shape travels to the engine either way and a family-specific absence would be
+-- a second way to say what 'rowGeometry' already says.
+contextLengthForRow :: MatrixRow -> Int
+contextLengthForRow row =
   case rowFamily row of
-    "llm"
-      | engineHas "gguf" || engineHas "llama.cpp" -> 3072
-      | engineHas "mlx" -> 6144
-      | otherwise -> 4096
-    "speech" -> 3072
-    "music" -> 6144
-    "image" -> 12288
-    "video" -> 28672
-    "tool" -> 3072
-    "audio"
-      | rowHas "demucs" || rowHas "unmix" -> 8192
-      | rowHas "bark" -> 8192
-      | rowHas "basic-pitch" -> 2048
-      | otherwise -> 4096
-    _ -> 4096
-  where
-    engineHas needle = needle `Text.isInfixOf` Text.toLower (bindingEngine binding)
-    rowHas needle = needle `Text.isInfixOf` Text.toLower (rowId row)
+    "llm" -> 2048
+    _ -> 1024
+
+-- | The generation bound the engine is given, replacing the adapter literals
+-- Sprint 4.42 deletes.
+generationBoundForRow :: MatrixRow -> Int
+generationBoundForRow row =
+  case rowFamily row of
+    "llm" -> 256
+    _ -> 100
+
+-- | The declared geometry for a row whose engine keeps a key/value cache.
+--
+-- Every field is cross-checked against the staged artifact's own tensor table
+-- before the cache term is computed from it, so a geometry that the checkpoint
+-- does not corroborate yields no requirement rather than a small one. A row that
+-- declares none has a cache term of zero rather than a guessed one.
+rowGeometry :: MatrixRow -> Maybe ModelGeometry
+rowGeometry row =
+  case rowModelId row of
+    -- SmolLM2-135M-Instruct: thirty layers, three key/value heads, sixty-four
+    -- wide heads, 576-wide hidden state.
+    "llm-smollm2-safetensors" ->
+      Just (ModelGeometry 30 3 64 576)
+    -- TinyLlama-1.1B-Chat: twenty-two layers, four key/value heads,
+    -- sixty-four wide heads, 2048-wide hidden state.
+    "llm-tinyllama-gguf" ->
+      Just (ModelGeometry 22 4 64 2048)
+    "llm-tinyllama-gptq" ->
+      Just (ModelGeometry 22 4 64 2048)
+    -- Qwen2.5-1.5B-Instruct: twenty-eight layers, two key/value heads,
+    -- 128-wide heads, 1536-wide hidden state.
+    "llm-qwen25-awq" ->
+      Just (ModelGeometry 28 2 128 1536)
+    -- Qwen1.5-1.8B-Chat: twenty-four layers, sixteen key/value heads,
+    -- 128-wide heads, 2048-wide hidden state.
+    "llm-qwen15-mlx" ->
+      Just (ModelGeometry 24 16 128 2048)
+    _ -> Nothing
 
 -- | The Linux per-execution resident-memory budget (MiB). The engine pod's
 -- outer limit is intentionally larger (5 GiB) so the Haskell daemon and RSS

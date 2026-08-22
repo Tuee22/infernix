@@ -5,6 +5,8 @@
 module Infernix.Storage
   ( edgePortPath,
     formatTimestamp,
+    inferenceErrorFromProto,
+    inferenceErrorToProto,
     harborPortPath,
     parseTimestamp,
     pulsarHttpPortPath,
@@ -309,15 +311,24 @@ inferenceErrorToProto errorValue =
   case errorValue of
     ModelMemoryLimitExceeded {} ->
       set (field @"modelMemoryLimitExceeded") (modelMemoryLimitExceededToProto errorValue) defMessage
+    ModelRequirementUnderivable {inferenceErrorModelId, inferenceErrorArtifactType, inferenceErrorReason} ->
+      set
+        (field @"modelRequirementUnderivable")
+        ( set (field @"modelId") inferenceErrorModelId $
+            set (field @"artifactType") inferenceErrorArtifactType $
+              set (field @"reason") inferenceErrorReason defMessage
+        )
+        defMessage
 
 modelMemoryLimitExceededToProto :: InferenceError -> ProtoInference.ModelMemoryLimitExceeded
 modelMemoryLimitExceededToProto errorValue =
   case errorValue of
+    ModelRequirementUnderivable {} -> defMessage
     ModelMemoryLimitExceeded {inferenceErrorModelId, inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} ->
       set (field @"modelId") inferenceErrorModelId $
         set (field @"requiredMib") (fromIntegral inferenceErrorRequiredMib :: Int32) $
           set (field @"availableMib") (fromIntegral inferenceErrorAvailableMib :: Int32) $
-            set (field @"resource") (inferenceMemoryBudgetResourceText inferenceErrorResource) $
+            set (field @"resource") (resourceText inferenceErrorResource) $
               set (field @"source") inferenceErrorSource defMessage
 
 inferenceErrorFromProto :: ProtoInference.InferenceError -> Maybe InferenceError
@@ -325,11 +336,18 @@ inferenceErrorFromProto protoValue =
   case view ProtoInferenceFields.maybe'error protoValue of
     Just (ProtoInference.InferenceError'ModelMemoryLimitExceeded memoryError) ->
       modelMemoryLimitExceededFromProto memoryError
+    Just (ProtoInference.InferenceError'ModelRequirementUnderivable underivable) ->
+      Just
+        ModelRequirementUnderivable
+          { inferenceErrorModelId = view ProtoInferenceFields.modelId underivable,
+            inferenceErrorArtifactType = view ProtoInferenceFields.artifactType underivable,
+            inferenceErrorReason = view ProtoInferenceFields.reason underivable
+          }
     Nothing -> Nothing
 
 modelMemoryLimitExceededFromProto :: ProtoInference.ModelMemoryLimitExceeded -> Maybe InferenceError
 modelMemoryLimitExceededFromProto protoValue = do
-  resource <- parseInferenceMemoryResource (view ProtoInferenceFields.resource protoValue)
+  resource <- parseResource (view ProtoInferenceFields.resource protoValue)
   pure
     ModelMemoryLimitExceeded
       { inferenceErrorModelId = view ProtoInferenceFields.modelId protoValue,

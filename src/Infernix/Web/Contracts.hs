@@ -93,7 +93,17 @@ data ModelDescriptor = ModelDescriptor
     runtimeLane :: Text.Text,
     requiresGpu :: Bool,
     notes :: Text.Text,
-    modelRamFootprintMib :: Int,
+    -- | Phase 4 Sprint 4.39: the browser mirrors the declared execution shape
+    -- and no memory quantity at all.
+    --
+    -- A model's requirement is derived from its own artifact on the machine that
+    -- will execute, so no browser holds the inputs to that derivation. The
+    -- retired @modelRamFootprintMib@ let a browser-side harness predict an exact
+    -- admission verdict; that prediction is now unavailable by construction,
+    -- which is the correct shape — the authority is the engine's refined plan and
+    -- the typed result it publishes.
+    contextLength :: Int,
+    generationBound :: Int,
     requestShape :: [RequestField]
   }
   deriving (Eq, Generic, Show)
@@ -211,31 +221,51 @@ instance FromJSON ArtifactRenderDisposition where
 
 data InferenceError
   = ModelMemoryLimitExceeded
-  { modelMemoryLimitExceededModelId :: Text.Text,
-    modelMemoryLimitExceededRequiredMib :: Int,
-    modelMemoryLimitExceededAvailableMib :: Int,
-    modelMemoryLimitExceededResource :: Text.Text,
-    modelMemoryLimitExceededSource :: Text.Text
-  }
+      { modelMemoryLimitExceededModelId :: Text.Text,
+        modelMemoryLimitExceededRequiredMib :: Int,
+        modelMemoryLimitExceededAvailableMib :: Int,
+        modelMemoryLimitExceededResource :: Text.Text,
+        modelMemoryLimitExceededSource :: Text.Text
+      }
+  | -- | Phase 4 Sprint 4.39: the model's requirement could not be derived from
+    -- its own artifact, so it was never admitted. It carries no quantity,
+    -- because the quantity is exactly what could not be established.
+    ModelRequirementUnderivable
+      { modelRequirementUnderivableModelId :: Text.Text,
+        modelRequirementUnderivableArtifactType :: Text.Text,
+        modelRequirementUnderivableReason :: Text.Text
+      }
   deriving (Eq, Generic, Show)
 
 instance ToJSON InferenceError where
-  toJSON
-    ModelMemoryLimitExceeded
-      { modelMemoryLimitExceededModelId,
-        modelMemoryLimitExceededRequiredMib,
-        modelMemoryLimitExceededAvailableMib,
-        modelMemoryLimitExceededResource,
-        modelMemoryLimitExceededSource
-      } =
-      Aeson.object
-        [ "tag" .= ("ModelMemoryLimitExceeded" :: Text.Text),
-          "modelMemoryLimitExceededModelId" .= modelMemoryLimitExceededModelId,
-          "modelMemoryLimitExceededRequiredMib" .= modelMemoryLimitExceededRequiredMib,
-          "modelMemoryLimitExceededAvailableMib" .= modelMemoryLimitExceededAvailableMib,
-          "modelMemoryLimitExceededResource" .= modelMemoryLimitExceededResource,
-          "modelMemoryLimitExceededSource" .= modelMemoryLimitExceededSource
-        ]
+  toJSON errorValue =
+    case errorValue of
+      ModelMemoryLimitExceeded
+        { modelMemoryLimitExceededModelId,
+          modelMemoryLimitExceededRequiredMib,
+          modelMemoryLimitExceededAvailableMib,
+          modelMemoryLimitExceededResource,
+          modelMemoryLimitExceededSource
+        } ->
+          Aeson.object
+            [ "tag" .= ("ModelMemoryLimitExceeded" :: Text.Text),
+              "modelMemoryLimitExceededModelId" .= modelMemoryLimitExceededModelId,
+              "modelMemoryLimitExceededRequiredMib" .= modelMemoryLimitExceededRequiredMib,
+              "modelMemoryLimitExceededAvailableMib" .= modelMemoryLimitExceededAvailableMib,
+              "modelMemoryLimitExceededResource" .= modelMemoryLimitExceededResource,
+              "modelMemoryLimitExceededSource" .= modelMemoryLimitExceededSource
+            ]
+      ModelRequirementUnderivable
+        { modelRequirementUnderivableModelId,
+          modelRequirementUnderivableArtifactType,
+          modelRequirementUnderivableReason
+        } ->
+          Aeson.object
+            [ "tag" .= ("ModelRequirementUnderivable" :: Text.Text),
+              "modelRequirementUnderivableModelId" .= modelRequirementUnderivableModelId,
+              "modelRequirementUnderivableArtifactType" .= modelRequirementUnderivableArtifactType,
+              "modelRequirementUnderivableReason" .= modelRequirementUnderivableReason
+            ]
 
 instance FromJSON InferenceError where
   parseJSON = withObject "InferenceError" $ \value -> do
@@ -243,6 +273,7 @@ instance FromJSON InferenceError where
     case tag of
       Nothing -> parseModelMemoryLimitExceeded value
       Just "ModelMemoryLimitExceeded" -> parseModelMemoryLimitExceeded value
+      Just "ModelRequirementUnderivable" -> parseModelRequirementUnderivable value
       Just other -> fail ("Unsupported inference error: " <> Text.unpack other)
     where
       parseModelMemoryLimitExceeded value =
@@ -252,6 +283,11 @@ instance FromJSON InferenceError where
           <*> value .: "modelMemoryLimitExceededAvailableMib"
           <*> value .: "modelMemoryLimitExceededResource"
           <*> value .: "modelMemoryLimitExceededSource"
+      parseModelRequirementUnderivable value =
+        ModelRequirementUnderivable
+          <$> value .: "modelRequirementUnderivableModelId"
+          <*> value .: "modelRequirementUnderivableArtifactType"
+          <*> value .: "modelRequirementUnderivableReason"
 
 inferenceErrorFromRuntime :: Types.InferenceError -> InferenceError
 inferenceErrorFromRuntime runtimeError =
@@ -267,8 +303,18 @@ inferenceErrorFromRuntime runtimeError =
           { modelMemoryLimitExceededModelId = modelIdValue,
             modelMemoryLimitExceededRequiredMib = requiredMibValue,
             modelMemoryLimitExceededAvailableMib = availableMibValue,
-            modelMemoryLimitExceededResource = Types.inferenceMemoryBudgetResourceText resourceValue,
+            modelMemoryLimitExceededResource = Types.resourceText resourceValue,
             modelMemoryLimitExceededSource = sourceValue
+          }
+    Types.ModelRequirementUnderivable
+      { Types.inferenceErrorModelId = modelIdValue,
+        Types.inferenceErrorArtifactType = artifactTypeValue,
+        Types.inferenceErrorReason = reasonValue
+      } ->
+        ModelRequirementUnderivable
+          { modelRequirementUnderivableModelId = modelIdValue,
+            modelRequirementUnderivableArtifactType = artifactTypeValue,
+            modelRequirementUnderivableReason = reasonValue
           }
 
 data UserPromptPayload = UserPromptPayload
@@ -735,7 +781,8 @@ renderPursContractFooter activeRuntimeMode =
             "  , runtimeLane :: String",
             "  , requiresGpu :: Boolean",
             "  , notes :: String",
-            "  , modelRamFootprintMib :: Int",
+            "  , contextLength :: Int",
+            "  , generationBound :: Int",
             "  , requestShape :: Array RequestFieldRecord",
             "  }",
             "",
@@ -754,7 +801,8 @@ renderPursContractFooter activeRuntimeMode =
             "  , runtimeLane: value.runtimeLane",
             "  , requiresGpu: value.requiresGpu",
             "  , notes: value.notes",
-            "  , modelRamFootprintMib: value.modelRamFootprintMib",
+            "  , contextLength: value.contextLength",
+            "  , generationBound: value.generationBound",
             "  , requestShape: map requestFieldRecord value.requestShape",
             "  }",
             "",
@@ -865,7 +913,10 @@ modelDescriptorFromInternal internalModel =
       runtimeLane = Types.runtimeLaneId (Types.runtimeLane internalModel),
       requiresGpu = Types.requiresGpu internalModel,
       notes = Types.notes internalModel,
-      modelRamFootprintMib = Types.modelMemoryFootprintMib (Types.modelRamFootprint internalModel),
+      contextLength =
+        Types.executionContextLength (Types.modelExecutionShape internalModel),
+      generationBound =
+        Types.executionGenerationBound (Types.modelExecutionShape internalModel),
       requestShape = map requestFieldFromInternal (Types.requestShape internalModel)
     }
 
@@ -925,7 +976,8 @@ renderModel modelDescriptor =
           runtimeLane = modelRuntimeLane,
           requiresGpu = modelRequiresGpu,
           notes = modelNotes,
-          modelRamFootprintMib = modelRamFootprint,
+          contextLength = modelContextLength,
+          generationBound = modelGenerationBound,
           requestShape = modelRequestShape
         } = modelDescriptor
    in "    ModelDescriptor\n"
@@ -968,8 +1020,11 @@ renderModel modelDescriptor =
         <> "      , notes: "
         <> show (Text.unpack modelNotes)
         <> "\n"
-        <> "      , modelRamFootprintMib: "
-        <> show modelRamFootprint
+        <> "      , contextLength: "
+        <> show modelContextLength
+        <> "\n"
+        <> "      , generationBound: "
+        <> show modelGenerationBound
         <> "\n"
         <> "      , requestShape:\n"
         <> "          ["
@@ -1066,6 +1121,17 @@ phase7Sums =
             ("modelMemoryLimitExceededAvailableMib", "Int"),
             ("modelMemoryLimitExceededResource", "String"),
             ("modelMemoryLimitExceededSource", "String")
+          ],
+        -- Phase 4 Sprint 4.39: the browser mirror carries both refusal arms.
+        -- The generated `WriteForeign` / `ReadForeign` instances are emitted
+        -- from this list, so an arm added to the Haskell type but not here
+        -- produces a PureScript instance whose case expression does not cover
+        -- its own type — which is exactly how this omission was found.
+        PursRecord
+          "ModelRequirementUnderivable"
+          [ ("modelRequirementUnderivableModelId", "String"),
+            ("modelRequirementUnderivableArtifactType", "String"),
+            ("modelRequirementUnderivableReason", "String")
           ]
       ]
     ),

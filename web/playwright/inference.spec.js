@@ -1510,24 +1510,21 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
     );
     expect(JSON.stringify(terminalResult.frame)).toContain("ConversationStateAppendMessage");
 
-    const expectedMemoryError = expectedModelMemoryLimitExceeded(model, demoConfig);
-    if (expectedMemoryError) {
-      expect(terminalResult.status).toBe("failed");
-      expectModelMemoryLimitExceededPayload(terminalResult.result.inferenceResultError, expectedMemoryError);
+    if (terminalResult.status === "failed") {
+      expectTypedInferenceRefusal(terminalResult.result.inferenceResultError, model, demoConfig);
       await expect(
         page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
         `context ${contextId} should remain selected before rendering ${modelId}'s capacity result`,
       ).toBeVisible({ timeout: 10000 });
-      await expectCapacityResultRendered(page, wsFrames, contextId, modelId, expectedMemoryError, userPromptMessageId);
-      continue;
-    }
-
-    if (terminalResult.status === "failed") {
-      throw new Error(
-        `Model ${modelId} returned an unexpected failed inference result for prompt ${promptText}: ${JSON.stringify(
-          terminalResult.frame,
-        )}`,
+      await expectCapacityResultRendered(
+        page,
+        wsFrames,
+        contextId,
+        modelId,
+        terminalResult.result.inferenceResultError,
+        userPromptMessageId,
       );
+      continue;
     }
     expect(terminalResult.status).toBe("completed");
 
@@ -1614,62 +1611,50 @@ function podLimitAdmission(podLimit) {
   };
 }
 
-function inferenceMemoryBudgetAdmission(budget, model) {
-  if (!budget) return null;
-  if (budget.hostEnforced) {
-    return {
-      availableMib: Number(budget.hostEnforced.partition?.inferenceCapacityMib),
-      resource: "unified-host-ram",
-      source: "host-memory-partition-inference-capacity",
-    };
-  }
+function inferenceMemoryBudgetEnforcedResources(budget) {
+  if (!budget) return [];
+  if (budget.hostEnforced) return ["unified-host-ram"];
   if (budget.substrateEnforced) {
-    return podLimitAdmission(budget.substrateEnforced.podLimit);
+    const admission = podLimitAdmission(budget.substrateEnforced.podLimit);
+    return admission ? [admission.resource] : [];
   }
   if (budget.dualEnforced) {
-    // Mirrors `compileResources` in src/Infernix/ExecutionPlan.hs: a model that
-    // does not require the device is admitted against pod RAM alone, and a
-    // device-using model is admitted against pod RAM FIRST and VRAM second, so
-    // the pod limit is the one an error names whenever both are exceeded.
-    const podAdmission = podLimitAdmission(budget.dualEnforced.podLimit);
-    if (!model?.requiresGpu) return podAdmission;
-    const requiredMib = Number(model?.modelRamFootprintMib);
-    if (
-      podAdmission &&
-      Number.isFinite(requiredMib) &&
-      Number.isFinite(podAdmission.availableMib) &&
-      requiredMib > podAdmission.availableMib
-    ) {
-      return podAdmission;
-    }
-    return podLimitAdmission(budget.dualEnforced.vramLimit);
+    return [
+      podLimitAdmission(budget.dualEnforced.podLimit)?.resource,
+      podLimitAdmission(budget.dualEnforced.vramLimit)?.resource,
+    ].filter(Boolean);
   }
-  return null;
+  return [];
 }
 
-function expectedModelMemoryLimitExceeded(model, demoConfig) {
-  const admission = inferenceMemoryBudgetAdmission(demoConfig?.inferenceMemoryBudget, model);
-  if (!admission) return null;
-  const requiredMib = Number(model?.modelRamFootprintMib);
-  const availableMib = admission.availableMib;
-  if (!Number.isFinite(requiredMib) || !Number.isFinite(availableMib)) return null;
-  if (requiredMib <= availableMib) return null;
-  return {
-    modelId: model.modelId,
-    requiredMib,
-    availableMib,
-    resource: admission.resource,
-    source: admission.source,
-  };
-}
-
-function expectModelMemoryLimitExceededPayload(error, expected) {
+// Phase 4 Sprint 4.39: the browser states no prediction.
+//
+// A model's memory requirement is derived from that model's own artifact on the
+// machine that will execute, so no browser holds the inputs to that derivation.
+// The retired form multiplied a declared per-family constant by a declared
+// budget and asserted an exact payload; that constant is gone. What survives is
+// stronger where it can be: a refusal the engine publishes must name its own
+// cause, and this asserts exactly that.
+function expectTypedInferenceRefusal(error, model, demoConfig) {
   expect(error).toBeTruthy();
-  expect(error.modelMemoryLimitExceededModelId).toBe(expected.modelId);
-  expect(error.modelMemoryLimitExceededRequiredMib).toBe(expected.requiredMib);
-  expect(error.modelMemoryLimitExceededAvailableMib).toBe(expected.availableMib);
-  expect(error.modelMemoryLimitExceededResource).toBe(expected.resource);
-  expect(error.modelMemoryLimitExceededSource).toBe(expected.source);
+  if (error.tag === "ModelRequirementUnderivable") {
+    expect(error.modelRequirementUnderivableModelId).toBe(model.modelId);
+    expect(String(error.modelRequirementUnderivableArtifactType || "")).not.toBe("");
+    expect(String(error.modelRequirementUnderivableReason || "")).not.toBe("");
+    return;
+  }
+  expect(error.modelMemoryLimitExceededModelId).toBe(model.modelId);
+  const requiredMib = Number(error.modelMemoryLimitExceededRequiredMib);
+  const availableMib = Number(error.modelMemoryLimitExceededAvailableMib);
+  expect(Number.isFinite(requiredMib)).toBe(true);
+  expect(Number.isFinite(availableMib)).toBe(true);
+  // Required equal to available is the one proposition a limit-exceeded refusal
+  // establishes is false; the retired payload reported exactly that pair.
+  expect(requiredMib).toBeGreaterThan(availableMib);
+  expect(inferenceMemoryBudgetEnforcedResources(demoConfig?.inferenceMemoryBudget)).toContain(
+    error.modelMemoryLimitExceededResource,
+  );
+  expect(String(error.modelMemoryLimitExceededSource || "")).not.toBe("");
 }
 
 // Phase 4 Sprint 4.23: route each input family to a REAL fixture, dispatched
@@ -2759,8 +2744,18 @@ async function expectInBrowserRenderReady(card, dispositionTag, previewSelector)
   await expect(card.locator(previewSelector)).toHaveCount(1);
 }
 
+// Phase 4 Sprint 4.39: the expected summary is derived from the payload the
+// engine actually published, not from a browser-side prediction, and it covers
+// both refusal arms.
+function capacityResultSummary(error) {
+  if (error?.tag === "ModelRequirementUnderivable") {
+    return `Model ${error.modelRequirementUnderivableModelId} states no memory requirement this daemon can derive from its ${error.modelRequirementUnderivableArtifactType} artifact: ${error.modelRequirementUnderivableReason}`;
+  }
+  return `Model ${error.modelMemoryLimitExceededModelId} requires ${error.modelMemoryLimitExceededRequiredMib} MiB; this daemon has ${error.modelMemoryLimitExceededAvailableMib} MiB available.`;
+}
+
 async function expectCapacityResultRendered(page, frames, contextId, modelId, expectedMemoryError, userPromptMessageId = null) {
-  const expectedText = `Model ${expectedMemoryError.modelId} requires ${expectedMemoryError.requiredMib} MiB; this daemon has ${expectedMemoryError.availableMib} MiB available.`;
+  const expectedText = capacityResultSummary(expectedMemoryError);
   const resultMessage = page.locator(".chat-message.result").filter({ hasText: expectedText }).last();
   try {
     await expect(
@@ -2870,7 +2865,7 @@ async function waitForCapacityResultFrameAfter(frames, startIndex, details, time
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(
-    `Timed out waiting for result-bearing conversation frame for ${details.expectedMemoryError.modelId} in ${details.contextId} after ${timeoutMs}ms; last context frame: ${JSON.stringify(lastContextFrame)}`,
+    `Timed out waiting for result-bearing conversation frame for ${capacityResultSummary(details.expectedMemoryError)} in ${details.contextId} after ${timeoutMs}ms; last context frame: ${JSON.stringify(lastContextFrame)}`,
   );
 }
 
@@ -2902,16 +2897,13 @@ function conversationMessageInferenceResult(message) {
   return event.contents || null;
 }
 
+// Phase 4 Sprint 4.39: the match is against the exact payload the engine
+// published, whichever refusal arm it took, rather than against a browser-side
+// reconstruction of it.
 function capacityResultMatches(result, expectedMemoryError, userPromptMessageId = null) {
   if (!result || result.inferenceResultStatus !== "failed") return false;
   if (userPromptMessageId && result.inferenceResultUserPromptMessageId !== userPromptMessageId) return false;
   const error = result.inferenceResultError;
-  return (
-    error &&
-    error.modelMemoryLimitExceededModelId === expectedMemoryError.modelId &&
-    error.modelMemoryLimitExceededRequiredMib === expectedMemoryError.requiredMib &&
-    error.modelMemoryLimitExceededAvailableMib === expectedMemoryError.availableMib &&
-    error.modelMemoryLimitExceededResource === expectedMemoryError.resource &&
-    error.modelMemoryLimitExceededSource === expectedMemoryError.source
-  );
+  if (!error) return false;
+  return capacityResultSummary(error) === capacityResultSummary(expectedMemoryError);
 }

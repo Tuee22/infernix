@@ -50,16 +50,20 @@ Phase 6 is the execution gate, and it is the only gate: no phase carries open co
 Done, its final sprint having landed `infernix lint plan` as the mechanical enforcement of the plan
 standards the standards document had declared only in prose, and the corpus satisfies it. Phase 0
 reopens are machine-independent, carry no accelerator cohort, and block no accelerator phase. Phases
-1 through 5 are Done, closed in numerical order on Apple accelerator cohorts plus their paired
-`linux-cpu` cohorts, and Phases 7 and 9 are Done on those same receipts under Section C's allowance
-for a later phase to close while an earlier open item is a named supported-lane validation blocker.
+1 through 3 and 5 are Done, closed in numerical order on Apple accelerator cohorts plus their paired
+`linux-cpu` cohorts, and Phases 7 and 9 are Done on those same receipts. Since Sprint 0.25 that
+closure needs no allowance: a phase's status describes only the scope it owns, so an earlier phase
+gaining sprints does not revert a later one, and the obligation running the other way — that every
+phase be completable using only equal-or-lower-numbered phases — is checked mechanically.
 
-Two phases remain Active, and every item open inside them is the *same* blocker rather than
-unfinished work: Phase 6 Sprint 6.44 and Phase 8 Sprints 8.9 and 8.10 are each code-side closed and
-each consume one `linux-gpu` cohort plus its paired `linux-cpu` lane, on a CUDA-capable Linux host.
-Section Q forbids substituting the other accelerator for it, so no Apple-cohort work discharges them.
-Each phase document records the implementation position it holds behind that blocker, and
-[README.md](README.md) holds the plan's single phase-status table.
+Three phases are Active, and the open items divide into two kinds. Phase 6 Sprints 6.44 and 6.50 and
+Phase 8 Sprints 8.9, 8.10 and 8.13 are implementation-complete and consume one `linux-gpu` cohort plus
+its paired `linux-cpu` lane, on a CUDA-capable Linux host; Section Q forbids substituting the other
+accelerator, so no Apple-cohort work discharges them. Phase 4 Sprints 4.37 through 4.42 and Phase 6
+Sprint 6.51 are open code work: the Bounded Engine Launch architecture, whose host and device halves
+are separate contracts on separate accelerators and therefore separate waves. Each phase document
+records the position it holds, and [README.md](README.md) holds the plan's single phase-status
+table.
 
 Per-lane attestation lives in [cohort-validation-waves.md](cohort-validation-waves.md), and
 superseded surfaces are inventoried in
@@ -72,8 +76,10 @@ per-lane real-output record for each of `llm-smollm2-safetensors`, `audio-demucs
 the typed `image-sdxl-turbo` refusal on Apple. [Wave AB](cohort-validation-waves.md) is Done and owns
 the per-machine fleet cohort that closed Phase 8 Sprints 8.11 and 8.12, and
 [Wave AA](cohort-validation-waves.md) is closed for the Darwin build-memory mechanism and is not
-rerun. [Wave Z](cohort-validation-waves.md) is the one open wave: the `linux-gpu` NVIDIA sign-off
-behind Phase 6 Sprint 6.44, consumed also by Phase 8 Sprints 8.9 and 8.10.
+rerun. [Wave Z](cohort-validation-waves.md) is the queued accelerator wave: the `linux-gpu` NVIDIA sign-off
+behind Phase 6 Sprints 6.44 and 6.50, consumed also by Phase 8 Sprints 8.9, 8.10 and 8.13. Waves AC
+and AD are declared but unscheduled, for the Bounded Engine Launch host and device halves
+respectively.
 
 The repository implements the runtime-config architecture, bootstrap responsibility boundary, and
 Harbor-first image-boundary doctrine described in this overview. The governed validation surface

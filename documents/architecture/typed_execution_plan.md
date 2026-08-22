@@ -10,10 +10,14 @@
 
 - Generated Dhall describes a closed execution plan, not a bag of descriptive settings. The wire
   uses proper Dhall unions and `Natural` quantities and carries no transitional descriptive shape.
-- The Haskell capability core models resource and enforcer alternatives as indexed ADTs; text tags
-  plus zeroed inapplicable fields are forbidden in the generated language.
+- The Haskell capability core carries one requirement and one enforcement mechanism per physical
+  resource a placement consumes, as resource-indexed ADTs. The strength of that mechanism — a ceiling
+  installed before the engine's first allocation, or sampling alone — is part of the type rather than
+  a remark beside it; text tags plus zeroed inapplicable fields are forbidden in the generated
+  language.
 - Decoding proves structural validity. Runtime probes refine the decoded plan into opaque
-  capabilities proving that the declared enforcer exists now.
+  capabilities proving that the declared mechanism exists now, on this machine, at the strength the
+  plan claims for it.
 - Coordinator routing consumes only compiled placements and daemon/topic capabilities. Engine
   subscription and process launch consume only runtime-refined `ExecutableModel` capabilities.
 - Coordinator and engine handling is total: unavailable, empty-model, unknown-model, wrong-route,
@@ -36,12 +40,13 @@ binary-generated Dhall
 |---|---|---|---|
 | Dhall typecheck | generated expression | structurally typed expression | missing union payloads, fields from the wrong alternative, negative quantities |
 | Haskell decode and compile | `RawRuntimeConfig` | `CompiledRuntimePlan` | zero quantities, dangling pool/member references, resource/enforcer mismatch, capacity oversubscription, unroutable models |
-| Runtime refinement | `CompiledRuntimePlan` + live observations | `RuntimePlan` | unavailable process-group RSS sampler, ineffective outer cgroup envelope, unavailable Apple footprint probe, unavailable NVIDIA accounting, chart/config limit drift |
+| Runtime refinement | `CompiledRuntimePlan` + live observations | `RuntimePlan` | an unavailable sampler for any resource the placement consumes, ineffective outer cgroup envelope, unavailable Apple footprint probe, unavailable NVIDIA accounting, chart/config limit drift, a lane that declares an installed ceiling its mechanism cannot install, a ceiling never calibrated against a real engine on that lane |
 | Capability-gated routing/execution | coordinator projections from `CompiledRuntimePlan`; engine projections from `RuntimePlan` | total outcomes | raw unbounded command spawn, coordinator routing without compiled placement/daemon authority, engine launch without a matching grant and enforcer |
 
 Dhall cannot prove a live OS fact. A Dhall alternative names the only permitted enforcement
 mechanism; an opaque Haskell capability proves that the named mechanism was observed and installed.
-Neither proof substitutes for the other.
+Neither proof substitutes for the other, and neither lets a lane spell a mechanism stronger than the
+one it can install.
 
 ## Closed Dhall Language
 
@@ -68,8 +73,8 @@ cannot express at all.
 `fieldType` needs an explicitly built union decoder, which the generate-then-decode round trip is
 what catches.
 
-The Haskell compiler models resource/enforcer alternatives as indexed ADTs. The generated memory
-shape is equivalent to:
+The Haskell compiler expresses requirements and enforcement mechanisms as resource-indexed ADTs.
+The generated memory shape is equivalent to:
 
 ```dhall
 let HostPartition =
@@ -78,18 +83,42 @@ let HostPartition =
       , headroomMib : Natural
       }
 
-let MemoryEnforcement =
-      < ApplePhysicalFootprintWatchdog : HostPartition
-      | LinuxProcessGroupRssWatchdog :
-          { pollingIntervalMicros : Natural
-          , outerCgroupHeadroomMib : Natural
-          }
-      | NvidiaPerProcessWatchdog :
-          { deviceIds : List Natural
-          , pollingIntervalMicros : Natural
-          }
+let SamplingPolicy = { pollingIntervalMicros : Natural }
+
+let HostEnvelope =
+      < UnifiedHostPartition : HostPartition
+      | OuterPodEnvelope : { outerCgroupHeadroomMib : Natural }
       >
+
+let HostMechanism =
+      < InstalledDataSegmentCeiling : { backstop : SamplingPolicy }
+      | SampledFootprintOnly : { backstop : SamplingPolicy }
+      >
+
+let MemoryEnforcement =
+      { host : { envelope : HostEnvelope, mechanism : HostMechanism }
+      , device :
+          Optional
+            { deviceIds : List Natural
+            , arenaMib : Natural
+            , backstop : SamplingPolicy
+            }
+      }
 ```
+
+The union names **what a lane installs**, not which loop it runs. One sampling kernel serves every
+resource, so three per-platform watchdog alternatives would spell an implementation detail three
+times and still leave the load-bearing distinction unsaid: `InstalledDataSegmentCeiling` claims a
+kernel limit in force before the engine's first allocation, with the backstop covering the residue
+that limit does not charge, while `SampledFootprintOnly` claims detection and nothing more. A lane
+that can install no ceiling — and a lane whose ceiling has never been calibrated against a real
+engine on it — has only the second spelling available, so an unearned claim of prevention is a
+refusal at refinement rather than a sentence in a comment.
+
+The device arm has no mechanism alternative to choose from, because no kernel mechanism bounds
+device memory on any supported lane: it names the devices, the arena the admitted quantity sizes,
+and the backstop's cadence. Giving it a `< Prevented | Sampled >` union would offer a strength no
+platform can supply.
 
 The exact expression remains owned by the Haskell decoder types and is emitted by `infernix
 internal dhall-schema substrate`; this document owns its semantics. The schema must not encode
@@ -97,18 +126,40 @@ alternatives as `kind : Text`, arbitrary `resource : Text`, or one record contai
 every alternative. `Natural` removes negative values; Haskell smart constructors reject zero and
 enforce relationships Dhall cannot express.
 
-Each executable placement binds the model, pool, resource requirements, and enforcer:
+Each executable placement binds the model, pool, execution shape, a requirement per physical
+resource, and the enforcement mechanism for each:
 
 ```dhall
+let LoadStrategy =
+      < ResidentInHost
+      | StreamedToDevice : { stagingWindowMib : Natural }
+      >
+
+let ExecutionShape =
+      { contextLengthTokens : Natural
+      , batchSize : Natural
+      , maxGenerationTokens : Natural
+      , loadStrategy : LoadStrategy
+      }
+
 { model : ModelDescriptor
 , pool : Text
-, resources :
-    { residentMemoryMib : Natural
-    , accelerator : < None | Nvidia : { vramMib : Natural } >
+, shape : ExecutionShape
+, requirement :
+    { hostResidentMib : Natural
+    , deviceResidentMib : Optional Natural
     }
 , enforcement : MemoryEnforcement
 }
 ```
+
+Neither field of `requirement` is a copy of the other. Host residency and device residency are
+different formulas with different drivers, and `StreamedToDevice` is why: under it the host term is
+the staging window rather than the model, so a single `residentMemoryMib` admitted against both
+resources would be wrong twice — oversized against the host and unrelated to the device. Both
+quantities are derived from the artifact and the execution shape rather than authored, under the
+derivation and its refusals owned by
+[bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Compile And Refinement Boundary
 
@@ -133,8 +184,9 @@ Compilation validates at least:
 - every daemon has the exact role, member, location, derived topics, result topic, subscription,
   and connection mode required by that graph, producing an opaque `CompiledDaemon`;
 - CPU work cannot select a VRAM enforcer and GPU-required work cannot select a RAM-only enforcer;
-- every model promoted to a compiled placement fits the declared capacity, while an oversized
-  structurally valid model is classified explicitly as unavailable;
+- every model promoted to a compiled placement fits the executing machine's observed capacity for
+  every resource it consumes, while an oversized structurally valid model is classified explicitly as
+  unavailable;
 - runtime refinement compares the declared Linux outer envelope with live `memory.max` and the
   configured Apple partition with a fresh host observation;
 - every compiled route is authorized by an exact `CompiledDaemon`; every engine-executed model has a
@@ -152,7 +204,7 @@ it, before publishing readiness. The coordinator publishes
 readiness on the compiled plan and the webapp builds no plan beyond compilation, because refinement
 is not a stronger validation of the same thing — it is an observation of *the refining process's
 own machine*: the live sampler probes, the host partition, this process's own cgroup `memory.max`,
-and the observed device VRAM. Its pod arm is an exact match against the hosting pod's `memory.max`,
+the observed device VRAM, and whether this machine's lane can install the ceiling its plan declares. Its pod arm is an exact match against the hosting pod's `memory.max`,
 so refining in a coordinator pod would either fail against a limit that is legitimately different or
 succeed against a ceiling no inference will ever run under — the second outcome being worse, because
 it manufactures evidence about a resource the process does not use.
@@ -190,8 +242,15 @@ Generated substrate Dhall is converted to bytes with explicit UTF-8 encoding.
 ## Resource-Indexed Execution
 
 Admission capacity and execution enforcement are distinct. Admission capacity answers whether work
-may start; the execution ceiling is the exact quantity the launched process is prevented from
-exceeding.
+may start; the execution ceiling is the exact quantity the launched process is held to — and *how*
+it is held there differs by resource, which is the reason the two are not one number. On a host lane
+whose ceiling is calibrated and installed by the launch prefix before the engine's first allocation,
+the process is literally prevented from exceeding it: the over-budget allocation is refused inside
+the process, and nothing observes a breach because none occurs. On the device, and on any lane that can only sample,
+nothing prevents the allocation at all: the ceiling is the quantity a sampled footprint is compared
+against, and a measured breach terminates the group and names the resource it breached together with
+the footprint it observed. A contract that requires prevention refuses readiness on a lane offering
+only detection, rather than accepting the weaker mechanism under the stronger word.
 
 ```haskell
 executeExecutableInferenceWithKVCache
@@ -207,34 +266,57 @@ An Apple unified-memory grant cannot be consumed by a Linux cgroup enforcer; a V
 consumed by a RAM enforcer. Constructors for `Enforcer resource`, `MemoryGrant resource`, and
 `ExecutableModel` remain hidden. The package-internal worker derives the only legal process command
 from the engine binding carried by that same executable value; arbitrary shell or cluster-config
-command overrides are absent.
+command overrides are absent. The execution shape the cache term was derived from travels inside
+that same executable value onto the typed worker request, so the engine runs the context length,
+batch, generation bound, and load strategy the compiler reasoned about instead of restating literals
+of its own.
 
-Per-substrate enforcement is:
+Enforcement is one ceiling installer plus one resource-parameterised sampling kernel, not one
+implementation per platform. The installer is what differs between lanes; the kernel differs only in
+which resource it reads:
 
-- `apple-silicon`: a package-internal observer runs only fixed, absolute `/usr/bin/top` and
-  `/usr/bin/footprint` commands under one total deadline and bounded captures, then the watchdog
-  kills the child process group on a measured breach. No direct FFI or caller-supplied observer
-  command exists;
-- `linux-cpu`: the `/proc` process-group RSS watchdog sums every member conservatively and
-  kills only the child execution group on breach; the pod cgroup is a larger verified outer
-  envelope covering the daemon, admitted child ceiling, and polling overshoot, never the
-  per-request breach classifier. Terminal tasks are excluded. A no-live-member sample receives
-  four fresh observations at the normal 50 ms interval; reappearance resumes enforcement, and
-  persistent absence completes normally only when the leader is terminal or absent in procfs.
-  Stable-live or unreadable evidence remains typed fail-closed. The watchdog does not wait on the
-  engine `ProcessHandle`, leaving one owner for reap;
-- `linux-gpu`: RAM enforcement is paired with per-process-group NVIDIA VRAM accounting. A
-  device-using model compiles two independently indexed grants from a
-  `DualEnforcedBudget`, refinement requires a live NVIDIA sampler plus a device envelope large enough
-  for the admitted VRAM ceiling, and the capped-engine kernel runs one watchdog per grant. A pod
-  limit or a CUDA exit code is still never accepted as VRAM evidence: an unavailable sampler is
-  `NvidiaSamplerUnavailable` at refinement and `EngineEnforcementUnavailable` at run time. A
-  `linux-gpu` model that does *not* use the device stays on the resident-set lane alone, because a
-  VRAM grant it would never consume is not evidence of anything.
+- **the installer** — on the Linux lanes the engine starts behind a fixed public-tool launch prefix
+  that lowers the soft and hard data-segment limit and then replaces itself with the engine image, so
+  the ceiling binds before the first allocation and cannot be raised back by the process it binds. It
+  is a closed constructor: its only free values are quantities rendered from indexed types, and the
+  executable and argument vector come from the already-closed engine command, so neither a caller nor
+  a manifest can supply an enforcement executable. `apple-silicon` installs nothing, because Darwin
+  reports the address-space limit as infinite and rejects every finite ceiling written against it;
+- **the backstop** — one sampling loop parameterised by the resource it observes: process-group
+  physical footprint on `apple-silicon` through fixed, absolute `/usr/bin/top` and
+  `/usr/bin/footprint` commands under one total deadline and bounded captures, process-group
+  anonymous residency on the Linux lanes through `/proc`, and per-process device bytes through a
+  fixed device query. No caller-supplied observer command and no direct FFI exist on any of the
+  three. The polling interval belongs to this loop and to nothing else, because a prevented breach
+  has no cadence — the kernel refuses the allocation at the instant it is made. Terminal procfs tasks
+  are excluded from the live group; a no-live-member sample receives four fresh observations at that
+  interval, reappearance resumes enforcement, and persistent absence completes normally only when the
+  leader is terminal or absent. Stable-live or unreadable evidence remains typed fail-closed, and the
+  loop never waits on the engine `ProcessHandle`, leaving one owner for reap;
+- **conformance** — the engine reads its own installed limit back after the image is replaced and
+  before it loads a weight, and reports it on the worker channel. A limit that was written and a
+  limit the running image is bound by are two claims, and only the process that will allocate can
+  make the second.
 
-If a mechanism cannot be verified, refinement fails and the engine member never becomes ready. A
-pod-wide capacity value or CUDA OOM classification is not evidence that an individual model ceiling
-is enforced.
+The pod cgroup on `linux-cpu` is a larger verified outer envelope covering the daemon, the admitted
+child ceiling, and inter-sample overshoot; it is never the per-request breach classifier. On
+`linux-gpu` a device-using model compiles two independently indexed grants from a
+`DualEnforcedBudget`, refinement requires a live NVIDIA sampler plus a device envelope large enough
+for the admitted device quantity, and the capped-engine kernel runs one backstop per grant. A pod
+limit or a CUDA exit code is never accepted as device evidence: an unavailable sampler is
+`NvidiaSamplerUnavailable` at refinement and `EngineEnforcementUnavailable` at run time. A
+`linux-gpu` model that does *not* use the device stays on the host lane alone, because a device grant
+it would never consume is not evidence of anything.
+
+What each lane may declare is fixed by what it can install: `apple-silicon` declares detection,
+`linux-cpu` and `linux-gpu` declare prevention over private writable mappings once their ceiling is
+calibrated against a real engine on that lane and detection over the residue, and the device half
+declares admission plus arena sizing plus detection everywhere. The per-lane table is owned by
+[bounded_inference_memory.md](bounded_inference_memory.md).
+
+If a mechanism cannot be verified at the strength the plan declares, refinement fails and the engine
+member never becomes ready. A pod-wide capacity value or CUDA OOM classification is not evidence that
+an individual model ceiling is enforced.
 
 ## Bounded Command Language
 
@@ -382,9 +464,18 @@ The contract is proved by:
 - command-kernel tests prove exact required-tool validation, total-deadline retry behavior,
   allowlisted read-only operator kubectl compatibility, and process-group descendant
   cleanup/reaping;
-- runtime tests refuse readiness when the selected enforcer is absent or ineffective;
+- runtime tests refuse readiness when the selected mechanism is absent, ineffective, or weaker than
+  the strength the plan declares for its lane;
+- the installed ceiling is proved by reading both its soft and hard values back inside the process
+  the limit binds, after the image is replaced and before a weight is loaded, and comparing them with
+  the quantity the plan installed; a limit that was written is a different claim from a limit the
+  running image is bound by, and only the second is evidence;
+- a lane claims prevention only where a real engine on that lane has been observed to refuse an
+  over-budget allocation cleanly under an installed ceiling; without that observation the lane
+  declares detection and the gate that would prove prevention is red;
 - adversarial Apple, Linux CPU, and CUDA tests exceed each declared ceiling and observe a typed,
-  terminal per-request failure while the host and daemon remain alive;
+  terminal per-request failure naming the breached resource and the observed footprint, while the
+  host and daemon remain alive;
 - production `System.Process` use is confined to the bounded command, capped engine, fixed
   public-tool observer, and bounded provisioning kernels, plus the CLI-passthrough and host-tool
   surfaces that remain explicitly exempt;

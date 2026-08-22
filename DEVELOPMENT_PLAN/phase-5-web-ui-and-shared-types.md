@@ -29,7 +29,7 @@ Managed-State-Transition Doctrine readiness-contract reopen is closed by
 [Wave V](cohort-validation-waves.md).
 Phase 7 extends the PureScript demo surface with the durable-context Chat, Artifacts, and Model
 Picker views; the supported manual-inference path moves from a direct HTTP request/poll cycle to
-WebSocket-delivered `ConversationStatePatch` deltas owned by Phase 7.
+WebSocket-delivered `ConversationStatePatch` deltas.
 
 Sprint 5.11 closes the shared type boundary for runtime failures code-side: failed inference
 results carry closed `InferenceError` values through the Haskell browser contracts, generated

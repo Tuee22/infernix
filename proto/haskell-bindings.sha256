@@ -2,9 +2,9 @@
 # generator: proto-lens-protoc 0.9.0.1 with libprotoc 34.1
 # canonical inputs: proto/infernix/**/*.proto
 # style exclusion: only the four generated src/Proto modules inventoried below
-456e755f738761eaee2f3c7ae1cb6a0ebf9d54fc56a902abe6960494f92551c3  proto/infernix/runtime/inference.proto
+979fd6fc7b0aae66ba4f5a7fe9aca9f0ae2d12efd8daa9b58226cedeaf5be45c  proto/infernix/runtime/inference.proto
 8a6128f261276fd0d59d9095475a10fa347dbb03e875caadd4605ae8173770d6  proto/infernix/manifest/runtime_manifest.proto
 b1e70ff948119dd76d28f9d2782ebde951caf25213aa54b7cbae1b8c3dfbb458  src/Proto/Infernix/Manifest/RuntimeManifest.hs
 c8a4b73bc09bb28e611efb422366382d2ed2813e6538413e49ac2c1f622e2a59  src/Proto/Infernix/Manifest/RuntimeManifest_Fields.hs
-3953f7638225b0f9f6ae1d7877308937f0714c8f407f5b18703b5ea045466878  src/Proto/Infernix/Runtime/Inference.hs
-afba2d8cd9d60c64a90e72ffb80fd62d5d67f95ecb17e63cb81aaad69a495602  src/Proto/Infernix/Runtime/Inference_Fields.hs
+5b561a4e04a28e3233edf5846db48a207a2b8017a47281d4e8509a1f9dfe672f  src/Proto/Infernix/Runtime/Inference.hs
+253604689eb803d3be8cd91548dfc7747157a32236bbc6d13ffb8b92398bfa38  src/Proto/Infernix/Runtime/Inference_Fields.hs

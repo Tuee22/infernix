@@ -29,9 +29,12 @@ durable. The engine pod has no PVC and uses a single ephemeral `emptyDir` volume
 `engine.modelCache.sizeLimit`); the adapter helper runs LRU eviction inside that quota. The engine's
 KV cache is in-memory and rebuilds from the Pulsar conversation log on restart via `prefixHash`. The
 `sizeLimit`/LRU quota bounds only the on-disk `emptyDir` cache; model memory is governed separately
-by runtime admission. Each model's `modelRamFootprintMib` is compiled against the active Apple host
-or Linux CPU pod capacity. Oversized rows remain explicit `UnavailableModel` values; fitting rows
-receive indexed grants and must pass live-enforcer refinement before engine launch accepts an
+by runtime admission on the machine that will execute. Each model's host requirement is *derived from
+the artifact this storage contract holds* — weight bytes from its tensor table under a bounded header
+read, cache bytes from its declared geometry and the execution shape — and compiled against the
+active Apple host or Linux CPU pod capacity; no field of this contract authors that quantity.
+Oversized rows remain explicit `UnavailableModel` values; fitting rows receive one grant per physical
+resource they consume and must pass live-enforcer refinement before engine launch accepts an
 `ExecutableModel`. A Linux GPU plan without independently indexed RAM/VRAM enforcement fails closed
 with `GpuDualResourceBudgetRequired` (canonical home
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)). Model

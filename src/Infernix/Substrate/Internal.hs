@@ -157,7 +157,19 @@ retiredSubstrateMarkers =
     ("daemonRole = <", "generated `daemonRole` field, which now lives in the machine contract's `machine` block"),
     ("coordinator = ", "generated `coordinator` record, now derived from the runtime mode"),
     ("webapp = ", "generated `webapp` record, now derived from the runtime mode"),
-    ("engineMembers = ", "generated `engineMembers` list, now inverted out of the pool graph")
+    ("engineMembers = ", "generated `engineMembers` list, now inverted out of the pool graph"),
+    -- Phase 4 Sprint 4.38 replaced the per-model `requiresGpu : Bool` plus
+    -- `modelRamFootprintMib : Natural` pair with one closed requirement union.
+    -- Both markers carry their `= ` so a field name appearing inside a note or
+    -- a URL cannot match, and neither spelling occurs in a current payload:
+    -- device usage is now the requirement's own arm.
+    ("requiresGpu = ", "per-model `requiresGpu` field, now derived from the requirement's own arm"),
+    ("modelRamFootprintMib = ", "per-model `modelRamFootprintMib` field, replaced by the derived requirement and the declared execution shape"),
+    -- Phase 4 Sprint 4.39 took the requirement's quantities off the wire too:
+    -- they are derived from the artifact's own bytes on the machine that will
+    -- execute, and what remains declared is the shape they are evaluated
+    -- against.
+    ("requirement = <", "per-model `requirement` union, whose quantities are now derived from the model's own artifact")
   ]
 
 -- The retired top-level `models` list has no marker of its own on purpose: a
@@ -238,13 +250,53 @@ data DhallModelDescriptor = DhallModelDescriptor
     dhallDownloadUrl :: Text,
     dhallSelectedEngine :: Text,
     dhallRequestShape :: [DhallRequestField],
-    dhallRequiresGpu :: Bool,
     dhallNotes :: Text,
-    dhallModelRamFootprintMib :: Natural
+    -- | Phase 4 Sprint 4.39: the execution shape the cache term is evaluated
+    -- against, and the declared geometry it is evaluated from. Sprint 4.38 put a
+    -- closed requirement here in place of the retired @requiresGpu : Bool@ plus
+    -- @modelRamFootprintMib : Natural@ pair; this sprint took the quantities off
+    -- the wire entirely, because they are derived from the artifact's own bytes
+    -- on the machine that will execute. Where the weights live is what remains
+    -- declared, and it is what decides which resource the model-size term is
+    -- charged to.
+    dhallExecutionShape :: DhallModelExecutionShape,
+    dhallGeometry :: Maybe DhallModelGeometry
   }
   deriving (Generic)
 
 instance Dhall.FromDhall DhallModelDescriptor where
+  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
+
+data DhallModelExecutionShape = DhallModelExecutionShape
+  { dhallShapeContextLength :: Natural,
+    dhallShapeBatchSize :: Natural,
+    dhallShapeGenerationBound :: Natural,
+    dhallShapeCacheElementWidth :: Natural,
+    dhallShapeLoadStrategy :: DhallModelLoadStrategy
+  }
+  deriving (Generic)
+
+instance Dhall.FromDhall DhallModelExecutionShape where
+  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
+
+data DhallModelLoadStrategy
+  = DhallModelLoadStrategyLoadResidentHost
+  | DhallModelLoadStrategyStreamWeightsToDevice
+  deriving (Generic)
+
+instance Dhall.FromDhall DhallModelLoadStrategy where
+  autoWith _ =
+    Dhall.genericAutoWith (dhallEnumInterpretOptions "DhallModelLoadStrategy")
+
+data DhallModelGeometry = DhallModelGeometry
+  { dhallGeometryLayers :: Natural,
+    dhallGeometryKeyValueHeads :: Natural,
+    dhallGeometryHeadWidth :: Natural,
+    dhallGeometryHiddenWidth :: Natural
+  }
+  deriving (Generic)
+
+instance Dhall.FromDhall DhallModelGeometry where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
 -- | The generated execution-plan budget is a proper union. An arm carries only
@@ -431,6 +483,16 @@ dhallFieldSuffixName suffix =
     "BudgetLimitMib" -> "limitMib"
     "BudgetPodLimit" -> "podLimit"
     "BudgetVramLimit" -> "vramLimit"
+    "ExecutionShape" -> "executionShape"
+    "ShapeContextLength" -> "contextLength"
+    "ShapeBatchSize" -> "batchSize"
+    "ShapeGenerationBound" -> "generationBound"
+    "ShapeCacheElementWidth" -> "cacheElementWidth"
+    "ShapeLoadStrategy" -> "loadStrategy"
+    "GeometryLayers" -> "layers"
+    "GeometryKeyValueHeads" -> "keyValueHeads"
+    "GeometryHeadWidth" -> "headWidth"
+    "GeometryHiddenWidth" -> "hiddenWidth"
     "EnginePools" -> "enginePools"
     "PoolId" -> "id"
     "PoolMemberIds" -> "members"
@@ -565,7 +627,7 @@ inferenceMemoryBudgetFromDhall runtimeModeValue rawBudget =
           (dhallBudgetPodLimit dualBudget)
         <*> podMemoryLimitFromDhall
           "inferenceMemoryBudget.vramLimit"
-          GpuVram
+          NvidiaVram
           LinuxGpuVramBudget
           (dhallBudgetVramLimit dualBudget)
 
@@ -576,11 +638,11 @@ residentLimitSourceForMode _ = ClusterEnginePodMemoryLimit
 
 podMemoryLimitFromDhall ::
   String ->
-  InferenceMemoryResource ->
+  Resource ->
   PodMemoryLimitSource ->
   DhallSubstrateMemoryBudget ->
   Either String PodMemoryLimit
-podMemoryLimitFromDhall fieldPath resourceValue sourceValue substrateBudget = do
+podMemoryLimitFromDhall fieldPath limitResource sourceValue substrateBudget = do
   limitMib <- naturalToInt (fieldPath <> ".limitMib") (dhallBudgetLimitMib substrateBudget)
   -- @Natural@ already excludes a negative limit on the wire; zero is still
   -- representable, so the positivity check stays.
@@ -589,7 +651,7 @@ podMemoryLimitFromDhall fieldPath resourceValue sourceValue substrateBudget = do
     else
       pure
         PodMemoryLimit
-          { podMemoryLimitResource = resourceValue,
+          { podMemoryLimitResource = limitResource,
             podMemoryLimitSource = sourceValue,
             podMemoryLimitMib = limitMib
           }
@@ -673,15 +735,16 @@ enginePoolFromDhall runtimeModeValue rawPool = do
 
 modelDescriptorFromDhall :: RuntimeMode -> DhallModelDescriptor -> Either String ModelDescriptor
 modelDescriptorFromDhall runtimeModeValue rawModel = do
-  let runtimeLaneValue = runtimeLaneForMode runtimeModeValue (dhallRequiresGpu rawModel)
   requestShapeValue <- traverse requestFieldFromDhall (dhallRequestShape rawModel)
-  -- Phase 4 Sprint 4.31: the footprint is required and positive; a model whose
-  -- Dhall row carries an absent/zero footprint fails the decode closed.
-  footprintMib <-
-    naturalToInt
-      ("models." <> Text.unpack (dhallModelId rawModel) <> ".modelRamFootprintMib")
-      (dhallModelRamFootprintMib rawModel)
-  footprintValue <- mkModelMemoryFootprint footprintMib
+  -- Phase 4 Sprint 4.39: the shape's quantities are required and positive, and
+  -- the load strategy is what decides whether the model uses the device at all.
+  shapeValue <- modelExecutionShapeFromDhall (dhallModelId rawModel) (dhallExecutionShape rawModel)
+  geometryValue <-
+    traverse (modelGeometryFromDhall (dhallModelId rawModel)) (dhallGeometry rawModel)
+  let runtimeLaneValue =
+        runtimeLaneForMode
+          runtimeModeValue
+          (executionLoadStrategy shapeValue == StreamWeightsToDevice)
   pure
     ModelDescriptor
       { matrixRowId = dhallMatrixRowId rawModel,
@@ -696,10 +759,56 @@ modelDescriptorFromDhall runtimeModeValue rawModel = do
         requestShape = requestShapeValue,
         runtimeMode = runtimeModeValue,
         runtimeLane = runtimeLaneValue,
-        requiresGpu = dhallRequiresGpu rawModel,
         notes = dhallNotes rawModel,
-        modelRamFootprint = footprintValue
+        modelExecutionShape = shapeValue,
+        modelGeometry = geometryValue
       }
+
+modelExecutionShapeFromDhall ::
+  Text ->
+  DhallModelExecutionShape ->
+  Either String ModelExecutionShape
+modelExecutionShapeFromDhall modelIdValue rawShape = do
+  contextLength <- shapeNatural "contextLength" (dhallShapeContextLength rawShape)
+  batchSize <- shapeNatural "batchSize" (dhallShapeBatchSize rawShape)
+  generationBound <- shapeNatural "generationBound" (dhallShapeGenerationBound rawShape)
+  cacheElementWidth <- shapeNatural "cacheElementWidth" (dhallShapeCacheElementWidth rawShape)
+  pure
+    ModelExecutionShape
+      { executionContextLength = contextLength,
+        executionBatchSize = batchSize,
+        executionGenerationBound = generationBound,
+        executionCacheElementWidth = cacheElementWidth,
+        executionLoadStrategy = loadStrategyFromDhall (dhallShapeLoadStrategy rawShape)
+      }
+  where
+    shapeNatural fieldName =
+      naturalToInt
+        ("models." <> Text.unpack modelIdValue <> ".executionShape." <> fieldName)
+
+loadStrategyFromDhall :: DhallModelLoadStrategy -> ModelLoadStrategy
+loadStrategyFromDhall rawStrategy =
+  case rawStrategy of
+    DhallModelLoadStrategyLoadResidentHost -> LoadResidentHost
+    DhallModelLoadStrategyStreamWeightsToDevice -> StreamWeightsToDevice
+
+modelGeometryFromDhall :: Text -> DhallModelGeometry -> Either String ModelGeometry
+modelGeometryFromDhall modelIdValue rawGeometry = do
+  layers <- geometryNatural "layers" (dhallGeometryLayers rawGeometry)
+  keyValueHeads <- geometryNatural "keyValueHeads" (dhallGeometryKeyValueHeads rawGeometry)
+  headWidth <- geometryNatural "headWidth" (dhallGeometryHeadWidth rawGeometry)
+  hiddenWidth <- geometryNatural "hiddenWidth" (dhallGeometryHiddenWidth rawGeometry)
+  pure
+    ModelGeometry
+      { geometryLayers = layers,
+        geometryKeyValueHeads = keyValueHeads,
+        geometryHeadWidth = headWidth,
+        geometryHiddenWidth = hiddenWidth
+      }
+  where
+    geometryNatural fieldName =
+      naturalToInt
+        ("models." <> Text.unpack modelIdValue <> ".geometry." <> fieldName)
 
 requestFieldFromDhall :: DhallRequestField -> Either String RequestField
 requestFieldFromDhall rawField =
@@ -815,13 +924,59 @@ renderModelDescriptor model =
     <> dhallText (selectedEngine model)
     <> ", requestShape = "
     <> dhallList requestFieldType renderRequestField (requestShape model)
-    <> ", requiresGpu = "
-    <> dhallBool (requiresGpu model)
     <> ", notes = "
     <> dhallText (notes model)
-    <> ", modelRamFootprintMib = "
-    <> dhallNatural (modelMemoryFootprintMib (modelRamFootprint model))
+    <> ", executionShape = "
+    <> renderModelExecutionShape (modelExecutionShape model)
+    <> ", geometry = "
+    <> renderModelGeometry (modelGeometry model)
     <> " }"
+
+-- | The single rendered spelling of the generated load-strategy union, so a new
+-- arm cannot be added to the Haskell ADT and its decoder while some renderer
+-- keeps emitting a stale union type.
+modelLoadStrategyUnionType :: String
+modelLoadStrategyUnionType =
+  dhallEnumUnionType ["LoadResidentHost", "StreamWeightsToDevice"]
+
+renderModelLoadStrategy :: ModelLoadStrategy -> String
+renderModelLoadStrategy strategy =
+  dhallEnumValue modelLoadStrategyUnionType (loadStrategyAlternative strategy)
+
+loadStrategyAlternative :: ModelLoadStrategy -> String
+loadStrategyAlternative strategy =
+  case strategy of
+    LoadResidentHost -> "LoadResidentHost"
+    StreamWeightsToDevice -> "StreamWeightsToDevice"
+
+renderModelExecutionShape :: ModelExecutionShape -> String
+renderModelExecutionShape shape =
+  "{ contextLength = "
+    <> dhallNatural (executionContextLength shape)
+    <> ", batchSize = "
+    <> dhallNatural (executionBatchSize shape)
+    <> ", generationBound = "
+    <> dhallNatural (executionGenerationBound shape)
+    <> ", cacheElementWidth = "
+    <> dhallNatural (executionCacheElementWidth shape)
+    <> ", loadStrategy = "
+    <> renderModelLoadStrategy (executionLoadStrategy shape)
+    <> " }"
+
+renderModelGeometry :: Maybe ModelGeometry -> String
+renderModelGeometry maybeGeometry =
+  case maybeGeometry of
+    Nothing -> "None " <> modelGeometryRecordType
+    Just geometry ->
+      "Some { layers = "
+        <> dhallNatural (geometryLayers geometry)
+        <> ", keyValueHeads = "
+        <> dhallNatural (geometryKeyValueHeads geometry)
+        <> ", headWidth = "
+        <> dhallNatural (geometryHeadWidth geometry)
+        <> ", hiddenWidth = "
+        <> dhallNatural (geometryHiddenWidth geometry)
+        <> " }"
 
 renderRequestField :: RequestField -> String
 renderRequestField requestField =
@@ -882,4 +1037,18 @@ modelDescriptorType :: String
 modelDescriptorType =
   "{ matrixRowId : Text, modelId : Text, displayName : Text, family : Text, description : Text, artifactType : Text, referenceModel : Text, downloadUrl : Text, selectedEngine : Text, requestShape : List "
     <> requestFieldType
-    <> ", requiresGpu : Bool, notes : Text, modelRamFootprintMib : Natural }"
+    <> ", notes : Text, executionShape : "
+    <> modelExecutionShapeRecordType
+    <> ", geometry : Optional "
+    <> modelGeometryRecordType
+    <> " }"
+
+modelExecutionShapeRecordType :: String
+modelExecutionShapeRecordType =
+  "{ contextLength : Natural, batchSize : Natural, generationBound : Natural, cacheElementWidth : Natural, loadStrategy : "
+    <> modelLoadStrategyUnionType
+    <> " }"
+
+modelGeometryRecordType :: String
+modelGeometryRecordType =
+  "{ layers : Natural, keyValueHeads : Natural, headWidth : Natural, hiddenWidth : Natural }"
