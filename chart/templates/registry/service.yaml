@@ -1,0 +1,40 @@
+{{/*
+Phase 3 Sprint 3.17: the registry's published endpoint.
+
+NodePort `30002` is the port every lane's `kind/cluster-*.yaml`
+`extraPortMappings` already forwards, so the host-side Docker client reaches
+the registry at `localhost:30002` and in-cluster workloads reach the same
+registry at `infernix-registry.platform.svc.cluster.local:5000`. The dynamic
+port-discovery path (`chooseRegistryPort` / `currentKindRegistryPort` in
+`src/Infernix/Cluster.hs`) resolves the live mapping when the default is
+already taken on the host.
+
+The registry serves anonymously over HTTP. There is no identity provider, no
+credential, and no `docker login` in the publication path: the NodePort
+listener is the boundary, the same exposure class as the MinIO and Pulsar
+NodePorts on this local Kind cluster. Operator-facing catalog reads go through
+the gateway-routed `/registry` prefix, which is covered by the operator
+`SecurityPolicy`.
+*/}}
+{{- if .Values.registry.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: infernix-registry
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: infernix-registry
+    app.kubernetes.io/component: image-registry
+    app.kubernetes.io/part-of: infernix
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: infernix-registry
+    app.kubernetes.io/component: image-registry
+  ports:
+    - name: registry
+      port: {{ .Values.registry.service.port }}
+      targetPort: {{ .Values.registry.service.port }}
+      nodePort: {{ .Values.registry.service.nodePort }}
+      protocol: TCP
+{{- end }}

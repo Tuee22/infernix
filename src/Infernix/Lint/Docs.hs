@@ -35,10 +35,10 @@ import Infernix.Models (catalogForMode, matrixRowReadmeKeys, residualMatrixRowId
 import Infernix.Routes
   ( renderClusterBootstrapRouteChecksSection,
     renderEdgeRoutingInventorySection,
-    renderHarborRouteSummarySection,
     renderMinioRouteSummarySection,
     renderPulsarRouteSummarySection,
     renderReadmeRouteSummarySection,
+    renderRegistryRouteSummarySection,
     renderWebPortalRoutesSection,
   )
 import Infernix.Types (RuntimeMode (..), allRuntimeModes, matrixRowId, referenceModel, runtimeModeId, selectedEngine)
@@ -97,7 +97,7 @@ requiredDocs =
     "documents/reference/cli_reference.md",
     "documents/reference/cli_surface.md",
     "documents/reference/web_portal_surface.md",
-    "documents/tools/harbor.md",
+    "documents/tools/registry.md",
     "documents/tools/keycloak.md",
     "documents/tools/minio.md",
     "documents/tools/postgresql.md",
@@ -113,7 +113,6 @@ forbiddenPhrases =
     "Homebrew-installed poetry",
     "single Haskell binary",
     "infernix edge",
-    "infernix gateway harbor",
     "infernix gateway minio",
     "infernix gateway pulsar",
     "tools/python_quality.sh",
@@ -131,7 +130,6 @@ forbiddenPhrases =
     "docker/linux-cpu.Dockerfile",
     "docker/linux-gpu.Dockerfile",
     "npx playwright",
-    "Harbor admin Basic-auth",
     "real-output proof remains",
     "Wave I still owns replacing",
     -- Implementation-status vocabulary. The governed suite is prescriptive: it
@@ -292,10 +290,10 @@ generatedSectionRules =
         generatedSectionExpected = trimTrailingNewlines renderWebPortalRoutesSection
       },
     GeneratedSectionRule
-      { generatedSectionPath = "documents/tools/harbor.md",
-        generatedSectionStartMarker = "<!-- infernix:route-registry:harbor:start -->",
-        generatedSectionEndMarker = "<!-- infernix:route-registry:harbor:end -->",
-        generatedSectionExpected = trimTrailingNewlines renderHarborRouteSummarySection
+      { generatedSectionPath = "documents/tools/registry.md",
+        generatedSectionStartMarker = "<!-- infernix:route-registry:registry:start -->",
+        generatedSectionEndMarker = "<!-- infernix:route-registry:registry:end -->",
+        generatedSectionExpected = trimTrailingNewlines renderRegistryRouteSummarySection
       },
     GeneratedSectionRule
       { generatedSectionPath = "documents/tools/minio.md",
@@ -868,7 +866,6 @@ retiredTopologyAndStatusPhrases =
     "pod-failover-from-browser",
     "Pod failover from the browser",
     "pod-failover-safe",
-    "deletes the Harbor PostgreSQL primary to verify failover",
     "kill the WS-hosting pod",
     "not implemented in the current sprint",
     "implementation status for the convergence work",

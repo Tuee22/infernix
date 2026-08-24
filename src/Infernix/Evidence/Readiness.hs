@@ -3,7 +3,7 @@
 -- wait returns typed evidence instead of @IO ()@ or @IO Bool@: 'awaitReadiness'
 -- is the only producer of a positive 'Ready', so a 'Ready' value witnesses that
 -- a real poll observed the ready condition. The deadline is a required value, so
--- no wait is unbounded. This generalizes the existing @HarborBootstrapOutcome@
+-- no wait is unbounded. This generalizes the earlier registry-bootstrap outcome
 -- shape into a reusable primitive.
 module Infernix.Evidence.Readiness
   ( Readiness,

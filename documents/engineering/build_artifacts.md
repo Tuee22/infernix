@@ -120,7 +120,7 @@ app. Validation requires direct upstream MLX and coremltools preflights, pinned-
 duplicate rejection, the production `demo_ui = false` shape, and routed real output. One engine runs
 per machine; any multi-host `Shared` claim requires evidence from distinct Apple hosts. The cluster
 image path uses source-fingerprint reuse and Dockerfile dependency caching; long Cabal compilation,
-image export, Harbor push, and Helm/Pulsar readiness intervals remain healthy only while lifecycle
+image export, registry push, and Helm/Pulsar readiness intervals remain healthy only while lifecycle
 heartbeat evidence advances.
 
 Every materialized engine root carries a typed manifest recording `adapterId`, `engineName`,

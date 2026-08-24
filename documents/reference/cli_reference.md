@@ -18,7 +18,7 @@
 
 ### `cluster`
 
-- `infernix cluster up` - requires the initialized repo-root runtime config, then reconciles Kind, Harbor-first bootstrap, its cluster deployment mirror, and routed publication state
+- `infernix cluster up` - requires the initialized repo-root runtime config, then reconciles Kind, registry-first bootstrap, its cluster deployment mirror, and routed publication state
 - `infernix cluster down` - tears the cluster down while leaving durable repo-local state under `./.data/` intact
 - `infernix cluster status` - reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation
 - `infernix cluster reclaim-slot [--force-owner-pid PID]` - reports the typed evidence for an interrupted harness cluster-slot reservation and retires it only after owner-death or an exact operator-transcribed PID premise, bounded-command quiescence, and config-transaction recovery
@@ -62,8 +62,8 @@
 - `infernix internal validate-darwin-installed-python-source-isolation` - runs the fixed Darwin installed-Python source-isolation cohort gate
 - `infernix internal discover images RENDERED_CHART` - prints the unique image references discovered in a rendered chart manifest
 - `infernix internal discover claims RENDERED_CHART` - prints the persistent-claim inventory discovered in a rendered chart manifest
-- `infernix internal discover harbor-overlay OVERLAY` - prints the Harbor-backed image references discovered in a rendered override payload
-- `infernix internal publish-chart-images RENDERED_CHART OUTPUT` - publishes the chart image inventory into a Harbor override file
+- `infernix internal discover registry-overlay OVERLAY` - prints the registry-backed image references discovered in a rendered override payload
+- `infernix internal publish-chart-images RENDERED_CHART OUTPUT` - publishes the chart image inventory into a registry override file
 - `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--engine-machines N] [--empty-models]` - writes the generated runtime config and prepares the closed per-engine Python framework plan for one explicit substrate id
 - `infernix internal materialize-metal-engines` - materializes the allowlisted Apple Metal/Core ML engine manifests under `./.data/engines/<adapterId>/` and prepares the canonical Apple per-engine Python framework plan through the Tart-free headless host lane (Apple-only; mirrors `internal materialize-substrate`)
 - `infernix internal materialize-linux-native-engines` - materializes the allowlisted Linux native runner roots under `/opt/infernix/engines/<adapterId>/` for substrate images
@@ -161,7 +161,7 @@
 - While `cluster up` or `cluster down` is active, `cluster status` reports
   `lifecycleStatus: in-progress` plus `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`,
   `lifecycleHeartbeatAt`, and `lifecycleHeartbeatAgeSeconds`.
-- Long Docker builds, Harbor image publication, Kind-worker Harbor preload, and Apple retained-state
+- Long Docker builds, registry image publication, Kind-worker registry preload, and Apple retained-state
   replay refresh `lifecycleHeartbeatAt` roughly every 30 seconds while progressing. Elapsed wall
   time alone is not failure; a non-zero owning command or a heartbeat that stops across multiple
   monitor intervals is a stall/failure signal.

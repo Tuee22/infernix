@@ -24,7 +24,7 @@ This repository serves two aligned purposes:
   Silicon or Metal, Ubuntu 24.04 CPU on native amd64 or arm64 Linux, and Ubuntu 24.04 NVIDIA CUDA
   containers
 - provide a local Kind cluster, running the single-instance platform-service topology, as the
-  testing and demo ground for the control plane, including Harbor, MinIO, Pulsar, and
+  testing and demo ground for the control plane, including the in-cluster registry, MinIO, Pulsar, and
   per-service Patroni PostgreSQL clusters where durable PostgreSQL state is required; the demo UI
   is served by the `infernix` Webapp role in the `infernix-demo` workload when the active `.dhall`
   config enables it
@@ -44,10 +44,10 @@ This repository serves two aligned purposes:
   `poetry run check-code`, while Python-stdio inference uses only a pre-materialized per-engine
   interpreter and marker
 - one Kind and Helm workflow for the testing and demo ground
-- one single-node local platform topology: Harbor, MinIO, Pulsar, and per-service
+- one single-node local platform topology: the in-cluster registry, MinIO, Pulsar, and per-service
   operator-managed PostgreSQL on Kind
 - no metrics or dashboard plane. Monitoring is not a supported first-class surface.
-- one local Harbor registry as the image source for every non-Harbor pod
+- one local single-binary `registry:2` as the image source for every cluster pod
 - one manual persistent-storage doctrine rooted at `./.data/`
 - one PureScript demo UI built with spago, tested with `purescript-spec`, with frontend contracts
   emitted by `infernix internal generate-purs-contracts` through `purescript-bridge` from
@@ -189,7 +189,7 @@ classes.
 
 The supported local platform is built around:
 
-- one Kind cluster used as the single-instance testing and demo ground for Harbor, MinIO, Pulsar, the Envoy
+- one Kind cluster used as the single-instance testing and demo ground for the in-cluster registry, MinIO, Pulsar, the Envoy
   Gateway controller, per-service operator-managed PostgreSQL clusters, the
   production `infernix-coordinator` workload, substrate-specific engine pool workloads, and (when
   the demo UI is enabled) the optional `infernix-demo` workload per the supported three-role daemon
@@ -203,7 +203,7 @@ The supported local platform is built around:
 - one manual storage class backed by repo-owned PVs under `./.data/`
 - each service that requires durable PostgreSQL storage deploys its own Patroni PostgreSQL cluster
   managed by the Percona Kubernetes operator; chart-embedded PostgreSQL paths stay disabled
-- one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
+- one local single-binary `registry:2` used by every cluster pod after registry bootstrap completes
 - one OCI image per Linux substrate carrying `infernix` plus the engine toolchain and the demo UI
   build toolchain; chart workload args select the role through `infernix service --role
   coordinator|engine|webapp`. Apple Silicon has no Dockerfile: the host daemon uses the same
@@ -216,9 +216,9 @@ The supported local platform is built around:
   create or delete so lifecycle-owned lock files never become part of the supported repo contract
 
 <!-- infernix:route-registry:readme:start -->
-- always-published routed prefixes: `/harbor/api`, `/harbor`, `/pulsar/admin`, `/pulsar/ws`
+- always-published routed prefixes: `/registry`, `/pulsar/admin`, `/pulsar/ws`
 - demo-only routed prefixes (present when `.dhall` `demo_ui = True`): `/`, `/api`, `/auth`, `/ws`, `/api/objects`
-- registry-owned rewrites: `/harbor/api` -> `/api`; `/harbor` -> `/`; `/pulsar/admin` -> `/`; `/pulsar/ws` -> `/ws`
+- registry-owned rewrites: `/registry` -> `/v2`; `/pulsar/admin` -> `/`; `/pulsar/ws` -> `/ws`
 <!-- infernix:route-registry:readme:end -->
 
 The optional demo UI runs in the cluster as the `infernix-demo` workload when the active `.dhall`
@@ -237,11 +237,11 @@ and `Create account` actions; the summary grid, Chat tab, Artifacts tab, and man
 workspace render only after the SPA holds a Keycloak JWT. The routed Keycloak login and
 registration forms use the repo-owned `infernix` theme mounted from the chart, while the stock
 Keycloak image remains unchanged. When the demo surface is enabled, the app shell exposes an
-operator console ribbon for Harbor and Pulsar Admin **only to admins**: the cluster-wide
+operator console ribbon for the registry and Pulsar Admin **only to admins**: the cluster-wide
 operator consoles are gated to the `infernix-admin` Keycloak realm role, while ordinary
 and self-registered users see only their own data (chat, artifacts, files, and a personal dashboard).
 Envoy Gateway both validates the Keycloak JWT and admin-authorizes the `infernix-admin` realm role on
-`/harbor`, `/harbor/api`, `/pulsar/admin`, and `/pulsar/ws` — through a cookie written by the SPA or a
+`/registry`, `/pulsar/admin`, and `/pulsar/ws` — through a cookie written by the SPA or a
 direct bearer token header — and the SPA hides the ribbon from non-admins. The Apple host-worker
 loopback data plane (MinIO / Pulsar-proxy NodePorts on `127.0.0.1`) is trust-boundary-internal and
 never transits this admin-gated edge; see
@@ -272,7 +272,7 @@ user sees only their own objects and conversations
 and [documents/architecture/tenant_isolation_doctrine.md](documents/architecture/tenant_isolation_doctrine.md)).
 On Apple,
 `./.build/infernix` builds and drives the control plane from the host while `cluster up` keeps
-Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, `infernix-demo`, and the stateless
+the registry, MinIO, Pulsar, PostgreSQL, Envoy Gateway, `infernix-demo`, and the stateless
 `infernix-coordinator` Deployment in Kind. Routed manual inference enters the coordinator before
 Apple-native batches move through Pulsar to eligible host-side `./.build/infernix` engine daemons.
 On Linux, the same routed demo surface bridges through Pulsar into the coordinator Deployment, which
@@ -522,7 +522,7 @@ Notes:
 - the supported `linux-gpu` lane does not need host-installed `kind`, `kubectl`, `helm`, Node.js,
   or GHC because the baked `infernix-linux-gpu:local` image carries them
 - plan for substantial free disk space before `cluster up` or `test all`; the Kind preload plus
-  Harbor-backed rollout is materially heavier than the CPU lane
+  registry-backed rollout is materially heavier than the CPU lane
 - everything beyond Docker plus the NVIDIA host prerequisites happens inside the shared Linux
   substrate image build or runtime path
 
@@ -773,7 +773,7 @@ The canonical supported CLI surface is the single `infernix` binary.
   starts, are not in the sample
 - `infernix internal validate-darwin-audiveris-cancellation`
 - `infernix internal validate-darwin-installed-python-source-isolation`
-- `infernix internal discover {images,claims,harbor-overlay}`
+- `infernix internal discover {images,claims,registry-overlay}`
 - `infernix internal publish-chart-images`
 - `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]`
 - `infernix internal materialize-metal-engines`
@@ -795,7 +795,7 @@ lifecycle surface.
 ## Runtime and Image Flow
 
 - `cluster up` is the supported single-instance testing and demo-ground bring-up command
-- `cluster up` declaratively reconciles Kind, manual storage, Harbor-backed images, Helm workloads,
+- `cluster up` declaratively reconciles Kind, manual storage, registry-backed images, Helm workloads,
   repo-local kubeconfig publication, and publication of the active substrate configuration; Kind
   or `nvkind` create or delete uses a transient scratch kubeconfig while the published repo-local
   kubeconfig remains the supported operator surface
@@ -818,22 +818,21 @@ lifecycle surface.
   Strict image smoke checks validate payload presence, imports, and command wiring, including the
   native Java Audiveris classpath launch; selected-accelerator validation requires full routed
   MinIO-backed real output
-- `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
-  support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
-  public container repositories
-- after Harbor is responsive, `cluster up` mirrors every remaining non-Harbor image into Harbor
+- `cluster up` brings the in-cluster registry up first through Helm and allows the registry plus
+  only the MinIO storage it needs to pull from public container repositories
+- after the registry is responsive, `cluster up` mirrors every remaining image into the registry
   before deploying those workloads, including third-party platform images and the active
   `infernix` runtime image
 - on Linux substrates the active runtime image is the same launcher-selected
   `infernix-linux-<mode>:local` image used by the outer control-plane launcher; on Apple Silicon
   the host-native `infernix` binary builds the cluster-resident runtime image and publishes it to
-  Harbor after Harbor is ready
-- every non-Harbor pod pulls from local Harbor
-- Harbor and only the storage or support services Harbor needs are the allowed direct-upstream
-  bootstrap exception before the Harbor-backed pull contract takes over
-- `cluster up` always deploys the single-node local platform topology: one instance of each Harbor
-  application-plane service, MinIO, and Pulsar surface, plus a dedicated operator-managed PostgreSQL
-  cluster for each service that requires durable PostgreSQL storage. The operator is the deployment
+  the registry after the registry is ready
+- every cluster pod pulls from the local registry
+- the registry and only the MinIO storage it needs are the allowed direct-upstream bootstrap
+  exception before the registry-backed pull contract takes over
+- `cluster up` always deploys the single-node local platform topology: one registry, MinIO, and
+  Pulsar surface, plus a dedicated operator-managed PostgreSQL cluster for each service that
+  requires durable PostgreSQL storage. The operator is the deployment
   and lifecycle mechanism, not a high-availability one: instance loss is restore-from-backup
 - services that can self-deploy PostgreSQL disable that embedded database path and target a
   dedicated operator-managed cluster instead

@@ -66,7 +66,7 @@
 For every state `S`: a transition `T` reaches it, evidence `E(S)` witnesses it. Evidence has two kinds.
 
 - **Monotone (latching) states** — once true, stay true (`ModelBootstrapReady`, `PayloadVerified`,
-  `DemoBucketsProvisioned`, `HarborRegistryReady`). Evidence is an **opaque newtype with a hidden
+  `DemoBucketsProvisioned`, `RegistryReady`). Evidence is an **opaque newtype with a hidden
   constructor**, minted by exactly one honest transition that consumes a real artifact. Provenance is
   truth here because the property never un-happens.
 - **Revocable (leased) states** — can lapse after `T` (`WriterQuiesced`, `AdminTokenValid`,
@@ -267,14 +267,14 @@ evidence:
   backoff for the rate-limited/transient cases and acking a permanent failure to stop the redeliver
   loop.
 
-Readiness waits **return evidence**, generalizing the `HarborBootstrapOutcome` pattern: a value proving
+Readiness waits **return evidence**, generalizing the earlier registry-bootstrap outcome pattern: a value proving
 `S`, or a total not-ready / expired outcome carrying progress, with the **deadline as a required data
-field**. The Harbor publish/verify surface mints an opaque `BlobServable` — proof that a specific image
+field**. The registry publish/verify surface mints an opaque `BlobServable` — proof that a specific image
 ref is actually pullable from the registry — only after a bounded authenticated platform-selected
-`skopeo copy` reads the selected manifest, config, and every referenced layer from the Harbor API
+`skopeo copy` reads the selected manifest, config, and every referenced layer from the registry API
 authority into a fresh empty `dir:` store. That store lives under a birth-identity-owned mode-0700
 directory and is independent of Docker's shared content cache. Tag-metadata presence
-(`harborTagMetadataPresent`), a measured reachable-registry observation (`observeRegistryApi`), or
+(`registryTagMetadataPresent`), a measured reachable-registry observation (`observeRegistryApi`), or
 a Docker pull that can reuse cached content may shortcut work or gate polling but can never stand
 in for blob-servability; the terminal "done" of a publish requires the `BlobServable`, not a `Bool`.
 A client deadline is derived from its server ceiling in one definition, so a client that waits
@@ -521,7 +521,7 @@ The extracted contract, stated as requirements rather than as progress:
   declare still resolves out of the host's ordinary binary directories.
 - Registry verification is a closed `PublishVerifyRegistry` command whose generated policy bounds an
   authenticated, platform-selected `docker://` → `dir:` copy.
-- Readiness is measured, never assumed. The Harbor `/v2/` startup observation folds through
+- Readiness is measured, never assumed. The registry `/v2/` startup observation folds through
   `awaitReadinessObservable` under an explicit stall-and-ceiling deadline: HTTP `200`, `401`, and
   `403` are measured API-ready; every other response is measured non-ready; and a transport
   exception is **unobservable**, so it can neither mint readiness nor masquerade as a measured

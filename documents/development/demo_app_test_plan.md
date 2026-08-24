@@ -167,7 +167,7 @@ routes `Sign in` to the Keycloak login form, and routes `Create account` directl
 Keycloak registration form through `kc_action=register`. The same assertions check that the
 repo-owned Keycloak theme is active by looking for the Infernix-specific login and registration
 titles.
-After login, the auth lifecycle smoke checks the operator ribbon links to `/harbor` and
+After login, the auth lifecycle smoke checks the operator ribbon links to `/registry` and
 `/pulsar/admin/admin/v2/clusters` (and asserts no `/minio/s3` ribbon link exists); it also verifies
 the same access token is written to the `infernix_operator_token` cookie on login/refresh and
 cleared on logout. The auth lifecycle also proves Sign out clears the upstream Keycloak SSO session
@@ -219,7 +219,7 @@ the textarea value.
   after the refresh grant. The pre-auth landing smoke asserts the anonymous shell exposes exactly
   the two supported CTA entry points, that each lands on the matching Keycloak form, and that the
   mounted `infernix` Keycloak theme is active. The same auth lifecycle checks cover the operator
-  ribbon and the cookie that Envoy Gateway's JWT policy reads for `/harbor` and `/pulsar/admin`.
+  ribbon and the cookie that Envoy Gateway's JWT policy reads for `/registry` and `/pulsar/admin`.
   Account deletion coverage verifies the backend state reap happens before the
   Keycloak `delete_account` action begins.
 - **Context lifecycle.** New-context dialog open/close without backend state; create; rename;

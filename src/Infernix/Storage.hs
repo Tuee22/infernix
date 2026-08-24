@@ -7,12 +7,12 @@ module Infernix.Storage
     formatTimestamp,
     inferenceErrorFromProto,
     inferenceErrorToProto,
-    harborPortPath,
+    registryPortPath,
     parseTimestamp,
     pulsarHttpPortPath,
     readCacheManifestProtoMaybe,
     readEdgePortMaybe,
-    readHarborPortMaybe,
+    readRegistryPortMaybe,
     readClusterStateFile,
     readInferenceResultProtoMaybe,
     readPulsarHttpPortMaybe,
@@ -58,7 +58,7 @@ edgePortPath paths = runtimeRoot paths </> "edge-port.json"
 readEdgePortMaybe :: Paths -> IO (Maybe Int)
 readEdgePortMaybe paths = readPortFileMaybe (edgePortPath paths)
 
--- | Phase 3 follow-on (2026-05-29): Harbor's host-side NodePort is
+-- | Phase 3 follow-on (2026-05-29): the registry's host-side NodePort is
 -- dynamically selected at @cluster up@ time using the same
 -- bind-test / increment loop that the edge port uses, and persisted
 -- here for downstream probes, the publication path, and the
@@ -67,15 +67,15 @@ readEdgePortMaybe paths = readPortFileMaybe (edgePortPath paths)
 -- hostPort mapping observed by the operator host shifts when another
 -- process (e.g. an unrelated VSCode debug worker) already holds the
 -- baseline.
-harborPortPath :: Paths -> FilePath
-harborPortPath paths = runtimeRoot paths </> "harbor-port.json"
+registryPortPath :: Paths -> FilePath
+registryPortPath paths = runtimeRoot paths </> "registry-port.json"
 
-readHarborPortMaybe :: Paths -> IO (Maybe Int)
-readHarborPortMaybe paths = readPortFileMaybe (harborPortPath paths)
+readRegistryPortMaybe :: Paths -> IO (Maybe Int)
+readRegistryPortMaybe paths = readPortFileMaybe (registryPortPath paths)
 
 -- | The Pulsar proxy HTTP NodePort's Kind hostPort mapping is selected
 -- dynamically at @cluster up@ time from the @30080@ baseline using the same
--- bind-test / increment loop as the edge and Harbor ports, and persisted
+-- bind-test / increment loop as the edge and registry ports, and persisted
 -- here so the Apple host-native service daemon's loopback Pulsar transport
 -- targets whatever host port is actually free on the operator's machine
 -- (the in-cluster Kubernetes NodePort number stays @30080@; only the Kind

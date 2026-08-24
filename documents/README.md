@@ -146,7 +146,7 @@
   `infernix`
 - [reference/web_portal_surface.md](reference/web_portal_surface.md) records the browser-visible
   routed demo and operator surface
-- [tools/harbor.md](tools/harbor.md) records the Harbor-first bootstrap and routed Harbor contract
+- [tools/registry.md](tools/registry.md) records the registry-first bootstrap and routed registry contract
 - [tools/minio.md](tools/minio.md) records the durable object-storage and routed MinIO contract
 - [research/README.md](research/README.md) reserves the non-authoritative research subtree used for
   exploratory notes
@@ -210,9 +210,9 @@
   update this index, update the plan, and update docs lint in the same change.
 - Supported workflow docs describe the bounded `bootstrap/*.sh` stage-0 entrypoints as host
   prerequisite and launcher builders, while cluster lifecycle, Kubernetes manifests, cluster
-  workload image pulls, Harbor publication, validation, and teardown stay owned by the `infernix`
+  workload image pulls, registry publication, validation, and teardown stay owned by the `infernix`
   binary.
 - When a bootstrap entrypoint uses Docker to probe host prerequisites, such as the `linux-gpu`
-  CUDA runtime probe, that does not move Harbor image publication, cluster workload image pulls, or
+  CUDA runtime probe, that does not move registry image publication, cluster workload image pulls, or
   lifecycle ownership out of the `infernix` binary.
 - Run the docs validator before handing off changes.

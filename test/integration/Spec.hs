@@ -194,8 +194,7 @@ exerciseRuntimeMode paths runtimeMode = do
       demoConfigResponse <- waitForRoutedDemoConfig paths state
       routedDemoConfig <- requireJsonDemoConfig demoConfigResponse
       modelsResponse <- httpGet (baseUrl <> "/api/models")
-      (harborPortalStatus, _) <- httpGetWithStatus (baseUrl <> "/harbor")
-      (harborApiStatus, _) <- httpGetWithStatus (baseUrl <> "/harbor/api/v2.0/projects")
+      (registryApiStatus, _) <- httpGetWithStatus (baseUrl <> "/registry/_catalog")
       (pulsarAdminStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/admin/admin/v2/clusters")
       (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
       assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
@@ -234,11 +233,8 @@ exerciseRuntimeMode paths runtimeMode = do
         (all (\modelIdValue -> ("\"modelId\":\"" <> modelIdValue <> "\"") `isInfixOf` compact modelsResponse) activeModelIds)
         "model listing returns every generated active-mode catalog entry"
       assert
-        (harborPortalStatus `elem` [401, 403])
-        "harbor portal route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
-      assert
-        (harborApiStatus `elem` [401, 403])
-        "harbor API route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
+        (registryApiStatus `elem` [401, 403])
+        "the registry route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
       assert
         (not (any ((== "/minio/s3") . path) (routes state)))
         "Phase 3 Sprint 3.13: the /minio/s3 external gateway route is removed from the published route inventory"
@@ -248,12 +244,16 @@ exerciseRuntimeMode paths runtimeMode = do
       assert
         (pulsarHttpStatus `elem` [401, 403])
         "pulsar websocket route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
+      reportStep ("registry populated-backing reconcile: " <> showRuntimeMode runtimeMode)
+      validateRegistryPopulatedBackingReconcile paths state runtimeMode
+      reportStep ("registry stateless pod reschedule: " <> showRuntimeMode runtimeMode)
+      validateRegistryPodReschedule paths state runtimeMode
       reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
       validateCatalogModelInferenceForRuntime paths state runtimeMode compiledPlan
       reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)
       -- Phase 9 Sprint 9.3: @GET /api/cache@ exposes cluster-wide model-cache
       -- state, so it is now admin-gated (`withAdminRequest`) alongside the
-      -- @/api/cache/{evict,rebuild}@ mutations. Like the Harbor / Pulsar Admin
+      -- @/api/cache/{evict,rebuild}@ mutations. Like the registry / Pulsar Admin
       -- operator routes above, the integration lane proves the gate is present
       -- by asserting an unauthenticated read is rejected 401; the
       -- admin-authenticated 2xx read (and the non-admin 403) is proven by
@@ -285,14 +285,19 @@ exerciseRuntimeMode paths runtimeMode = do
       -- Phase 6 Sprint 6.47 retired the failure-injection tail that used to run
       -- here: frontend pod replacement, coordinator failover, engine pod
       -- replacement, engine node drain, model-bootstrap failover/deduplication,
-      -- Harbor recovery, MinIO durability, routed Pulsar recovery, and Postgres
-      -- failover. Every one of them asserted a recovery property of a replicated
-      -- topology that no longer exists: one process per role per machine and one
+      -- registry availability failover, MinIO durability, routed Pulsar recovery,
+      -- and Postgres failover. Every one of them asserted a recovery property
+      -- of a replicated topology that no longer exists: one process per role per machine and one
       -- instance per platform service means there is no surviving replica to
       -- promote, and instance loss is restore-from-backup. **This reduces what a
       -- green run proves**, and that reduction is recorded in
       -- DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md rather than presented
       -- as a coverage-neutral cleanup.
+      --
+      -- Sprint 3.17's narrower registry check above is not availability
+      -- failover: it permits the sole instance to be unavailable, waits for a
+      -- replacement, and proves that the replacement serves the same tag set
+      -- from MinIO-backed storage rather than from pod-local state.
       --
       -- What stays, and why each is not an HA property:
       --   * pool placement — the engine-pool graph, not recovery;
@@ -2028,12 +2033,14 @@ validateDemoUiDisabled paths runtimeMode =
         let baseUrl = routeBaseUrl paths state
         disabledHomeResult <- try (httpGet (baseUrl <> "/")) :: IO (Either IOError String)
         disabledPublicationResult <- try (httpGet (baseUrl <> "/api/publication")) :: IO (Either IOError String)
-        harborResponse <- httpGet (baseUrl <> "/harbor")
+        registryCatalogResponse <- httpGet (baseUrl <> "/registry/_catalog")
         pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
         (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
         assert (either (const True) (const False) disabledHomeResult) "the browser root is absent when demo_ui is disabled"
         assert (either (const True) (const False) disabledPublicationResult) "the demo API is absent when demo_ui is disabled"
-        assert ("Harbor" `isInfixOf` harborResponse) "harbor remains published when demo_ui is disabled"
+        assert
+          ("repositories" `isInfixOf` registryCatalogResponse)
+          "the registry remains published when demo_ui is disabled"
         assert
           (not (any ((== "/minio/s3") . path) (routes state)))
           "Phase 3 Sprint 3.13: the /minio/s3 external gateway route is removed from the published route inventory"
@@ -2102,6 +2109,91 @@ httpGetWithStatus url = do
     Just (body, statusCodeValue) -> pure (statusCodeValue, body)
     Nothing -> fail ("failed to parse curl status output for " <> url)
 
+-- | Phase 3 Sprint 3.17: run a second complete reconcile while the registry's
+-- MinIO backing is populated. Cluster-up can return only after its publication
+-- path has minted fresh 'BlobServable' evidence for every image, and the tag
+-- set must remain unchanged across that reconcile.
+validateRegistryPopulatedBackingReconcile :: Paths -> ClusterState -> RuntimeMode -> IO ()
+validateRegistryPopulatedBackingReconcile paths state runtimeMode = do
+  tagListBefore <- requireRegistryBusyboxTagList paths state runtimeMode
+  clusterUpHarness (Just runtimeMode)
+  tagListAfter <- requireRegistryBusyboxTagList paths state runtimeMode
+  assert
+    (tagListAfter == tagListBefore)
+    "a second cluster up preserves the populated registry tag set"
+
+-- | The registry has one replica and therefore makes no availability claim.
+-- Its pod is nevertheless stateless: after deleting that sole instance, a
+-- distinct replacement must serve the exact tag list already written to
+-- MinIO. The test uses @busybox@ because every runtime publishes it during
+-- bootstrap, so the assertion is substrate-independent.
+validateRegistryPodReschedule :: Paths -> ClusterState -> RuntimeMode -> IO ()
+validateRegistryPodReschedule paths state runtimeMode = do
+  tagListBefore <- requireRegistryBusyboxTagList paths state runtimeMode
+  originalPod <- registryPodName state
+  assert (not (null originalPod)) "the registry has a pod before rescheduling"
+  runKubectl
+    state
+    [ "-n",
+      "platform",
+      "delete",
+      "pod",
+      originalPod,
+      "--wait=true",
+      "--timeout=300s"
+    ]
+  replacementPod <- waitForReplacementRegistryPod state originalPod 180
+  waitForPodReady state "platform" replacementPod
+  waitForRollout state "deployment/infernix-registry"
+  tagListAfter <- requireRegistryBusyboxTagList paths state runtimeMode
+  assert
+    (replacementPod /= originalPod && tagListAfter == tagListBefore)
+    "a distinct registry replacement serves the same MinIO-backed busybox tag list"
+
+requireRegistryBusyboxTagList :: Paths -> ClusterState -> RuntimeMode -> IO Aeson.Value
+requireRegistryBusyboxTagList paths state runtimeMode = do
+  let registryHost =
+        if Config.controlPlaneContext paths == Config.OuterContainer
+          then kindControlPlaneNodeName paths runtimeMode <> ":30002"
+          else "127.0.0.1:" <> show (registryPort state)
+      tagListUrl = "http://" <> registryHost <> "/v2/library/busybox/tags/list"
+  tagListPayload <- httpGet tagListUrl
+  assert
+    ( "\"tags\":[" `isInfixOf` compact tagListPayload
+        && "\"tags\":[]" `notElemString` compact tagListPayload
+    )
+    "the registry serves a non-empty busybox tag list"
+  case Aeson.eitherDecode (LazyByteStringChar8.pack tagListPayload) of
+    Left parseError -> fail ("failed to decode registry tag list: " <> parseError)
+    Right tagListValue -> pure tagListValue
+
+registryPodName :: ClusterState -> IO String
+registryPodName state =
+  trim
+    <$> kubectlOutputForState
+      state
+      [ "-n",
+        "platform",
+        "get",
+        "pods",
+        "-l",
+        "app.kubernetes.io/name=infernix-registry",
+        "-o",
+        "jsonpath={.items[0].metadata.name}"
+      ]
+
+waitForReplacementRegistryPod :: ClusterState -> String -> Int -> IO String
+waitForReplacementRegistryPod state originalPod remainingAttempts
+  | remainingAttempts <= 0 =
+      fail "timed out waiting for a distinct replacement registry pod"
+  | otherwise = do
+      candidate <- registryPodName state
+      if null candidate || candidate == originalPod
+        then do
+          threadDelay 1000000
+          waitForReplacementRegistryPod state originalPod (remainingAttempts - 1)
+        else pure candidate
+
 -- | One routed probe, retried while the peer is merely not listening yet.
 --
 -- Phase 4 Sprint 4.35: this helper retried nothing. It ran `curl` through
@@ -2113,8 +2205,8 @@ httpGetWithStatus url = do
 -- constantly `False`, every routed probe in this suite was single-shot behind a
 -- name and a 20-attempt envelope that promised otherwise, and a cold-start race
 -- on any published route failed the whole lane. Observed on the `linux-cpu`
--- cohort: the @demo_ui=false@ scenario's @/harbor@ probe hit the edge NodePort
--- ~1 s before Harbor's portal accepted connections, and the suite failed with
+-- cohort: the @demo_ui=false@ scenario's @/registry@ probe hit the edge NodePort
+-- ~1 s before the registry accepted connections, and the suite failed with
 -- `exit 7` rather than waiting the ten seconds it already claimed to wait.
 --
 -- Classifying on curl's **exit code** is both correct and stronger than the
@@ -2309,13 +2401,13 @@ usesDetachedRetainedSnapshot paths runtimeMode =
 -- written only to a live non-Patroni MinIO claim. While Kind is live it must not
 -- appear in the detached host mirror. Teardown then freezes and commits that
 -- claim before deleting Kind, after which its WriterQuiesced scrub removes only
--- rebuildable Harbor storage from the detached copy. Before recreate, the test
+-- rebuildable registry storage from the detached copy. Before recreate, the test
 -- turns that committed snapshot into a crash residue: the last committed tree
 -- is under @.previous@ and an unmarked partial @.incoming@ also exists. The
 -- first recreate is killed after Kind exists and the exact replay intent moves
 -- to ClusterActivating. A second recreate must resume that intent, recover the
 -- committed tree before claim preparation, replay the canary, remove both
--- residues, and provision a fresh Harbor registry bucket.
+-- residues, and provision a fresh registry bucket.
 validateDetachedRetainedSnapshotReplay :: Paths -> RuntimeMode -> IO ()
 validateDetachedRetainedSnapshotReplay paths runtimeMode = do
   state <-
@@ -2347,12 +2439,12 @@ validateDetachedRetainedSnapshotReplay paths runtimeMode = do
           </> show (ordinal retainedClaim)
           </> Text.unpack (claim retainedClaim)
       retainedCanaryPath = retainedClaimRoot </> "ha-smoke" </> canaryName
-      retainedHarborRoot = retainedClaimRoot </> "harbor-registry"
+      retainedRegistryRoot = retainedClaimRoot </> "infernix-registry"
   waitForPodReady state "platform" podName
   mountPath <- podMountPathForVolume state "platform" podName "data"
   assert (not (null mountPath)) "the selected MinIO claim has a live pod mount"
   let liveCanaryPath = mountPath </> "ha-smoke" </> canaryName
-      liveHarborRoot = mountPath </> "harbor-registry"
+      liveRegistryRoot = mountPath </> "infernix-registry"
   runKubectl
     state
     [ "-n",
@@ -2373,16 +2465,16 @@ validateDetachedRetainedSnapshotReplay paths runtimeMode = do
       <$> kubectlOutputForState
         state
         ["-n", "platform", "exec", podName, "--", "cat", liveCanaryPath]
-  liveHarborPresent <- remotePathExists state podName liveHarborRoot
+  liveRegistryPresent <- remotePathExists state podName liveRegistryRoot
   detachedCanaryPresentWhileLive <- doesFileExist retainedCanaryPath
-  detachedHarborPresentWhileLive <- doesDirectoryExist retainedHarborRoot
+  detachedRegistryPresentWhileLive <- doesDirectoryExist retainedRegistryRoot
   assert
     ( liveCanaryContents == canaryPayload
-        && liveHarborPresent
+        && liveRegistryPresent
         && not detachedCanaryPresentWhileLive
-        && not detachedHarborPresentWhileLive
+        && not detachedRegistryPresentWhileLive
     )
-    "the live MinIO writer contains the canary and Harbor bucket while its detached host mirror remains untouched"
+    "the live MinIO writer contains the canary and registry bucket while its detached host mirror remains untouched"
 
   clusterDownHarness (Just runtimeMode)
   downState <- loadClusterState paths
@@ -2391,13 +2483,13 @@ validateDetachedRetainedSnapshotReplay paths runtimeMode = do
     if retainedCanaryPresent
       then trim <$> readFile retainedCanaryPath
       else pure ""
-  retainedHarborPresent <- doesDirectoryExist retainedHarborRoot
+  retainedRegistryPresent <- doesDirectoryExist retainedRegistryRoot
   assert
     ( maybe False (not . clusterPresent) downState
         && retainedCanaryContents == canaryPayload
-        && not retainedHarborPresent
+        && not retainedRegistryPresent
     )
-    "post-delete detached snapshot retains non-Patroni data and scrubs rebuildable Harbor storage under WriterQuiesced"
+    "post-delete detached snapshot retains non-Patroni data and scrubs rebuildable registry storage under WriterQuiesced"
 
   renameDirectory retainedRuntimeRoot previousSnapshotRoot
   createDirectoryIfMissing True incomingSnapshotRoot
@@ -2426,20 +2518,20 @@ validateDetachedRetainedSnapshotReplay paths runtimeMode = do
           "cat",
           reboundMountPath </> "ha-smoke" </> canaryName
         ]
-  reboundHarborPresent <-
+  reboundRegistryPresent <-
     remotePathExists
       reboundState
       podName
-      (reboundMountPath </> "harbor-registry")
+      (reboundMountPath </> "infernix-registry")
   previousResiduePresent <- doesDirectoryExist previousSnapshotRoot
   incomingResiduePresent <- doesDirectoryExist incomingSnapshotRoot
   assert
     ( reboundCanaryContents == canaryPayload
-        && reboundHarborPresent
+        && reboundRegistryPresent
         && not previousResiduePresent
         && not incomingResiduePresent
     )
-    "cluster recreate recovers the last committed snapshot before claim preparation, removes partial swap residue, replays the canary, and provisions fresh Harbor storage"
+    "cluster recreate recovers the last committed snapshot before claim preparation, removes partial swap residue, replays the canary, and provisions fresh registry storage"
   where
     isMinioDataClaim persistentClaim =
       namespace persistentClaim == "platform"
@@ -3164,15 +3256,15 @@ validatePostgresLifecycleRebinding paths runtimeMode state = do
   inventoryBefore <- postgresPersistentVolumeInventory state
   assert (not (Map.null inventoryBefore)) "operator-managed PostgreSQL persistent-volume inventory is present before cluster lifecycle rebind validation"
   boundVolumesBefore <- postgresBoundVolumeNames state
-  assert (boundVolumesBefore == Map.keysSet inventoryBefore) "operator-managed PostgreSQL PVCs bind to the full deterministic Harbor PV inventory before cluster lifecycle rebind validation"
+  assert (boundVolumesBefore == Map.keysSet inventoryBefore) "operator-managed PostgreSQL PVCs bind to the full deterministic Patroni PV inventory before cluster lifecycle rebind validation"
   clusterDownHarness (Just runtimeMode)
   clusterUpHarness (Just runtimeMode)
   reboundState <- maybe (fail "cluster state was not available after lifecycle rebind validation") pure =<< loadClusterState paths
-  waitForRollout reboundState "deployment/harbor-postgresql-pgbouncer"
+  waitForRollout reboundState "deployment/keycloak-postgresql-pgbouncer"
   inventoryAfter <- postgresPersistentVolumeInventory reboundState
-  assert (inventoryAfter == inventoryBefore) "operator-managed PostgreSQL lifecycle reuses the same deterministic Harbor PV inventory and host paths after cluster down and cluster up"
+  assert (inventoryAfter == inventoryBefore) "operator-managed PostgreSQL lifecycle reuses the same deterministic Patroni PV inventory and host paths after cluster down and cluster up"
   boundVolumesAfter <- postgresBoundVolumeNames reboundState
-  assert (boundVolumesAfter == Map.keysSet inventoryAfter) "operator-managed PostgreSQL PVCs rebind onto the deterministic Harbor PV inventory after cluster down and cluster up"
+  assert (boundVolumesAfter == Map.keysSet inventoryAfter) "operator-managed PostgreSQL PVCs rebind onto the deterministic Patroni PV inventory after cluster down and cluster up"
 
 postgresPvcBindings :: ClusterState -> IO (Map.Map String String)
 postgresPvcBindings state = do
@@ -3185,7 +3277,7 @@ postgresPvcBindings state = do
           "get",
           "pvc",
           "-l",
-          "postgres-operator.crunchydata.com/cluster=harbor-postgresql",
+          "postgres-operator.crunchydata.com/cluster=keycloak-postgresql",
           "-o",
           "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.volumeName}{\"\\n\"}{end}"
         ]
@@ -3231,12 +3323,12 @@ parsePersistentVolumeInventory :: String -> Maybe (String, String)
 parsePersistentVolumeInventory lineValue =
   case splitTabs lineValue of
     [pvName, hostPath]
-      | harborPostgresPersistentVolumePrefix `isPrefixOf` pvName && not (null hostPath) ->
+      | patroniPostgresPersistentVolumePrefix `isPrefixOf` pvName && not (null hostPath) ->
           Just (pvName, hostPath)
     _ -> Nothing
 
-harborPostgresPersistentVolumePrefix :: String
-harborPostgresPersistentVolumePrefix = "platform-infernix-harbor-postgresql-"
+patroniPostgresPersistentVolumePrefix :: String
+patroniPostgresPersistentVolumePrefix = "platform-infernix-keycloak-postgresql-"
 
 kubectlOutputForState :: ClusterState -> [String] -> IO String
 kubectlOutputForState state args = do

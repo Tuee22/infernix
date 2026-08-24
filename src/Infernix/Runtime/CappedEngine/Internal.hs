@@ -42,6 +42,7 @@ module Infernix.Runtime.CappedEngine.Internal
     parseResidentBytesForTest,
     llamaLaneSpecificArguments,
     renderNativeArtifactArgumentsForTest,
+    renderNativeArtifactArgumentsForShapeForTest,
     runExecutableNativeArtifact,
     runExecutablePythonWorker,
     verifyNvidiaVramSampler,
@@ -131,7 +132,8 @@ import Infernix.Types
         runtimeMode,
         selectedEngine
       ),
-    ModelExecutionShape (executionCacheElementWidth, executionContextLength),
+    ModelExecutionShape (..),
+    ModelLoadStrategy (LoadResidentHost),
     Resource (..),
     RuntimeMode (AppleSilicon, LinuxCpu, LinuxGpu),
     resourceText,
@@ -266,6 +268,7 @@ data NativeArtifactInvocation = NativeArtifactInvocation
     nativeInvocationFamily :: !Text,
     nativeInvocationAdapterId :: !Text,
     nativeInvocationRuntimeMode :: !RuntimeMode,
+    nativeInvocationExecutionShape :: !ModelExecutionShape,
     nativeInvocationInput :: !NativeArtifactInput,
     nativeInvocationCache :: !(Maybe NativeArtifactCache),
     nativeInvocationOutputDirectory :: !(Maybe FilePath),
@@ -351,6 +354,7 @@ nativeArtifactInvocation
           nativeInvocationFamily = family descriptor,
           nativeInvocationAdapterId = engineBindingAdapterId engineBinding,
           nativeInvocationRuntimeMode = runtimeMode descriptor,
+          nativeInvocationExecutionShape = modelExecutionShape descriptor,
           nativeInvocationInput = invocationInput,
           nativeInvocationCache = maybeCache,
           nativeInvocationOutputDirectory = maybeOutputDirectory,
@@ -768,10 +772,10 @@ runArtifactLaunchRequest
 -- The probe executable is resolved as a sibling of the validated entry object,
 -- inside the same sealed immutable closure root the artifact's own evidence
 -- binds, so the probe cannot be pointed anywhere the engine itself is not. It
--- runs through the ordinary engine launch under the /artifact-derived/ ceiling
--- alone, which is the honest bound for it: a tool that reports what a model will
--- need must cost less than the model, and one that does not is refused rather
--- than trusted.
+-- runs through the ordinary engine launch with no per-execution ceiling: the
+-- quantity it exists to correct cannot soundly bound the probe before the probe
+-- reports its correction. The enclosing pod envelope, bounded output capture,
+-- closed argument grammar, and sealed artifact closure bound this surface.
 --
 -- A refusal is fail-closed by construction: it does not fall back to the derived
 -- quantity and does not launch unbounded, because the caller turns it into a
@@ -810,7 +814,7 @@ resolveNativeEngineProjection
         case Projection.engineProjectionRequest
           (nativeInvocationAdapterId invocation)
           (nativeModelPayloadPath cache invocation)
-          llamaNativeExecution of
+          nativeExecution of
           Nothing -> pure (Right Ceiling.NoEngineProjection)
           Just request -> do
             let probeExecutable =
@@ -843,6 +847,7 @@ resolveNativeEngineProjection
                       stderrOutput
                   )
     where
+      nativeExecution = llamaNativeExecution invocation
       unprojectedCeiling =
         executableEngineCeiling Ceiling.NoEngineProjection executableModel
 
@@ -1245,19 +1250,24 @@ validateInvocationBinding
 -- probe asked about a different context length reports a number about work the
 -- machine will not do.
 --
--- These are the lane's own literals and deliberately not the carried execution
--- shape. Sprint 4.42 carries that shape to the /Python/ adapters and records the
--- native argument vector as its outstanding residual; adopting it here would
--- change what this lane executes, which is a different change from making the
--- projection describe it.
-llamaNativeExecution :: Projection.LlamaNativeExecution
-llamaNativeExecution =
+-- The cache-bearing operands come from the descriptor's carried execution
+-- shape. The engine invocation and its pre-flight projection both consume this
+-- one value, so admission, projection, and execution cannot silently choose
+-- different context or generation bounds. Thread count and device-layer count
+-- remain properties of this sealed CPU-native artifact binding; neither is a
+-- second spelling of a field carried by 'ModelExecutionShape'.
+llamaNativeExecution ::
+  NativeArtifactInvocation ->
   Projection.LlamaNativeExecution
-    { Projection.llamaExecutionContextLength = 512,
-      Projection.llamaExecutionGenerationBound = 32,
+llamaNativeExecution invocation =
+  Projection.LlamaNativeExecution
+    { Projection.llamaExecutionContextLength = executionContextLength shape,
+      Projection.llamaExecutionGenerationBound = executionGenerationBound shape,
       Projection.llamaExecutionThreads = 1,
       Projection.llamaExecutionGpuLayers = 0
     }
+  where
+    shape = nativeInvocationExecutionShape invocation
 
 llamaLaneSpecificArguments :: RuntimeMode -> [String]
 llamaLaneSpecificArguments runtimeModeValue =
@@ -1282,7 +1292,7 @@ renderNativeArtifactArguments installRoot invocation =
       pure
         ( Projection.llamaNativeExecutionArguments
             (nativeModelPayloadPath cache invocation)
-            llamaNativeExecution
+            (llamaNativeExecution invocation)
             <> [ "--prompt",
                  Text.unpack prompt,
                  "--no-display-prompt",
@@ -1346,29 +1356,55 @@ renderNativeArtifactArgumentsForTest ::
   Maybe FilePath ->
   Maybe FilePath ->
   Either String [String]
-renderNativeArtifactArgumentsForTest adapterId maybeOutputDirectory maybeInputFile =
-  renderNativeArtifactArguments
-    "/opt/infernix/engines/test-adapter"
-    NativeArtifactInvocation
-      { nativeInvocationModelId = "test-model",
-        nativeInvocationSelectedEngine = "test-engine",
-        nativeInvocationFamily = "test-family",
-        nativeInvocationAdapterId = adapterId,
-        nativeInvocationRuntimeMode = LinuxCpu,
-        nativeInvocationInput = NativeArtifactText "test prompt",
-        nativeInvocationCache =
-          Just
-            NativeArtifactCache
-              { nativeCacheRoot = "/var/lib/infernix/models",
-                nativeCacheQuotaBytes = 1,
-                nativeCacheMinioEndpoint = "minio",
-                nativeCacheModelsBucket = "models",
-                nativeCacheDemoArtifactsBucket = "artifacts",
-                nativeCacheRegion = "local"
-              },
-        nativeInvocationOutputDirectory = maybeOutputDirectory,
-        nativeInvocationInputFile = maybeInputFile
-      }
+renderNativeArtifactArgumentsForTest adapterId =
+  renderNativeArtifactArgumentsForShapeForTest
+    adapterId
+    testNativeExecutionShape
+
+renderNativeArtifactArgumentsForShapeForTest ::
+  Text ->
+  ModelExecutionShape ->
+  Maybe FilePath ->
+  Maybe FilePath ->
+  Either String [String]
+renderNativeArtifactArgumentsForShapeForTest
+  adapterId
+  executionShape
+  maybeOutputDirectory
+  maybeInputFile =
+    renderNativeArtifactArguments
+      "/opt/infernix/engines/test-adapter"
+      NativeArtifactInvocation
+        { nativeInvocationModelId = "test-model",
+          nativeInvocationSelectedEngine = "test-engine",
+          nativeInvocationFamily = "test-family",
+          nativeInvocationAdapterId = adapterId,
+          nativeInvocationRuntimeMode = LinuxCpu,
+          nativeInvocationExecutionShape = executionShape,
+          nativeInvocationInput = NativeArtifactText "test prompt",
+          nativeInvocationCache =
+            Just
+              NativeArtifactCache
+                { nativeCacheRoot = "/var/lib/infernix/models",
+                  nativeCacheQuotaBytes = 1,
+                  nativeCacheMinioEndpoint = "minio",
+                  nativeCacheModelsBucket = "models",
+                  nativeCacheDemoArtifactsBucket = "artifacts",
+                  nativeCacheRegion = "local"
+                },
+          nativeInvocationOutputDirectory = maybeOutputDirectory,
+          nativeInvocationInputFile = maybeInputFile
+        }
+
+testNativeExecutionShape :: ModelExecutionShape
+testNativeExecutionShape =
+  ModelExecutionShape
+    { executionContextLength = 512,
+      executionBatchSize = 1,
+      executionGenerationBound = 32,
+      executionCacheElementWidth = 2,
+      executionLoadStrategy = LoadResidentHost
+    }
 
 requireNativeArtifactCache ::
   NativeArtifactInvocation ->

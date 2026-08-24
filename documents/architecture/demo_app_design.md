@@ -116,7 +116,7 @@ The signed-in shell writes the current Keycloak access token to the
 `infernix_operator_token` same-origin cookie. The operator ribbon is **admin-only**: the SPA
 shows it only when the token carries the `infernix-admin` realm role, and Envoy Gateway both validates
 that cookie (or a direct `Authorization: Bearer ...` header) **and** requires the `infernix-admin` role
-before forwarding browser traffic to `/harbor`, `/harbor/api`, `/pulsar/admin`, or `/pulsar/ws` — a
+before forwarding browser traffic to `/registry`, `/pulsar/admin`, or `/pulsar/ws` — a
 non-admin token is rejected with HTTP 403. Non-admin users get chat / artifacts / files and a personal
 dashboard scoped to their own `sub`; the admin cluster-wide panel exposes platform monitoring.
 There is no `/minio/s3` route. See

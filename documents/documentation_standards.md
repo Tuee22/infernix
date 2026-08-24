@@ -185,7 +185,7 @@ status exception.
 - document the supported `bootstrap/*.sh` stage-0 entrypoints as bounded prerequisite and launcher
   builders: they may install host prerequisites and build or enter the substrate-specific
   `infernix` launcher, but cluster lifecycle, Kubernetes manifests, cluster workload image pulls,
-  Harbor publication, validation, and teardown behavior must be described as binary-owned
+  registry publication, validation, and teardown behavior must be described as binary-owned
 - no governed doc may reference project-prefixed env names or shell path overrides as a supported
   operator override; the supported configuration substrate is the typed `.dhall` files named in
   [architecture/configuration_doctrine.md](architecture/configuration_doctrine.md). No governed
@@ -206,7 +206,7 @@ status exception.
 - when storage rules change, update `documents/engineering/k8s_storage.md`,
   `documents/engineering/storage_and_state.md`, and the relevant phase document in the same change
 - when PostgreSQL topology changes, update `documents/tools/postgresql.md`,
-  `documents/tools/harbor.md`, `documents/engineering/k8s_storage.md`, and the relevant phase
+  `documents/tools/registry.md`, `documents/engineering/k8s_storage.md`, and the relevant phase
   document in the same change
 - when route prefixes change, update `documents/engineering/edge_routing.md`,
   `documents/reference/web_portal_surface.md`, and the relevant phase document in the same change

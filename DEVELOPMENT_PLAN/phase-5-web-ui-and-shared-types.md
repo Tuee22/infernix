@@ -1,19 +1,11 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Done — Phase 4 closed on 2026-08-17, and this phase's cohort evidence is reproduced by
-that closure's `apple-silicon` plus paired `linux-cpu` receipts in
-[Wave Y](cohort-validation-waves.md): both lanes built the generated browser contracts, ran the web
-unit suite at 83/83, and passed the routed Playwright matrix 16/16 against the published edge, with
-the typed `ModelMemoryLimitExceeded` capacity path rendered in the browser on the Apple lane. No
-code-side work is open in this phase and no defect is known in its own surface. The
-[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) had invalidated the Wave T and Wave V
-attestations this phase cites; that dependency is discharged. The former Sprint 1.20 bounded-command
-environment defect is corrected and is historical context. Sprint 5.11 is closed for typed inference errors in browser contracts and the
-demo UI. Sprints 5.1-5.10 remain closed for their original PureScript, generated-contract, and
-no-env scopes. [Wave T](cohort-validation-waves.md) closed with `linux-cpu` plus the selected
-`linux-gpu` accelerator. Sprint 5.12 (Managed-State-Transition Doctrine reopen) is closed by
-[Wave V](cohort-validation-waves.md).
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [cohort-validation-waves.md](cohort-validation-waves.md)
+No code-side work is open in this phase and no defect is known in its own surface. Sprint 5.11 is
+closed for typed inference errors in browser contracts and the demo UI. Sprints 5.1-5.10 remain
+closed for their original PureScript, generated-contract, and no-env scopes. **Referenced by**:
+[README.md](README.md), [00-overview.md](00-overview.md),
+[system-components.md](system-components.md),
+[cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
 > generator, the `purescript-spec` test framework, the cluster-resident browser SPA, and the
@@ -24,18 +16,16 @@ no-env scopes. [Wave T](cohort-validation-waves.md) closed with `linux-cpu` plus
 Phase 5's original PureScript demo UI, Haskell-owned browser-contract source, generated contract
 path under `web/src/Generated/`, clustered demo hosting rule, container-owned routed Playwright
 executor, and Phase 5.9 process-environment retirement are closed for Sprints 5.1-5.10. Sprint
-5.11 is closed for typed inference errors in the browser contract and demo UI. Sprint 5.12's
-Managed-State-Transition Doctrine readiness-contract reopen is closed by
-[Wave V](cohort-validation-waves.md).
-Phase 7 extends the PureScript demo surface with the durable-context Chat, Artifacts, and Model
-Picker views; the supported manual-inference path moves from a direct HTTP request/poll cycle to
-WebSocket-delivered `ConversationStatePatch` deltas.
+5.11 is closed for typed inference errors in the browser contract and demo UI. Phase 7 extends the
+PureScript demo surface with the durable-context Chat, Artifacts, and Model Picker views; the
+supported manual-inference path moves from a direct HTTP request/poll cycle to WebSocket-delivered
+`ConversationStatePatch` deltas.
 
 Sprint 5.11 closes the shared type boundary for runtime failures code-side: failed inference
 results carry closed `InferenceError` values through the Haskell browser contracts, generated
 PureScript types, WebSocket patches, and Chat rendering. `ModelMemoryLimitExceeded` is rendered from
 explicit `requiredMib` and `availableMib` fields, not from a generic string or successful inline
-output. Wave T's `linux-cpu` and selected `linux-gpu` routed full-suite proofs cover the live
+output. the selected accelerator's `linux-cpu` and selected `linux-gpu` routed full-suite proofs cover the live
 browser capacity path.
 
 ## Current Repo Assessment
@@ -215,8 +205,6 @@ Playwright executor from the active substrate image on Linux.
   is baked into `docker/Dockerfile` rather than carried in a separate image or
   sidecar service
 - `infernix test e2e` invokes `npm --prefix web exec -- playwright test` inside the Linux
-  launcher image; Apple host-native E2E uses host `npm exec` with the same typed fixture and
-  is closed in [Wave A.2](cohort-validation-waves.md)
 - the chart does not deploy a separate web workload or web image
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 
@@ -311,7 +299,6 @@ the inference batch execution moves to host daemons.
 
 - the routed demo app remains cluster-resident on Apple and Linux substrates alike
 - Apple host-native E2E orchestration uses host `npm exec` with the same typed fixture and is
-  closed in [Wave A.2](cohort-validation-waves.md)
 - Linux outer-container E2E orchestration runs `npm --prefix web exec -- playwright test` from
   inside the active substrate image
 - Docker is a hard prerequisite for `infernix test e2e` on Linux substrates; the Apple branch runs
@@ -330,7 +317,7 @@ the inference batch execution moves to host daemons.
 
 ### Validation
 
-- Apple routed E2E runner code is landed and closed in [Wave A.2](cohort-validation-waves.md)
+- Apple routed E2E runner code is landed and closed
 - Linux routed E2E passes through the in-substrate Playwright executor without any host daemon
   management
 - Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific
@@ -431,51 +418,48 @@ None.
 
 ## Sprint 5.11: Typed Inference Errors in Browser Contracts and Demo UI [Done]
 
-**Status**: Done — code-side complete and routed [Wave T](cohort-validation-waves.md) validation is
-closed on `linux-cpu` plus the selected `linux-gpu` accelerator.
+**Status**: Done — implemented and validated.
 **Browser-contract shape**: `src/Infernix/Web/Contracts.hs` exports typed browser-facing
 `InferenceError` values, `Bridge.Result` and the WebSocket result payload carry
 `inferenceResultError` as an explicit tagged contract for failed results, generated PureScript
 contracts roundtrip `ModelMemoryLimitExceeded`, and `Chat.purs` renders the capacity message from
-typed fields before considering inline output.
-**Browser state model**: conversations are cached per context and the rendered chat pane is
-projected from the active context id plus that cache, so a stored terminal result for the selected
-context cannot be hidden behind a stale `activeConversation` pane and a patch for an inactive
-context is stored without displacing the rendered pane. A server conversation snapshot renders only
-when it targets the active context or the already rendered conversation, and merging a snapshot into
-a cached conversation for the same context retains the already-seen messages that snapshot omits, so
-a snapshot arriving behind a patch cannot erase a raced terminal result. Restored, created,
-selected, and locally submitted prompt conversations all seed that cache, an append patch that
-arrives before its conversation snapshot seeds the active context, and a submitted prompt is pinned
-into the active conversation before a fast terminal result can arrive, so a fail-closed
-capacity result is not dropped by the browser state reducer. The SPA ignores WebSocket messages from
-superseded connection generations and keeps one live per-context stream per session;
-browser-facing Pulsar readers carry unique per-stream names so a replaced stream cannot be mistaken for the live one.
-**Routed coverage shape**: the routed Playwright per-model matrix treats over-budget rows as terminal
-typed capacity results — it derives the expected `ModelMemoryLimitExceeded` from
-`/api/demo-config.inferenceMemoryBudget`, asserts the explicit MiB fields in the WebSocket payload,
-and checks the rendered capacity message — while in-budget rows keep the existing success/artifact
-assertions. The matrix waits for the subscribed conversation snapshot before submitting, waits for
-the server prompt patch matching the exact submitted prompt, and filters the terminal result by
-`inferenceResultUserPromptMessageId`. Playwright-observed WebSocket frames are tagged by browser
-socket id, so refresh, subscribe, and terminal-result waits key off the live socket rather than one
-the SPA correctly ignores, and the capacity assertion waits for the exact typed capacity text — its
-resubscription fallback requires a new-socket conversation snapshot or patch carrying the matching
-typed capacity result before asserting the DOM, and names the model and context on failure. The
-artifact helper waits for the upload-record echo before a download, retries against a re-resolved
-artifact card until the webapp-proxy download grant is ready, and waits for text and JSON previews to
-reach their own ready marker after that grant before asserting preview contents.
-**Cohort gate**: Closed [Wave T](cohort-validation-waves.md) — routed Playwright recorded the live
-`linux-cpu` and selected `linux-gpu` over-budget browser messages plus smaller-model continuity for
-this typed error scope.
-**Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/Bridge/Result.hs`,
-`web/src/Infernix/Web/Chat.purs`, `web/src/Generated/Contracts.purs`,
-`web/test/Infernix/Web/ContractsSpec.purs`, `web/test/Infernix/Web/ChatSpec.purs`, and routed
-Playwright assertions under `web/playwright/`.
+typed fields before considering inline output. **Browser state model**: conversations are cached
+per context and the rendered chat pane is projected from the active context id plus that cache, so
+a stored terminal result for the selected context cannot be hidden behind a stale
+`activeConversation` pane and a patch for an inactive context is stored without displacing the
+rendered pane. A server conversation snapshot renders only when it targets the active context or
+the already rendered conversation, and merging a snapshot into a cached conversation for the same
+context retains the already-seen messages that snapshot omits, so a snapshot arriving behind a
+patch cannot erase a raced terminal result. Restored, created, selected, and locally submitted
+prompt conversations all seed that cache, an append patch that arrives before its conversation
+snapshot seeds the active context, and a submitted prompt is pinned into the active conversation
+before a fast terminal result can arrive, so a fail-closed capacity result is not dropped by the
+browser state reducer. The SPA ignores WebSocket messages from superseded connection generations
+and keeps one live per-context stream per session; browser-facing Pulsar readers carry unique
+per-stream names so a replaced stream cannot be mistaken for the live one. **Routed coverage
+shape**: the routed Playwright per-model matrix treats over-budget rows as terminal typed capacity
+results — it derives the expected `ModelMemoryLimitExceeded` from
+`/api/demo-config.inferenceMemoryBudget`, asserts the explicit MiB fields in the WebSocket
+payload, and checks the rendered capacity message — while in-budget rows keep the existing
+success/artifact assertions. The matrix waits for the subscribed conversation snapshot before
+submitting, waits for the server prompt patch matching the exact submitted prompt, and filters the
+terminal result by `inferenceResultUserPromptMessageId`. Playwright-observed WebSocket frames are
+tagged by browser socket id, so refresh, subscribe, and terminal-result waits key off the live
+socket rather than one the SPA correctly ignores, and the capacity assertion waits for the exact
+typed capacity text — its resubscription fallback requires a new-socket conversation snapshot or
+patch carrying the matching typed capacity result before asserting the DOM, and names the model
+and context on failure. The artifact helper waits for the upload-record echo before a download,
+retries against a re-resolved artifact card until the webapp-proxy download grant is ready, and
+waits for text and JSON previews to reach their own ready marker after that grant before asserting
+preview contents.
+**Implementation**: `src/Infernix/Web/Contracts.hs`,
+`src/Infernix/Bridge/Result.hs`, `web/src/Infernix/Web/Chat.purs`,
+`web/src/Generated/Contracts.purs`, `web/test/Infernix/Web/ContractsSpec.purs`,
+`web/test/Infernix/Web/ChatSpec.purs`, and routed Playwright assertions under `web/playwright/`.
 **Docs to update**: `README.md`, `documents/development/demo_app_test_plan.md`,
 `documents/reference/web_portal_surface.md`, `documents/reference/api_surface.md`,
-`documents/development/frontend_contracts.md`, `documents/development/testing_strategy.md`, and this
-plan.
+`documents/development/frontend_contracts.md`, `documents/development/testing_strategy.md`, and
+this plan.
 
 ### Objective
 
@@ -509,26 +493,23 @@ None.
 ## Remaining Work
 
 Sprint 5.11 is closed for typed inference errors in the browser contracts and demo UI by
-[Wave T](cohort-validation-waves.md)'s `linux-cpu` plus selected `linux-gpu` routed full-suite proof.
+the selected accelerator's `linux-cpu` plus selected `linux-gpu` routed full-suite proof.
 Sprints 5.1-5.10 are `Done`; Apple cohort validation is closed in
 [Waves A/A.2](cohort-validation-waves.md) and the CUDA Linux `linux-cpu` and `linux-gpu` gates pass.
 
 Sprint 5.12's Managed-State-Transition Doctrine readiness-contract reopen is closed by
-[Wave V](cohort-validation-waves.md) — apple-silicon plus linux-cpu full-suite `test all` clean. No
+apple-silicon plus linux-cpu full-suite `test all` clean. No
 remaining work exists for this phase.
 
 ---
 
 ## Sprint 5.12: Shared Readiness Contract [Done]
 
-**Status**: Done — the model-bootstrap deadline is single-sourced through the shared Haskell browser
-contract (a below-ceiling client deadline is unconstructible) and the Playwright executor awaits the
-real `ModelBootstrapReadyEvent`; code-side closure (machine-independent gates) plus the
-single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
-[Wave V](cohort-validation-waves.md).
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) — apple-silicon plus
-linux-cpu full-suite `test all` clean.
-**Implementation**: `src/Infernix/Web/Contracts.hs`, `web/playwright/inference.spec.js`
+**Status**: Done — implemented and validated.
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `web/playwright/inference.spec.js` **Docs to
+update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
+
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
 engineering/reference docs
 

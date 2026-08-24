@@ -478,7 +478,7 @@ data ClusterState = ClusterState
   { clusterLifecycle :: ClusterLifecycle,
     clusterOwner :: ClusterOwner,
     edgePort :: Int,
-    harborPort :: Int,
+    registryPort :: Int,
     routes :: [RouteInfo],
     storageClass :: Text,
     claims :: [PersistentClaim],
@@ -559,7 +559,7 @@ instance ToJSON ClusterState where
       [ "clusterLifecycle" .= clusterLifecycle state,
         "clusterOwner" .= clusterOwner state,
         "edgePort" .= edgePort state,
-        "harborPort" .= harborPort state,
+        "registryPort" .= registryPort state,
         "routes" .= routes state,
         "storageClass" .= storageClass state,
         "claims" .= claims state,
@@ -582,7 +582,7 @@ instance FromJSON ClusterState where
       -- than destroying an unowned-but-present cluster.
       <*> value .:? "clusterOwner" .!= OperatorOwned
       <*> value .: "edgePort"
-      <*> value .: "harborPort"
+      <*> value .: "registryPort"
       <*> value .: "routes"
       <*> value .: "storageClass"
       <*> value .: "claims"

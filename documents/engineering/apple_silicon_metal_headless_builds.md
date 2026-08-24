@@ -121,7 +121,7 @@ release path.
 
 ## Storage Boundary
 
-- Harbor owns container images and heavyweight Linux runtime bases.
+- The in-cluster registry owns container images and heavyweight Linux runtime bases.
 - MinIO may store immutable, content-addressed engine payloads that are expensive to reproduce.
 - `infernix-models` remains the model-weight bucket; engine software and model weights are
   separate artifact classes.

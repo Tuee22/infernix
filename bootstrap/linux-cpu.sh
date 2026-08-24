@@ -109,7 +109,7 @@ compose_run() {
 # compose.yaml @build: args:@ block (forbidden by the
 # configuration-doctrine standards). Build args feed the Dockerfile;
 # the resulting image is referenced from compose.yaml by name only.
-# BuildKit provenance is disabled so Harbor publication sees a plain
+# BuildKit provenance is disabled so registry publication sees a plain
 # single-platform image rather than an OCI index with attestation metadata.
 build_launcher_image() {
   bootstrap::run "${BOOTSTRAP_DOCKER}" build \

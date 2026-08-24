@@ -4,7 +4,7 @@ module Infernix.Cluster.Discover
   ( discoverChartClaimsFile,
     discoverChartImagesFile,
     discoverChartRoutesFile,
-    discoverHarborOverlayImageRefsFile,
+    discoverRegistryOverlayImageRefsFile,
   )
 where
 
@@ -52,8 +52,8 @@ discoverChartRoutesFile renderedChartPath = do
 -- block was retired in favor of `infernixMinio:` consumed by the
 -- hand-authored MinIO StatefulSet. The new overlay carries flat
 -- @repository@ + @tag@ image refs (no @registry@/@repository@ split).
-discoverHarborOverlayImageRefsFile :: FilePath -> IO [String]
-discoverHarborOverlayImageRefsFile overlayPath = do
+discoverRegistryOverlayImageRefsFile :: FilePath -> IO [String]
+discoverRegistryOverlayImageRefsFile overlayPath = do
   overlay <- loadSingleYamlDocument overlayPath
   pure . nub $
     concat
@@ -66,9 +66,9 @@ discoverHarborOverlayImageRefsFile overlayPath = do
         maybe [] pure (overlayFlatImageRef overlay ["infernixMinio", "clientImage"]),
         maybe [] pure (overlayScalarImageRef overlay ["pulsar", "defaultPulsarImageRepository"] ["pulsar", "defaultPulsarImageTag"]),
         maybe [] pure (overlayDirectImageRef overlay ["postgresOperator", "image"]),
-        maybe [] pure (overlayDirectImageRef overlay ["harborpg", "image"]),
-        maybe [] pure (overlayDirectImageRef overlay ["harborpg", "backups", "pgbackrest", "image"]),
-        maybe [] pure (overlayDirectImageRef overlay ["harborpg", "proxy", "pgBouncer", "image"])
+        maybe [] pure (overlayDirectImageRef overlay ["keycloakpg", "image"]),
+        maybe [] pure (overlayDirectImageRef overlay ["keycloakpg", "backups", "pgbackrest", "image"]),
+        maybe [] pure (overlayDirectImageRef overlay ["keycloakpg", "proxy", "pgBouncer", "image"])
       ]
 
 loadYamlDocuments :: FilePath -> IO [Value]

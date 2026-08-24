@@ -21,7 +21,7 @@
   `infernix-demo-objects` data before teardown. Rebuildable `infernix-models` and
   `infernix-engine-artifacts` content is repopulated through eager staging and materialization
 - on a pristine cluster, MinIO may pull from public container repositories only when it is one of
-  Harbor's required backend services before Harbor becomes pull-ready
+  the storage the in-cluster registry needs before the registry becomes pull-ready
 - the supported durable shape uses **three MinIO buckets**:
   - `infernix-models` — always-on (not demo-gated); platform model weights, tokenizers, and
     configs at `<modelId>/<filename>` plus a `<modelId>/.ready` sentinel object; populated
@@ -36,11 +36,11 @@
   - `infernix-demo-objects` — demo-gated; user uploads and engine-generated artifacts at
     `users/<userId>/contexts/<contextId>/{uploads,generated}/<objectKey>`; absent when
     `demo_ui = false`
-- Harbor also uses a MinIO bucket named `harbor-registry` as its rebuildable registry backing
+- the in-cluster `registry:2` registry stores its blobs in a MinIO bucket named `infernix-registry`
   store. That bucket is not product-durable state: after Kind deletion, lifecycle cleanup holding a
   freshly proved `WriterQuiesced` lease may remove the bucket contents, matching MinIO metadata,
-  stale multipart/tmp working sets, and the matching Harbor Redis registry-cache claim only from
-  the detached local retained copy. This prevents fresh Harbor database state from pointing at
+  and stale multipart/tmp working sets only from the detached local retained copy. This prevents
+  a fresh registry from pointing at
   stale image fragments or cache keys. The durable model and demo-object buckets remain retained.
 - the **`.ready` sentinel pattern** on `infernix-models`: the coordinator's bootstrap
   worker PUTs each weight file first, then PUTs `<modelId>/.ready` last, then publishes
@@ -160,14 +160,14 @@ There is no `/minio/s3` gateway route and no MinIO console; browser file access 
 the webapp-mediated `/api/objects` path.
 
 The substrate → container architecture mapping is owned by
-[../architecture/runtime_modes.md](../architecture/runtime_modes.md); Harbor publication
+[../architecture/runtime_modes.md](../architecture/runtime_modes.md); registry publication
 pulls the substrate-matched manifest from each multi-arch upstream image and pushes the
-single-platform variant into the cluster's Harbor namespace.
+single-platform variant into the cluster's registry namespace.
 
 ## Cross-References
 
 - [pulsar.md](pulsar.md)
-- [harbor.md](harbor.md)
+- [registry.md](registry.md)
 - [postgresql.md](postgresql.md)
 - [keycloak.md](keycloak.md)
 - [../engineering/object_storage.md](../engineering/object_storage.md)

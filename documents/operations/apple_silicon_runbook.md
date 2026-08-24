@@ -35,16 +35,16 @@ generated execution plan into an opaque Apple enforcer before an engine member b
   3.12+ executable when one passes the version check
 - the Apple bootstrap shell owns only host prerequisite reconciliation through the host binary
   build and then invokes `./.build/infernix <command>`; the host binary owns Kind, Kubernetes,
-  container builds, Harbor publication, and any cluster workload image pulls needed after it exists,
+  container builds, registry publication, and any cluster workload image pulls needed after it exists,
   but it must not provision Docker virtualization or switch Docker contexts
 - the Apple lifecycle keeps Kind lock-taking off repo-visible paths by using a host-local
   scratch kubeconfig under the system temp directory during cluster create or delete and then
   publishing the durable repo-local kubeconfig under `./.build/`
 - long waits can be healthy while the supported path is replaying retained Kind data, building
-  the shared runtime image, publishing it through Harbor, or preloading Harbor-backed images
-  onto the Kind worker; Harbor Docker pushes use readiness-gated bounded retries across
+  the shared runtime image, publishing it through the registry, or preloading registry-backed images
+  onto the Kind worker; registry Docker pushes use readiness-gated bounded retries across
   transient registry resets
-- retained-state Apple reruns may log a non-waiting recycle of unready Harbor PostgreSQL startup
+- retained-state Apple reruns may log a non-waiting recycle of unready Patroni PostgreSQL startup
   pods when Patroni readiness does not converge; treat that as supported retained-state repair
   while the surrounding readiness wait continues
 - Apple Metal/Core ML engine materialization uses a Tart-free headless host lane. The retained
@@ -90,14 +90,14 @@ Direct reference path:
 - use `./bootstrap/apple-silicon.sh status` or `./.build/infernix cluster status` before treating a
 long `up`, `test`, or `down` run as failed.
 - Cold or retained-state Apple runs can spend many
-minutes in `prepare-kind-cluster`, `build-cluster-images`, `publish-harbor-images`,
-`preload-harbor-images`, and `replay-retained-state`; a cold `build-cluster-images` phase can remain
-healthy well past twenty minutes before Harbor publication begins.
+minutes in `prepare-kind-cluster`, `build-cluster-images`, `publish-registry-images`,
+`preload-registry-images`, and `replay-retained-state`; a cold `build-cluster-images` phase can remain
+healthy well past twenty minutes before registry publication begins.
 - Apple teardown freezes every
 workload-capable Kind worker, rechecks claim placement, stages a complete detached snapshot in
 `.incoming`, and atomically commits it with `.previous` recovery before Kind deletion. Retained
 MinIO model/demo-object and Pulsar data stay durable; the post-delete `WriterQuiesced` scrub may
-remove only the rebuildable Harbor/Keycloak Patroni, Harbor Redis, and MinIO `harbor-registry`
+remove only the rebuildable Keycloak Patroni and MinIO `infernix-registry`
 subset.
 - Apple bring-up reconciles interrupted `.incoming` / `.previous` roots before claim
 preparation, then keeps the exact `replay-retained-state-into-kind` lifecycle intent from before
@@ -108,12 +108,12 @@ live cluster. Do not manually alter these transaction roots while a lifecycle co
 - On host-native Apple, `build-cluster-images` reuses `infernix-linux-cpu:local` only when the local
 image carries the current source fingerprint, runtime-mode label, architecture, and pushable
 manifest shape; the first run after source changes may rebuild, while unchanged-source reruns should
-reuse the stamped image before Harbor publication.
+reuse the stamped image before registry publication.
 - `infernix test integration` may perform several
 internal cluster cycles. A source edit changes the fingerprint and forces one rebuild; subsequent
 cycles in the same run should print `reusing cluster image for linux-cpu: infernix-linux-cpu:local`
 when source is unchanged.
-- `publish-harbor-images` includes readiness-gated bounded retries for
+- `publish-registry-images` includes readiness-gated bounded retries for
 Docker push failures, so a transient registry reset during large-image publication is not a hard
 failure unless the retry budget is exhausted and the image is still neither tagged nor pullable;
 repo-owned local images are published before third-party chart dependencies and are re-tagged from
@@ -137,7 +137,7 @@ leftover rather than a corrupt cluster.
 lifecycle heartbeat refreshes roughly every 30 seconds; treat that as active progress, and treat the
 action as stalled only when the command exits non-zero or the heartbeat stops refreshing across
 multiple intervals.
-- If warmup logs a Harbor PostgreSQL startup-pod recycle, the delete is intentionally non-waiting; StatefulSet
+- If warmup logs a Patroni PostgreSQL startup-pod recycle, the delete is intentionally non-waiting; StatefulSet
 recreation and final readiness are owned by the surrounding lifecycle wait loop
 
 ## Rules
@@ -151,7 +151,7 @@ only overrides `--installdir=./.build` so the materialized `./.build/infernix` b
 the supported CLI surface expects it
 - after the host binary exists, the bootstrap shell does not
 call `kind`, `kubectl`, `helm`, apply manifests, pull images, build the cluster runtime image, or
-publish to Harbor directly; it calls `./.build/infernix <command>` and lets the binary own those
+publish to the registry directly; it calls `./.build/infernix <command>` and lets the binary own those
 lifecycle responsibilities
 - supported Apple bootstrap commands are restartable stage-0 entrypoints:
 when host prerequisite reconciliation crosses a real new-shell or reboot boundary, rerun the same
@@ -178,7 +178,7 @@ coordinator workloads run from the `infernix-linux-cpu:local` image family while
 cluster-role deployment mirror derived from the initialized `apple-silicon` runtime config; the
 coordinator role owns request fan-in and batch handoff, not Apple-native inference execution, and
 the host-native `infernix` binary builds or freshness-reuses that image family and publishes it to
-Harbor after Harbor is responsive
+the registry after the registry is responsive
 - `/api/publication` keeps the routed demo API on
 `apiUpstream.mode: cluster-demo`, reports `daemonLocation: cluster-pod`, reports
 `inferenceExecutorLocation: control-plane-host`, and publishes `inferenceDispatchMode:
@@ -258,7 +258,7 @@ The supported Apple Silicon control plane runs cluster workloads natively as `li
 The publication path does not depend on Rosetta, QEMU, or any other cross-architecture emulation
 layer.
 `clusterWorkloadArchitectureForHostArchitecture AppleSilicon` returns `"arm64"` in `src/Infernix/Cluster.hs`,
-and every Harbor `docker pull --platform linux/<arch>` and `skopeo copy --override-arch=<arch>`
+and every registry `docker pull --platform linux/<arch>` and `skopeo copy --override-arch=<arch>`
 invocation reads from that mapping. The chart's MinIO sub-chart uses upstream multi-arch
 images (`minio/minio`, `minio/mc`, `busybox`) — not single-architecture amd64-only packaging.
 Operators must not enable an emulated Linux lane for Infernix validation, and the Apple
@@ -328,8 +328,8 @@ operator's already selected native arm64 Docker daemon: one instance of each pla
 coordinator process, and one demo process. The static chart and Linux
 generated values are single-node on every lane, matching the supported fleet topology. On a constrained Colima VM,
 capacity failures before routed inference are real environment failures, not acceptable skips:
-`XMinioStorageFull` from Harbor's MinIO backend means the Docker VM disk needs reclaimable cache
-space freed. Check for stale local Harbor-tagged runtime image ids such as
+`XMinioStorageFull` from the registry MinIO backend means the Docker VM disk needs reclaimable cache
+space freed. Check for stale local registry-tagged runtime image ids such as
 `localhost:30002/library/infernix-linux-cpu:sha256-*` in the already selected Docker daemon before
 assuming retained MinIO state is still the cause. Cluster-side `Insufficient memory` scheduling
 events or Keycloak `OOMKilled` events mean the Apple local topology or Docker VM memory envelope
@@ -440,14 +440,14 @@ private writable mappings once its ceiling has been calibrated against a real en
 Linux GPU requires independently indexed host-RAM and GPU-VRAM grants and observers; a
 single-resource plan fails compilation closed with `GpuDualResourceBudgetRequired`.
 
-## Harbor Host-Port Conflicts
+## Registry Host-Port Conflicts
 
-`cluster up` selects Harbor's host-side Kind hostPort dynamically. The chooser
-(`chooseHarborPort` in `src/Infernix/Cluster.hs`) probes `127.0.0.1:30002` first and
+`cluster up` selects the registry's host-side Kind hostPort dynamically. The chooser
+(`chooseRegistryPort` in `src/Infernix/Cluster.hs`) probes `127.0.0.1:30002` first and
 increments until an open port is found, persists the selection to
-`./.data/runtime/harbor-port.json`, and re-uses it on subsequent `cluster up` runs when the
+`./.data/runtime/registry-port.json`, and re-uses it on subsequent `cluster up` runs when the
 stored port is still free. Operators read the chosen port from `cluster status`
-(`harborPort` alongside `edgePort`) or directly from `harbor-port.json`.
+(`registryPort` alongside `edgePort`) or directly from `registry-port.json`.
 
 The typical conflict source on Apple Silicon developer hosts is an editor's debug adapter
 or language-server worker binding `127.0.0.1:30002` deliberately (the port falls outside
@@ -456,7 +456,7 @@ The dynamic selection unblocks `cluster up` without touching the editor or its e
 the in-cluster Kubernetes NodePort and chart references stay fixed at `30002` so cluster-
 internal wiring is unaffected.
 
-See [../tools/harbor.md](../tools/harbor.md) for the supported Harbor surface and
+See [../tools/registry.md](../tools/registry.md) for the supported registry surface and
 [../engineering/docker_policy.md](../engineering/docker_policy.md) for the containerd
 registry-hosts patch.
 
@@ -471,7 +471,7 @@ requires the corresponding evidence from each accelerator or distinct host.
 - [cluster_bootstrap_runbook.md](cluster_bootstrap_runbook.md)
 - [../architecture/runtime_modes.md](../architecture/runtime_modes.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
-- [../tools/harbor.md](../tools/harbor.md)
+- [../tools/registry.md](../tools/registry.md)
 - [../tools/minio.md](../tools/minio.md)
 - [../engineering/portability.md](../engineering/portability.md)
 - [../engineering/docker_policy.md](../engineering/docker_policy.md)

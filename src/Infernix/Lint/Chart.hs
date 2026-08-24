@@ -44,7 +44,7 @@ requiredPhrases =
       [ "runtimeMode:",
         "upstreamCharts:",
         "envoyGateway:",
-        "harbor:",
+        "registry:",
         -- Phase 3 Sprint 3.11 (2026-05-29): the bitnami `minio:`
         -- sub-chart block was retired in favor of the hand-authored
         -- StatefulSet configured under `infernixMinio:`.
@@ -219,8 +219,7 @@ requiredPhrases =
       [ "kind: SecurityPolicy",
         "name: infernix-operator-routes-jwt",
         -- all four admin-gated operator routes must be targeted
-        "name: infernix-harbor-portal",
-        "name: infernix-harbor-api",
+        "name: infernix-registry-api",
         "name: infernix-pulsar-admin",
         "name: infernix-pulsar-ws",
         "jwt:",

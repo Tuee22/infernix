@@ -125,7 +125,7 @@ class CacheValidity(Enum):
     (which removes the ``.ready`` sentinel) was reachable whenever revalidation
     returned ``False`` — and revalidation returned ``False`` on both genuine
     corruption *and* a fallible MinIO read. On the retained-state second
-    ``cluster up``, a transient read fault (MinIO/Harbor contending for the same
+    ``cluster up``, a transient read fault (MinIO/registry contending for the same
     backing store) would therefore destroy a valid retained sentinel, leaving the
     barrier polling forever for a model it just deleted. Making the verdict
     three-valued keeps "I could not verify it" (``UNVERIFIABLE``) distinct from

@@ -19,7 +19,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   generated catalog selection, and routed demo-surface expectations
 - each validation gate selects one accelerator (`apple-silicon` or `linux-gpu`) plus `linux-cpu`;
   a cross-accelerator claim requires corresponding evidence from both accelerators
-- the auxiliary routed-prefix checks require the live Harbor, MinIO, and Pulsar upstream
+- the auxiliary routed-prefix checks require the live registry, MinIO, and Pulsar upstream
   responses on the shared edge
 
 ## Lane Ownership
@@ -75,7 +75,7 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
 - `infernix test unit` validates generated catalog counts and selection rules, demo-config encode
   or decode behavior, cache lifecycle, the protobuf-over-stdio Python worker path, execution-plan
   compilation and live-enforcer refinement, executable-derived engine commands, chart image or
-  claim discovery, Harbor overlay emission, and the PureScript generated-contract and SPA
+  claim discovery, registry overlay emission, and the PureScript generated-contract and SPA
   view-model behavior via `spago test` driven by the maintained runner in `web/test/Main.purs`. Its
   focused process coverage includes same-process/cross-process lifecycle-lock contention and release,
   isolated helper handles, bounded framed-protocol failures, target provenance, parent/supervisor
@@ -101,7 +101,7 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
 - `infernix test all` runs lint, unit, integration, and E2E in sequence as the complete supported
   suite for the active substrate
 - the supported real-cluster `linux-gpu` integration and `test all` lanes also depend on enough
-  host disk headroom for Kind image preload, Harbor-backed image publication, and Pulsar
+  host disk headroom for Kind image preload, registry-backed image publication, and Pulsar
   BookKeeper durability; low disk headroom can block `infernix-engine` readiness after cluster
   creation even when the NVIDIA preflight passes
 
@@ -131,7 +131,7 @@ Hardware-specific validation runs on the machine that owns the changed path.
 ## Lifecycle Interpretation
 
 - long waits in `cluster up` and `cluster down` can still be healthy when the lifecycle is
-  building images, publishing them into Harbor, preloading Harbor-backed images onto the Kind
+  building images, publishing them into the registry, preloading registry-backed images onto the Kind
   worker, or replaying retained state
 - the supported operator check during those waits is `infernix cluster status`
 - when that status surface reports `lifecycleStatus: in-progress`, use `lifecyclePhase`,
@@ -171,8 +171,8 @@ Hardware-specific validation runs on the machine that owns the changed path.
 - `infernix test integration` also validates the routed `GET /api/cache`,
   `POST /api/cache/evict`, and `POST /api/cache/rebuild` contract against manifest-backed durable
   state
-- `infernix test integration` also validates that `/harbor` and `/pulsar/ws`
-  resolve through the shared routed surface through the live Harbor and Pulsar upstreams (MinIO is
+- `infernix test integration` also validates that `/registry` and `/pulsar/ws`
+  resolve through the shared routed surface through the live registry and Pulsar upstreams (MinIO is
   reached only through the webapp `/api/objects` proxy, not a gateway route)
 - the `/pulsar/ws` contract is specific: the public prefix rewrites to Pulsar's real
   `/ws` upstream context root so routed `/pulsar/ws/v2/...` requests terminate on the WebSocket
@@ -191,7 +191,7 @@ Hardware-specific validation runs on the machine that owns the changed path.
   `infernix internal materialize-substrate linux-cpu --demo-ui false`
 - on the host-native `apple-silicon` lane, `infernix test integration` also validates
   `9090`-first edge-port rediscovery
-- on the `linux-cpu` lane, `infernix test integration` compares the deterministic Harbor
+- on the `linux-cpu` lane, `infernix test integration` compares the deterministic Patroni
   PostgreSQL PV inventory and host-path mapping across `cluster down` plus `cluster up`; platform
   services are single-instance and recover through their ordinary restart or restore contracts,
   not standby-promotion failure injection

@@ -16,8 +16,8 @@
 - the local demo runs one Keycloak application pod while the backing Patroni Postgres cluster
   runs a single instance; raising the Keycloak application replica count requires routed proxy-affinity or
   clustered-cache validation
-- the Keycloak workload image is mirrored into Harbor before deployment and pulled from
-  Harbor at runtime; no other registries are used after Harbor is ready
+- the Keycloak workload image is mirrored into the in-cluster registry before deployment and
+  pulled from it at runtime; no other registries are used after the registry is ready
 - the realm definition is pre-seeded by an in-binary reconcile path during `cluster up`; the
   realm allows self-signup with username and password, has email verification disabled, has
   no MFA, no federation, and no social login
@@ -60,13 +60,13 @@
 
 ## Bootstrap Order
 
-`cluster up` brings up Keycloak after Harbor is responsive and after the Keycloak Patroni
+`cluster up` brings up Keycloak after the registry is responsive and after the Keycloak Patroni
 cluster reports readiness. Order:
 
-1. Harbor + Harbor-required services (MinIO, Harbor's own Patroni cluster) start with public
+1. the in-cluster registry + the MinIO storage it needs start with public
    registry pulls allowed only for them
 2. Operator-managed Patroni Postgres for Keycloak is created and reports ready
-3. Keycloak Deployment is created from a Harbor-mirrored image
+3. Keycloak Deployment is created from a registry-mirrored image
 4. Realm pre-seed runs idempotently; subsequent `cluster up` runs reconcile the realm flags,
    `infernix` login theme, public SPA client, redirect URIs, web origins, and PKCE setting
    through the Keycloak admin API

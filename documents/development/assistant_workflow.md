@@ -34,7 +34,7 @@ this canonical list.
 
 - keep repo-owned shell limited to the supported `bootstrap/*.sh` stage-0 host bootstrap surface:
   scripts may reconcile prerequisites and build or enter the active launcher, while cluster
-  lifecycle, Kubernetes manifests, cluster workload image pulls, Harbor publication, validation,
+  lifecycle, Kubernetes manifests, cluster workload image pulls, registry publication, validation,
   and teardown remain `infernix`-owned
 - do not use bare host `cabal` commands for validation. Apple clean-clone and rebuild work goes through
   `./bootstrap/apple-silicon.sh build`, whose fixed stage-0 preflight measures physical memory and
@@ -220,9 +220,9 @@ this canonical list.
 
 ## Platform Doctrine To Preserve
 
-- keep the Harbor-first bootstrap narrative aligned across `README.md`, `DEVELOPMENT_PLAN/`, and
-  `documents/`: Harbor and only Harbor-required bootstrap support services may pull upstream before
-  readiness, and every remaining non-Harbor workload pulls from Harbor afterward
+- keep the registry-first bootstrap narrative aligned across `README.md`, `DEVELOPMENT_PLAN/`, and
+  `documents/`: the registry and only the storage it needs may pull upstream before
+  readiness, and every remaining cluster workload pulls from the registry afterward
 - keep the PostgreSQL deployment narrative aligned across `README.md`, `DEVELOPMENT_PLAN/`, and
   `documents/`: every in-cluster PostgreSQL dependency uses a Patroni cluster managed by the
   Percona Kubernetes operator, even when a chart can self-deploy PostgreSQL, and its PVCs stay on
@@ -233,7 +233,7 @@ this canonical list.
   the active `.dhall` and accept inference work via Pulsar subscription only
 - routing is owned by Gateway API resources and repo-owned HTTPRoute / SecurityPolicy manifests;
   the demo cluster remains local-only, and when the demo UI is enabled the operator route family
-  (`/harbor`, `/pulsar/admin`) is protected by the Keycloak JWT edge policy while
+  (`/registry`, `/pulsar/admin`) is protected by the Keycloak JWT edge policy while
   demo routes keep their application-level JWT checks (MinIO has no external gateway route; the
   webapp `/api/objects` proxy is its only browser-facing surface)
 - custom platform logic is Haskell; Python is permitted only under `python/adapters/` and only

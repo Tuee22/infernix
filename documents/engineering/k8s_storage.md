@@ -18,9 +18,8 @@
 `cluster up` renders the Helm release shape, discovers the PVC inventory from that owned chart or
 operator input, and prepares one matching PV per claim before workload rollout - PV paths follow
 `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` - the claim
-inventory includes Harbor, MinIO, Pulsar, and operator-managed PostgreSQL claims under the path
-doctrine above. Retained MinIO model/demo-object data and Pulsar data are durable. Harbor and
-Keycloak Patroni roots, Harbor Redis, and the MinIO `harbor-registry` bucket internals are the
+inventory includes registry, MinIO, Pulsar, and operator-managed PostgreSQL claims under the path
+doctrine above. Retained MinIO model/demo-object data and Pulsar data are durable. the Keycloak Patroni root and the MinIO `infernix-registry` bucket internals are the
 narrow rebuildable exception: they may be removed only after a `WriterQuiesced` lease proves Kind
 absent under the lifecycle lock, and `cluster up` rebuilds them. **No `infernix` daemon (frontend,
 coordinator, or engine) has a PVC**. The coordinator's Pulsar subscription cursors are broker-side

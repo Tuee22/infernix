@@ -41,7 +41,7 @@
 - `linux-gpu` flows expect the `linux-cpu` Docker baseline plus the supported NVIDIA driver and
   container-toolkit setup
 - real-cluster `linux-gpu` validation also expects enough disk headroom for Kind image preload,
-  Harbor-backed rollout, and Pulsar BookKeeper durability
+  registry-backed rollout, and Pulsar BookKeeper durability
 - hardware-specific validation runs on the machine that owns the changed path; a cross-hardware
   claim requires both Apple Silicon and CUDA Linux to run the relevant full-suite gates against the
   same source state
@@ -54,7 +54,7 @@
 
 - Each supported lifecycle state carries typed evidence rather than an assumed pass. The canonical
   contract is [Managed State Transitions](../architecture/managed_state_transitions.md).
-- Long Docker build finalization, Harbor publication, Kind-worker image preload, and retained-state
+- Long Docker build finalization, registry publication, Kind-worker image preload, and retained-state
   replay are healthy convergence while `lifecycleHeartbeatAt` keeps moving. Elapsed wall time alone
   does not classify `cluster up`, `cluster down`, `test integration`, `test e2e`, or `test all` as
   failed.

@@ -36,7 +36,7 @@
   paths, and as `.pb` files under the harness-local `result_topic` directory on the repo-local
   topic spool. Batch payloads reuse the inference-request protobuf while moving through the
   configured batch handoff topic.
-- because Pulsar is first enabled in the final Harbor-backed Helm phase, `cluster up` forces the
+- because Pulsar is first enabled in the final registry-backed Helm phase, `cluster up` forces the
   upstream bookkeeper and cluster-initialization jobs there on the real Kind path
 - the final chart keeps `pulsar.proxy.configData.webSocketServiceEnabled: "true"` so the internal
   daemon transport and the routed `/pulsar/ws` surface both terminate on Pulsar's real WebSocket

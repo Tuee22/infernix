@@ -1,24 +1,17 @@
 # Phase 7: Demo App Multi-User Durable Context
 
 **Status**: Done — with a named open dependency, per Section C of
-[development_plan_standards.md](development_plan_standards.md). Every sprint in this phase is closed,
-and the evidence reopen below is discharged by the 2026-08-17 Apple plus paired `linux-cpu` cohort in
-[Wave Y](cohort-validation-waves.md). The dependency it names is Phase 6 Sprint 6.44, whose
-`linux-gpu` behavioral cohort needs a CUDA-capable Linux host and cannot be discharged on the hardware
-this closure ran on; that is a supported-lane validation blocker rather than open work in this phase,
-and no defect is known in this phase's own surface.
-**Historical implementation state (superseded by the closure above).** Active — reopened by the
-[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md). Sprint 7.29's closure rests
-explicitly on the [Wave V](cohort-validation-waves.md) apple-silicon plus linux-cpu full-suite
-`test all` pass, and that attestation predates a large body of subsequently landed work that carries
-no Darwin validation. No complete current-source Phase 1 gate or replacement Apple/paired-`linux-cpu`
-attestation exists, so the evidence this phase's `Done` depended on is not current proof. No defect
-is known in this phase's own surface — the reopen is an evidence reopen, and it re-closes when
-[Wave Y](cohort-validation-waves.md) records a result. Sprint 7.28 closed by full linux-gpu plus
-linux-cpu cohort validation, and the Sprint 7.29 Managed-State-Transition plus
-Bounded-Command/Bounded-HTTP reopen closed under [Wave V](cohort-validation-waves.md) on the
-apple-silicon plus linux-cpu full-suite `test all` pass
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
+[development_plan_standards.md](development_plan_standards.md). The dependency it names is Phase 6
+Sprint 6.44, whose `linux-gpu` behavioral cohort needs a CUDA-capable Linux host and cannot be
+discharged on the hardware this closure ran on; that is a supported-lane validation blocker rather
+than open work in this phase, and no defect is known in this phase's own surface.
+
+**Referenced by**: [README.md](README.md),
+[00-overview.md](00-overview.md), [system-components.md](system-components.md),
+[../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md),
+[../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md),
+[../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md),
+[../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
 > Keycloak self-signup, WebSocket post-login transport, Pulsar-backed per-context conversation
@@ -43,27 +36,21 @@ apple-silicon plus linux-cpu full-suite `test all` pass
 > only to that target, makes the result bridge reject raw or cross-user object refs, and is validated
 > by the full `linux-gpu` plus `linux-cpu` routed real-output gates.
 
-Sprints 7.1–7.18 are closed, Sprints 7.19–7.22 closed the auth-UX quad described in the Status block
-on the [Wave G](cohort-validation-waves.md) routed E2E validation, and Sprint 7.28 closed through the
-full selected `linux-gpu` plus `linux-cpu` cohort gate.
 Sprint 7.23's Apple `Exclusive` / `Failover` singleton design is retained only as historical plan
 context and is superseded by the engine-pool routing target: normal Apple fanout uses `Shared`
-across distinct host ids, exact-host routes use `Exclusive`, and the coordinator chooses pool/model
-topics rather than concrete nodes.
+across distinct host ids, exact-host routes use `Exclusive`, and the coordinator chooses
+pool/model topics rather than concrete nodes.
 
 Browser file storage sits behind the webapp. Sprint 7.25 makes `Demo/Api.hs` proxy the
-upload/download bytes through the internal MinIO endpoint and drops the browser-direct presigned-URL
-path, realizing the
+upload/download bytes through the internal MinIO endpoint and drops the browser-direct
+presigned-URL path, realizing the
 [../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md)
-and the [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md);
+and the
+[../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md);
 Sprint 7.26 adds a per-user Files navigational view scoped to `users/<sub>/`; and Sprint 7.27 adds
-in-browser MIDI/MusicXML/ZIP rendering. Sprint 7.25 (delivered jointly with
-[Phase 3 Sprint 3.13](phase-3-platform-services-and-edge-routing.md), the `/minio/s3`
-de-exposure) is code-side closed and cohort-closed by
-[Wave M](cohort-validation-waves.md); Sprints 7.26 and 7.27 build on it and are closed
-by the same wave. The Sprint 7.9 presigned-URL prose describes the superseded
-pre-7.25 path; Sprint 7.27 replaces the prior download-only behavior for MIDI, MusicXML, and ZIP
-stem artifacts with in-browser render dispositions.
+in-browser MIDI/MusicXML/ZIP rendering. The Sprint 7.9 presigned-URL prose describes the
+superseded pre-7.25 path; Sprint 7.27 replaces the prior download-only behavior for MIDI,
+MusicXML, and ZIP stem artifacts with in-browser render dispositions.
 
 Code-side closure: Sprints 7.1–7.17 are code-side closed covering the daemon-split topology
 (stateless `infernix-demo` frontend, two-replica stateless `infernix-coordinator` with per-context
@@ -81,7 +68,7 @@ and the non-chaos dispatcher + result-bridge durable prompt roundtrip. Sprint 7.
 wires a process-local `EngineKVCache` through the engine daemon process and moves
 daemon role orchestration into `Infernix.Runtime.Daemon`; `Infernix.Runtime.Pulsar`
 remains the shared Pulsar transport and runtime-loop module. The Sprint 7.14
-Linux-owned chaos/throughput block is validated in [Wave C](cohort-validation-waves.md),
+Linux-owned chaos/throughput block is validated on the selected accelerator plus `linux-cpu`,
 covering frontend/coordinator/engine pod replacement, engine node drain, model-bootstrap
 deduplication, Linux engine anti-affinity, and compact multi-user durable prompt throughput.
 Runtime bucket repair, deployed wrong-realm Keycloak token rejection for `/api/objects` and `/ws`,
@@ -89,22 +76,15 @@ throughput matrix parameterization, and extracted Playwright artifact fixtures c
 rebuilt-image `linux-gpu` and `linux-cpu` full gates, each covering style/Python/unit/web-unit,
 full integration, and routed Playwright E2E.
 
-Validation closure: tracked by [cohort-validation-waves.md](cohort-validation-waves.md).
-Apple cohort closed in [Wave A](cohort-validation-waves.md) (durable-context prompt roundtrip
-plus routed e2e), [Wave A.1](cohort-validation-waves.md) (artifact-upload submit-race fix),
-[Wave A.2](cohort-validation-waves.md) (per-model browser smoke matrix over every demo-config
-catalog model), and
-[Wave A.3](cohort-validation-waves.md) (Apple `engine.lock` enforcement chaos case, now legacy
-coverage superseded by Sprint 7.24 engine-pool routing). CUDA
-Linux cohort closure is recorded in [Wave C](cohort-validation-waves.md): both the native
+Validation closure: tracked by [cohort-validation-waves.md](cohort-validation-waves.md). CUDA
+Linux cohort closure is recorded on the selected accelerator plus `linux-cpu`: both the native
 `linux-cpu` and the real-hardware `linux-gpu` full-suite gates passed, covering the LinuxCpu
-integration chaos block and the multi-user throughput suite. A rebuilt-image `linux-cpu` residual
-full-suite gate passed after [Wave D](cohort-validation-waves.md).
-Historical validation proof points are inventoried in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Historical Validation
-Evidence"; the underlying contracts they exercised still describe supported behavior.
+integration chaos block and the multi-user throughput suite. Historical validation proof points
+are inventoried in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under
+"Historical Validation Evidence"; the underlying contracts they exercised still describe supported
+behavior.
 
-Sprint 7.24's pool-routing work is closed under [Wave J](cohort-validation-waves.md). The
+Sprint 7.24's pool-routing work is closed on the selected accelerator plus `linux-cpu`. The
 coordinator and engine-daemon code-side pool-routing work has landed on the Linux outer-container
 lane, and the Apple integration plus aggregate `test all` lanes prove pinned `Exclusive` routes,
 same-machine host-member coexistence on a real `Shared` subscription, single-host logical `Shared`
@@ -116,14 +96,12 @@ browser matrix on the selected CUDA Linux accelerator plus `linux-cpu`. Physical
 routing is hardware-deferred proof while no second Apple host is available. The earlier
 durable-context and auth-UX scopes remain closed on their recorded validation.
 
-Sprints 7.25–7.27 closed in [Wave M](cohort-validation-waves.md). The paired
-`linux-cpu` gate passed with the full real-output suite, and the selected `linux-gpu` accelerator
-gate passed `./bootstrap/linux-gpu.sh test`: Haskell style, Python `check-code`, Haskell unit, web
-contracts, full integration with every `linux-gpu` catalog row producing real output plus
-the service/cache/durable-topic and HA lifecycle tail, and routed Playwright including the
-browser per-model smoke matrix. The routed browser evidence covers the Wave M-owned
-object-proxy, cross-user isolation, Files view, proxied media previews, and in-browser
-MIDI/MusicXML/ZIP rendering.
+Sprints 7.25–7.27 closed on the selected accelerator plus `linux-cpu`. The paired `linux-cpu` gate
+passed with the full real-output suite, and the selected `linux-gpu` accelerator gate passed
+`./bootstrap/linux-gpu.sh test`: Haskell style, Python `check-code`, Haskell unit, web contracts,
+full integration with every `linux-gpu` catalog row producing real output plus the
+service/cache/durable-topic and HA lifecycle tail, and routed Playwright including the browser
+per-model smoke matrix.
 
 Sprint 7.28 makes `WorkerRequest` carry a Haskell-derived
 `users/<sub>/contexts/<ctx>/generated/` output prefix, restricts Python adapter and native runner
@@ -140,7 +118,7 @@ per-model matrix.
 The current `infernix-demo` workload ships a routed PureScript SPA, the catalog and cache
 HTTP API surface from Phase 4 Sprint 4.4, and the clustered demo deployment described by
 Phase 3. The Helm chart already deploys Pulsar (3-broker HA), MinIO (4-replica HA),
-per-service Patroni Postgres clusters (Harbor's `harborpg` and Keycloak's `keycloakpg`), Envoy
+per-service Patroni Postgres clusters (Keycloak's `keycloakpg`), Envoy
 Gateway, and the routed edge described by Phase 3. Production inference dispatch already
 flows through `inference.request.<mode>` and `inference.result.<mode>` topics per Phase 4.
 The prior direct manual-inference HTTP handlers, the matching CLI helper, the
@@ -179,17 +157,15 @@ deployed (`infernix-coordinator 2/2`, `infernix-engine 1/1`, `infernix-demo 1/1`
 broker/bookie/zookeeper set `Running`, the Pulsar admin reconcile creating the `infernix` tenant
 plus the `infernix/demo` and `infernix/system` namespaces, all ten supported HTTPRoutes registered
 (`/`, `/api`, `/api/objects`, `/auth`, `/ws`, and the operator route family, with the prior
-`/objects` route absent), and no `infernix-{coordinator,engine,demo}` PVCs (the Sprint 7.7 PVC-free
-daemon contract). The coordinator runtime loops attach in steady state — the model-bootstrap
-session on `persistent://infernix/system/model.bootstrap.request` and the result-bridge session on
-the substrate's configured result topic — and `runResultBridgeLoop` consumes the daemon's
-already-loaded `daemonConfigResultTopic`, so the bridge listens on the exact topic the engine
-publishes to regardless of namespace. `cluster down` returns the lifecycle to
+`/objects` route absent), and no `infernix-{coordinator,engine,demo}` PVCs (the Sprint 7.7
+PVC-free daemon contract). The coordinator runtime loops attach in steady state — the
+model-bootstrap session on `persistent://infernix/system/model.bootstrap.request` and the
+result-bridge session on the substrate's configured result topic — and `runResultBridgeLoop`
+consumes the daemon's already-loaded `daemonConfigResultTopic`, so the bridge listens on the exact
+topic the engine publishes to regardless of namespace. `cluster down` returns the lifecycle to
 `clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: cluster-absent` with `./.data`
-preserved. The Sprint 7.7 model-bootstrap topic residual is closed; Sprint 7.14 and Wave C
-validated model-bootstrap request and ready-event behavior through real Pulsar, including
-coordinator-replacement deduplication before first publish. The Sprint 7.1 + 7.3 + 7.7 + 7.8 + 7.9
-chart-side surfaces are real-cluster validated on both `linux-cpu` and `linux-gpu`.
+preserved. The Sprint 7.1 + 7.3 + 7.7 + 7.8 + 7.9 chart-side surfaces are real-cluster validated
+on both `linux-cpu` and `linux-gpu`.
 
 The Sprint 7.7 architectural items — the daemon-role rename and the chart cutover from fused to
 split topology — are closed and validated end to end on `linux-cpu`. The resulting surfaces:
@@ -233,9 +209,9 @@ split topology — are closed and validated end to end on `linux-cpu`. The resul
   coordinator + engine replica counts in every pre-Pulsar phase and raises
   them in `FinalPhase`. The retired demo-bound coordinator enablement has been removed;
   generated values now keep the coordinator enabled in production.
-- `src/Infernix/Cluster/PublishImages.hs.buildHarborOverridesValue`
+- `src/Infernix/Cluster/PublishImages.hs.buildRegistryOverridesValue`
   rewrites `coordinator.image` + `engine.image` alongside `service.image`
-  and `demo.image`, so the new pods pull from the Harbor mirror instead
+  and `demo.image`, so the new pods pull from the registry mirror instead
   of the bare `:local` tag (which is not present on Kind worker nodes).
 - `src/Infernix/Runtime/Pulsar.hs.buildConsumerSocketPath` now requests
   `subscriptionType=Shared` so two coordinator replicas can split the
@@ -303,7 +279,7 @@ boundary without re-reading the design docs.
   proxy; binary bytes traverse the demo backend, and the browser never receives a presigned MinIO
   URL.
 - **Statelessness.** Backend pods hold zero per-user state across requests. No demo-backend
-  Postgres is added; existing per-service Patroni clusters (Harbor and Keycloak's own) are
+  Postgres is added; the existing Keycloak Patroni cluster are
   unchanged. The browser holds no durable state — full reconstitution from server-
   side state alone on every login.
 - **Pulsar topology.** Per-context conversation log topic
@@ -403,7 +379,7 @@ that allows self-signup with username/password and skips email verification.
 - `chart/Chart.yaml` declares a second `pg-db` dependency aliased to `keycloakpg`, gated on
   `upstreamCharts.keycloakpg.enabled`; `chart/values.yaml` carries the matching `keycloakpg:`
   Patroni stanza (3-instance HA, `infernix-manual` storage class, pgbackrest backups) and the
-  `keycloak:` stanza with image from Harbor, demo-gating tied to `demo_ui`, realm and client
+  `keycloak:` stanza with image from the registry, demo-gating tied to `demo_ui`, realm and client
   identifiers, routed external base URL, and admin/database secret names. The backing Patroni
   cluster is HA; the Keycloak application itself runs one local-demo replica. Multi-replica
   Keycloak serving is deliberately not enabled — it requires proxy affinity or a clustered cache,
@@ -415,16 +391,16 @@ that allows self-signup with username/password and skips email verification.
   after final rollout so repeat `cluster up` runs do not drift
 - `src/Infernix/Cluster.hs.reconcileFinalPhaseOperatorManagedPersistentVolumes` runs after the
   no-hooks FinalPhase chart apply creates the `keycloak-postgresql` PerconaPGCluster CR, waits for
-  the combined Harbor plus Keycloak operator-managed PVCs, creates matching PVs, and binds them;
+  the Keycloak operator-managed PVCs, creates matching PVs, and binds them;
   the warmup-only reconcile cannot see Keycloak's claims because that CR is FinalPhase-gated
 - `src/Infernix/Cluster/PublishImages.hs.pushUpstreamMultiArchViaImagetools` falls back to
   `skopeo copy --override-os=linux --override-arch=amd64` for upstream multi-arch images, derives
-  content-addressed Harbor tags from the upstream linux/amd64 manifest when the containerd image
+  content-addressed registry tags from the upstream linux/amd64 manifest when the containerd image
   store leaves the pulled tag non-inspectable, and routes non-taggable upstream tags straight
   through the fallback copy
 - `/auth` route added to the Haskell route registry source so the auto-rendered registry
   emits it into README, `documents/reference/web_portal_surface.md`, and publication JSON
-- `cluster up` reconciles Keycloak after Harbor is responsive, before the demo workload starts
+- `cluster up` reconciles Keycloak after the registry is responsive, before the demo workload starts
   on the durable-context surface. With `demo_ui = false`, `upstreamCharts.keycloakpg.enabled`,
   `keycloak.enabled`, the `prepare-keycloak-storage` PV reconcile, and the realm reconcile all
   follow the substrate's demo flag
@@ -443,7 +419,7 @@ that allows self-signup with username/password and skips email verification.
 
 ### Remaining Work
 
-None. Closed by the Apple routed E2E gates and [Wave C](cohort-validation-waves.md).
+None.
 
 ---
 
@@ -498,7 +474,7 @@ None.
 
 ## Sprint 7.3: WS Endpoint, JWT Validation, and Stateless Coordination [Done]
 
-**Status**: Done (code-side closed for routed JWT, malformed-frame, expired-token, and per-context Reader browser coverage; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); LinuxCpu frontend pod replacement coverage implemented in Sprint 7.14 on the recorded cohort validation and passed the native `linux-cpu` full-suite gate the same day; `linux-gpu` full-suite validation passed on the recorded cohort validation in [Wave C](cohort-validation-waves.md); browser-level pod-failover closed on the recorded cohort validation with the mounted-source `linux-gpu` routed E2E pass.)
+**Status**: Done (code-side closed for routed JWT, malformed-frame, expired-token, and per-context Reader browser coverage; Apple cohort gate closed on the selected accelerator plus `linux-cpu`; LinuxCpu frontend pod replacement coverage implemented in Sprint 7.14 on the recorded cohort validation and passed the native `linux-cpu` full-suite gate the same day; `linux-gpu` full-suite validation passed on the recorded cohort validation on the selected accelerator plus `linux-cpu`; browser-level pod-failover closed on the recorded cohort validation with the mounted-source `linux-gpu` routed E2E pass.)
 **Implementation**: `src/Infernix/Demo/WebSocket.hs`, `src/Infernix/Demo/Auth.hs`, `src/Infernix/Auth/Jwt.hs`, `chart/templates/demo/service.yaml` (or equivalent), `src/Infernix/Demo/Api.hs`
 **Docs to update**: `documents/architecture/durable_context_design.md`, `documents/architecture/demo_app_design.md`, `documents/reference/web_portal_surface.md`, `documents/tools/keycloak.md`
 
@@ -548,7 +524,7 @@ session.
 
 ### Remaining Work
 
-None. Closed by [Wave A](cohort-validation-waves.md) and [Wave C](cohort-validation-waves.md).
+None.
 
 ---
 
@@ -1181,9 +1157,19 @@ None.
 
 ## Sprint 7.14: Integration-Layer Validation [Done]
 
-**Status**: Done (code-side closed for WebSocket-to-Pulsar publish plumbing, the coordinator-to-engine handoff contract, real Pulsar Reader roundtrip coverage for conversation/contexts/drafts/bootstrap-ready topic families, broker compacted-reader latest-per-key coverage, real broker producer-dedup validation, the non-chaos dispatcher/result-bridge durable prompt roundtrip, the Apple `engine.lock` chaos case (Wave A.3 in [cohort-validation-waves.md](cohort-validation-waves.md)), and the Linux-owned Sprint 7.14 chaos/throughput block implemented on the recorded cohort validation: frontend pod replacement, coordinator pod replacement around durable prompt dispatch/writeback, engine pod replacement, engine node drain, model-bootstrap request/ready-event deduplication across coordinator replacement, Linux engine anti-affinity, and multi-user durable prompt throughput. Native `linux-cpu` `infernix test all` validation passed on the recorded cohort validation; `linux-gpu` `infernix test all` validation passed on the recorded cohort validation in [Wave C](cohort-validation-waves.md). The mounted Linux CPU `cabal test infernix-integration` rerun on the recorded cohort validation passed against the Sprint 7.8 runtime KV-cache and daemon-orchestration split worktree.)
-**Implementation**: `test/integration/*` (existing `infernix-integration` Cabal stanza), `test/integration/Spec.hs (multi-user throughput logic — ThroughputMatrix, validateMultiUserDurablePromptThroughput/...With — lives inline in this module Main)`
-**Docs to update**: `documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`
+**Status**: Done — implemented and validated.
+Native `linux-cpu` `infernix test all` validation passed on the recorded cohort validation;
+`linux-gpu` `infernix test all` validation passed on the recorded cohort validation on the
+selected accelerator plus `linux-cpu`. The mounted Linux CPU `cabal test infernix-integration`
+rerun on the recorded cohort validation passed against the Sprint 7.8 runtime KV-cache and
+daemon-orchestration split worktree.)
+**Implementation**: `test/integration/*` (existing
+`infernix-integration` Cabal stanza), `test/integration/Spec.hs (multi-user throughput logic —
+ThroughputMatrix, validateMultiUserDurablePromptThroughput/...With — lives inline in this module
+Main)`
+**Docs to update**: `documents/development/demo_app_test_plan.md`,
+`documents/development/chaos_testing.md`, `documents/tools/pulsar.md`,
+`documents/architecture/daemon_topology.md`
 
 ### Objective
 
@@ -1421,12 +1407,12 @@ fields (for non-secret values) plus file-based Secret mounts (for credentials). 
 - `rg -n 'lookupEnv|getEnv' src/Infernix/Demo/Api.hs src/Infernix/Demo/Auth.hs src/Infernix/Runtime/Pulsar.hs` returns zero matches.
 - `grep -rn '^\s*-\s*name:\s*INFERNIX_' chart/templates/deployment-demo.yaml` returns zero
   matches.
-- Apple cohort validation closed in Wave A. CUDA Linux validation closed in Wave C with
+- Apple cohort validation closed on the selected accelerator plus `linux-cpu`. CUDA Linux validation closed on the selected accelerator plus `linux-cpu` with
   `linux-cpu` passing on the recorded cohort validation and `linux-gpu` passing on the recorded cohort validation.
 
 ### Remaining Work
 
-None. Closed by [Wave A](cohort-validation-waves.md) and [Wave C](cohort-validation-waves.md).
+None.
 
 ---
 
@@ -1441,8 +1427,6 @@ None. Closed by [Wave A](cohort-validation-waves.md) and [Wave C](cohort-validat
 Rewrite Phase 7 prose so the supported three-role daemon split (`infernix-coordinator`,
 `infernix-engine`, demo-gated `infernix-demo`) is described as the supported shape directly.
 Cleanup history lives in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-Per-sprint dated proof points are removed; cohort closure references via
-`Wave A`/`Wave A.1`/`Wave A.2`/`Wave A.3`/`Wave C` remain.
 
 ### Deliverables
 
@@ -1452,9 +1436,8 @@ Per-sprint dated proof points are removed; cohort closure references via
   (`infernix-coordinator` + substrate-specific engine pools + demo-gated `infernix-demo`) and the supported
   MinIO-backed object-storage contract, with cleanup receipts held in
   `legacy-tracking-for-deletion.md`.
-- Sprint 7.8/7.14/7.15/7.17 prose is declarative current-state; dated hardware proof points and
-  per-run attempt chronology live in [cohort-validation-waves.md](cohort-validation-waves.md), and
-  cohort closure references remain.
+- Sprint 7.8/7.14/7.15/7.17 prose is declarative current-state; open cohort gates live in
+  [cohort-validation-waves.md](cohort-validation-waves.md).
 - Per-sprint Validation sections retain test-name and gate references, drop daily proof points,
   and anchor on the canonical architecture documents.
 
@@ -1582,7 +1565,7 @@ idempotent admin reconcile.
 - `./.build/infernix lint chart` exits zero.
 - `./.build/infernix lint docs` exits zero.
 - `npm --prefix web run test:unit` exits zero.
-- Wave G routed E2E verifies the Keycloak pages show `Sign in to Infernix` and
+- routed E2E verifies the Keycloak pages show `Sign in to Infernix` and
   `Create your Infernix account`.
 
 ### Remaining Work
@@ -1623,14 +1606,14 @@ surface.
 
 ### Deliverables
 
-- The signed-in app shell renders an operator console ribbon linking to `/harbor`,
+- The signed-in app shell renders an operator console ribbon linking to `/registry`,
   `/pulsar/admin/admin/v2/clusters`, and `/minio/s3`; the ribbon stays hidden with the app shell
   before authentication.
 - `web/src/Infernix/Web/Auth.js` writes the current Keycloak access token to the
   `infernix_operator_token` cookie on token receipt / refresh and clears the cookie on logout
   (with Keycloak SSO logout added later by Phase 9 Sprint 9.9).
 - `chart/templates/securitypolicy-operator-routes.yaml` renders
-  `SecurityPolicy/infernix-operator-routes-jwt`, targeting the Harbor portal, Pulsar Admin, and
+  `SecurityPolicy/infernix-operator-routes-jwt`, targeting the registry, Pulsar Admin, and
   MinIO S3 HTTPRoutes. The policy accepts either the SPA-written cookie or a direct
   `Authorization: Bearer ...` header and validates against the configured Keycloak JWKS endpoint.
 - `src/Infernix/Lint/Chart.hs` requires the new SecurityPolicy template and the chart values that
@@ -1647,12 +1630,12 @@ surface.
 - `./.build/infernix lint docs` exits zero.
 - `helm template infernix chart` exits zero.
 - `npm --prefix web run test:unit` exits zero.
-- Wave G routed E2E verifies the operator route family rejects requests without a JWT and accepts
+- routed E2E verifies the operator route family rejects requests without a JWT and accepts
   the real Keycloak token through the supported cookie or bearer-header paths.
 
 ### Remaining Work
 
-None. Wave G routed E2E closed the operator-console ribbon and JWT-gated operator routes.
+None.
 
 ### Documentation Requirements
 
@@ -1721,7 +1704,7 @@ caller's MinIO prefix and user-owned Pulsar durable-context topics.
   refreshes the Apple host-native `./.build/infernix` binary.
 - `./.build/infernix test e2e` exits zero on the supported Apple host-native lane with 9/9 routed
   Playwright tests passing, including account deletion in 2.9 seconds on the final run.
-- Wave G routed E2E verifies the complete browser account-deletion flow against real Keycloak,
+- routed E2E verifies the complete browser account-deletion flow against real Keycloak,
   MinIO, Pulsar, and Envoy Gateway.
 
 ### Remaining Work
@@ -1754,11 +1737,6 @@ None.
 ## Sprint 7.23: Apple Host Engine Pulsar Singleton [Done]
 
 **Status**: Done (superseded by Sprint 7.24; no new Apple `Failover` evidence requested)
-**Code-side closure**: Superseded — the singleton-oriented Apple design has been demoted. Service
-consumer validation now rejects `Failover` for service consumers, accepts normal Apple `Shared`
-pool membership across distinct host ids, and reserves `Exclusive` for pinned member routes.
-Sprint 7.24 replaces the singleton-oriented design with substrate-neutral engine pools.
-**Cohort gate**: Replaced by Sprint 7.24 pool-routing validation; no new Apple `Failover` evidence is requested.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/Service.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`
 **Docs to update**: [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/tools/pulsar.md](../documents/tools/pulsar.md), [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md), [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
@@ -1802,36 +1780,6 @@ None. The superseded singleton target survives only as historical notes and ledg
 ## Sprint 7.24: Engine Pool Assignment and Broker-Native Backpressure [Done]
 
 **Status**: Done
-**Code-side closure**: Complete for startup-time member assignment on the present Linux
-outer-container lane and the Apple pinned/shared validation path — coordinator routing resolves
-model ids to validated pool topics, engine daemons select a stable member id from
-`daemonConfig.memberId` / `--engine-name`, normal service consumers use `Shared`, pinned routes
-retain `Exclusive`, and `Failover` remains limited to coordinator-owned
-dispatcher/result-bridge/model-bootstrap loops. The current Apple integration pass proves one
-pinned Apple host member consumes an exact member topic through `Exclusive`, processes a
-validation request, and rejects a duplicate daemon with the broker 409 conflict by launching both
-daemons against an isolated `infernix service --config` substrate file. The same pass starts two
-same-machine Apple host-member daemons on one isolated derived pool/model topic, observes two real
-Pulsar consumers on the `Shared` subscription through the admin stats endpoint, and completes an
-inference request. It also covers Apple production `demo_ui = false` route/publication assertions.
-Current source additionally adds a single-host logical `Shared` backlog harness that opens two real
-Pulsar WebSocket consumers on an isolated pool/model topic with service-shaped subscription names
-and `receiverQueueSize=1`, holds the first request unacked, publishes a second request, and asserts
-the free consumer receives that second request by decoding the request id from the Pulsar payload,
-and the Apple integration lane runs that harness against the live Apple Pulsar lane.
-No hot reload is implemented in this sprint; changing pool/member assignment remains a Dhall
-materialization and daemon restart or rollout boundary. The Linux CPU rebuilt-image integration
-pass exercises the real-cluster Linux side of this sprint: Kubernetes-observed pool placement
-across the two-worker Kind topology, unique-topic `Shared` backlog/backpressure, frontend and
-engine replacement cases, engine node drain, model-bootstrap failover/deduplication, anti-affinity,
-lifecycle rebinding, and demo-off coordinator/engine publication.
-**Cohort gate**: Closed [Wave J](cohort-validation-waves.md) — real Pulsar integration has proved
-pinned duplicate-consumer rejection, same-machine Apple `Shared` coexistence, and Apple
-production `demo_ui = false` assertions, plus the single-host logical `Shared`
-backlog/backpressure harness. The current full Apple aggregate `./.build/infernix test all` also
-passes against this state, and Linux CPU integration proves pool placement/backpressure in Kind.
-Physical Apple multi-host operation is hardware-deferred proof while no second Apple host is
-available.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs` (substrate decoder type = reflected schema; no tracked `.dhall`), `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/tools/pulsar.md](../documents/tools/pulsar.md), [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md), [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
@@ -1872,7 +1820,7 @@ exact-member routes stay explicit through `Exclusive` pinned topics.
 
 ### Remaining Work
 
-None. Closed by [Wave J](cohort-validation-waves.md).
+None. Closed on the selected accelerator plus `linux-cpu`.
 
 ### Documentation Requirements
 
@@ -1889,35 +1837,6 @@ None. Closed by [Wave J](cohort-validation-waves.md).
 ## Sprint 7.25: Webapp Object-Proxy and Per-User Isolation Hardening [Done]
 
 **Status**: Done
-**Code-side closure**: Done (machine-independent). The webapp is the single mediator for
-browser file I/O. `src/Infernix/Demo/Api.hs` proxies the bytes server-side over the internal MinIO
-endpoint (`loadInternalMinioPresignedConfig` + the new `putMinioObjectBytes` / `getMinioObjectBytes`
-helpers, matching the file's existing account-cleanup signing pattern): `handleObjectsUpload`
-(`POST /api/objects/upload`) stores the request-body bytes and returns the typed `ObjectRef`;
-`handleObjectsDownloadBytes` (`GET /api/objects/download?key=…`) streams the bytes with
-`Content-Type` + `Content-Disposition`, authenticated by the `Authorization` header **or** the
-`infernix_operator_token` cookie (for browser-issued media `src` GETs); `handleObjectsDownloadGrant`
-(`POST /api/objects/download`) returns the authoritative render disposition. The
-`mintAndRespond` grants, the `artifactUploadGrantPresignedUrl` / `artifactDownloadGrantPresignedUrl`
-fields in `src/Infernix/Web/Contracts.hs`, and the public-endpoint `loadPresignedConfig` are deleted.
-`Infernix.Objects.Layout.sanitizeFilename` neutralizes the client display name, and
-`pathBelongsToUser` on the verified `sub` is the single server-side choke point for every object
-operation (re-checked on the streaming GET against the client-supplied key). The browser
-`web/src/Infernix/Web/ArtifactTransport.js` now does a one-leg authenticated POST upload and a
-GET-by-key download; `web/src/index.html` drops the MinIO S3 operator-ribbon link. This realizes the
-[../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md)
-and the [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md).
-Gates green: `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
-`infernix lint files/chart/docs/proto`, `infernix docs check` (host toolchain); `node --check` on the
-rewritten JS. The web unit suite + bundle and `poetry run check-code` are unaffected by 7.25 (no
-PureScript or Python changes) and run in the Wave M container batch. Delivered jointly with
-[Phase 3 Sprint 3.13](phase-3-platform-services-and-edge-routing.md). **Note:** the implementation
-keeps `ArtifactDownloadGrant` (minus its URL field) as the disposition carrier and uses the file-local
-`putMinioObjectBytes`/`getMinioObjectBytes` signers rather than `Infernix.Objects.Upload`'s
-`ObjectUploadConfig`-typed helpers, matching the established `Demo/Api.hs` MinIO-access pattern; the
-contract module is `src/Infernix/Web/Contracts.hs` (there is no `src/Infernix/Demo/Contracts.hs`).
-**Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the
-chosen `linux-gpu` accelerator.
 **Implementation**: `src/Infernix/Demo/Api.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Objects/Layout.hs`, `web/src/Infernix/Web/ArtifactTransport.js`, `web/src/index.html`
 **Docs to update**: `documents/architecture/object_access_doctrine.md`, `documents/architecture/tenant_isolation_doctrine.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/architecture/demo_app_design.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1942,13 +1861,13 @@ cross-user access is impossible by construction.
   get / put / delete) and cannot read another user's chat context
 - e2e: the browser uploads and downloads only through the webapp `/api/objects` surface, never a
   presigned MinIO URL
-- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen `linux-gpu` real
+- the `linux-cpu` plus chosen `linux-gpu` cohort records the real
   per-user attestation, including the routed cross-user-403 e2e and proxied byte upload/download
   evidence.
 
 ### Remaining Work
 
-None. Closed by [Wave M](cohort-validation-waves.md).
+None. Closed on the selected accelerator plus `linux-cpu`.
 
 ### Documentation Requirements
 
@@ -1965,22 +1884,6 @@ None. Closed by [Wave M](cohort-validation-waves.md).
 ## Sprint 7.26: Per-User Files Navigational View [Done]
 
 **Status**: Done
-**Code-side closure**: Done (machine-independent). `src/Infernix/Demo/Api.hs` adds
-`handleObjectsList` (`GET /api/objects/list`, returns the caller's objects as a JSON array of
-`ObjectRef` scoped server-side to `users/<sub>/` via the existing `listMinioUserObjectKeys`) and
-`handleObjectsDelete` (`DELETE /api/objects?key=…`, removes a single caller-owned object via the
-existing `deleteMinioObject`); both authorize through the same `pathBelongsToUser` choke point as
-Sprint 7.25 (HTTP 403 on a cross-user key). The SPA gains a Files nav tab + `files-root` view
-(`web/src/index.html`, `web/src/Infernix/Web/Router.purs` `RouteFiles`): `renderFilesView` /
-`fileEntryFromObjectRef` / `filesEntriesFromObjectRefs` in `web/src/Infernix/Web/Artifacts.purs`
-render a flat per-user list (list / upload / download / preview / delete) reusing the artifact render
-dispositions; `web/src/Infernix/Web/FilesTransport.{purs,js}` wraps the authenticated list refresh
-and the delete request; `web/src/Main.purs` wires the route, transport, and refresh-after-upload.
-Gates green: `cabal build all`, `cabal test infernix-haskell-style` (ormolu + hlint clean on the new
-handlers), `infernix lint files/chart/docs/proto`, `infernix docs check`, and the containerized web
-suite (`spago build` clean, `spago test` 71/71).
-**Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the
-chosen `linux-gpu` accelerator.
 **Implementation**: `src/Infernix/Demo/Api.hs`, `web/src/index.html`, `web/src/Infernix/Web/Router.purs`, `web/src/Infernix/Web/Artifacts.purs`, `web/src/Infernix/Web/FilesTransport.purs`, `web/src/Infernix/Web/FilesTransport.js`, `web/src/Main.purs`
 **Docs to update**: `documents/reference/web_portal_surface.md`, `documents/reference/api_surface.md`, `documents/architecture/demo_app_design.md`, `documents/architecture/tenant_isolation_doctrine.md`
 
@@ -2001,11 +1904,11 @@ dispositions for preview.
 
 - scoping e2e: the Files view lists only the caller's objects, and list / download / delete on
   another user's key is rejected
-- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen `linux-gpu` attestation
+- the `linux-cpu` plus chosen `linux-gpu` cohort records the attestation
 
 ### Remaining Work
 
-None. Closed by [Wave M](cohort-validation-waves.md).
+None. Closed on the selected accelerator plus `linux-cpu`.
 
 ### Documentation Requirements
 
@@ -2019,26 +1922,6 @@ None. Closed by [Wave M](cohort-validation-waves.md).
 ## Sprint 7.27: In-Browser MIDI/MusicXML/ZIP Rendering [Done]
 
 **Status**: Done
-**Code-side closure**: Done (machine-independent). New `ArtifactRenderDisposition`
-variants `RenderMidi` / `RenderMusicXml` / `RenderZipStems` are added to
-`src/Infernix/Web/Contracts.hs` (data type + `phase7Sums` so the regenerated `Generated.Contracts`
-carries them), the `src/Infernix/Demo/Api.hs.renderDispositionForMime` classifier, and the
-PureScript `web/src/Infernix/Web/Artifacts.purs` classifier (`dispositionFor`), `mimeFromObjectKey`
-(`.zip`), the `dispositionLabel`/`dispositionClass`/`dispositionTag` helpers, and the
-`renderArtifactPreview` mount nodes. `web/src/Infernix/Web/ArtifactTransport.js` renders the three
-families in-browser through **dynamically-imported** FFI — `@tonejs/midi` + `smplr` (MIDI piano-roll
-canvas + playback against self-hosted samples at `/samples/smplr`), `opensheetmusicdisplay`
-(MusicXML/`.mxl` → SVG, code-split via dynamic `import()`), and `fflate` (ZIP-stems → inline
-`<audio>`) — wired into `handleDownload`; `web/package.json` adds the runtime deps. The dynamic
-imports keep the unit suite free of the runtime deps (resolved only by esbuild at bundle time). Gates
-green: `cabal build all`, `cabal test infernix-unit` (disposition matrix + roundtrip extended),
-`cabal test infernix-haskell-style`, `infernix lint files/chart/docs/proto`, `infernix docs check`,
-and the containerized web suite (`spago build` clean, `spago test` 71/71 with the updated
-`ArtifactsSpec`).
-**Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the
-chosen `linux-gpu` accelerator. The esbuild bundle of the new deps, self-hosted smplr sample
-provisioning, and in-browser render e2e (MIDI plays + piano-roll, MusicXML SVG, ZIP-stem audio) are
-validated by the Wave M routed browser suite.
 **Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/Demo/Api.hs`, `web/src/Infernix/Web/Artifacts.purs`, `web/src/Infernix/Web/ArtifactTransport.js`, `web/package.json`
 **Docs to update**: `documents/reference/web_portal_surface.md`, `documents/architecture/demo_app_design.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -2059,11 +1942,11 @@ and self-hosted PureScript FFI, replacing the download-only fallback for those f
 
 - e2e: a MIDI artifact plays and renders a piano-roll, a MusicXML/`.mxl` artifact renders SVG, and a
   ZIP stem set renders inline audio — none falls back to download-only
-- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen `linux-gpu` attestation
+- the `linux-cpu` plus chosen `linux-gpu` cohort records the attestation
 
 ### Remaining Work
 
-None. Closed by [Wave M](cohort-validation-waves.md).
+None. Closed on the selected accelerator plus `linux-cpu`.
 
 ### Documentation Requirements
 
@@ -2077,12 +1960,6 @@ None. Closed by [Wave M](cohort-validation-waves.md).
 ## Sprint 7.28: Generated Artifact Object Ownership and Result-Bridge Authorization [Done]
 
 **Status**: Done
-**Code-side closure**: Closed. The worker protobuf carries a Haskell-derived
-generated-output prefix, Python adapters reject missing/invalid generated-output ownership and upload
-only below that prefix, native artifact uploads use the same target instead of `native-generated/...`,
-and the result bridge rejects raw or cross-user generated object refs.
-**Cohort gate**: Closed by full selected `linux-gpu` plus `linux-cpu` routed real-output
-validation with generated artifact families exercised end to end.
 **Implementation**: `proto/infernix/runtime/inference.proto`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Objects/Layout.hs`, `python/adapters/common.py`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/architecture/object_access_doctrine.md`, `documents/architecture/tenant_isolation_doctrine.md`, `documents/engineering/object_storage.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -2125,23 +2002,15 @@ None.
 
 ## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Done]
 
-**Status**: Done — the typed transition-evidence retirement of the
-`ClusterState`/`LifecycleProgress` stringly fields, the `DemoBucketsProvisioned`-gated object-proxy
-routes, and the proven `.ready` sentinel gate are landed, and the
-[Wave V](cohort-validation-waves.md) sign-off that was reset as current proof is reproduced: the
-2026-08-17 Apple plus paired `linux-cpu` cohort in [Wave Y](cohort-validation-waves.md) ran both
-lanes' full `test all` on one frozen source identity, exercising the routed object-proxy surface and
-the lifecycle transitions this sprint retyped.
-**Code-side closure**: closed — `cabal build all` (`-Wall -Werror`, clean),
-`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and
-`poetry run check-code` all pass on the apple-silicon lane.
+**Status**: Done — implemented and validated.
 **Cohort**: closed on the 2026-08-17 apple-silicon plus `linux-cpu` full-suite `test all` pair
-recorded in [Wave Y](cohort-validation-waves.md). [Wave V](cohort-validation-waves.md)'s earlier pass
+recorded on the selected accelerator plus `linux-cpu`. the selected accelerator's earlier pass
 remains historical and is not read as current proof.
-**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`
+**Implementation**: `src/Infernix/Types.hs`,
+`src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`
 **Blocked by**: Sprint 2.14, 4.28
-**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
-engineering/reference docs
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's
+existing engineering/reference docs
 
 ### Objective
 
@@ -2202,24 +2071,8 @@ None.
 
 ## Remaining Work
 
-Reproduce the Sprint 7.29 cohort evidence. The [Wave V](cohort-validation-waves.md) attestation this
-phase closed on was reset and is no longer a current proof point; nothing in this phase's own surface
-is known broken, and no code-side work is claimed here. The residual is validation-only.
+Reproduce the Sprint 7.29 cohort evidence. The residual is validation-only.
 
-**Cohort gate**: [Wave Y](cohort-validation-waves.md), after Phase 1's complete current-source gates
-and Apple/paired-`linux-cpu` cohorts. The former Sprint 1.20 bounded-command environment defect is
-corrected and is historical context, not the current blocker.
-
-## Closure Notes
-
-- Sprint 7.28 closed through the full `linux-gpu` plus `linux-cpu` cohort gates.
-- Sprint 7.24 closed through [Wave J](cohort-validation-waves.md): the selected
-  `linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
-- Sprints 7.25–7.27 closed through [Wave M](cohort-validation-waves.md): the selected
-  `linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
-- Physical Apple multi-host routing is deferred hardware proof, not open Phase 7 work.
-
----
 
 ## Documentation Requirements
 

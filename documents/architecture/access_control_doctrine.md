@@ -14,7 +14,7 @@
   chat) is owned by [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md) and is derived from the
   Keycloak `sub`. This doctrine adds the orthogonal **admin vs. user** dimension: only members of the
   `infernix-admin` realm role may see **cluster-wide** data.
-- **Invariant.** Admins see cluster-wide surfaces (Harbor, Pulsar Admin, cluster-wide monitoring);
+- **Invariant.** Admins see cluster-wide surfaces (the registry, Pulsar Admin, cluster-wide monitoring);
   every other authenticated user — including self-registered users — sees only their own data. A valid
   JWT is necessary but **not sufficient** for cluster-wide surfaces.
 - **Admin identity is a realm role, not a user id.** Keycloak emits the `infernix-admin` role in
@@ -39,7 +39,7 @@ admin predicate. `sub`-scoped per-user surfaces never consult the role.
 
 | Surface | Path | Gate |
 |---|---|---|
-| Operator consoles (Harbor `/harbor` + `/harbor/api`, Pulsar Admin `/pulsar/admin` + `/pulsar/ws`) | browser → Envoy **edge** (gateway NodePort 30090) | `SecurityPolicy/infernix-operator-routes-jwt`: JWT authentication **and** an `authorization` rule (`defaultAction: Deny`) allowing only tokens whose `realm_access.roles` include `infernix-admin` |
+| Operator consoles (registry `/registry` + `/registry`, Pulsar Admin `/pulsar/admin` + `/pulsar/ws`) | browser → Envoy **edge** (gateway NodePort 30090) | `SecurityPolicy/infernix-operator-routes-jwt`: JWT authentication **and** an `authorization` rule (`defaultAction: Deny`) allowing only tokens whose `realm_access.roles` include `infernix-admin` |
 | Admin monitoring panel + `/api/admin/overview`; cluster-wide model-cache surface `GET /api/cache` and the `/api/cache/{evict,rebuild}` mutations | browser → `infernix-demo` webapp | backend requires `jwtClaimsHasRealmRole "infernix-admin"` (`withAdminRequest`); 401 without a token, 403 for a valid non-admin token |
 | Per-user chat / artifacts / files / personal dashboard | browser → `infernix-demo` webapp | `sub`-derived, per-user (tenant isolation); no role needed |
 | Per-user object storage (upload / download / list / delete) | `infernix-demo` webapp → MinIO (internal endpoint) | server-side `pathBelongsToUser` on the verified `sub` **plus** (when `cluster.minio.stsPerUser`) a per-user MinIO STS credential scoped by an inline session policy to `users/<sub>/*` — the IAM layer is a second boundary, so the shared root credential is not the sole isolation |

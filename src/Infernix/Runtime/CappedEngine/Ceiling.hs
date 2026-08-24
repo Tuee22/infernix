@@ -15,6 +15,7 @@
 -- installation whose strength is part of its value.
 module Infernix.Runtime.CappedEngine.Ceiling
   ( CeilingStrength (..),
+    CeilingRequirement (..),
     CeilingProvenance (..),
     EngineCeilingProjection (..),
     InstalledCeiling,
@@ -25,15 +26,19 @@ module Infernix.Runtime.CappedEngine.Ceiling
     installedCeilingProvenance,
     installedCeilingResource,
     installedCeilingStrength,
+    ceilingStrengthForLane,
+    requireCeilingStrength,
+    validateRuntimeCeilingReadiness,
     resolveEngineCeiling,
     projectionProbeCeiling,
     ceilingReadBackMatches,
   )
 where
 
+import Data.Foldable (traverse_)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Infernix.Types (Resource (NvidiaVram, PodRam), RuntimeMode (AppleSilicon, LinuxCpu, LinuxGpu))
+import Infernix.Types (Resource (HostRam, NvidiaVram, PodRam), RuntimeMode (AppleSilicon, LinuxCpu, LinuxGpu))
 
 -- | What a lane's mechanism actually provides.
 --
@@ -50,6 +55,30 @@ data CeilingStrength
   | -- | A kernel data-segment limit is installed before the engine's first
     -- instruction and cannot be raised back by the process it binds.
     CeilingInstalledDataSegment
+  deriving (Eq, Show)
+
+-- | The minimum strength a production lane contract accepts at readiness.
+--
+-- This is deliberately distinct from 'CeilingStrength': one is what the
+-- contract requires and the other is what the calibrated mechanism provides.
+-- Keeping both values means readiness compares two independently named facts
+-- instead of treating the resolver's declaration as its own proof.
+data CeilingRequirement
+  = CeilingDetectionPermitted
+  | CeilingPreventionRequired
+  deriving (Eq, Show)
+
+-- | Whether a real engine on a host lane has demonstrated a clean allocation
+-- refusal under the installed mechanism.
+--
+-- Constructors stay private. Calibration is a cohort property of the pinned
+-- lane implementation, not a caller-supplied runtime option: @linux-cpu@ has
+-- the real llama.cpp observation, while @linux-gpu@ remains pending until its
+-- own selected accelerator cohort runs. Apple and device resources never reach
+-- this declaration because they have no installable mechanism.
+data HostCeilingCalibration
+  = HostCeilingCalibrationPending
+  | HostCeilingCalibrationObserved
   deriving (Eq, Show)
 
 -- | Phase 4 Sprint 4.43 — what an engine projects it needs, or that its family
@@ -129,12 +158,9 @@ resolveEngineCeiling ::
   EngineCeilingProjection ->
   InstalledCeiling
 resolveEngineCeiling runtimeModeValue resource derivedMib projection =
-  case (runtimeModeValue, resource) of
-    (AppleSilicon, _) -> detectionOnly
-    (_, NvidiaVram) -> detectionOnly
-    (LinuxCpu, PodRam) -> installedDataSegment
-    (LinuxGpu, PodRam) -> installedDataSegment
-    _ -> detectionOnly
+  case ceilingStrengthForLane runtimeModeValue resource of
+    CeilingDetectionOnly -> detectionOnly
+    CeilingInstalledDataSegment -> installedDataSegment
   where
     -- Phase 4 Sprint 4.43 — the greater of the two quantities, never a
     -- replacement of one by the other. The derivation stays authoritative
@@ -165,6 +191,66 @@ resolveEngineCeiling runtimeModeValue resource derivedMib projection =
           installedCeilingProvenance = provenance,
           installedCeilingArgumentPrefix = dataSegmentPrefix installedMib
         }
+
+-- | The strength the selected lane has earned for one resource.
+--
+-- Linux CPU prevention is backed by a real pinned llama.cpp run that
+-- initialized the backend and model under the data-segment ceiling and then
+-- refused an over-budget compute-buffer allocation with an ordinary non-zero
+-- exit. Linux GPU remains detection-only until the corresponding CUDA cohort
+-- produces its own observation. Device memory and Apple unified memory have no
+-- installable mechanism and therefore cannot be promoted by calibration.
+ceilingStrengthForLane :: RuntimeMode -> Resource -> CeilingStrength
+ceilingStrengthForLane runtimeModeValue resource =
+  case (runtimeModeValue, resource) of
+    (AppleSilicon, _) -> CeilingDetectionOnly
+    (_, NvidiaVram) -> CeilingDetectionOnly
+    (LinuxCpu, PodRam) -> strengthFromCalibration HostCeilingCalibrationObserved
+    (LinuxGpu, PodRam) -> strengthFromCalibration HostCeilingCalibrationPending
+    _ -> CeilingDetectionOnly
+  where
+    strengthFromCalibration calibration =
+      case calibration of
+        HostCeilingCalibrationPending -> CeilingDetectionOnly
+        HostCeilingCalibrationObserved -> CeilingInstalledDataSegment
+
+-- | Refuse a required prevention contract when the lane declares only
+-- detection. Detection-permitted contracts accept either strength.
+requireCeilingStrength :: CeilingRequirement -> CeilingStrength -> Either Text ()
+requireCeilingStrength requirement provided =
+  case (requirement, provided) of
+    (CeilingDetectionPermitted, _) -> Right ()
+    (CeilingPreventionRequired, CeilingInstalledDataSegment) -> Right ()
+    (CeilingPreventionRequired, CeilingDetectionOnly) ->
+      Left "the runtime contract requires prevention but this lane declares detection only"
+
+-- | Production readiness check for every physical resource the runtime mode
+-- can execute against.
+--
+-- The Linux CPU contract requires its calibrated host mechanism. The Apple
+-- contract permits its honest detection-only host mechanism. Linux GPU stays
+-- detection-permitted until Phase 6's CUDA calibration promotes that lane; its
+-- device resource is permanently detection-only because no kernel mechanism
+-- bounds device memory on any supported lane.
+validateRuntimeCeilingReadiness :: RuntimeMode -> Either Text ()
+validateRuntimeCeilingReadiness runtimeModeValue =
+  traverse_ validateResource (runtimeResources runtimeModeValue)
+  where
+    validateResource resource =
+      requireCeilingStrength
+        (requiredStrength runtimeModeValue resource)
+        (ceilingStrengthForLane runtimeModeValue resource)
+
+    runtimeResources mode =
+      case mode of
+        AppleSilicon -> [HostRam]
+        LinuxCpu -> [PodRam]
+        LinuxGpu -> [PodRam, NvidiaVram]
+
+    requiredStrength mode resource =
+      case (mode, resource) of
+        (LinuxCpu, PodRam) -> CeilingPreventionRequired
+        _ -> CeilingDetectionPermitted
 
 -- | @\/usr\/bin\/prlimit --data=\<soft>:\<hard> --@.
 --

@@ -1,0 +1,87 @@
+{{/*
+Phase 3 Sprint 3.17: the in-cluster image repository.
+
+One Deployment running the upstream single-binary CNCF distribution registry.
+There is no database, no job service, no scanner, no Redis, and no portal --
+the components this replaced needed a Patroni PostgreSQL cluster and a
+first-boot schema migration, and the bulk of the retired cluster-lifecycle code
+existed only to nurse that migration through retained state.
+
+The pod is stateless: every blob lives in the MinIO-backed
+`{{ .Values.registry.storage.bucket }}` bucket, so a rescheduled pod re-reads
+the blobs it served before. The MinIO StatefulSet and its provisioning Job are
+ordered ahead of this Deployment because distribution's S3 driver requires its
+bucket to already exist.
+
+`registry:2` publishes a multi-arch manifest, so the same ref runs natively on
+`amd64` and `arm64` Kind nodes with no per-lane override and no emulation. It is
+pulled directly from upstream rather than through itself, which is the bounded
+bootstrap exception the image doctrine names: the registry and its storage
+backend may pull from upstream before the registry is serving, and every later
+workload pulls registry-backed refs.
+
+The config is mounted and named explicitly on the command line rather than
+relying on the image's default config path, so the running config does not
+depend on which default path the upstream tag happens to use.
+*/}}
+{{- if .Values.registry.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infernix-registry
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: infernix-registry
+    app.kubernetes.io/component: image-registry
+    app.kubernetes.io/part-of: infernix
+spec:
+  replicas: {{ .Values.registry.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-registry
+      app.kubernetes.io/component: image-registry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-registry
+        app.kubernetes.io/component: image-registry
+        app.kubernetes.io/part-of: infernix
+    spec:
+      containers:
+        - name: registry
+          image: {{ .Values.registry.image }}
+          imagePullPolicy: {{ .Values.registry.imagePullPolicy }}
+          command:
+            - registry
+          args:
+            - serve
+            - /etc/infernix-registry/config.yml
+          ports:
+            - name: registry
+              containerPort: {{ .Values.registry.service.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: registry-config
+              mountPath: /etc/infernix-registry
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: {{ .Values.registry.service.port }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: {{ .Values.registry.service.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+{{ toYaml .Values.registry.resources | indent 12 }}
+      volumes:
+        - name: registry-config
+          configMap:
+            name: infernix-registry-config
+{{- end }}

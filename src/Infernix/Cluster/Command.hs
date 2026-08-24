@@ -57,7 +57,6 @@ module Infernix.Cluster.Command
     WebDependencyToolchain (..),
     PodQuery (..),
     SecretField (..),
-    PostgresAction (..),
     HelmDuration (..),
     HelmUpgradeSpec (..),
     HelmDependency (..),
@@ -87,12 +86,10 @@ module Infernix.Cluster.Command
     kubectlListStorageClasses,
     kubectlDeleteStorageClass,
     kubectlApplyInfernixStorageClass,
-    kubectlDeleteHarborMigrationJob,
     kubectlListPods,
     kubectlScaleDeployment,
     kubectlWaitPodReady,
     kubectlDeletePods,
-    kubectlRunPostgresAction,
     kubectlGetSecretField,
     kubectlGetCrd,
     kubectlPodLogs,
@@ -135,7 +132,7 @@ module Infernix.Cluster.Command
     hostMakeClaimWritable,
     hostSetClaimOwner,
     hostHostname,
-    curlHarborHealth,
+    curlRegistryApi,
     curlPulsarClusters,
     curlPublication,
     tarListArchive,
@@ -354,8 +351,8 @@ data WebDependencyToolchain
 
 data PodQuery
   = AllPodsNoHeaders
-  | HarborPostgresStartupPods
-  | HarborPostgresPrimary
+  | PatroniPostgresStartupPods
+  | PatroniPostgresPrimary
   | PlaywrightDemoPods
   deriving (Eq, Show)
 
@@ -363,11 +360,6 @@ data SecretField
   = UsernameField
   | PasswordField
   deriving (Eq, Show)
-
-data PostgresAction
-  = DetectDirtyHarborMigration !Password
-  | RepairDirtyHarborMigration !Password
-  deriving (Eq)
 
 data HelmDuration
   = HelmSeconds !Int
@@ -384,16 +376,14 @@ data HelmUpgradeSpec = HelmUpgradeSpec
   deriving (Eq, Show)
 
 data HelmDependency
-  = HarborChart
-  | PostgresOperatorChart
+  = PostgresOperatorChart
   | PostgresDatabaseChart
   | PulsarChart
   | EnvoyGatewayChart
   deriving (Eq, Show)
 
 data HelmRepository
-  = GoharborRepo
-  | PerconaRepo
+  = PerconaRepo
   | PulsarRepo
   | BitnamiRepo
   | NvidiaPluginRepo
@@ -469,12 +459,10 @@ data ClusterCommand
   | KubectlListStorageClasses !KubeTarget
   | KubectlDeleteStorageClass !KubeTarget !ResourceName
   | KubectlApplyInfernixStorageClass !KubeTarget
-  | KubectlDeleteHarborMigrationJob !KubeTarget
   | KubectlListPods !KubeTarget !PodQuery
   | KubectlScaleDeployment !KubeTarget !Namespace !WorkloadRef !Int
   | KubectlWaitPodReady !KubeTarget !Namespace !PodName !Int
   | KubectlDeletePods !KubeTarget !Namespace !(NonEmpty PodName)
-  | KubectlRunPostgresAction !KubeTarget !PodName !PostgresAction
   | KubectlGetSecretField !KubeTarget !Namespace !SecretName !SecretField
   | KubectlGetCrd !KubeTarget !ResourceName
   | KubectlPodLogs !KubeTarget !Namespace !PodName !Bool
@@ -516,7 +504,7 @@ data ClusterCommand
   | HostMakeClaimWritable !FilePath
   | HostSetClaimOwner !Owner !FilePath
   | HostHostnameCommand
-  | CurlHarborHealth !Url
+  | CurlRegistryApi !Url
   | CurlPulsarClusters !Url
   | CurlPublication !Url
   | TarListArchive !FilePath
@@ -597,9 +585,6 @@ kubectlDeleteStorageClass = KubectlDeleteStorageClass
 kubectlApplyInfernixStorageClass :: KubeTarget -> ClusterCommand
 kubectlApplyInfernixStorageClass = KubectlApplyInfernixStorageClass
 
-kubectlDeleteHarborMigrationJob :: KubeTarget -> ClusterCommand
-kubectlDeleteHarborMigrationJob = KubectlDeleteHarborMigrationJob
-
 kubectlListPods :: KubeTarget -> PodQuery -> ClusterCommand
 kubectlListPods = KubectlListPods
 
@@ -611,9 +596,6 @@ kubectlWaitPodReady = KubectlWaitPodReady
 
 kubectlDeletePods :: KubeTarget -> Namespace -> NonEmpty PodName -> ClusterCommand
 kubectlDeletePods = KubectlDeletePods
-
-kubectlRunPostgresAction :: KubeTarget -> PodName -> PostgresAction -> ClusterCommand
-kubectlRunPostgresAction = KubectlRunPostgresAction
 
 kubectlGetSecretField ::
   KubeTarget ->
@@ -761,8 +743,8 @@ hostSetClaimOwner = HostSetClaimOwner
 hostHostname :: ClusterCommand
 hostHostname = HostHostnameCommand
 
-curlHarborHealth :: Url -> ClusterCommand
-curlHarborHealth = CurlHarborHealth
+curlRegistryApi :: Url -> ClusterCommand
+curlRegistryApi = CurlRegistryApi
 
 curlPulsarClusters :: Url -> ClusterCommand
 curlPulsarClusters = CurlPulsarClusters
@@ -1039,12 +1021,10 @@ clusterCommandOperation = \case
   KubectlListStorageClasses {} -> KubectlReadOperation
   KubectlDeleteStorageClass {} -> KubectlDeleteOperation
   KubectlApplyInfernixStorageClass {} -> KubectlApplyOperation
-  KubectlDeleteHarborMigrationJob {} -> KubectlDeleteOperation
   KubectlListPods {} -> KubectlReadOperation
   KubectlScaleDeployment {} -> KubectlApplyOperation
   KubectlWaitPodReady {} -> KubectlWaitOperation
   KubectlDeletePods {} -> KubectlDeleteOperation
-  KubectlRunPostgresAction {} -> KubectlExecOperation
   KubectlGetSecretField {} -> KubectlReadOperation
   KubectlGetCrd {} -> KubectlReadOperation
   KubectlPodLogs {} -> KubectlReadOperation
@@ -1086,7 +1066,7 @@ clusterCommandOperation = \case
   HostMakeClaimWritable {} -> HostMutationOperation
   HostSetClaimOwner {} -> HostMutationOperation
   HostHostnameCommand -> HostProbeOperation
-  CurlHarborHealth {} -> CurlProbeOperation
+  CurlRegistryApi {} -> CurlProbeOperation
   CurlPulsarClusters {} -> CurlProbeOperation
   CurlPublication {} -> CurlProbeOperation
   TarListArchive {} -> ArchiveReadOperation
@@ -1152,8 +1132,6 @@ validateClusterCommand = \case
     validateResourceName resourceName
   KubectlApplyInfernixStorageClass target ->
     validateKubeTarget target
-  KubectlDeleteHarborMigrationJob target ->
-    validateKubeTarget target
   KubectlListPods target _podQuery ->
     validateKubeTarget target
   KubectlScaleDeployment target namespaceName workload replicas -> do
@@ -1170,10 +1148,6 @@ validateClusterCommand = \case
     validateKubeTarget target
     validateNamespace namespaceName
     mapM_ validatePodName (NonEmpty.toList podNames)
-  KubectlRunPostgresAction target primaryPod action -> do
-    validateKubeTarget target
-    validatePodName primaryPod
-    validatePostgresAction action
   KubectlGetSecretField target namespaceName secretName _secretField -> do
     validateKubeTarget target
     validateNamespace namespaceName
@@ -1285,7 +1259,7 @@ validateClusterCommand = \case
     validatePath "claim directory path" directoryPath
   HostHostnameCommand ->
     Right ()
-  CurlHarborHealth url ->
+  CurlRegistryApi url ->
     validateUrl url
   CurlPulsarClusters url ->
     validateUrl url
@@ -1434,12 +1408,6 @@ validateContainerInspectField inspectField =
     MountSourceAt destinationPath ->
       validatePath "container mount destination" destinationPath
     ContainerPaused -> Right ()
-
-validatePostgresAction :: PostgresAction -> Either String ()
-validatePostgresAction action =
-  case action of
-    DetectDirtyHarborMigration password -> validatePassword password
-    RepairDirtyHarborMigration password -> validatePassword password
 
 validateHelmDuration :: HelmDuration -> Either String ()
 validateHelmDuration duration =
@@ -1649,18 +1617,6 @@ renderClusterCommand resolveTool = \case
     kubectlSpec target ["delete", unResourceName storageClassName] ""
   KubectlApplyInfernixStorageClass target ->
     kubectlSpec target ["apply", "-f", "-"] infernixStorageClassManifest
-  KubectlDeleteHarborMigrationJob target ->
-    kubectlSpec
-      target
-      [ "-n",
-        "platform",
-        "delete",
-        "job",
-        "migration-job",
-        "--ignore-not-found=true",
-        "--wait=true"
-      ]
-      ""
   KubectlListPods target podQuery ->
     kubectlSpec target (podQueryArguments podQuery) ""
   KubectlScaleDeployment target namespaceName workload replicas ->
@@ -1693,8 +1649,6 @@ renderClusterCommand resolveTool = \case
           <> ["--ignore-not-found=true", "--wait=false"]
       )
       ""
-  KubectlRunPostgresAction target primaryPod action ->
-    renderPostgresAction target primaryPod action
   KubectlGetSecretField target namespaceName secretName secretField ->
     kubectlSpec
       target
@@ -1955,7 +1909,7 @@ renderClusterCommand resolveTool = \case
     commandSpec HostChown ["-R", unOwner owner, directoryPath] ""
   HostHostnameCommand ->
     commandSpec HostHostname [] ""
-  CurlHarborHealth url ->
+  CurlRegistryApi url ->
     commandSpec
       HostCurl
       ["-sS", "-m", "30", "-o", "-", "-w", "\n%{http_code}", unUrl url]
@@ -2250,15 +2204,15 @@ podQueryArguments :: PodQuery -> [String]
 podQueryArguments podQuery =
   case podQuery of
     AllPodsNoHeaders -> ["get", "pods", "-A", "--no-headers"]
-    HarborPostgresStartupPods ->
+    PatroniPostgresStartupPods ->
       ["-n", "platform", "get", "pods", "--no-headers"]
-    HarborPostgresPrimary ->
+    PatroniPostgresPrimary ->
       [ "-n",
         "platform",
         "get",
         "pods",
         "-l",
-        "postgres-operator.crunchydata.com/cluster=harbor-postgresql,postgres-operator.crunchydata.com/role=primary",
+        "postgres-operator.crunchydata.com/cluster=keycloak-postgresql,postgres-operator.crunchydata.com/role=primary",
         "--no-headers",
         "-o",
         "custom-columns=:metadata.name"
@@ -2280,63 +2234,6 @@ renderSecretField secretField =
   case secretField of
     UsernameField -> "username"
     PasswordField -> "password"
-
-renderPostgresAction ::
-  KubeTarget ->
-  PodName ->
-  PostgresAction ->
-  RenderedCommandSpec
-renderPostgresAction target primaryPod action =
-  case action of
-    DetectDirtyHarborMigration password ->
-      postgresPasswordScriptSpec
-        target
-        primaryPod
-        password
-        detectDirtyHarborMigrationScript
-        "detect dirty Harbor migration state"
-    RepairDirtyHarborMigration password ->
-      postgresPasswordScriptSpec
-        target
-        primaryPod
-        password
-        repairDirtyHarborMigrationScript
-        "repair dirty Harbor migration state"
-
-postgresPasswordScriptSpec ::
-  KubeTarget ->
-  PodName ->
-  Password ->
-  String ->
-  String ->
-  RenderedCommandSpec
-postgresPasswordScriptSpec target primaryPod password script description =
-  commandSpecRedacted
-    HostKubectl
-    ( kubeTargetArguments target
-        <> kubercDisabledArguments
-        <> [ "-n",
-             "platform",
-             "exec",
-             "-i",
-             unPodName primaryPod,
-             "-c",
-             "database",
-             "--",
-             "sh",
-             "-lc",
-             script
-           ]
-    )
-    (unPassword password <> "\n")
-    ( "kubectl --kubeconfig "
-        <> kubeconfigPath target
-        <> " -n platform exec "
-        <> unPodName primaryPod
-        <> " -c database -- sh -lc <"
-        <> description
-        <> "> <redacted>"
-    )
 
 renderHelmUpgrade :: HelmUpgradeSpec -> [String]
 renderHelmUpgrade upgradeSpec =
@@ -2365,8 +2262,6 @@ renderHelmDuration duration =
 helmDependencyArguments :: HelmDependency -> FilePath -> [String]
 helmDependencyArguments dependency destinationDirectory =
   case dependency of
-    HarborChart ->
-      repositoryChart "harbor" "1.18.3" "https://helm.goharbor.io"
     PostgresOperatorChart ->
       repositoryChart "pg-operator" "2.9.0" "https://percona.github.io/percona-helm-charts"
     PostgresDatabaseChart ->
@@ -2396,7 +2291,6 @@ helmDependencyArguments dependency destinationDirectory =
 helmRepositoryDefinition :: HelmRepository -> (String, String)
 helmRepositoryDefinition repository =
   case repository of
-    GoharborRepo -> ("goharbor", "https://helm.goharbor.io")
     PerconaRepo -> ("percona", "https://percona.github.io/percona-helm-charts")
     PulsarRepo -> ("apachepulsar", "https://pulsar.apache.org/charts")
     BitnamiRepo -> ("bitnami", "https://charts.bitnami.com/bitnami")
@@ -2647,46 +2541,3 @@ dockerStreamImportScript :: String
 dockerStreamImportScript =
   "set -euo pipefail; \"$1\" image save \"$2\""
     <> " | \"$1\" exec -i \"$3\" ctr --namespace=k8s.io images import -"
-
-detectDirtyHarborMigrationScript :: String
-detectDirtyHarborMigrationScript =
-  unlines
-    (postgresPasswordPreamble <> harborMigrationDirtyCountScript <> dirtyResult)
-  where
-    dirtyResult =
-      [ "if [ \"$dirty_count\" = \"0\" ]; then",
-        "  echo clean",
-        "else",
-        "  echo dirty",
-        "fi"
-      ]
-
-repairDirtyHarborMigrationScript :: String
-repairDirtyHarborMigrationScript =
-  unlines
-    (postgresPasswordPreamble <> harborMigrationDirtyCountScript <> repair)
-  where
-    repair =
-      [ "if [ \"$dirty_count\" != \"0\" ]; then",
-        "  psql -h 127.0.0.1 -U harbor -d registry -v ON_ERROR_STOP=1 -c \"DROP SCHEMA IF EXISTS harbor CASCADE;\"",
-        "  psql -h 127.0.0.1 -U harbor -d registry -v ON_ERROR_STOP=1 -c \"CREATE SCHEMA harbor AUTHORIZATION harbor;\"",
-        "  psql -h 127.0.0.1 -U harbor -d registry -v ON_ERROR_STOP=1 -c \"GRANT ALL ON SCHEMA harbor TO harbor;\"",
-        "fi"
-      ]
-
-postgresPasswordPreamble :: [String]
-postgresPasswordPreamble =
-  [ "set -eu",
-    "IFS= read -r PGPASSWORD",
-    "export PGPASSWORD"
-  ]
-
-harborMigrationDirtyCountScript :: [String]
-harborMigrationDirtyCountScript =
-  [ "migration_table_exists=$(psql -h 127.0.0.1 -U harbor -d registry -v ON_ERROR_STOP=1 -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'harbor' AND table_name = 'schema_migrations') THEN 'yes' ELSE 'no' END\")",
-    "if [ \"$migration_table_exists\" = \"yes\" ]; then",
-    "  dirty_count=$(psql -h 127.0.0.1 -U harbor -d registry -v ON_ERROR_STOP=1 -Atqc \"SELECT COUNT(*)::text FROM harbor.schema_migrations WHERE dirty = TRUE\")",
-    "else",
-    "  dirty_count=0",
-    "fi"
-  ]

@@ -49,10 +49,10 @@ emulation; there is no supported Rosetta, QEMU, or amd64-on-Apple validation pat
 | `linux-cpu` | native host Linux architecture: `linux/amd64` or `linux/arm64` | same |
 | `linux-gpu` | `linux/amd64` | same |
 
-Harbor publication pulls each upstream multi-arch image with the substrate's architecture
+registry publication pulls each upstream multi-arch image with the substrate's architecture
 override (`--platform linux/<arch>` for Docker, `--override-arch=<arch>` for the `skopeo copy`
-fallback) and pushes the matching single-platform variant into the cluster's Harbor namespace.
-Kind worker nodes then pull the architecture-matched image from Harbor without any
+fallback) and pushes the matching single-platform variant into the cluster's registry namespace.
+Kind worker nodes then pull the architecture-matched image from the registry without any
 cross-architecture translation. Apple Silicon workflows must not create or switch Docker contexts
 or create a Colima VM; Docker-backed Apple work uses the operator's already selected native arm64
 Docker daemon or stops at prerequisite validation. The supported MinIO image inventory uses upstream multi-arch
@@ -234,7 +234,7 @@ Python-native framework work can use pool-specific or per-engine Deployments sel
 pool/model topics. Repo-owned `linux-gpu` lifecycle values may keep heavyweight per-engine
 deployments at zero replicas on the single-GPU lane and validation scales one at a time. Apple
 silicon runs eligible engine-pool members as on-host `infernix service` daemons. Host-native Apple
-generated Helm values use one local Harbor instance, one Pulsar instance, one coordinator process,
+generated Helm values use one local registry instance, one Pulsar instance, one coordinator process,
 and one demo process on the already selected native arm64 Docker daemon so the real Apple engine
 gate fits constrained Colima memory; Linux generated values use the single-node platform defaults
 on every lane. This single-instance sizing bounds the control-plane services; the on-host `infernix service`

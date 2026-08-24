@@ -20,7 +20,6 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Bits (shiftR, (.&.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Base16 qualified as Base16
-import Data.ByteString.Base64 qualified
 import Data.ByteString.Base64.URL qualified
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
@@ -131,18 +130,18 @@ import Infernix.Cluster.MutationRecovery
     runInterruptedMutationRecovery,
   )
 import Infernix.Cluster.PublishImages
-  ( HarborPublishOptions (..),
-    PublishedImage,
+  ( PublishedImage,
+    RegistryPublishOptions (..),
     classifyRegistryApiStatus,
     contentAddressTagFromInspectPayload,
     contentAddressTagFromManifestPayload,
-    defaultHarborPublishOptions,
+    defaultRegistryPublishOptions,
     dockerHubMirrorRef,
     normalizeRepositoryPath,
     prioritizePublishableImages,
-    skopeoTargetRefForHarborApiHost,
-    withHarborRegistryAuthFile,
-    writeHarborOverridesFile,
+    skopeoTargetRefForRegistryApiHost,
+    withRegistryAuthFile,
+    writeRegistryOverridesFile,
   )
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Cluster.Subprocess.Activity qualified as SubprocessActivity
@@ -3084,8 +3083,8 @@ main = do
     ("--runtime-mode" `notElem` words renderCliReferenceCommandsSection)
     "the generated CLI reference no longer documents a runtime-mode override"
   assert
-    ("`/harbor/api`" `isInfixOf` renderReadmeRouteSummarySection)
-    "the README route summary includes the Harbor API prefix from the route registry"
+    ("`/registry`" `isInfixOf` renderReadmeRouteSummarySection)
+    "the README route summary includes the registry API prefix from the route registry"
   assert
     ("`/pulsar/ws`" `isInfixOf` renderEdgeRoutingInventorySection)
     "the edge-routing route table includes the Pulsar websocket prefix from the route registry"
@@ -3550,16 +3549,14 @@ main = do
             "      limits:",
             "        memory: 512Mi"
           ]
-      expectedBaseHarborRegistryResourcesBlock =
+      expectedBaseRegistryResourcesBlock =
         unlines
-          [ "    registry:",
-            "      resources:",
-            "        requests:",
-            "          cpu: 100m",
-            "          memory: 512Mi",
-            "        limits:",
-            "          memory: 2Gi",
-            "    controller:"
+          [ "  resources:",
+            "    requests:",
+            "      cpu: 100m",
+            "      memory: 256Mi",
+            "    limits:",
+            "      memory: 2Gi"
           ]
       expectedBaseMinioPersistenceBlock =
         unlines
@@ -3578,8 +3575,8 @@ main = do
     (expectedBasePulsarAutorecoveryBlock `isInfixOf` chartValuesContents)
     "base Pulsar autorecovery values avoid the 192Mi OOMKilled recovery rollout"
   assert
-    (expectedBaseHarborRegistryResourcesBlock `isInfixOf` chartValuesContents)
-    "base Harbor registry values avoid the 640Mi OOMKilled large-image publication rollout"
+    (expectedBaseRegistryResourcesBlock `isInfixOf` chartValuesContents)
+    "the registry carries an explicit memory envelope for large-image publication"
   assert
     (expectedBaseMinioPersistenceBlock `isInfixOf` chartValuesContents)
     "base MinIO persistence keeps enough retained model capacity for the linux-gpu catalog"
@@ -5382,7 +5379,7 @@ main = do
             { clusterLifecycle = ClusterReady,
               clusterOwner = OperatorOwned,
               edgePort = 30090,
-              harborPort = 30002,
+              registryPort = 30002,
               routes = [RouteInfo "/" "demo web UI"],
               storageClass = "standard",
               claims = [],
@@ -5501,7 +5498,7 @@ main = do
             { clusterLifecycle = ClusterReady,
               clusterOwner = OperatorOwned,
               edgePort = 30090,
-              harborPort = 30002,
+              registryPort = 30002,
               routes = [RouteInfo "/" "demo web UI"],
               storageClass = "standard",
               claims = [],
@@ -5669,65 +5666,60 @@ main = do
       )
       "rendered chart claim discovery preserves normalized PVC names"
 
-    let harborOverlayPath = unitTestRoot </> "harbor-overlay.yaml"
-        generatedHarborOverlayPath = unitTestRoot </> "generated-harbor-overrides.yaml"
-    writeFile harborOverlayPath sampleHarborOverlay
-    overlayImages <- discoverHarborOverlayImageRefsFile harborOverlayPath
+    let registryOverlayPath = unitTestRoot </> "registry-overlay.yaml"
+        generatedRegistryOverlayPath = unitTestRoot </> "generated-registry-overrides.yaml"
+    writeFile registryOverlayPath sampleRegistryOverlay
+    overlayImages <- discoverRegistryOverlayImageRefsFile registryOverlayPath
     assert
       ( overlayImages
-          == [ "harbor.local/library/infernix-linux-cpu:sha256-runtime",
-               "harbor.local/library/minio/minio:sha256-minio",
-               "harbor.local/library/busybox:sha256-shell",
-               "harbor.local/library/minio/mc:sha256-client",
-               "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar",
-               "harbor.local/library/percona/percona-postgresql-operator:sha256-pg-operator",
-               "harbor.local/library/percona/percona-distribution-postgresql:sha256-pg-db",
-               "harbor.local/library/percona/percona-pgbackrest:sha256-pgbackrest",
-               "harbor.local/library/percona/percona-pgbouncer:sha256-pgbouncer"
+          == [ "registry.local/library/infernix-linux-cpu:sha256-runtime",
+               "registry.local/library/minio/minio:sha256-minio",
+               "registry.local/library/busybox:sha256-shell",
+               "registry.local/library/minio/mc:sha256-client",
+               "registry.local/library/apachepulsar/pulsar-all:sha256-pulsar",
+               "registry.local/library/percona/percona-postgresql-operator:sha256-pg-operator",
+               "registry.local/library/percona/percona-distribution-postgresql:sha256-pg-db",
+               "registry.local/library/percona/percona-pgbackrest:sha256-pgbackrest",
+               "registry.local/library/percona/percona-pgbouncer:sha256-pgbouncer"
              ]
       )
-      "Harbor overlay discovery returns the routed image refs"
-    writeHarborOverridesFile samplePublishedImages generatedHarborOverlayPath
-    generatedOverlayImages <- discoverHarborOverlayImageRefsFile generatedHarborOverlayPath
+      "registry overlay discovery returns the routed image refs"
+    writeRegistryOverridesFile samplePublishedImages generatedRegistryOverlayPath
+    generatedOverlayImages <- discoverRegistryOverlayImageRefsFile generatedRegistryOverlayPath
     assert
       ( generatedOverlayImages
-          == [ "harbor.local/library/infernix-linux-cpu:sha256-runtime",
-               "harbor.local/library/minio/minio:sha256-minio",
-               "harbor.local/library/busybox:sha256-shell",
-               "harbor.local/library/minio/mc:sha256-client",
-               "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar",
-               "harbor.local/library/percona/percona-postgresql-operator:sha256-pg-operator",
-               "harbor.local/library/percona/percona-distribution-postgresql:sha256-pg-db",
-               "harbor.local/library/percona/percona-pgbackrest:sha256-pgbackrest",
-               "harbor.local/library/percona/percona-pgbouncer:sha256-pgbouncer"
+          == [ "registry.local/library/infernix-linux-cpu:sha256-runtime",
+               "registry.local/library/minio/minio:sha256-minio",
+               "registry.local/library/busybox:sha256-shell",
+               "registry.local/library/minio/mc:sha256-client",
+               "registry.local/library/apachepulsar/pulsar-all:sha256-pulsar",
+               "registry.local/library/percona/percona-postgresql-operator:sha256-pg-operator",
+               "registry.local/library/percona/percona-distribution-postgresql:sha256-pg-db",
+               "registry.local/library/percona/percona-pgbackrest:sha256-pgbackrest",
+               "registry.local/library/percona/percona-pgbouncer:sha256-pgbouncer"
              ]
       )
-      "Harbor overlay emission produces the routed image override contract"
+      "registry overlay emission produces the routed image override contract"
     assert
       (normalizeRepositoryPath "docker.io/library/busybox:1.36" == "library/busybox")
       "repository normalization removes tags and explicit registries"
     assert
       (normalizeRepositoryPath "localhost:30002/library/infernix-service@sha256:deadbeef" == "library/infernix-service")
-      "repository normalization removes digests and loopback Harbor prefixes"
-    let linuxOuterHarborOptions =
-          defaultHarborPublishOptions
-            { harborHost = "localhost:30002",
-              harborClientHost = "localhost:30002",
-              harborApiHost = "infernix-linux-cpu-control-plane:30002"
+      "repository normalization removes digests and loopback registry prefixes"
+    let linuxOuterRegistryOptions =
+          defaultRegistryPublishOptions
+            { registryHost = "localhost:30002",
+              registryClientHost = "localhost:30002",
+              registryApiHost = "infernix-linux-cpu-control-plane:30002"
             }
-        redactedHarborOptions =
-          defaultHarborPublishOptions
-            { harborPassword = "unit-harbor-password"
-            }
-        renderedHarborOptions = show redactedHarborOptions
     assert
-      ( "harborPassword = <redacted>" `isInfixOf` renderedHarborOptions
-          && not ("unit-harbor-password" `isInfixOf` renderedHarborOptions)
+      ( not ("assword" `isInfixOf` show defaultRegistryPublishOptions)
+          && not ("auth" `isInfixOf` show defaultRegistryPublishOptions)
       )
-      "Harbor publication options never expose the registry password through Show"
+      "registry publication options carry no credential to expose through Show"
     assert
       (all (isRight . classifyRegistryApiStatus) [200, 401, 403])
-      "Harbor registry readiness accepts only the measured API-ready status set"
+      "registry readiness accepts only the measured API-ready status set"
     let registryFailureMeasured =
           case classifyRegistryApiStatus 503 of
             Left progress ->
@@ -5738,17 +5730,17 @@ main = do
             Right () -> False
     assert
       registryFailureMeasured
-      "Harbor registry HTTP failure is measured non-ready progress rather than transport unobservability"
+      "registry HTTP failure is measured non-ready progress rather than transport unobservability"
     assert
-      ( skopeoTargetRefForHarborApiHost
-          linuxOuterHarborOptions
+      ( skopeoTargetRefForRegistryApiHost
+          linuxOuterRegistryOptions
           "localhost:30002/library/envoyproxy/gateway:sha256-gateway"
           == "infernix-linux-cpu-control-plane:30002/library/envoyproxy/gateway:sha256-gateway"
       )
       "outer-container skopeo publication targets the Kind control-plane NodePort instead of container loopback"
     assert
-      ( skopeoTargetRefForHarborApiHost
-          defaultHarborPublishOptions
+      ( skopeoTargetRefForRegistryApiHost
+          defaultRegistryPublishOptions
           "localhost:30002/library/envoyproxy/gateway:sha256-gateway"
           == "127.0.0.1:30002/library/envoyproxy/gateway:sha256-gateway"
       )
@@ -5773,7 +5765,7 @@ main = do
                "docker.io/apachepulsar/pulsar-all:4.0.9"
              ]
       )
-      "Harbor publication prioritizes repo-owned local images before remote chart dependencies"
+      "registry publication prioritizes repo-owned local images before remote chart dependencies"
     assert
       (contentAddressTagFromInspectPayload sampleDockerImageInspect == Right "sha256-deadbeef")
       "docker inspect parsing prefers repo digests for content-addressed tags"
@@ -10886,15 +10878,6 @@ main = do
           { ClusterCommand.registryUsername = ClusterCommand.Username "unit-user",
             ClusterCommand.registryPassword = ClusterCommand.Password secretValue
           }
-      postgresSecretCommand =
-        ClusterCommand.kubectlRunPostgresAction
-          operatorTarget
-          (ClusterCommand.PodName "postgres-primary")
-          (ClusterCommand.DetectDirtyHarborMigration (ClusterCommand.Password secretValue))
-      postgresSecretSpec =
-        ClusterCommand.renderClusterCommand
-          (const "/unused")
-          postgresSecretCommand
       skopeoAuthFile = subprocessRoot </> "secrets" </> "skopeo-auth.json"
       skopeoCopySpec =
         ClusterCommand.renderClusterCommand
@@ -10925,28 +10908,12 @@ main = do
           )
           subprocessEnv
       )
-  boundedPostgres <-
-    expectRight
-      "compile redacted postgres action"
-      (Subprocess.compileBoundedCommand postgresSecretCommand subprocessEnv)
   assert
-    ( not (secretValue `isInfixOf` Subprocess.boundedCommandLabel boundedLogin)
-        && not (secretValue `isInfixOf` Subprocess.boundedCommandLabel boundedPostgres)
-        && "<redacted>" `isInfixOf` Subprocess.boundedCommandLabel boundedPostgres
-    )
-    "bounded command labels redact registry and PostgreSQL credentials"
+    (not (secretValue `isInfixOf` Subprocess.boundedCommandLabel boundedLogin))
+    "bounded command labels keep registry credentials out of the rendered label"
   assert
-    ( not
-        ( any
-            (secretValue `isInfixOf`)
-            (ClusterCommand.renderedCommandArgv postgresSecretSpec)
-        )
-        && ClusterCommand.renderedCommandStdin postgresSecretSpec
-          == secretValue <> "\n"
-        && "--kuberc=/dev/null"
-          `elem` ClusterCommand.renderedCommandArgv postgresSecretSpec
-        && ("--dest-authfile=" <> skopeoAuthFile)
-          `elem` ClusterCommand.renderedCommandArgv skopeoCopySpec
+    ( ("--dest-authfile=" <> skopeoAuthFile)
+        `elem` ClusterCommand.renderedCommandArgv skopeoCopySpec
         && ("--src-authfile=" <> skopeoAuthFile)
           `elem` ClusterCommand.renderedCommandArgv skopeoVerifySpec
         && "docker://127.0.0.1:30002/library/busybox:unit"
@@ -10963,7 +10930,7 @@ main = do
               )
           )
     )
-    "PostgreSQL and skopeo credentials use protected transport, and registry verification bypasses Docker's shared store"
+    "skopeo authentication uses protected transport, and registry verification bypasses Docker's shared store"
   assert
     ( isLeft
         ( ClusterCommand.validateClusterCommand
@@ -10976,52 +10943,40 @@ main = do
         )
     )
     "registry verification rejects a caller-selected relative output directory"
-  let authFileUser = "unit-\252ser"
-      authFileSecret = "auth-file-p\228ssword"
-      authFileOptions =
-        defaultHarborPublishOptions
-          { harborUser = authFileUser,
-            harborPassword = authFileSecret
-          }
+  let authFileOptions = defaultRegistryPublishOptions
       validAuthPayload payload =
         case Aeson.decodeStrict' payload of
           Just (Aeson.Object rootObject) ->
             case KeyMap.lookup "auths" rootObject of
               Just (Aeson.Object authsObject) ->
                 case KeyMap.toList authsObject of
+                  -- Sprint 3.17: the registry serves anonymously, so the
+                  -- entry names the destination authority and carries no
+                  -- credential of any kind.
                   [(authority, Aeson.Object credentialsObject)] ->
                     Key.toString authority == "127.0.0.1:30002"
-                      && case KeyMap.lookup "auth" credentialsObject of
-                        Just (Aeson.String encodedCredential) ->
-                          Data.ByteString.Base64.decode
-                            (TextEncoding.encodeUtf8 encodedCredential)
-                            == Right
-                              ( TextEncoding.encodeUtf8
-                                  (Text.pack (authFileUser <> ":" <> authFileSecret))
-                              )
-                        _ -> False
+                      && KeyMap.null credentialsObject
                   _ -> False
               _ -> False
           _ -> False
   normalAuthPathRef <- IORef.newIORef Nothing
-  withHarborRegistryAuthFile authFileOptions $ \authFilePath -> do
+  withRegistryAuthFile authFileOptions $ \authFilePath -> do
     IORef.writeIORef normalAuthPathRef (Just authFilePath)
     authFileStatus <- getFileStatus authFilePath
     authPayload <- BS.readFile authFilePath
     assert
       ( fileMode authFileStatus .&. 0o777 == 0o600
           && validAuthPayload authPayload
-          && not (authFileSecret `isInfixOf` authFilePath)
       )
-      "the skopeo auth file is mode 0600, matches the normalized destination authority, and carries the expected credential"
+      "the skopeo auth file is mode 0600 and names the normalized destination authority anonymously"
   normalAuthPath <- maybe (fail "auth callback did not publish its path") pure =<< IORef.readIORef normalAuthPathRef
   normalAuthExists <- doesFileExist normalAuthPath
   assert
     (not normalAuthExists)
     "the skopeo auth file is removed after a successful callback"
   concurrentAuthPathsRef <- IORef.newIORef Nothing
-  withHarborRegistryAuthFile authFileOptions $ \outerAuthPath ->
-    withHarborRegistryAuthFile authFileOptions $ \innerAuthPath -> do
+  withRegistryAuthFile authFileOptions $ \outerAuthPath ->
+    withRegistryAuthFile authFileOptions $ \innerAuthPath -> do
       outerStillExists <- doesFileExist outerAuthPath
       outerPayload <- BS.readFile outerAuthPath
       innerPayload <- BS.readFile innerAuthPath
@@ -11046,7 +11001,7 @@ main = do
   exceptionalAuthPathRef <- IORef.newIORef Nothing
   exceptionalAuthResult <-
     try @IOException $
-      withHarborRegistryAuthFile authFileOptions $ \authFilePath -> do
+      withRegistryAuthFile authFileOptions $ \authFilePath -> do
         IORef.writeIORef exceptionalAuthPathRef (Just authFilePath)
         ioError (userError "auth-file callback failure")
   exceptionalAuthPath <-
@@ -11059,7 +11014,7 @@ main = do
   cancelledAuthPathRef <- IORef.newIORef Nothing
   cancelledAuthResult <-
     timeout 100000 $
-      withHarborRegistryAuthFile authFileOptions $ \authFilePath -> do
+      withRegistryAuthFile authFileOptions $ \authFilePath -> do
         IORef.writeIORef cancelledAuthPathRef (Just authFilePath)
         threadDelay 2000000
   cancelledAuthPath <-
@@ -11075,7 +11030,7 @@ main = do
     forkProcess $ do
       dropInheritedProcessIdentity
       _ <- registerCurrentProcessIdentity
-      withHarborRegistryAuthFile authFileOptions $ \authFilePath -> do
+      withRegistryAuthFile authFileOptions $ \authFilePath -> do
         writeFile killedAuthMarkerPath authFilePath
         threadDelay 30000000
   killedAuthPath <-
@@ -11086,7 +11041,7 @@ main = do
   signalProcess sigKILL killedAuthOwnerPid
   _ <- getProcessStatus True False killedAuthOwnerPid
   killedAuthResidueExists <- doesFileExist killedAuthPath
-  withHarborRegistryAuthFile authFileOptions (const (pure ()))
+  withRegistryAuthFile authFileOptions (const (pure ()))
   killedAuthResidueAfterReconcile <- doesFileExist killedAuthPath
   assert
     (killedAuthResidueExists && not killedAuthResidueAfterReconcile)
@@ -11134,7 +11089,7 @@ main = do
                   },
             clusterOwner = OperatorOwned,
             edgePort = 30090,
-            harborPort = 30002,
+            registryPort = 30002,
             routes = [RouteInfo "/" "demo web UI"],
             storageClass = "infernix-manual",
             claims = [],
@@ -12895,10 +12850,10 @@ main = do
           }
       rebuildablePatroniClaim =
         podlessRetainedClaim
-          { namespace = "harbor",
-            release = "harbor",
-            workload = "harbor-postgresql-postgres",
-            pvcName = "harbor-postgresql-postgres-0"
+          { namespace = "keycloak",
+            release = "keycloak",
+            workload = "keycloak-postgresql-postgres",
+            pvcName = "keycloak-postgresql-postgres-0"
           }
       snapshotBindingState =
         mstState
@@ -15180,7 +15135,7 @@ runFleetMemberIdentityAssertions root = do
           { clusterLifecycle = ClusterReady,
             clusterOwner = OperatorOwned,
             edgePort = 30090,
-            harborPort = 30002,
+            registryPort = 30002,
             routes = [RouteInfo "/" "demo web UI"],
             storageClass = "standard",
             claims = [],
@@ -18613,11 +18568,11 @@ assertDemoBucketBootstrap = do
   assert
     (DemoBootstrap.planMissingBuckets fromEmpty == ["infernix-models", "infernix-engine-artifacts", "infernix-demo-objects"])
     "all required buckets are missing from an empty MinIO"
-  let halfPresent = DemoBootstrap.planDemoBucketBootstrap ["infernix-models", "harbor-registry"]
+  let halfPresent = DemoBootstrap.planDemoBucketBootstrap ["infernix-models", "infernix-registry"]
   assert
     (DemoBootstrap.planMissingBuckets halfPresent == ["infernix-engine-artifacts", "infernix-demo-objects"])
     "only the absent buckets land in the missing-list"
-  let fullyPresent = DemoBootstrap.planDemoBucketBootstrap ["infernix-models", "infernix-engine-artifacts", "infernix-demo-objects", "harbor-registry"]
+  let fullyPresent = DemoBootstrap.planDemoBucketBootstrap ["infernix-models", "infernix-engine-artifacts", "infernix-demo-objects", "infernix-registry"]
   assert
     (null (DemoBootstrap.planMissingBuckets fullyPresent))
     "no work needed when every required bucket is already present"
@@ -19483,7 +19438,7 @@ sampleRenderedChart =
       "apiVersion: v1",
       "kind: ConfigMap",
       "metadata:",
-      "  name: harbor-postgresql-init-sql",
+      "  name: keycloak-postgresql-init-sql",
       "data:",
       "  init.sql: |",
       "    DO $$",
@@ -19499,57 +19454,57 @@ sampleRenderedChart =
       "apiVersion: pgv2.percona.com/v2",
       "kind: PerconaPGCluster",
       "metadata:",
-      "  name: harbor-postgresql",
+      "  name: keycloak-postgresql",
       "spec:",
       "  image: docker.io/percona/percona-distribution-postgresql:18.3-1",
       "  databaseInitSQL:",
       "    key: init.sql",
-      "    name: harbor-postgresql-init-sql",
+      "    name: keycloak-postgresql-init-sql",
       "  instances:",
       "    - name: instance1",
       "      dataVolumeClaimSpec:",
       "        storageClassName: infernix-manual"
     ]
 
-sampleHarborOverlay :: String
-sampleHarborOverlay =
+sampleRegistryOverlay :: String
+sampleRegistryOverlay =
   unlines
     [ "service:",
       "  image:",
-      "    registry: harbor.local",
+      "    registry: registry.local",
       "    repository: library/infernix-linux-cpu",
       "    tag: sha256-runtime",
       "demo:",
       "  image:",
-      "    registry: harbor.local",
+      "    registry: registry.local",
       "    repository: library/infernix-linux-cpu",
       "    tag: sha256-runtime",
       "infernixMinio:",
       "  image:",
-      "    repository: harbor.local/library/minio/minio",
+      "    repository: registry.local/library/minio/minio",
       "    tag: sha256-minio",
       "    pullPolicy: IfNotPresent",
       "  initImage:",
-      "    repository: harbor.local/library/busybox",
+      "    repository: registry.local/library/busybox",
       "    tag: sha256-shell",
       "    pullPolicy: IfNotPresent",
       "  clientImage:",
-      "    repository: harbor.local/library/minio/mc",
+      "    repository: registry.local/library/minio/mc",
       "    tag: sha256-client",
       "    pullPolicy: IfNotPresent",
       "pulsar:",
-      "  defaultPulsarImageRepository: harbor.local/library/apachepulsar/pulsar-all",
+      "  defaultPulsarImageRepository: registry.local/library/apachepulsar/pulsar-all",
       "  defaultPulsarImageTag: sha256-pulsar",
       "postgresOperator:",
-      "  image: harbor.local/library/percona/percona-postgresql-operator:sha256-pg-operator",
-      "harborpg:",
-      "  image: harbor.local/library/percona/percona-distribution-postgresql:sha256-pg-db",
+      "  image: registry.local/library/percona/percona-postgresql-operator:sha256-pg-operator",
+      "keycloakpg:",
+      "  image: registry.local/library/percona/percona-distribution-postgresql:sha256-pg-db",
       "  backups:",
       "    pgbackrest:",
-      "      image: harbor.local/library/percona/percona-pgbackrest:sha256-pgbackrest",
+      "      image: registry.local/library/percona/percona-pgbackrest:sha256-pgbackrest",
       "  proxy:",
       "    pgBouncer:",
-      "      image: harbor.local/library/percona/percona-pgbouncer:sha256-pgbouncer"
+      "      image: registry.local/library/percona/percona-pgbouncer:sha256-pgbouncer"
     ]
 
 -- type PublishedImage = (String, String)
@@ -19562,15 +19517,15 @@ sampleHarborOverlay =
 samplePublishedImages :: Map.Map String PublishedImage
 samplePublishedImages =
   Map.fromList
-    [ ("infernix-linux-cpu:local", ("harbor.local/library/infernix-linux-cpu", "sha256-runtime")),
-      ("docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z", ("harbor.local/library/minio/minio", "sha256-minio")),
-      ("docker.io/busybox:1.36", ("harbor.local/library/busybox", "sha256-shell")),
-      ("docker.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", ("harbor.local/library/minio/mc", "sha256-client")),
-      ("docker.io/apachepulsar/pulsar-all:4.0.9", ("harbor.local/library/apachepulsar/pulsar-all", "sha256-pulsar")),
-      ("docker.io/percona/percona-postgresql-operator:2.9.0", ("harbor.local/library/percona/percona-postgresql-operator", "sha256-pg-operator")),
-      ("docker.io/percona/percona-distribution-postgresql:18.3-1", ("harbor.local/library/percona/percona-distribution-postgresql", "sha256-pg-db")),
-      ("docker.io/percona/percona-pgbouncer:1.25.1-1", ("harbor.local/library/percona/percona-pgbouncer", "sha256-pgbouncer")),
-      ("docker.io/percona/percona-pgbackrest:2.58.0-1", ("harbor.local/library/percona/percona-pgbackrest", "sha256-pgbackrest"))
+    [ ("infernix-linux-cpu:local", ("registry.local/library/infernix-linux-cpu", "sha256-runtime")),
+      ("docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z", ("registry.local/library/minio/minio", "sha256-minio")),
+      ("docker.io/busybox:1.36", ("registry.local/library/busybox", "sha256-shell")),
+      ("docker.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", ("registry.local/library/minio/mc", "sha256-client")),
+      ("docker.io/apachepulsar/pulsar-all:4.0.9", ("registry.local/library/apachepulsar/pulsar-all", "sha256-pulsar")),
+      ("docker.io/percona/percona-postgresql-operator:2.9.0", ("registry.local/library/percona/percona-postgresql-operator", "sha256-pg-operator")),
+      ("docker.io/percona/percona-distribution-postgresql:18.3-1", ("registry.local/library/percona/percona-distribution-postgresql", "sha256-pg-db")),
+      ("docker.io/percona/percona-pgbouncer:1.25.1-1", ("registry.local/library/percona/percona-pgbouncer", "sha256-pgbouncer")),
+      ("docker.io/percona/percona-pgbackrest:2.58.0-1", ("registry.local/library/percona/percona-pgbackrest", "sha256-pgbackrest"))
     ]
 
 sampleDockerImageInspect :: String
@@ -22255,10 +22210,18 @@ runNativeArtifactArgumentAssertions = do
 runEngineProjectionAssertions :: IO ()
 runEngineProjectionAssertions = do
   let payloadPath = "/var/lib/infernix/models/test-model/payload"
+      carriedShape =
+        ModelExecutionShape
+          { executionContextLength = 1536,
+            executionBatchSize = 1,
+            executionGenerationBound = 96,
+            executionCacheElementWidth = 2,
+            executionLoadStrategy = LoadResidentHost
+          }
       execution =
         Projection.LlamaNativeExecution
-          { Projection.llamaExecutionContextLength = 512,
-            Projection.llamaExecutionGenerationBound = 32,
+          { Projection.llamaExecutionContextLength = executionContextLength carriedShape,
+            Projection.llamaExecutionGenerationBound = executionGenerationBound carriedShape,
             Projection.llamaExecutionThreads = 1,
             Projection.llamaExecutionGpuLayers = 0
           }
@@ -22269,8 +22232,9 @@ runEngineProjectionAssertions = do
       renderedEngineArguments =
         fromRight
           []
-          ( CappedEngineInternal.renderNativeArtifactArgumentsForTest
+          ( CappedEngineInternal.renderNativeArtifactArgumentsForShapeForTest
               "llama-cpp-cli"
+              carriedShape
               Nothing
               Nothing
           )
@@ -22284,8 +22248,8 @@ runEngineProjectionAssertions = do
         == Just sharedOperands
         && take (length sharedOperands) renderedEngineArguments == sharedOperands
     )
-    ( "Sprint 4.43: the projection probe and the engine invocation render the "
-        <> "same execution operands from one value"
+    ( "Sprint 4.42/4.43: the carried execution shape reaches both the native "
+        <> "engine invocation and its projection probe through one value"
     )
   assert
     ( fmap Projection.projectionExecutableName llamaProbe
@@ -22578,6 +22542,8 @@ runInstalledCeilingAssertions = do
         Ceiling.resolveEngineCeiling LinuxCpu PodRam 4096 Ceiling.NoEngineProjection
       appleCeiling =
         Ceiling.resolveEngineCeiling AppleSilicon HostRam 4096 Ceiling.NoEngineProjection
+      linuxGpuHostCeiling =
+        Ceiling.resolveEngineCeiling LinuxGpu PodRam 4096 Ceiling.NoEngineProjection
       deviceCeiling =
         Ceiling.resolveEngineCeiling LinuxGpu NvidiaVram 4096 Ceiling.NoEngineProjection
   assert
@@ -22616,6 +22582,32 @@ runInstalledCeilingAssertions = do
   assert
     (null (Ceiling.installedCeilingArgumentPrefix appleCeiling))
     "Sprint 4.41: a detection-only lane installs no launch prefix at all"
+  assert
+    ( Ceiling.installedCeilingStrength linuxGpuHostCeiling
+        == Ceiling.CeilingDetectionOnly
+        && null (Ceiling.installedCeilingArgumentPrefix linuxGpuHostCeiling)
+    )
+    ( "Sprint 4.41: the uncalibrated Linux GPU host lane declares detection "
+        <> "only and installs no prefix"
+    )
+  assert
+    ( isLeftResult
+        ( Ceiling.requireCeilingStrength
+            Ceiling.CeilingPreventionRequired
+            (Ceiling.installedCeilingStrength appleCeiling)
+        )
+    )
+    ( "Sprint 4.41: a prevention-required readiness contract refuses a lane "
+        <> "that declares detection only"
+    )
+  assert
+    ( all
+        ((== Right ()) . Ceiling.validateRuntimeCeilingReadiness)
+        [AppleSilicon, LinuxCpu, LinuxGpu]
+    )
+    ( "Sprint 4.41: each production runtime accepts exactly the strength its "
+        <> "current calibrated contract requires"
+    )
   -- The device column reads detection for a different reason than a host column
   -- does, and the two are kept distinct.
   assert

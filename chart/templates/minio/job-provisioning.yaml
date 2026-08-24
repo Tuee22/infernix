@@ -6,7 +6,7 @@ Uses upstream `minio/mc` to wait for MinIO readiness, register a local
 alias against the in-cluster Service, and ensure every required bucket
 exists (idempotent via `--ignore-existing`):
 
-- `harbor-registry` — Harbor's S3 storage backend
+- `infernix-registry` — the in-cluster `registry:2` S3 storage backend
 - `infernix-models` — platform model-weights bucket (lazy bootstrap)
 - `infernix-engine-artifacts` — immutable engine software payload bucket
 - `infernix-demo-objects` — demo user-artifact bucket (Phase 7)

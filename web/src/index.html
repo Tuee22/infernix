@@ -873,7 +873,7 @@
         }
       }
       /* Phase 9: cluster-wide surfaces are admin-only. The operator consoles
-         (Harbor, Pulsar Admin), the five infrastructure/topology summary cells
+         (Registry, Pulsar Admin), the five infrastructure/topology summary cells
          (.summary-item.cluster-summary), and the cluster monitoring panel
          (#admin-panel) are hidden for every non-admin (and pre-login, where
          .app-shell is already hidden); they appear only once the admin-detection
@@ -977,7 +977,7 @@
             <a id="route-files" class="app-tab" href="/files">Files</a>
           </nav>
           <nav class="operator-ribbon" aria-label="Operator consoles">
-            <a class="operator-link" data-operator-route="/harbor" href="/harbor" target="_blank" rel="noreferrer">Harbor</a>
+            <a class="operator-link" data-operator-route="/registry" href="/registry/_catalog" target="_blank" rel="noreferrer">Registry</a>
             <a class="operator-link" data-operator-route="/pulsar/admin" href="/pulsar/admin/admin/v2/clusters" target="_blank" rel="noreferrer">Pulsar Admin</a>
           </nav>
           <!-- Phase 9: the five infrastructure/topology cells are cluster-wide
@@ -1074,7 +1074,7 @@
       // Phase 9 admin gating (cosmetic; the edge SecurityPolicy is the real
       // gate). Decode the operator cookie's JWT and mark <html> with
       // .infernix-admin when it carries the infernix-admin realm role, so the
-      // operator ribbon (Harbor, Pulsar Admin) is shown only to admins. This
+      // operator ribbon (Registry, Pulsar Admin) is shown only to admins. This
       // reads the same infernix_operator_token cookie the edge validates; the
       // cookie is written asynchronously after login and cleared on logout, so
       // re-check on an interval and on focus/visibility. <html> is used (not

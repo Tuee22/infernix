@@ -31,13 +31,13 @@
 - if retained Pulsar ZooKeeper state is self-inconsistent, `cluster up` logs a targeted Pulsar
   claim-root reset and retries once; treat that retry as explicit durability repair for the
   affected runtime lane because prior Pulsar message history there is discarded
-- if Harbor PostgreSQL startup pods remain `Running` but fail Patroni readiness beyond the grace
+- if Patroni PostgreSQL startup pods remain `Running` but fail Patroni readiness beyond the grace
   window, `cluster up` may recycle those startup pods with a non-waiting Kubernetes delete; treat
   the log as retained-state readiness repair while the lifecycle heartbeat continues
-- Harbor and Keycloak Patroni PostgreSQL claim roots are rebuildable: only after Kind deletion, and
+- Keycloak Patroni PostgreSQL claim roots are rebuildable: only after Kind deletion, and
   only from the detached local retained copy under a freshly proved `WriterQuiesced` lease, may the
   lifecycle scrub those roots before a later bring-up recreates them
-- Harbor's MinIO-backed `harbor-registry` bucket is also non-retained publication cache, not
+- The registry's MinIO-backed `infernix-registry` bucket is also non-retained publication cache, not
   product data. The same post-delete `WriterQuiesced` scrub of the detached local copy may remove
   that bucket, its MinIO bucket metadata, and stale multipart/tmp upload working sets; the durable
   `infernix-models`, `infernix-engine-artifacts`, and `infernix-demo-objects` buckets stay retained.
@@ -54,7 +54,7 @@
   `docker run --gpus all` preflight contract before cluster creation
 - for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
   or `test all`; low disk headroom can make Kind-hosted BookKeeper ledger directories
-  non-writable during the Harbor-backed rollout and prevent `infernix-coordinator` and
+  non-writable during the registry-backed rollout and prevent `infernix-coordinator` and
   `infernix-engine` readiness
 - confirm that the chosen edge port, active runtime mode, repo-root runtime config, and publication
   details are printed
@@ -73,16 +73,16 @@
   subprocess phases, a heartbeat that continues to refresh roughly every 30 seconds indicates the
   supported path is still progressing
 - the current monitored long-running subprocess phases are binary-owned lifecycle phases such as
-  the shared runtime `docker build`, Harbor image publication, Kind-worker Harbor preload, and
+  the shared runtime `docker build`, registry image publication, Kind-worker registry preload, and
   Apple retained-state replay steps
-- Harbor image publication waits for registry readiness before Docker push attempts and retries
+- registry image publication waits for registry readiness before Docker push attempts and retries
   transient push resets with bounded backoff; treat registry-reset logs during large image pushes
   as recoverable until the command exhausts that retry budget
 - upstream multi-arch chart images may be published through the digest-pinned `skopeo copy`
   fallback when Docker's containerd image store leaves the original tag non-inspectable or
   non-taggable after a successful pull; the publisher reuses an already discovered linux/amd64
   digest when available so later Docker Hub manifest-rate limits do not force a second manifest
-  request; this is expected recovery as long as Harbor pull verification succeeds for the
+  request; this is expected recovery as long as registry pull verification succeeds for the
   resulting content-addressed tag
 - repo-owned local images are published before third-party chart dependencies and re-tagged from
   their source image before each bounded push retry, so a missing transient target tag is
@@ -90,9 +90,9 @@
 - on the governed Apple lane, `infernix test all` may trigger multiple internal cluster bring-up
   or teardown cycles before the outer command returns; apply the same heartbeat-driven failure
   classification to those internal rounds
-- on the real Kind path, confirm that Harbor is the first deployed service on a pristine cluster
-  and that only Harbor-required backend services pull from public container repositories before
-  Harbor is ready
+- on the real Kind path, confirm that the registry is the first deployed service on a pristine cluster
+  and that only the storage the registry needs pulls from public container repositories before
+  the registry is ready
 - on supported Kind lanes, `cluster up` may hydrate missing Docker Hub warmup dependency images from
   `mirror.gcr.io`, tag them under the original chart reference, and stream warmup images into the
   worker before the Helm warmup pass by piping `docker image save` into
@@ -100,19 +100,19 @@
   host-cache entries fall back to normal chart pulls, and the flow intentionally avoids `docker cp`
   because CUDA-enabled Kind workers can reject copied paths through the NVIDIA runtime mount
   boundary
-- after Harbor is responsive, confirm that every remaining image is mirrored or published into
-  Harbor before its workload rolls out, including the active `infernix` runtime image on every
+- after the registry is responsive, confirm that every remaining image is mirrored or published into
+  the registry before its workload rolls out, including the active `infernix` runtime image on every
   substrate
-- the supported Harbor-first bootstrap path does not use any helper-registry container or
-  `./.build/kind/registry/localhost:30001` namespace; Harbor itself is the only registry once it
+- the supported registry-first bootstrap path does not use any helper-registry container or
+  `./.build/kind/registry/localhost:30001` namespace; the in-cluster registry is the only registry once it
   becomes ready
 - on the supported outer-container path, confirm that `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot instead of rebuilding that runtime image inside the
   launcher
-- confirm that `cluster up` preloads Harbor-backed final image refs onto the Kind worker before the
-  remaining non-Harbor workloads begin their final rollout
+- confirm that `cluster up` preloads registry-backed final image refs onto the Kind worker before the
+  remaining cluster workloads begin their final rollout
 - confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane,
-  the Harbor application-plane workloads, the MinIO statefulset, the Pulsar statefulsets,
+  the registry Deployment, the MinIO statefulset, the Pulsar statefulsets,
   the PostgreSQL operator-managed members, and the infernix-owned daemon set for the active
   shape: `infernix-coordinator` plus substrate-specific engine pools on production and demo
   deployments, with `infernix-demo` added only when `demo_ui = true`. On Linux, engine pools render
@@ -126,7 +126,7 @@
   absent
 - confirm `infernix kubectl get pvc -A` returns no daemon PVCs — the `infernix-coordinator`,
   engine-role, and `infernix-demo` Deployments are PVC-free in the supported target
-  shape. PVCs are still present for Harbor, MinIO, Pulsar, and the operator-managed PostgreSQL
+  shape. PVCs are still present for MinIO, Pulsar, and the operator-managed PostgreSQL
   clusters
 - confirm `infernix kubectl get buckets` (or equivalent MinIO admin check) shows
   `infernix-models` and `infernix-engine-artifacts` always-on; when `demo_ui = true`, also shows
@@ -153,14 +153,14 @@
 - inspect the real ConfigMap with `infernix kubectl get configmap infernix-demo-config -n platform -o yaml`
 
 <!-- infernix:route-registry:cluster-bootstrap:start -->
-- `curl http://127.0.0.1:<port>/harbor` checks the Harbor portal route.
-- `curl http://127.0.0.1:<port>/harbor/api/v2.0/projects` checks the `/harbor/api -> /api` rewrite into the Harbor core service.
+- `curl http://127.0.0.1:<port>/registry/` checks the `/registry -> /v2` rewrite into the in-cluster registry Service.
+- `curl http://127.0.0.1:<port>/registry/_catalog` lists the published repositories through the same rewrite.
 - `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.
 - `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/infernix/demo/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path.
 <!-- infernix:route-registry:cluster-bootstrap:end -->
 
 Those probes validate the real Gateway-backed upstream responses only; direct `infernix-demo`
-execution is not a supported compatibility fallback for the Harbor, MinIO, or Pulsar tool routes.
+execution is not a supported compatibility fallback for the registry, MinIO, or Pulsar tool routes.
 
 ## Repo-Local Lifecycle State
 
@@ -169,14 +169,14 @@ reconciles stay deterministic:
 
 - `./.data/runtime/edge-port.json` — the Envoy Gateway hostPort the routed edge listens on.
   Selected by `chooseEdgePort` starting at `9090`; reused on subsequent runs when still free.
-- `./.data/runtime/harbor-port.json` — the Kind hostPort observed from the operator host
-  for Harbor. Selected by `chooseHarborPort` starting at `30002`; reused on subsequent runs
+- `./.data/runtime/registry-port.json` — the Kind hostPort observed from the operator host
+  for the registry. Selected by `chooseRegistryPort` starting at `30002`; reused on subsequent runs
   when still free. The in-cluster Kubernetes NodePort stays fixed at `30002`; only the
   host-side mapping is dynamic, so operators with unrelated processes on `30002` (e.g. an
   editor's debug worker) see `cluster up` select `30003` or higher automatically.
 
-Both ports appear in `cluster status` (`edgePort`, `harborPort`) alongside `lifecyclePhase`
-and the heartbeat surface. See [../tools/harbor.md](../tools/harbor.md) for the Harbor
+Both ports appear in `cluster status` (`edgePort`, `registryPort`) alongside `lifecyclePhase`
+and the heartbeat surface. See [../tools/registry.md](../tools/registry.md) for the registry
 host-port contract.
 
 ## Warning Classification
@@ -188,9 +188,9 @@ constraints, or normal Kubernetes convergence.
 | Warning or event | Classification | Operator guidance |
 |------------------|----------------|-------------------|
 | `nvkind hit its known configmap persistence bug (nvkind reported: …)` | Recoverable only when the cluster was actually created and the repo-owned Linux GPU node bootstrap finishes | Treat as handled when `cluster up complete` follows. The warning carries the first line of the raw `nvkind` error in parentheses for triage. Treat as fatal if the command exits non-zero, if the cluster was not created (the failure then names the known bug and states the cluster was not created), or if the repo-owned `linux-gpu` node bootstrap fails (the failure then states it failed after working around the `nvkind` bug). This warning remains documented because the repository can work around the `nvkind` bug but cannot remove the upstream `nvkind` failure mode by itself. |
-| Harbor, MinIO, PostgreSQL, or Pulsar readiness probe failures, startup `BackOff`, volume-binding races, or early scheduling warnings | Normal Kubernetes convergence during bootstrap, retained-state repair, image swap, or final rollout | Treat as recoverable while `cluster up`, `test integration`, `test e2e`, or `test all` is still active and the lifecycle heartbeat continues. Treat as failure when the owning command exits non-zero, the heartbeat stops refreshing across multiple monitor intervals, or pods remain unready after the command reports completion. |
-| Long Docker builds, host-cached warmup image streaming, Harbor image publication, or Kind-worker Harbor image preload | Expected long-running lifecycle work, especially on cold `linux-gpu` runs and during large Pulsar or runtime-image publication | Use `infernix cluster status` and its `lifecycleStatus`, `lifecyclePhase`, `lifecycleDetail`, and `lifecycleHeartbeatAt` fields before abandoning the run. Elapsed wall time alone is not evidence of failure. |
-| Harbor PostgreSQL startup-pod recycle during retained-state repair | Recoverable readiness repair when startup pods keep running but do not satisfy Patroni readiness | Treat the logged recycle as informational while the lifecycle heartbeat continues. The delete is intentionally non-waiting so StatefulSet pod-name reuse cannot block the lifecycle. |
+| registry, MinIO, PostgreSQL, or Pulsar readiness probe failures, startup `BackOff`, volume-binding races, or early scheduling warnings | Normal Kubernetes convergence during bootstrap, retained-state repair, image swap, or final rollout | Treat as recoverable while `cluster up`, `test integration`, `test e2e`, or `test all` is still active and the lifecycle heartbeat continues. Treat as failure when the owning command exits non-zero, the heartbeat stops refreshing across multiple monitor intervals, or pods remain unready after the command reports completion. |
+| Long Docker builds, host-cached warmup image streaming, registry image publication, or Kind-worker registry image preload | Expected long-running lifecycle work, especially on cold `linux-gpu` runs and during large Pulsar or runtime-image publication | Use `infernix cluster status` and its `lifecycleStatus`, `lifecyclePhase`, `lifecycleDetail`, and `lifecycleHeartbeatAt` fields before abandoning the run. Elapsed wall time alone is not evidence of failure. |
+| Patroni PostgreSQL startup-pod recycle during retained-state repair | Recoverable readiness repair when startup pods keep running but do not satisfy Patroni readiness | Treat the logged recycle as informational while the lifecycle heartbeat continues. The delete is intentionally non-waiting so StatefulSet pod-name reuse cannot block the lifecycle. |
 | `SystemOOM` events naming unrelated host processes | Host resource contention, not an accepted product warning | Stop unrelated memory-heavy workloads, increase memory or swap, and rerun the lifecycle. Repeated `SystemOOM` on an otherwise idle supported host is actionable environment failure even when the current run eventually passes. |
 | Docker Compose warning that Bake is configured but buildx is missing | Tooling regression | The host bootstrap installs `docker-buildx-plugin`, and the Linux substrate image installs `docker-buildx`. Rebuild the substrate image. If a source-built image reproduces the warning, treat it as a regression to fix rather than accepted lifecycle noise. |
 | GHCup `[ Warn ] No GHCup update available` during `get-ghcup` bootstrap | Upstream bootstrap no-op warning | The upstream installer runs `ghcup upgrade` after downloading the current `ghcup` binary and reports the no-op through its warning channel. Accept only when the pinned `ghc`, pinned `cabal`, and formatter `ghc` installs complete and the image build exits zero. Do not replace the supported `ghcup` path just to hide this upstream no-op. |
@@ -210,7 +210,7 @@ PVC-to-node binding map, copies every retained claim into a fresh `.incoming` tr
 staging tree complete, and atomically commits it while preserving the prior tree as `.previous`.
 Kind deletion occurs while the frozen-source lease is still held. After deletion,
 `WriterQuiesced` permits only the explicit rebuildable scrub set in that detached local copy:
-Harbor/Keycloak Patroni roots, Harbor Redis, and the MinIO `harbor-registry` bucket internals.
+the Keycloak Patroni root and the MinIO `infernix-registry` bucket internals.
 Retained MinIO model/demo-object data and Pulsar data remain durable.
 
 ### One-time MinIO layout migration
@@ -268,7 +268,7 @@ transaction roots while either lifecycle command is active.
   `cluster up` reconciles the leftover state — see
   [Managed State Transitions](../architecture/managed_state_transitions.md)
 - expect retained durable state under `./.data/` to remain intact; the named rebuildable
-  Harbor/Patroni subset above may be removed after writer quiescence and recreated on bring-up
+  registry/Patroni subset above may be removed after writer quiescence and recreated on bring-up
 
 ### Cluster reuse across checkouts on one host
 
@@ -308,7 +308,7 @@ When the active substrate's generated `.dhall` carries `demo_ui = true`, `cluste
 performs the following additional reconciliation steps:
 
 - deploys a Keycloak Helm release together with its dedicated Patroni Postgres cluster managed
-  by the Percona operator; expects Harbor to be responsive first, then the Keycloak Patroni
+  by the Percona operator; expects the registry to be responsive first, then the Keycloak Patroni
   cluster to report ready, then Keycloak itself
 - idempotently imports the demo realm with self-signup on and email verification off via
   Keycloak's native `--import-realm` flag against the mounted ConfigMap; reruns are no-ops

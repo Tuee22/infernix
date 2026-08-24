@@ -101,11 +101,17 @@ Plan documents describe the intended supported architecture in present-tense dec
 
 - Say what the system uses, owns, validates, and exposes.
 - Do not turn phase docs into migration diaries.
-- Cleanup history belongs in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-- Per-lane attestations belong in [cohort-validation-waves.md](cohort-validation-waves.md). A
-  superseded attempt that changed a decision is recorded as the decision, in one sentence, in the
-  sprint that owns it; the chronology of the attempt itself is deleted rather than relocated,
-  because once the status it justified is superseded the chronology has no reader.
+- **The plan carries no history.** It is one cohesive narrative of the system as it is intended to
+  be, and nothing in it describes a superseded architectural decision, a retired component, a
+  previous attempt, or a closure that already happened. A superseded decision is recorded as the
+  decision it became, in present tense, in the sprint that owns it; the chronology that produced it
+  is deleted rather than relocated, because once the status it justified is superseded the
+  chronology has no reader. Git holds the history.
+- [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) is the one exception, and only
+  forward: it names surfaces that still exist and must be removed. A surface that is already gone
+  leaves the ledger entirely rather than moving to a completed table.
+- [cohort-validation-waves.md](cohort-validation-waves.md) names the cohort gates that are still
+  open. A wave that has closed is deleted; the phase it validated simply reads `Done`.
 - Enforced as a proxy by `infernix lint plan` (Section Q scan 5): no process identifier, no
   wall-clock time, no inode number, and a capped number of receipt-bearing lines per phase
   document.
@@ -176,13 +182,10 @@ and `**Cohort gate**:` (the pending single-accelerator full-suite — one of `ap
 `linux-gpu` plus `linux-cpu` — and its owning wave). These make the single-accelerator execution
 state from Section Q explicit at the top of the sprint.
 
-A **closed** sprint whose surface a later sprint replaces carries two further optional fields, which
-are how a `Done` sprint forward-points without reopening: `**Supersession note**:` (what replaced it
-and why) and `**Current-API note**:` (that the signatures below are the sprint's historical surface
-rather than the current one). They exist because Section C forbids reverting a closed sprint and
-Section A forbids leaving a stale completion claim standing; a forward pointer satisfies both. Note
-the asymmetry with scan 8: a *closed* sprint pointing forward to what replaced it is this rule
-working, whereas an *open* deliverable owned by a later sprint is the violation.
+They exist because Section C forbids reverting a closed sprint and Section A forbids leaving a
+stale completion claim standing; a forward pointer satisfies both. Note the asymmetry with scan 8:
+a *closed* sprint pointing forward to what replaced it is this rule working, whereas an *open*
+deliverable owned by a later sprint is the violation.
 
 ### H. Documentation Requirements Section
 
@@ -203,11 +206,6 @@ Use this format:
 - align the relevant plan and README entry points
 ```
 
-Historical Phase 0 bootstrap rule preserved for ordered-plan readability:
-
-- Before Phase 0 closed, paths under `documents/` did not necessarily exist yet.
-- They still appeared in `Docs to update` and `Documentation Requirements` because the plan had to
-  make documentation obligations explicit before the suite existed.
 - When a phase creates or materially rewrites a broad engineering document, the owning sprint or
   phase calls out the intended document structure when it matters to closure criteria:
   - add a `TL;DR` or `Executive Summary` when the topic is broad
@@ -229,13 +227,12 @@ ledger for obsolete paths, duplicate guidance, and stale compatibility surfaces.
 
 - If an obsolete or duplicate surface still exists, it must appear in the ledger.
 - Each item names its location, why it is slated for removal, and the owning phase or sprint.
-- When cleanup lands, move the item from pending to completed. A row that stays pending while its
-  own text records the surface as removed is the failure this rule exists to prevent, and a row
-  present in both tables leaves the reader unable to tell which claim is current.
-- Enforced by `infernix lint plan` (Section Q scan 6). The scan compares the two tables against
-  each other, not against the tree: it rejects a pending row whose own text records the surface as
-  removed, and a pending row that shares its owning sprint and at least three named symbols with a
-  completed row. Whether the completion claim matches the source is not decided here.
+- **When cleanup lands, the row is deleted.** The ledger is a list of work outstanding, not a record
+  of work done; there is no completed table, because a surface that no longer exists is not
+  something a reader of this plan needs told about. Per Section D, the removal is reflected by the
+  affected phase and doc simply describing the current architecture.
+- A row that stays pending while its own text records the surface as removed is the failure this
+  rule exists to prevent, and `infernix lint plan` (Section Q scan 6) rejects it.
 
 ### J. README and Documents Harmony
 
@@ -428,7 +425,7 @@ Rules:
 - For any given substrate, a matrix row is supported when that substrate's engine column names a real
   engine rather than `Not recommended` or an empty cell.
 - `apple-silicon` is an explicit split-executor substrate: the control plane remains
-  host-native, Kind still hosts Harbor, MinIO, Pulsar, operator-managed PostgreSQL, Envoy Gateway,
+  host-native, Kind still hosts the registry, MinIO, Pulsar, operator-managed PostgreSQL, Envoy Gateway,
   the cluster `infernix-coordinator` Deployment, and the optional routed demo app, while
   Apple-native inference execution and result publication run in same-binary host engine daemons
   fed by derived Pulsar pool topics.
@@ -639,51 +636,46 @@ Rules:
 
 Substrate-specific validation is explicit.
 
-- `infernix test integration` for a given initialized substrate validates only that substrate's published
-  catalog contract, routed surfaces, cache lifecycle, every generated active-substrate catalog
-  entry, and the supported service-loop roundtrip for that substrate.
-- The comprehensive model, format, and engine matrix in the root `README.md` is the authoritative
-  integration-test coverage ledger. For the active substrate, every row or reference whose engine
-  cell names a real engine has at least one integration assertion.
-- The repository does not carry separate per-substrate integration suites. One integration suite
-  reads the active substrate from the generated `.dhall`, traverses the README-derived matrix rows,
-  and chooses each row's engine binding from that same file.
-- Supported validation removes simulated cluster, route, transport, and generic inference-success
-  fallback behavior from the supported execution path. Test results name the single substrate they
-  exercised and do not imply coverage that was not run.
-- A resource-exhaustion result is classified into **four** outcomes, not two, and a suite that
-  collapses any pair of them is not evidence. A model refused at admission is a typed capacity
-  failure with no launch. An allocation refused inside a live engine by an installed ceiling is a
-  typed memory failure of an admitted model — a different fact, on a lane that prevents rather than
-  samples. A missing result, including a host out-of-memory kill, is a stall. And a pass produced
-  without real output is a fabrication. The first two are supported outcomes; the last two are
-  defects.
-- when an owning phase calls out real-cluster lifecycle or recovery assertions, the supported
-  non-Apple-cluster lane owns those checks on the deployed single-instance substrate rather than
-  any simulated fallback. Replica failover, anti-affinity, and chaos results belong only to
-  explicitly historical evidence for the retired topology and are not current closure criteria.
-- `infernix test e2e` for a given initialized substrate exercises every demo-visible catalog entry
-  present in that same generated file through the routed web surface unless a narrower exception is
-  called out explicitly in the owning phase document.
-- Playwright is substrate-agnostic at the browser layer. The browser suite does not branch on
-  substrate id or engine family; `infernix-demo` reads the generated `.dhall` and chooses the
-  correct engine binding for the active substrate behind the routed demo API.
-- On Apple Silicon, the supported host CLI owns test orchestration. It proves that the cluster
-  daemon is deployed, starts the same-binary host inference daemon when the service-loop checks need
-  Apple-native inference, validates the Pulsar batch handoff from cluster daemon to host daemon, and
-  verifies that the host daemon publishes the result; host-native routed E2E now uses host
-  `npm exec` Playwright fed by the same typed fixture against the published localhost edge port and
-  is covered by Apple cohort validation batches.
-- On Linux substrates, all supported CLI and test commands run through
-  `docker compose run --rm infernix infernix ...`, and test flows do not manage a host daemon
-  because request consumption, inference, and result publication all run from deployed cluster
-  daemons.
-- Integration checks use the engine binding encoded in the colocated or ConfigMap-backed substrate
-  `.dhall`, which must match the appropriate substrate column from the README matrix. E2E checks
-  rely on the demo app to honor that same file rather than selecting engines in browser code.
-- `infernix test all` aggregates lint, unit, integration, and E2E as the full supported suite for
-  the initialized substrate. Repository closure requires separate substrate-specific reruns instead of
-  one default matrix run that silently covers Apple, CPU, and GPU together.
+- `infernix test integration` for a given initialized substrate validates only that substrate's
+published catalog contract, routed surfaces, cache lifecycle, every generated active-substrate
+catalog entry, and the supported service-loop roundtrip for that substrate. - The comprehensive
+model, format, and engine matrix in the root `README.md` is the authoritative integration-test
+coverage ledger. For the active substrate, every row or reference whose engine cell names a real
+engine has at least one integration assertion. - The repository does not carry separate
+per-substrate integration suites. One integration suite reads the active substrate from the
+generated `.dhall`, traverses the README-derived matrix rows, and chooses each row's engine
+binding from that same file. - Supported validation removes simulated cluster, route, transport,
+and generic inference-success fallback behavior from the supported execution path. Test results
+name the single substrate they exercised and do not imply coverage that was not run. - A
+resource-exhaustion result is classified into **four** outcomes, not two, and a suite that
+collapses any pair of them is not evidence. A model refused at admission is a typed capacity
+failure with no launch. An allocation refused inside a live engine by an installed ceiling is a
+typed memory failure of an admitted model — a different fact, on a lane that prevents rather than
+samples. A missing result, including a host out-of-memory kill, is a stall. And a pass produced
+without real output is a fabrication. The first two are supported outcomes; the last two are
+defects. - when an owning phase calls out real-cluster lifecycle or recovery assertions, the
+supported non-Apple-cluster lane owns those checks on the deployed single-instance substrate
+rather than any simulated fallback. - `infernix test e2e` for a given initialized substrate
+exercises every demo-visible catalog entry present in that same generated file through the routed
+web surface unless a narrower exception is called out explicitly in the owning phase document. -
+Playwright is substrate-agnostic at the browser layer. The browser suite does not branch on
+substrate id or engine family; `infernix-demo` reads the generated `.dhall` and chooses the
+correct engine binding for the active substrate behind the routed demo API. - On Apple Silicon,
+the supported host CLI owns test orchestration. It proves that the cluster daemon is deployed,
+starts the same-binary host inference daemon when the service-loop checks need Apple-native
+inference, validates the Pulsar batch handoff from cluster daemon to host daemon, and verifies
+that the host daemon publishes the result; host-native routed E2E now uses host `npm exec`
+Playwright fed by the same typed fixture against the published localhost edge port and is covered
+by Apple cohort validation batches. - On Linux substrates, all supported CLI and test commands run
+through `docker compose run --rm infernix infernix ...`, and test flows do not manage a host
+daemon because request consumption, inference, and result publication all run from deployed
+cluster daemons. - Integration checks use the engine binding encoded in the colocated or
+ConfigMap-backed substrate `.dhall`, which must match the appropriate substrate column from the
+README matrix. E2E checks rely on the demo app to honor that same file rather than selecting
+engines in browser code. - `infernix test all` aggregates lint, unit, integration, and E2E as the
+full supported suite for the initialized substrate. Repository closure requires separate
+substrate-specific reruns instead of one default matrix run that silently covers Apple, CPU, and
+GPU together.
 
 ### Q. Single-Accelerator Phase Validation and Forward-Only Cohorts
 
@@ -740,17 +732,17 @@ Rules:
   phase state — never when "both cohorts" have run. A phase never waits on the
   other accelerator; cross-accelerator coverage is achieved by sibling
   per-accelerator phases or a later `linux-cpu`-only aggregation phase.
-- Per-accelerator full-suite evidence is recorded as committed per-lane
-  attestations; [cohort-validation-waves.md](cohort-validation-waves.md) is the
-  per-accelerator attestation ledger that the `linux-cpu` aggregation phase merges,
-  not a "batch both cohorts" switch list.
+- Per-accelerator full-suite evidence gates a phase's move to `Done`;
+  [cohort-validation-waves.md](cohort-validation-waves.md) names the gates that are
+  still open, not a "batch both cohorts" switch list and not an archive of gates
+  already met. A wave is deleted when it closes.
 - Current-state text in `DEVELOPMENT_PLAN/README.md`, `00-overview.md`, and each affected phase
   document must name which cohort has validated and which cohort remains, rather than describing
   a vague deferred validation pass.
 - The operational layer that names explicit batched-switch boundaries for the current closure cycle
   lives in [cohort-validation-waves.md](cohort-validation-waves.md). Phase doc Status headers and
   `Remaining Work` blocks reference the active wave instead of restating per-sprint cohort
-  residuals.
+  residuals, and cite no wave once that wave has closed.
 
 **Single-accelerator execution rule (single-machine implementation, one-accelerator sign-off).**
 
@@ -811,10 +803,9 @@ The scans, and what each one can and cannot decide:
    lines. Section D is not decidable, so this is a proxy: it bans the artefacts
    only an execution log contains and caps the residual. A document above the
    ceiling has become the attestation ledger instead of referencing it.
-6. **Removal-ledger exclusivity** — no item is both pending and complete, and no
-   pending row declares its own surface already removed. Two rows are the same
-   item when they share their owning sprint and at least three named symbols;
-   symbol overlap alone is not evidence.
+6. **Removal-ledger currency** — no pending row declares its own surface already
+   removed. A landed removal is deleted from the ledger rather than recorded as
+   complete, so the ledger reads as outstanding work only.
 7. **One current-state table** — the phase-status table appears once. Duplicated
    status tables do not merely repeat, they diverge, and a reader cannot tell
    which copy is current. The header is identified by its cells — a first column

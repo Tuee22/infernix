@@ -5,20 +5,11 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 dependencies:
-  - name: harbor
-    version: 1.18.3
-    repository: https://helm.goharbor.io
-    condition: upstreamCharts.harbor.enabled
   - name: pg-operator
     alias: postgresOperator
     version: 2.9.0
     repository: https://percona.github.io/percona-helm-charts
     condition: upstreamCharts.postgresOperator.enabled
-  - name: pg-db
-    alias: harborpg
-    version: 2.9.0
-    repository: https://percona.github.io/percona-helm-charts
-    condition: upstreamCharts.harborpg.enabled
   - name: pg-db
     alias: keycloakpg
     version: 2.9.0

@@ -46,7 +46,7 @@ data Command
   | TestAllCommand
   | InternalDiscoverImagesCommand FilePath
   | InternalDiscoverClaimsCommand FilePath
-  | InternalDiscoverHarborOverlayCommand FilePath
+  | InternalDiscoverRegistryOverlayCommand FilePath
   | InternalPublishChartImagesCommand FilePath FilePath
   | InternalMaterializeSubstrateCommand RuntimeMode (Maybe Int) Bool Bool
   | InternalMaterializeMetalEnginesCommand
@@ -287,7 +287,7 @@ clusterCommandFamily =
     { familyTopic = "cluster",
       familyOverview = "reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces",
       familyCommands =
-        [ simpleCommand "cluster up" "requires the initialized repo-root runtime config, then reconciles Kind, Harbor-first bootstrap, its cluster deployment mirror, and routed publication state" ClusterUpCommand,
+        [ simpleCommand "cluster up" "requires the initialized repo-root runtime config, then reconciles Kind, registry-first bootstrap, its cluster deployment mirror, and routed publication state" ClusterUpCommand,
           simpleCommand "cluster down" "tears the cluster down while leaving durable repo-local state under `./.data/` intact" ClusterDownCommand,
           simpleCommand "cluster status" "reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation" ClusterStatusCommand,
           CommandSpec
@@ -419,13 +419,13 @@ internalCommandFamily =
             InternalDiscoverClaimsCommand
             ["internal", "discover", "claims"],
           singlePathCommand
-            "internal discover harbor-overlay OVERLAY"
-            "prints the Harbor-backed image references discovered in a rendered override payload"
-            InternalDiscoverHarborOverlayCommand
-            ["internal", "discover", "harbor-overlay"],
+            "internal discover registry-overlay OVERLAY"
+            "prints the registry-backed image references discovered in a rendered override payload"
+            InternalDiscoverRegistryOverlayCommand
+            ["internal", "discover", "registry-overlay"],
           twoPathCommand
             "internal publish-chart-images RENDERED_CHART OUTPUT"
-            "publishes the chart image inventory into a Harbor override file"
+            "publishes the chart image inventory into a registry override file"
             InternalPublishChartImagesCommand
             ["internal", "publish-chart-images"],
           materializeSubstrateCommand,

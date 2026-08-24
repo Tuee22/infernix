@@ -42,14 +42,14 @@ governed documentation suite.
 - the demo UI is PureScript built with `spago`, tested with `purescript-spec`, with generated
   frontend contracts emitted by `infernix internal generate-purs-contracts` through
   `purescript-bridge` from dedicated browser-contract ADTs
-- chart assets target Harbor, MinIO, Pulsar, Envoy Gateway, and operator-managed PostgreSQL on the
+- chart assets target registry, MinIO, Pulsar, Envoy Gateway, and operator-managed PostgreSQL on the
   real Kind path; supported workflows fail fast when the required platform commands are unavailable
 - `bootstrap/*.sh` entrypoints are substrate launchers only: they reconcile host prerequisites and
   build or enter the active `infernix` launcher, while the binary owns Kind, Kubernetes, manifest
-  deployment, cluster workload image pulls, Harbor publication, and lifecycle status
-- Harbor is always the first deployed service on a pristine cluster, and only Harbor plus
-  Harbor-required backend services such as MinIO and PostgreSQL may pull from public container
-  repositories before Harbor is ready
+  deployment, cluster workload image pulls, registry publication, and lifecycle status
+- the in-cluster registry is always the first deployed service on a pristine cluster, and only
+  the registry plus the MinIO storage it needs may pull from public container repositories before
+  the registry is ready
 - every in-cluster PostgreSQL dependency, including services that could self-deploy PostgreSQL,
   uses an operator-managed Patroni cluster instead of a chart-managed standalone PostgreSQL path
 - every PVC-backed Helm workload uses `infernix-manual`, which is backed by
@@ -66,7 +66,7 @@ major roots:
   `infernix` package
 - `python/` for the shared adapter package and shared `pyproject.toml`
 - `web/` for the PureScript demo application built with `spago` and the Playwright E2E assets
-- `chart/` and `kind/` for cluster reconciliation inputs, including the locked Harbor, Pulsar,
+- `chart/` and `kind/` for cluster reconciliation inputs, including the locked Pulsar,
   MinIO, Percona PostgreSQL operator, and Envoy Gateway Helm dependency declarations
 - `test/` for repository-owned validation
 - `documents/` for governed documentation

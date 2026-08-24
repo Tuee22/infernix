@@ -42,7 +42,7 @@ The image family
 the Linux Playwright runtime. `compose.yaml` defines the single `infernix` service for both Linux
 lanes, defaults to the CPU image, and accepts `LAUNCHER_IMAGE=infernix-linux-gpu:local` for the
 GPU Docker Compose invocation. The service bind-mounts only `./.data/` and the Docker socket. The
-Harbor-first bootstrap path does not depend on any helper-registry container cleanup.
+registry-first bootstrap path does not depend on any helper-registry container cleanup.
 Kind and `nvkind` cluster create or delete uses launcher-local scratch kubeconfig state under the
 container temp directory, and the durable operator-facing kubeconfig is published afterward to
 `./.data/runtime/infernix.kubeconfig`. The host Linux bootstrap installs `docker-buildx-plugin`,
@@ -73,7 +73,7 @@ operations have a buildx-capable CLI when needed.
 
 - `docker build -f docker/Dockerfile --provenance=false ...` is the manual image refresh surface;
   bootstrap scripts call that build before entering the launcher. Disabling BuildKit provenance
-  keeps repo-owned local images as plain single-platform images for Harbor publication.
+  keeps repo-owned local images as plain single-platform images for registry publication.
 - `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix
   infernix ...` is the direct Linux CPU outer control-plane entrypoint.
 - `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu
@@ -90,7 +90,7 @@ operations have a buildx-capable CLI when needed.
   (`/root/.cabal/`, `dist-newstyle/`) rather than on any bind-mounted host path
 - the supported Linux launcher reuses the chart archive cache baked into the image at
   `/opt/infernix/chart/charts/`; `/workspace/chart/charts` links to that image-local cache so
-  Helm finds the top-level Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway dependencies
+  Helm finds the top-level PostgreSQL, Pulsar, MinIO, and Envoy Gateway dependencies
 - the substrate image uses `tini` as its `ENTRYPOINT` so PID 1 forwards signals cleanly and reaps
   zombie processes for cluster lifecycle commands
 - the baked launcher binaries under `/usr/local/bin/` are authoritative
@@ -102,13 +102,13 @@ operations have a buildx-capable CLI when needed.
   bind-mounted checkout without requiring global Git configuration inside the launcher
 - on the supported outer-container path, `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot selected by the launcher and publishes that image into
-  Harbor before final rollout instead of asking the shell bootstrap to build or push images
+  the registry before final rollout instead of asking the shell bootstrap to build or push images
   directly
 - on the Apple host-native path, `cluster up` computes a deterministic source fingerprint for the
   `infernix-linux-cpu:local` cluster workload image inputs and reuses the local image only when the
   fingerprint label, fingerprint-version label, runtime-mode label, target architecture, and
   non-index manifest shape match; otherwise it rebuilds and stamps the refreshed image before
-  Harbor publication
+  registry publication
 - `docker/Dockerfile` installs Cabal/NPM/Poetry dependency layers from package metadata before the
   full source copy, then performs protobuf generation, project build, native-engine materialization,
   web build, and Python checks after the full source is present
@@ -169,13 +169,13 @@ the generated Kind config that enables containerd's hosts.toml-driven registry r
 ```
 
 Kind 0.31 does not emit this `config_path` by default. Without the patch, containerd inside
-each Kind node ignores the `localhost:<harborPort>/hosts.toml` file that `writeRegistryHostsConfig`
+each Kind node ignores the `localhost:<registryPort>/hosts.toml` file that `writeRegistryHostsConfig`
 provisions (via the `extraMounts` entry mapping
 `./.build/kind/<runtime-mode>/registry` → `/etc/containerd/certs.d`), and kubelet dials
-`localhost:<harborPort>` literally inside the node — where nothing listens — so every
-Harbor-mirrored image pull fails with `connect: connection refused`. The registry-hosts root is
+`localhost:<registryPort>` literally inside the node — where nothing listens — so every
+registry-mirrored image pull fails with `connect: connection refused`. The registry-hosts root is
 runtime-scoped so a CPU and GPU validation lane cannot overwrite each other's
-`localhost:<harborPort>` mirror target. The patch is therefore part of the supported Kind config
+`localhost:<registryPort>` mirror target. The patch is therefore part of the supported Kind config
 contract; the binary owns it (operators do not hand-author Kind config).
 
 ## Unsupported Usage

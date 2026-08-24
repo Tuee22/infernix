@@ -192,8 +192,7 @@ test("routed WebSocket validates JWTs and reports malformed frames", async ({ pa
   // A valid self-registered (non-admin) token authenticates but is authorized
   // away with 403 on every operator route; an unauthenticated request is 401.
   for (const operatorRoute of [
-    `${baseUrl}/harbor`,
-    `${baseUrl}/harbor/api`,
+    `${baseUrl}/registry/_catalog`,
     `${baseUrl}/pulsar/admin/admin/v2/clusters`,
     `${baseUrl}/pulsar/ws`,
   ]) {
@@ -587,8 +586,7 @@ test("admin sees cluster-wide surfaces", async ({ page, request, infernixFixture
   expect(adminClaims.realm_access?.roles).toContain("infernix-admin");
 
   for (const operatorRoute of [
-    `${baseUrl}/harbor`,
-    `${baseUrl}/harbor/api`,
+    `${baseUrl}/registry/_catalog`,
     `${baseUrl}/pulsar/admin/admin/v2/clusters`,
     `${baseUrl}/pulsar/ws`,
   ]) {
@@ -640,8 +638,7 @@ test("non-admin is denied cluster-wide surfaces", async ({ page, request, infern
   // The edge SecurityPolicy authorizes the operator routes to admins only: a
   // valid non-admin token is 403 everywhere.
   for (const operatorRoute of [
-    `${baseUrl}/harbor`,
-    `${baseUrl}/harbor/api`,
+    `${baseUrl}/registry/_catalog`,
     `${baseUrl}/pulsar/admin/admin/v2/clusters`,
     `${baseUrl}/pulsar/ws`,
   ]) {
@@ -2213,7 +2210,7 @@ async function fillLoginPrompt(page, usernameField, credentials) {
 async function expectOperatorRibbon(page) {
   const ribbon = page.locator(".operator-ribbon");
   await expect(ribbon).toBeVisible();
-  await expect(ribbon.locator("[data-operator-route='/harbor']")).toHaveAttribute("href", "/harbor");
+  await expect(ribbon.locator("[data-operator-route='/registry']")).toHaveAttribute("href", "/registry/_catalog");
   await expect(ribbon.locator("[data-operator-route='/pulsar/admin']")).toHaveAttribute("href", "/pulsar/admin/admin/v2/clusters");
   // Phase 3 Sprint 3.13: the MinIO S3 operator-ribbon link is removed.
   await expect(ribbon.locator("[data-operator-route='/minio/s3']")).toHaveCount(0);
@@ -2280,7 +2277,7 @@ async function expectOperatorRouteForbidden(request, url, token) {
 // Phase 9 Sprint 9.8: the edge SecurityPolicy lets an admin token PAST the
 // admin authorization — i.e. it is never rejected 401/403. The precise property
 // under test is "admin is not denied by the edge gate", so the backend's own
-// status is allowed through: HTTP consoles (/harbor, /harbor/api, /pulsar/admin)
+// status is allowed through: HTTP consoles (/registry, /pulsar/admin)
 // answer 2xx/3xx, while a plain GET to the WebSocket route /pulsar/ws reaches the
 // Pulsar servlet and legitimately answers a non-auth 4xx (upgrade required). The
 // paired expectOperatorRouteForbidden proves the gate denies non-admins with 403,

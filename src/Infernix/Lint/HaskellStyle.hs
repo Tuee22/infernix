@@ -910,7 +910,7 @@ emptySubprocessEnvExemptedFiles =
 -- 'Infernix.Cluster.Subprocess.runBoundedCommand', which carries a required
 -- 'Infernix.Cluster.Subprocess.Timeout' and returns a total
 -- 'Infernix.Cluster.Subprocess.CommandOutcome', so an unbounded exec — the
--- class that produced the ~23-minute Harbor @docker pull@ hang — is
+-- class that produced the ~23-minute registry @docker pull@ hang — is
 -- unrepresentable. The exemption list is deliberately shrinking:
 -- 'ProcessMonitor.hs' was retired onto the kernel by Sprint 6.41 and
 -- 'Cluster.hs' by Sprint 2.16; the engine/runtime/host-tool spawn surface
@@ -1423,7 +1423,7 @@ unboundedToolchainSpawnExemptedFiles =
 -- @DownloadOutcome@ (so a rate-limit is retried with a bounded backoff, not
 -- hammered forever). @withResponse@ — the streaming-body reader that pattern
 -- powers — is therefore forbidden elsewhere in production code; trusted
--- in-cluster MinIO/Harbor calls use @httpLbs@ and are unaffected. Canonical
+-- in-cluster MinIO/registry calls use @httpLbs@ and are unaffected. Canonical
 -- doctrine: documents/architecture/managed_state_transitions.md.
 unboundedHttpViolations :: FilePath -> [(Int, String)] -> [String]
 unboundedHttpViolations sourceFile numberedLines

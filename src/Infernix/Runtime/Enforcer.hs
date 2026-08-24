@@ -52,6 +52,7 @@ import Infernix.Runtime.CappedEngine
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
   )
+import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
 import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryLimitMib)
 import Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (workerModelCacheRoot),
@@ -83,6 +84,19 @@ refineCompiledRuntimePlan ::
   CompiledRuntimePlan ->
   IO (Either RefinementErrors (RuntimePlan, EngineExecutionAuthority))
 refineCompiledRuntimePlan paths compiledPlan = do
+  -- Phase 4 Sprint 4.41: readiness consumes the lane's declared strength
+  -- before probing or minting execution authority. A production contract that
+  -- requires prevention cannot become ready through a detection-only resolver;
+  -- this check runs before the daemon writes either readiness sentinel.
+  case Ceiling.validateRuntimeCeilingReadiness (compiledPlanRuntimeMode compiledPlan) of
+    Left reason ->
+      ioError
+        ( userError
+            ( "runtime memory-enforcement readiness refused: "
+                <> Text.unpack reason
+            )
+        )
+    Right () -> pure ()
   -- Phase 4 Sprint 4.34: which samplers to probe is derived from the runtime
   -- mode, the declared budget, and whether the model uses the device — not from
   -- a resource the placement carries, because after the admission split it

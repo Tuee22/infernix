@@ -6,11 +6,7 @@ global:
     allowInsecureImages: true
 
 upstreamCharts:
-  harbor:
-    enabled: true
   postgresOperator:
-    enabled: true
-  harborpg:
     enabled: true
   # Phase 7 Sprint 7.1: Patroni Postgres backing Keycloak. Gated on the
   # demo surface — production deploys (`demo_ui = false`) skip Keycloak
@@ -272,7 +268,7 @@ infernixMinio:
       cpu: 50m
       memory: 128Mi
     limits:
-      memory: 384Mi
+      memory: 4Gi
   clientImage:
     repository: docker.io/minio/mc
     tag: "RELEASE.2025-08-13T08-35-41Z"
@@ -291,7 +287,7 @@ infernixMinio:
     # later rows can publish without tripping MinIO's low-free-space guard.
     size: 64Gi
   buckets:
-    - harbor-registry
+    - infernix-registry
     # Phase 7 Sprint 7.7: always-on platform model-weights bucket. The
     # coordinator role's bootstrap subscription PUTs `<modelId>/<filename>`
     # entries here on first use of a model and writes the `.ready` sentinel
@@ -307,286 +303,59 @@ infernixMinio:
     # `/api/objects` are scoped per user.
     - infernix-demo-objects
 
-harbor:
-  expose:
-    type: nodePort
-    tls:
-      enabled: false
-      certSource: none
-    nodePort:
-      name: harbor
-      ports:
-        http:
-          port: 80
-          nodePort: 30002
-  externalURL: http://localhost:30002
-  harborAdminPassword: Harbor12345
-  # Pin Harbor's internal secrets so bootstrap and final phases render the same Harbor resources.
-  secretKey: "0123456789abcdef"
-  database:
-    type: external
-    external:
-      host: harbor-postgresql-pgbouncer.platform.svc.cluster.local
-      port: "5432"
-      username: harbor
-      existingSecret: infernix-harbor-db-user
-      coreDatabase: registry
-      sslmode: require
-  persistence:
-    enabled: true
-    resourcePolicy: keep
-    persistentVolumeClaim:
-      registry:
-        storageClass: infernix-manual
-        size: 5Gi
-      jobservice:
-        jobLog:
-          storageClass: infernix-manual
-          size: 1Gi
-      redis:
-        storageClass: infernix-manual
-        size: 1Gi
-      trivy:
-        storageClass: infernix-manual
-        size: 5Gi
-    imageChartStorage:
-      type: s3
-      disableredirect: true
-      s3:
-        region: us-east-1
-        bucket: harbor-registry
-        regionendpoint: http://infernix-minio.platform.svc.cluster.local:9000
-        accesskey: minioadmin
-        secretkey: minioadmin123
-        secure: false
-        v4auth: true
-        chunksize: "33554432"
-        multipartcopychunksize: "33554432"
-        multipartcopymaxconcurrency: 2
-        multipartcopythresholdsize: "33554432"
-  nginx:
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        memory: 128Mi
-  portal:
-    replicas: 1
-    resources:
-      requests:
-        cpu: 50m
-        memory: 64Mi
-      limits:
-        memory: 128Mi
-  core:
-    replicas: 1
-    resources:
-      requests:
-        cpu: 200m
-        memory: 256Mi
-      limits:
-        memory: 768Mi
-    secret: "fedcba9876543210"
-    tokenKey: |
-      -----BEGIN RSA PRIVATE KEY-----
-      MIIEpAIBAAKCAQEAn4EAXJsf582OSveZAdLnOaZaI2ZMwaN6Z1qkGtJS96p/Fvzt
-      KvKCU7M/GVu5h/fQHpC3Vgb+Mv7BkEIEpWdL4f+O2yDn5CYxwW8L1Zd77SD3/TWt
-      8nopU2Tv6qi/gsrkDRUiiqxbou2fWeVZjlCyVghxq81mSb+/AmRiopGA41E46K5G
-      0smTKwy7jry2RdTwHF0xEEPNESfDu46iUm/oRQTGE+d8O32RujxssTzzKRotx+JW
-      zFuGkNZF87X7AasFxFY1zV8k/A69IimK6rsSTOV45hYHtDWyuXfyGIyNqbvwlinp
-      JOZ6vTFQTJm4PokdLjlh5EYf434DvVOK2v7NeQIDAQABAoIBAAPxeZ+weUBpm1RU
-      t3MdTTiGbtlL8XHClRdlHQ7phvdRlIjYvyjGBs04roKgcG9mo8io/tKpGNj20HR8
-      wKu8UxAO5DpcNNtrNc+bS2gQBwvAr5zSZPQ3C1qWUYeZZ9BSbC2mHtIzQA82D8Ur
-      oj7eVXBYJFjxL/o6sTH8ZxivifJksPC2wGrbngjaT6lMaWoQj3Slty5aI/nNP+oW
-      wYRUzfkcwSFh52+zVjGw6m2qJXu0p0ca1F4HVMduYLujYbuPex5hZYmWanIOI6bG
-      J7MJs0ZsCdTb7OR5Y0/dFaaebywWUVaZdldjiWj8Im7GgBBoOOTjMflE48izvj1C
-      GNjFhjECgYEA1m7ZOkjWJO4/g5ForBWgLe9so5EZLWyuwwW6hQl2ghv5DWW161Ww
-      fZl3tzhrL7D9LvRCsp3y3UuIrqN5XJBR3yCK0af16uicwP1rbWmtnageRWaZyCI1
-      kABtBIjxPJQtm2mUUfRveO5f2ztRugS/g+GhjAqbVmUbHrVVbmnMdmkCgYEAvmxR
-      oLrLi3/W8Lm16o041JpYA3Fh6a7nozQqaFYmUq3/MbJeY4260cZivY6V+ZvrTj+2
-      7NAzReCfeHyjPKCfpt59nrPR4uiAMUKGLDh/kihx6vGwQgJIvwCHmQQnhqTwoToS
-      kyab3fUMVxFHVXBkWyPadnRFB8x5xmk8vJZSXJECgYEAq6238XgbKxosc7PZb90o
-      j15fRl2HIN0g1jch7B11ahnnPhium6nRUd2rAWAEQPyc2BjrxYG7zf0Jg3iSU8+g
-      HNo7CjxFITv3NHQwrDqtq8nL4piQirEI3S/aGIVjTrL8CK9w9mSTUujWiflmJ15h
-      zr64zhw33eW43s8jhPDjp/ECgYEAkqr/nFsD1+iZd0SzF3u6oBZZYB1+muz6wTu2
-      xjJExj36Zx7JkMhjcpvpBbPDVESB0v1EOdaLB3Fhov3tBQ96qJ6KByjdqnYF9usU
-      SQ8jQ0IfrCSH6++ydFtGFdebUhvMs4H1OJ3uQ+EwpgdK+EXfJkvRQpd/a+hUizwX
-      afImceECgYAyqvXkyC1pihPiVLRWHmzBB2us8JHFEiVXDop8pQVphTroRd4JQ797
-      9whXenDJdOs9JVlbrvEYIF8mhKt2x36ONPOGnCrgRJhv3Thuxw/Wq/fRdV+nHCsd
-      YieWMg8OtYhkz7b+qVD33Q0v4QjKFeBUz61gDYxWAhiISanycwNCDg==
-      -----END RSA PRIVATE KEY-----
-    tokenCert: |
-      -----BEGIN CERTIFICATE-----
-      MIIDITCCAgmgAwIBAgIUETaxuIEC5DnxSWN1JoaYeOApZ6cwDQYJKoZIhvcNAQEL
-      BQAwIDEeMBwGA1UEAwwVaW5mZXJuaXgtaGFyYm9yLXRva2VuMB4XDTI2MDQyMDEz
-      MjczN1oXDTM2MDQxNzEzMjczN1owIDEeMBwGA1UEAwwVaW5mZXJuaXgtaGFyYm9y
-      LXRva2VuMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn4EAXJsf582O
-      SveZAdLnOaZaI2ZMwaN6Z1qkGtJS96p/FvztKvKCU7M/GVu5h/fQHpC3Vgb+Mv7B
-      kEIEpWdL4f+O2yDn5CYxwW8L1Zd77SD3/TWt8nopU2Tv6qi/gsrkDRUiiqxbou2f
-      WeVZjlCyVghxq81mSb+/AmRiopGA41E46K5G0smTKwy7jry2RdTwHF0xEEPNESfD
-      u46iUm/oRQTGE+d8O32RujxssTzzKRotx+JWzFuGkNZF87X7AasFxFY1zV8k/A69
-      IimK6rsSTOV45hYHtDWyuXfyGIyNqbvwlinpJOZ6vTFQTJm4PokdLjlh5EYf434D
-      vVOK2v7NeQIDAQABo1MwUTAdBgNVHQ4EFgQUC9oI1qxXiE7qH9i7ubH0vB0nahEw
-      HwYDVR0jBBgwFoAUC9oI1qxXiE7qH9i7ubH0vB0nahEwDwYDVR0TAQH/BAUwAwEB
-      /zANBgkqhkiG9w0BAQsFAAOCAQEAUG4DDBG/dgRbcwdC6MkiyoSEZysJcWOReACt
-      uiMQMfeeAcHktivI7qxCyDPFpF1Odj3jpmIrUmyigOd6sm0FHtNbvZnEsyE1eqMN
-      NvGH9wOq5rT1A0dMtIdejry13xIe7kQprPEjijv5jJx0frYAMeAFYNpF7IpLRctV
-      m7rMpavWPLgovJmj3Ftfr5Wl12SQaUIbQ3HySQb3R3I9T+2PqnCNX9mKYMKouLjm
-      ig252/725mwI4HmGXOR5/xw+prVcFRSC/1lq3/LyJCiqwdSFhcCvVnm3B7kSg7th
-      yqyAM9J51S3RMje5g3n73f6Zs5RVCgYW9UA6bIV6yFTbaLVwjA==
-      -----END CERTIFICATE-----
-    xsrfKey: "0123456789abcdef0123456789abcdef"
-  jobservice:
-    replicas: 1
-    secret: "0011223344556677"
-    resources:
-      requests:
-        cpu: 100m
-        memory: 128Mi
-      limits:
-        memory: 384Mi
-  registry:
-    replicas: 1
-    secret: "8899aabbccddeeff"
-    registry:
-      resources:
-        requests:
-          cpu: 100m
-          memory: 512Mi
-        limits:
-          memory: 2Gi
-    controller:
-      resources:
-        requests:
-          cpu: 50m
-          memory: 128Mi
-        limits:
-          memory: 256Mi
-    credentials:
-      username: "harbor_registry_user"
-      password: "harbor_registry_password"
-      htpasswdString: "harbor_registry_user:$2a$10$4sf.czgjL/xrrR0TipkLzOcrg82zXOFIPmku9jvCosb3t6vH4.Ml2"
-  trivy:
-    replicas: 1
-    resources:
-      requests:
-        cpu: 50m
-        memory: 128Mi
-      limits:
-        cpu: 200m
-        memory: 384Mi
-  redis:
-    internal:
-      resources:
-        requests:
-          cpu: 25m
-          memory: 64Mi
-        limits:
-          memory: 128Mi
+# Phase 3 Sprint 3.17: the in-cluster image repository is the single-binary
+# CNCF distribution registry (`registry:2`). It carries no database,
+# no job service, no scanner, and no portal: one Deployment, one Service, and one
+# ConfigMap holding the whole `config.yml`. The ConfigMap replaces the image's
+# stock config outright rather than layering onto it -- distribution refuses to
+# start with two configured storage drivers, and the shipped default declares
+# `filesystem`.
+registry:
+  enabled: true
+  image: docker.io/library/registry:2
+  imagePullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    port: 5000
+    # The published image-repository port every lane's `kind/cluster-*.yaml`
+    # `extraPortMappings` forwards and the dynamic port-discovery path resolves.
+    nodePort: 30002
+  # Blob storage is the same MinIO the rest of the platform uses. The bucket is
+  # created by the MinIO provisioning Job before the registry starts, because
+  # distribution's S3 driver requires the bucket to pre-exist.
+  #
+  # `redirect: disable: true` is mandatory, not tuning: the host-scope Docker
+  # client pushing through `localhost:30002` cannot resolve a 307 redirect to
+  # the cluster-only MinIO Service name, so blob requests must be proxied
+  # through the registry itself.
+  storage:
+    bucket: infernix-registry
+    region: us-east-1
+    regionendpoint: http://infernix-minio.platform.svc.cluster.local:9000
+    accesskey: minioadmin
+    secretkey: minioadmin123
+    secure: false
+    v4auth: true
+    # Quoted so Helm renders the integer literally: an unquoted YAML number
+    # reaches the template as a float and stringifies as `3.3554432e+07`,
+    # which distribution rejects at startup.
+    chunksize: "33554432"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 2Gi
+
 
 postgresOperator:
   fullnameOverride: infernix-postgres-operator
   image: docker.io/percona/percona-postgresql-operator:2.9.0
   imagePullPolicy: IfNotPresent
 
-harborpg:
-  fullnameOverride: harbor-postgresql
-  image: docker.io/percona/percona-distribution-postgresql:18.3-1
-  imagePullPolicy: IfNotPresent
-  postgresVersion: 18
-  users:
-    - name: harbor
-      databases:
-        - registry
-      password:
-        type: ASCII
-      secretName: infernix-harbor-db-user
-  databaseInitSQL:
-    key: init.sql
-    name: harbor-postgresql-init-sql
-  instances:
-    - name: instance1
-      # Phase 3 Sprint 3.16: one instance per platform service. The Percona
-      # operator remains the deployment mechanism and is no longer retained as a
-      # high-availability mechanism; instance loss is restore-from-backup.
-      replicas: 1
-      resources:
-        requests:
-          cpu: 75m
-          memory: 160Mi
-        limits:
-          cpu: 500m
-          memory: 384Mi
-      dataVolumeClaimSpec:
-        storageClassName: infernix-manual
-        accessModes:
-          - ReadWriteOnce
-        resources:
-          requests:
-            storage: 5Gi
-  proxy:
-    pgBouncer:
-      replicas: 1
-      image: docker.io/percona/percona-pgbouncer:1.25.1-1
-      resources:
-        requests:
-          cpu: 25m
-          memory: 48Mi
-        limits:
-          cpu: 100m
-          memory: 96Mi
-  backups:
-    enabled: true
-    pgbackrest:
-      image: docker.io/percona/percona-pgbackrest:2.58.0-1
-      containers:
-        pgbackrest:
-          resources:
-            requests:
-              cpu: 25m
-              memory: 96Mi
-            limits:
-              cpu: 100m
-              memory: 192Mi
-        pgbackrestConfig:
-          resources:
-            requests:
-              cpu: 15m
-              memory: 32Mi
-            limits:
-              cpu: 50m
-              memory: 64Mi
-      jobs:
-        resources:
-          requests:
-            cpu: 25m
-            memory: 96Mi
-          limits:
-            cpu: 100m
-            memory: 192Mi
-      repoHost:
-        resources:
-          requests:
-            cpu: 25m
-            memory: 96Mi
-          limits:
-            cpu: 100m
-            memory: 192Mi
-      repos:
-        - name: repo1
-          volume:
-            volumeClaimSpec:
-              storageClassName: infernix-manual
-              accessModes:
-                - ReadWriteOnce
-              resources:
-                requests:
-                  storage: 5Gi
-
-# Phase 7 Sprint 7.1: Patroni Postgres backing Keycloak. Mirrors the Harbor
-# pattern: dedicated Patroni cluster managed by the same Percona operator,
-# with the `keycloak` role + database created by the operator and the
+# Phase 7 Sprint 7.1: Patroni Postgres backing Keycloak. A dedicated Patroni
+# cluster managed by the Percona operator, and the platform's only database
+# cluster, with the `keycloak` role + database created by the operator and the
 # generated credentials exposed via `infernix-keycloak-db-user` for the
 # Keycloak Deployment to consume.
 keycloakpg:
@@ -725,7 +494,7 @@ keycloak:
     spaClientId: infernix-spa
     issuerUrl: /auth/realms/infernix
     # Phase 9: cluster-wide admin RBAC. Only members of this realm role reach
-    # the operator consoles (Harbor, Pulsar Admin) and cluster-wide monitoring;
+    # the operator consoles (image registry, Pulsar Admin) and cluster-wide monitoring;
     # self-registered users are non-admin by construction.
     adminRealmRole: infernix-admin
     # Hardcoded demo admin account in the infernix realm (demo app; not a

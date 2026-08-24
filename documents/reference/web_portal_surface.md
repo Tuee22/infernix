@@ -10,7 +10,7 @@
 
 The `/` and demo-related routes (`/`, `/api*`, `/auth`, `/ws`, `/api/objects`) are demo-only and absent from
 production deployments. Production deployments leave the active `.dhall` `demo_ui` flag off, the
-cluster has no `infernix-demo` workload, and the demo routes are not bound. The Harbor, MinIO,
+cluster has no `infernix-demo` workload, and the demo routes are not bound. The registry, MinIO,
 and Pulsar portal routes remain unconditional in every supported deployment.
 
 ## Routes
@@ -33,8 +33,7 @@ Always-published operator prefixes:
 
 | Routed prefix | Purpose | Notes |
 |---------------|---------|-------|
-| `/harbor/api` | Harbor API | Rewrites to upstream `/api` before forwarding to `infernix-harbor-core:80`. |
-| `/harbor` | Harbor portal | Rewrites to upstream `/` before forwarding to `infernix-harbor-portal:80`. |
+| `/registry` | Image registry API | Rewrites to upstream `/v2` before forwarding to `infernix-registry:5000`. |
 | `/pulsar/admin` | Pulsar admin surface | Rewrites to upstream `/` before forwarding to `infernix-infernix-pulsar-proxy:80`. |
 | `/pulsar/ws` | Pulsar websocket surface | Rewrites to upstream `/ws` before forwarding to `infernix-infernix-pulsar-proxy:80`. |
 <!-- infernix:route-registry:web-portal:end -->
@@ -42,8 +41,8 @@ Always-published operator prefixes:
 On the real Kind path those routes are published by `Gateway/infernix-edge`,
 `EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set.
 
-When the demo UI is enabled, the four operator routes (the Harbor portal, the Harbor API,
-`/pulsar/admin`, and `/pulsar/ws`) are **admin-gated** by
+When the demo UI is enabled, the three operator routes (`/registry`, `/pulsar/admin`, and
+`/pulsar/ws`) are **admin-gated** by
 `SecurityPolicy/infernix-operator-routes-jwt`. The policy validates the same Keycloak JWT
 the SPA uses for `/ws` and `/api/objects` — accepting either the `infernix_operator_token` cookie
 written by the SPA after login / refresh or an `Authorization: Bearer ...` header — **and** requires
@@ -121,7 +120,7 @@ Keycloak image.
 
 **Admin** users see an operator ribbon in the app shell with direct links to:
 
-- `Harbor` at `/harbor`
+- `Registry` at `/registry`
 - `Pulsar Admin` at `/pulsar/admin/admin/v2/clusters`
 
 The ribbon is inside `.app-shell`, so it is hidden in the anonymous landing state, and the SPA
@@ -138,7 +137,7 @@ cannot set headers on. The admin cluster-wide monitoring panel reads the admin-g
 `GET /api/admin/overview`, and the backend additionally admin-gates `GET /api/cache` and
 `/api/cache/{evict,rebuild}`.
 
-The `Harbor` and `Pulsar Admin` operator links are the operator ribbon's full set. MinIO is not
+The `Registry` and `Pulsar Admin` operator links are the operator ribbon's full set. MinIO is not
 browser-reachable and the ribbon has no `MinIO S3` link; browser object access flows through the
 webapp's `/api/objects` endpoints
 (see [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).

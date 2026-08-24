@@ -7,9 +7,9 @@ Current scope:
 
 - repo-owned templates for the Gateway API surface, demo workload, service workload,
   publication state, generated demo-config, and the service PVC
-- locked Harbor, MinIO, Pulsar, PostgreSQL-operator, and Envoy Gateway dependencies in
+- locked MinIO, Pulsar, PostgreSQL-operator, and Envoy Gateway dependencies in
   `Chart.yaml` and `Chart.lock`
-- shared values for runtime mode, HTTPRoute publication, Harbor-backed image coordinates,
+- shared values for runtime mode, HTTPRoute publication, registry-backed image coordinates,
   mandatory local HA replica targets, and the manual `infernix-manual` storage contract
 
 Runtime contract:
@@ -23,4 +23,4 @@ Runtime contract:
   flag
 - routing is owned by `GatewayClass/infernix-gateway`, `Gateway/infernix-edge`, and the
   data-driven `chart/templates/httproutes.yaml` template
-- non-Harbor workloads pull Harbor-published runtime-image references selected through chart values
+- cluster workloads pull registry-published runtime-image references selected through chart values

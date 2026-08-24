@@ -286,7 +286,7 @@ the shared adapter project:
 - Linux Kind or `nvkind` configs use repo-local state under `./.data/`; the outer container no
   longer forwards a host-repo-root override
 - on the Linux outer-container path, the baked image carries the chart archive cache at
-  `/opt/infernix/chart/charts/` for Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway, with
+  `/opt/infernix/chart/charts/` for PostgreSQL, Pulsar, MinIO, and Envoy Gateway, with
   `/workspace/chart/charts` linked to that image-local cache so fresh launcher containers can
   reuse the same dependency bundle without reconstructing it from the network every time
 - routed E2E on Linux runs Playwright inside the same substrate image with

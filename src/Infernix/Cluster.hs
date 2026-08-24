@@ -84,7 +84,7 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.Char (isAlphaNum, isSpace, toLower)
+import Data.Char (isAlphaNum, isSpace)
 import Data.Either (isRight)
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List qualified as List
@@ -290,7 +290,7 @@ nodeMountedKindRoot = "/var/infernix-data"
 data ClusterUpInputs = ClusterUpInputs
   { clusterUpControlPlane :: ControlPlaneContext,
     clusterUpRequestedEdgePort :: Int,
-    clusterUpRequestedHarborPort :: Int,
+    clusterUpRequestedRegistryPort :: Int,
     clusterUpRequestedPulsarHttpPort :: Int,
     clusterUpDemoUiEnabled :: Bool,
     clusterUpDemoConfigPath :: FilePath,
@@ -315,8 +315,7 @@ clusterServiceEnabled _runtimeMode = False
 
 helmRepositories :: [Command.HelmRepository]
 helmRepositories =
-  [ Command.GoharborRepo,
-    Command.PerconaRepo,
+  [ Command.PerconaRepo,
     Command.PulsarRepo,
     Command.BitnamiRepo,
     Command.NvidiaPluginRepo
@@ -328,8 +327,7 @@ helmRepositories =
 -- includes `chart/charts/minio-17.0.21.tgz`.
 helmDependencyArchives :: [FilePath]
 helmDependencyArchives =
-  [ "chart/charts/harbor-1.18.3.tgz",
-    "chart/charts/pg-operator-2.9.0.tgz",
+  [ "chart/charts/pg-operator-2.9.0.tgz",
     "chart/charts/pg-db-2.9.0.tgz",
     "chart/charts/pulsar-4.5.0.tgz",
     "chart/charts/gateway-helm-v1.7.2.tgz"
@@ -414,21 +412,19 @@ finalPhaseStatefulSets =
     "statefulset/infernix-minio"
   ]
 
-harborFinalPhaseDeployments :: [String]
-harborFinalPhaseDeployments =
-  [ "deployment/infernix-harbor-core",
-    "deployment/infernix-harbor-jobservice",
-    "deployment/infernix-harbor-nginx",
-    "deployment/infernix-harbor-portal",
-    "deployment/infernix-harbor-registry"
-  ]
+-- | Phase 3 Sprint 3.17: the in-cluster registry is one Deployment.
+--
+-- What this list used to hold is the clearest measure of the change: five
+-- Deployments (core, jobservice, nginx, portal, registry) plus two StatefulSets
+-- (redis, trivy), each of which had to roll out before the platform could be
+-- called up.
+registryFinalPhaseDeployments :: [String]
+registryFinalPhaseDeployments =
+  ["deployment/infernix-registry"]
 
-harborFinalPhaseStatefulSets :: [String]
-harborFinalPhaseStatefulSets =
-  [ "statefulset/infernix-harbor-redis",
-    "statefulset/infernix-harbor-trivy",
-    "statefulset/infernix-minio"
-  ]
+registryFinalPhaseStatefulSets :: [String]
+registryFinalPhaseStatefulSets =
+  ["statefulset/infernix-minio"]
 
 nvidiaDevicePluginVersion :: String
 nvidiaDevicePluginVersion = "0.17.1"
@@ -436,13 +432,13 @@ nvidiaDevicePluginVersion = "0.17.1"
 kindNodeImage :: String
 kindNodeImage = "kindest/node:v1.34.0"
 
-harborBootstrapHelmTimeout :: Command.HelmDuration
-harborBootstrapHelmTimeout = Command.HelmSeconds 90
+registryBootstrapHelmTimeout :: Command.HelmDuration
+registryBootstrapHelmTimeout = Command.HelmSeconds 90
 
 data HelmDeployPhase
   = WarmupPhase
   | BootstrapPhase
-  | HarborFinalPhase
+  | RegistryFinalPhase
   | KeycloakStoragePhase
   | PulsarReadyPhase
   | FinalPhase
@@ -452,11 +448,6 @@ isAppleHostedLinuxCpuLocalTopology paths controlPlane runtimeMode =
   controlPlane == OuterContainer
     && runtimeMode == LinuxCpu
     && HostConfig.normalizeHostArchitecture (hostArchitectureForPaths paths) == "arm64"
-
-data HarborBootstrapOutcome
-  = HarborRegistryReady
-  | HarborMigrationDirty
-  | HarborBootstrapTimedOut String
 
 data OperatorManagedClaim = OperatorManagedClaim
   { operatorClaimNamespace :: String,
@@ -473,36 +464,38 @@ data OperatorManagedClaim = OperatorManagedClaim
 postgresOperatorDeployment :: String
 postgresOperatorDeployment = "deployment/infernix-postgres-operator"
 
-harborPostgresClusterName :: String
-harborPostgresClusterName = "harbor-postgresql"
+-- | Phase 3 Sprint 3.17: the platform's only Patroni PostgreSQL cluster.
+--
+-- The registry carries no database at all, so the cluster that used to back it
+-- is gone and Keycloak's is the one that remains. The startup-readiness and
+-- stuck-pod-restart machinery below is retained and re-pointed here rather than
+-- deleted with the registry's database: it handles a real Patroni startup flake
+-- and that flake is a property of the operator, not of what sits on top of it.
+patroniPostgresClusterName :: String
+patroniPostgresClusterName = "keycloak-postgresql"
 
 -- | Phase 3 Sprint 3.16: one Patroni instance per platform service, so one data
 -- claim rather than three.
-harborPostgresExpectedDataClaims :: Int
-harborPostgresExpectedDataClaims = 1
+patroniPostgresExpectedDataClaims :: Int
+patroniPostgresExpectedDataClaims = 1
 
-harborPostgresStartupRepairGraceAttempts :: Int
-harborPostgresStartupRepairGraceAttempts = 18
+patroniPostgresStartupRepairGraceAttempts :: Int
+patroniPostgresStartupRepairGraceAttempts = 18
 
--- | Phase 3 Sprint 3.16: 1 data claim + 1 pgBackRest repo claim.
-harborPostgresExpectedOperatorClaims :: Int
-harborPostgresExpectedOperatorClaims = 2
-
--- | Phase 7 Sprint 7.1: keycloak-postgresql is a second Patroni Postgres
--- cluster (operator-managed) that lands in FinalPhase, after Harbor.
--- Phase 3 Sprint 3.16 collapsed it to one instance, so it contributes 2
--- operator-managed PVCs (1 data + 1 pgbackrest repo), and the FinalPhase
--- reconcile waits for the combined Harbor + Keycloak total before declaring the
--- PV side ready.
+-- | Phase 7 Sprint 7.1 / Phase 3 Sprint 3.17: @keycloak-postgresql@ is an
+-- operator-managed Patroni cluster that lands in FinalPhase, and since the
+-- registry stopped carrying a database it is the only one. Phase 3 Sprint 3.16
+-- collapsed it to one instance, so it contributes 2 operator-managed PVCs
+-- (1 data + 1 pgbackrest repo), and the FinalPhase reconcile waits for that
+-- total before declaring the PV side ready.
+--
+-- Nothing operator-managed lands earlier now: the warmup phase brings up the
+-- Percona operator itself and no cluster for it to reconcile.
 keycloakPostgresExpectedOperatorClaims :: Int
 keycloakPostgresExpectedOperatorClaims = 2
 
 finalPhaseExpectedOperatorClaims :: Int
-finalPhaseExpectedOperatorClaims =
-  harborPostgresExpectedOperatorClaims + keycloakPostgresExpectedOperatorClaims
-
-harborPostgresUserSecretName :: String
-harborPostgresUserSecretName = "infernix-harbor-db-user"
+finalPhaseExpectedOperatorClaims = keycloakPostgresExpectedOperatorClaims
 
 keycloakRealmName :: String
 keycloakRealmName = "infernix"
@@ -1130,7 +1123,7 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
           runtimeMode
           clusterAlreadyPresent
           (clusterUpRequestedEdgePort inputs)
-          (clusterUpRequestedHarborPort inputs)
+          (clusterUpRequestedRegistryPort inputs)
           (routeInventory (clusterUpDemoUiEnabled inputs))
           (platformClaimsForRuntime runtimeMode)
           claimDiscoveryTime
@@ -1161,7 +1154,7 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
       "cluster-up"
       (retainedReplayLifecyclePhaseName replayPlan "prepare-kind-cluster")
       "creating or reusing the Kind cluster and preparing retained runtime data"
-  (edgePortValue, harborPortValue, pulsarHttpPortValue, kubeconfigContents, clusterCreated) <-
+  (edgePortValue, registryPortValue, pulsarHttpPortValue, kubeconfigContents, clusterCreated) <-
     ensureKindCluster
       lifecycleLock
       teardownAuthority
@@ -1170,10 +1163,10 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
       clusterAlreadyPresent
       replayPlan
       (clusterUpRequestedEdgePort inputs)
-      (clusterUpRequestedHarborPort inputs)
+      (clusterUpRequestedRegistryPort inputs)
       (clusterUpRequestedPulsarHttpPort inputs)
-  writeRegistryHostsConfig paths runtimeMode harborPortValue
-  primeKindNodeRegistryHosts paths runtimeMode harborPortValue
+  writeRegistryHostsConfig paths runtimeMode registryPortValue
+  primeKindNodeRegistryHosts paths runtimeMode registryPortValue
   replayState <-
     if retainedReplayRequired replayPlan
       then
@@ -1189,7 +1182,7 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
   unless usesHostBindMounts $
     prepareKindNodeClaimDirectories paths replayState runtimeMode discoveredClaims
   writeFile (edgePortPath paths) (show edgePortValue)
-  writeFile (harborPortPath paths) (show harborPortValue)
+  writeFile (registryPortPath paths) (show registryPortValue)
   writeFile (pulsarHttpPortPath paths) (show pulsarHttpPortValue)
   publishGeneratedKubeconfig paths (Text.pack kubeconfigContents)
   activeStateTime <- getCurrentTime
@@ -1200,7 +1193,7 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
           runtimeMode
           True
           edgePortValue
-          harborPortValue
+          registryPortValue
           discoveredRoutes
           discoveredClaims
           activeStateTime
@@ -1218,13 +1211,13 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
   let seedState = activeState {claims = platformClaimsForRuntime runtimeMode, updatedAt = now}
   warmupValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) WarmupPhase
   bootstrapValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) BootstrapPhase
-  harborFinalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) HarborFinalPhase
+  registryFinalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) RegistryFinalPhase
   keycloakStorageValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) KeycloakStoragePhase
   pulsarReadyValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) PulsarReadyPhase
   finalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) (clusterUpFleetMachineContracts inputs) FinalPhase
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
   when clusterCreated $
-    putStrLn "cluster-up phase: preload-bootstrap-images - skipped broad pre-Harbor support-image preload; Harbor-first publication owns remaining images"
+    putStrLn "cluster-up phase: preload-bootstrap-images - skipped broad pre-registry support-image preload; registry-first publication owns remaining images"
   preloadHostCachedWarmupImagesOnKindWorker paths seedState runtimeMode
   applyBootstrapState paths runtimeMode (clusterUpDemoUiEnabled inputs) discoveredClaims
   let initialState = seedState {claims = discoveredClaims}
@@ -1248,48 +1241,47 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
   deployChart paths storageReconcileState [warmupValuesPath] False
   state0 <- reconcileOperatorManagedPersistentVolumes paths storageReconcileState
   persistClusterState paths state0
-  harborBootstrapState <-
+  registryBootstrapState <-
     startLifecyclePhase
       paths
       state0
       "cluster-up"
-      "bootstrap-harbor"
-      "repairing Harbor bootstrap state and waiting for the Harbor registry to become ready"
-  repairHarborDatabaseMigrationState harborBootstrapState
-  bootstrapHarborWithRepair paths harborBootstrapState [bootstrapValuesPath]
+      "bootstrap-registry"
+      "deploying the in-cluster registry and waiting for it to become ready"
+  bootstrapRegistry paths registryBootstrapState [bootstrapValuesPath]
   buildState <-
     startLifecyclePhase
       paths
-      harborBootstrapState
+      registryBootstrapState
       "cluster-up"
       "build-cluster-images"
       ("docker build " <> clusterWorkloadImageRef runtimeMode)
   buildClusterImages paths buildState runtimeMode
   imageOverridesPath <- publishClusterImages paths buildState renderedChartPath runtimeMode
-  harborFinalState <-
+  registryFinalState <-
     startLifecyclePhase
       paths
       buildState
       "cluster-up"
-      "deploy-harbor-final-phase"
-      "deploying Harbor-backed platform workloads and waiting for Harbor plus Gateway rollouts"
-  preloadHarborBackedImagesOnKindWorker paths harborFinalState runtimeMode imageOverridesPath
-  deployChart paths harborFinalState [harborFinalValuesPath, imageOverridesPath] True
-  waitForHarborFinalPhaseRollouts harborFinalState
-  waitForGatewayApiCrds harborFinalState
+      "deploy-registry-final-phase"
+      "deploying registry-backed platform workloads and waiting for registry plus Gateway rollouts"
+  preloadRegistryBackedImagesOnKindWorker paths registryFinalState runtimeMode imageOverridesPath
+  deployChart paths registryFinalState [registryFinalValuesPath, imageOverridesPath] True
+  waitForRegistryFinalPhaseRollouts registryFinalState
+  waitForGatewayApiCrds registryFinalState
   finalStorageStateWithOperatorClaims <-
-    if clusterStateHasDemoUi harborFinalState
+    if clusterStateHasDemoUi registryFinalState
       then do
         finalStorageState <-
           startLifecyclePhase
             paths
-            harborFinalState
+            registryFinalState
             "cluster-up"
             "prepare-keycloak-storage"
             "applying the Keycloak PostgreSQL CR and binding operator-managed storage"
         deployChartSkippingHooks paths finalStorageState [keycloakStorageValuesPath, imageOverridesPath] False
         reconcileFinalPhaseOperatorManagedPersistentVolumes paths finalStorageState
-      else pure harborFinalState
+      else pure registryFinalState
   finalRuntimePrereqState <-
     if isAppleHostedLinuxCpuLocalTopology paths (clusterUpControlPlane inputs) runtimeMode
       then do
@@ -1351,7 +1343,7 @@ clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runti
   putStrLn ("controlPlaneContext: " <> controlPlaneContextId (clusterUpControlPlane inputs))
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("edgePort: " <> show edgePortValue)
-  putStrLn ("harborPort: " <> show harborPortValue)
+  putStrLn ("registryPort: " <> show registryPortValue)
   putStrLn ("generatedDemoConfigPath: " <> clusterUpDemoConfigPath inputs)
   putStrLn ("publishedDemoConfigPath: " <> clusterUpPublishedCatalogPath inputs)
   putStrLn ("mountedDemoConfigPath: " <> clusterUpMountedCatalogPath inputs)
@@ -1426,7 +1418,7 @@ runWarmModelCacheBarrier configuredModelIds (Right minioHost) = do
 prepareClusterUpInputs :: Paths -> RuntimeMode -> IO ClusterUpInputs
 prepareClusterUpInputs paths runtimeMode = do
   requestedPort <- chooseEdgePort paths
-  requestedHarborPort <- chooseHarborPort paths
+  requestedRegistryPort <- chooseRegistryPort paths
   requestedPulsarHttpPort <- choosePulsarHttpPort paths
   generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
   generatedConfig <- decodeBootstrapDemoConfigFile generatedConfigPath
@@ -1473,7 +1465,7 @@ prepareClusterUpInputs paths runtimeMode = do
     ClusterUpInputs
       { clusterUpControlPlane = Config.controlPlaneContext paths,
         clusterUpRequestedEdgePort = requestedPort,
-        clusterUpRequestedHarborPort = requestedHarborPort,
+        clusterUpRequestedRegistryPort = requestedRegistryPort,
         clusterUpRequestedPulsarHttpPort = requestedPulsarHttpPort,
         clusterUpDemoUiEnabled = demoUiEnabledValue,
         clusterUpDemoConfigPath = generatedConfigPath,
@@ -1548,12 +1540,12 @@ renderFleetMachineContracts paths publishedDigest memberIds =
         )
 
 clusterUpState :: ClusterOwner -> ClusterUpInputs -> RuntimeMode -> Bool -> Int -> Int -> [RouteInfo] -> [PersistentClaim] -> UTCTime -> ClusterState
-clusterUpState owner inputs runtimeMode clusterPresentValue edgePortValue harborPortValue routesValue claimsValue updatedAtValue =
+clusterUpState owner inputs runtimeMode clusterPresentValue edgePortValue registryPortValue routesValue claimsValue updatedAtValue =
   ClusterState
     { clusterLifecycle = if clusterPresentValue then ClusterReady else ClusterAbsent,
       clusterOwner = owner,
       edgePort = edgePortValue,
-      harborPort = harborPortValue,
+      registryPort = registryPortValue,
       routes = routesValue,
       storageClass = "infernix-manual",
       claims = claimsValue,
@@ -3677,19 +3669,19 @@ chooseEdgePort :: Paths -> IO Int
 chooseEdgePort paths = chooseDynamicPort 9090 =<< readEdgePortMaybe paths
 
 -- | Phase 3 follow-on (2026-05-29): pick a free host-side TCP port for
--- Harbor's Kind hostPort mapping, mirroring 'chooseEdgePort'. The
+-- the registry's Kind hostPort mapping, mirroring 'chooseEdgePort'. The
 -- in-cluster Kubernetes NodePort number stays @30002@ — only the
 -- Kind hostPort observed by the operator host is dynamic, so the
--- chart's Harbor sub-chart still resolves to @<node>:30002@ for
+-- chart's registry Service still resolves to @<node>:30002@ for
 -- in-cluster reachability while the host probe and the containerd
 -- registry-hosts namespace honor whatever port is actually free on
 -- the operator's machine.
-chooseHarborPort :: Paths -> IO Int
-chooseHarborPort paths = chooseDynamicPort 30002 =<< readHarborPortMaybe paths
+chooseRegistryPort :: Paths -> IO Int
+chooseRegistryPort paths = chooseDynamicPort 30002 =<< readRegistryPortMaybe paths
 
 -- | Phase 7 follow-on: pick a free host-side TCP port for the Pulsar proxy
 -- HTTP NodePort's Kind hostPort mapping, mirroring 'chooseEdgePort' and
--- 'chooseHarborPort'. The in-cluster Kubernetes NodePort number stays
+-- 'chooseRegistryPort'. The in-cluster Kubernetes NodePort number stays
 -- @30080@; only the Kind hostPort observed by the operator host shifts when
 -- another process (for example a VSCode auto-forwarded port) already holds
 -- the @30080@ baseline. The Apple host-native service daemon reads the
@@ -3824,7 +3816,7 @@ hostClaimOwnershipAlignmentSupported paths =
 claimOwner :: PersistentClaim -> Maybe String
 claimOwner claimSpec
   | workload claimSpec == "minio" && claim claimSpec == "data" = Just "1001:1001"
-  | "harbor-postgresql" `List.isPrefixOf` Text.unpack (workload claimSpec) = Just "26:26"
+  | "keycloak-postgresql" `List.isPrefixOf` Text.unpack (workload claimSpec) = Just "26:26"
   | otherwise = Nothing
 
 ensureKindCluster ::
@@ -3838,7 +3830,7 @@ ensureKindCluster ::
   Int ->
   Int ->
   IO (Int, Int, Int, String, Bool)
-ensureKindCluster lifecycleLock teardownAuthority paths runtimeMode expectedClusterPresence replayPlan requestedPort requestedHarborPort requestedPulsarHttpPort = do
+ensureKindCluster lifecycleLock teardownAuthority paths runtimeMode expectedClusterPresence replayPlan requestedPort requestedRegistryPort requestedPulsarHttpPort = do
   clusterExists <- kindClusterExists paths runtimeMode
   unless (clusterExists == expectedClusterPresence) $
     ioError
@@ -3848,25 +3840,25 @@ ensureKindCluster lifecycleLock teardownAuthority paths runtimeMode expectedClus
               <> "; refusing to act on stale replay evidence"
           )
       )
-  (selectedPort, selectedHarborPort, selectedPulsarHttpPort, clusterCreated) <-
+  (selectedPort, selectedRegistryPort, selectedPulsarHttpPort, clusterCreated) <-
     if clusterExists
       then do
         maybeExistingPort <- currentKindEdgePort paths runtimeMode
-        maybeExistingHarborPort <- currentKindHarborPort paths runtimeMode
+        maybeExistingRegistryPort <- currentKindRegistryPort paths runtimeMode
         maybeExistingPulsarHttpPort <- currentKindPulsarHttpPort paths runtimeMode
         pure
           ( fromMaybe requestedPort maybeExistingPort,
-            fromMaybe requestedHarborPort maybeExistingHarborPort,
+            fromMaybe requestedRegistryPort maybeExistingRegistryPort,
             fromMaybe requestedPulsarHttpPort maybeExistingPulsarHttpPort,
             False
           )
       else do
-        (createdPort, createdHarborPort, createdPulsarHttpPort) <- createKindCluster paths runtimeMode requestedPort requestedHarborPort requestedPulsarHttpPort
-        pure (createdPort, createdHarborPort, createdPulsarHttpPort, True)
+        (createdPort, createdRegistryPort, createdPulsarHttpPort) <- createKindCluster paths runtimeMode requestedPort requestedRegistryPort requestedPulsarHttpPort
+        pure (createdPort, createdRegistryPort, createdPulsarHttpPort, True)
   kubeconfigResult <- waitForKindKubeconfig paths runtimeMode
   case kubeconfigResult of
     Right kubeconfigContents ->
-      pure (selectedPort, selectedHarborPort, selectedPulsarHttpPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) kubeconfigContents, clusterCreated)
+      pure (selectedPort, selectedRegistryPort, selectedPulsarHttpPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) kubeconfigContents, clusterCreated)
     Left firstError ->
       case kindKubeconfigRecoveryPlan replayPlan of
         RecreatePreWorkloadKind -> do
@@ -3877,20 +3869,20 @@ ensureKindCluster lifecycleLock teardownAuthority paths runtimeMode expectedClus
               paths
               runtimeMode
               replayPlan
-          (recreatedPort, recreatedHarborPort, recreatedPulsarHttpPort) <-
+          (recreatedPort, recreatedRegistryPort, recreatedPulsarHttpPort) <-
             recreatePreWorkloadKindCluster
               lifecycleLock
               recoveryEvidence
               paths
               selectedPort
-              selectedHarborPort
+              selectedRegistryPort
               selectedPulsarHttpPort
           recreatedKubeconfigResult <- waitForKindKubeconfig paths runtimeMode
           case recreatedKubeconfigResult of
             Right kubeconfigContents ->
               pure
                 ( recreatedPort,
-                  recreatedHarborPort,
+                  recreatedRegistryPort,
                   recreatedPulsarHttpPort,
                   normalizeKubeconfigServer
                     (Config.controlPlaneContext paths)
@@ -3963,7 +3955,7 @@ recreatePreWorkloadKindCluster ::
   Int ->
   Int ->
   IO (Int, Int, Int)
-recreatePreWorkloadKindCluster lifecycleLock recoveryEvidence paths edgePortValue harborPortValue pulsarHttpPortValue = do
+recreatePreWorkloadKindCluster lifecycleLock recoveryEvidence paths edgePortValue registryPortValue pulsarHttpPortValue = do
   case leasePayload lifecycleLock of
     ClusterMutationLocked -> pure ()
   case recoveryEvidence of
@@ -3973,7 +3965,7 @@ recreatePreWorkloadKindCluster lifecycleLock recoveryEvidence paths edgePortValu
         (AuthorizedPreWorkloadRecovery recoveryEvidence)
         paths
         runtimeMode
-      createKindCluster paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue
+      createKindCluster paths runtimeMode edgePortValue registryPortValue pulsarHttpPortValue
 
 -- | Create the Kind cluster and immediately record which checkout created it.
 --
@@ -3981,9 +3973,9 @@ recreatePreWorkloadKindCluster lifecycleLock recoveryEvidence paths edgePortValu
 -- step because the window between the two is the only interval in which a
 -- foreign checkout could observe the cluster as unidentified.
 createKindCluster :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO (Int, Int, Int)
-createKindCluster paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue = do
+createKindCluster paths runtimeMode edgePortValue registryPortValue pulsarHttpPortValue = do
   publishedPorts <-
-    createKindClusterNodes paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue
+    createKindClusterNodes paths runtimeMode edgePortValue registryPortValue pulsarHttpPortValue
   stampClusterSlotIdentity paths runtimeMode
   pure publishedPorts
 
@@ -3992,9 +3984,9 @@ createKindClusterNodes paths runtimeMode = case runtimeMode of
   LinuxGpu -> createLinuxGpuCluster paths
   _ -> go
   where
-    go candidatePort harborPortCandidate pulsarHttpPortCandidate = do
+    go candidatePort registryPortCandidate pulsarHttpPortCandidate = do
       machineCount <- resolveClusterEngineMachineCount paths runtimeMode
-      configPath <- writeGeneratedKindConfig paths runtimeMode machineCount candidatePort harborPortCandidate pulsarHttpPortCandidate
+      configPath <- writeGeneratedKindConfig paths runtimeMode machineCount candidatePort registryPortCandidate pulsarHttpPortCandidate
       result <- withKindScratchKubeconfig paths runtimeMode $ \scratchKubeconfig ->
         tryClusterCommand
           paths
@@ -4004,10 +3996,10 @@ createKindClusterNodes paths runtimeMode = case runtimeMode of
               (Command.kindScratchKubeconfig scratchKubeconfig)
           )
       case result of
-        Right _ -> pure (candidatePort, harborPortCandidate, pulsarHttpPortCandidate)
+        Right _ -> pure (candidatePort, registryPortCandidate, pulsarHttpPortCandidate)
         Left err
           | kindHostPortConflict err ->
-              go (candidatePort + 1) (harborPortCandidate + 1) (pulsarHttpPortCandidate + 1)
+              go (candidatePort + 1) (registryPortCandidate + 1) (pulsarHttpPortCandidate + 1)
           | otherwise ->
               ioError
                 (userError ("kind create cluster failed for " <> kindClusterName paths runtimeMode <> ":\n" <> err))
@@ -4015,10 +4007,10 @@ createKindClusterNodes paths runtimeMode = case runtimeMode of
 createLinuxGpuCluster :: Paths -> Int -> Int -> Int -> IO (Int, Int, Int)
 createLinuxGpuCluster paths = go
   where
-    go candidatePort harborPortCandidate pulsarHttpPortCandidate = do
+    go candidatePort registryPortCandidate pulsarHttpPortCandidate = do
       ensureLinuxGpuHostPrerequisites paths
       machineCount <- resolveClusterEngineMachineCount paths LinuxGpu
-      configPath <- writeGeneratedKindConfig paths LinuxGpu machineCount candidatePort harborPortCandidate pulsarHttpPortCandidate
+      configPath <- writeGeneratedKindConfig paths LinuxGpu machineCount candidatePort registryPortCandidate pulsarHttpPortCandidate
       result <- withKindScratchKubeconfig paths LinuxGpu $ \scratchKubeconfig ->
         tryClusterCommand
           paths
@@ -4028,10 +4020,10 @@ createLinuxGpuCluster paths = go
               (Command.kindScratchKubeconfig scratchKubeconfig)
           )
       case result of
-        Right _ -> pure (candidatePort, harborPortCandidate, pulsarHttpPortCandidate)
+        Right _ -> pure (candidatePort, registryPortCandidate, pulsarHttpPortCandidate)
         Left err
           | kindHostPortConflict err ->
-              go (candidatePort + 1) (harborPortCandidate + 1) (pulsarHttpPortCandidate + 1)
+              go (candidatePort + 1) (registryPortCandidate + 1) (pulsarHttpPortCandidate + 1)
           | linuxGpuNvkindConfigMapBug err -> do
               clusterCreated <- kindClusterExists paths LinuxGpu
               if clusterCreated
@@ -4043,7 +4035,7 @@ createLinuxGpuCluster paths = go
                     )
                   bootstrapResult <- try (completeLinuxGpuNodeBootstrap paths) :: IO (Either SomeException ())
                   case bootstrapResult of
-                    Right () -> pure (candidatePort, harborPortCandidate, pulsarHttpPortCandidate)
+                    Right () -> pure (candidatePort, registryPortCandidate, pulsarHttpPortCandidate)
                     Left bootstrapErr ->
                       ioError
                         ( userError
@@ -4420,7 +4412,7 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
             -- persisted as the authoritative owner record.
             clusterOwner = OperatorOwned,
             edgePort = 0,
-            harborPort = 0,
+            registryPort = 0,
             routes = routeInventory demoUiEnabledValue,
             storageClass = "infernix-manual",
             claims = claimInventory,
@@ -4557,7 +4549,7 @@ buildClusterImages paths state runtimeMode = do
 clusterWorkloadImageReusableForBuild :: Paths -> String -> String -> String -> String -> IO Bool
 clusterWorkloadImageReusableForBuild paths imageRef runtimeModeName targetArchitecture sourceFingerprint =
   case Config.controlPlaneContext paths of
-    OuterContainer -> dockerImageReusableForHarborPush imageRef
+    OuterContainer -> dockerImageReusableForRegistryPush imageRef
     HostNative ->
       dockerImageReusableForHostBuild imageRef runtimeModeName targetArchitecture sourceFingerprint
 
@@ -4567,7 +4559,7 @@ dockerImageReusableForHostBuild =
 
 dockerImageReusableWithSourceFingerprint :: String -> String -> String -> String -> IO Bool
 dockerImageReusableWithSourceFingerprint imageRef runtimeModeName targetArchitecture sourceFingerprint = do
-  pushReusable <- dockerImageReusableForHarborPush imageRef
+  pushReusable <- dockerImageReusableForRegistryPush imageRef
   architectureMatches <- dockerImageInspectFieldEquals imageRef Command.ImageArchitecture targetArchitecture
   fingerprintVersionMatches <-
     dockerImageInspectFieldEquals
@@ -4587,14 +4579,14 @@ dockerImageReusableWithSourceFingerprint imageRef runtimeModeName targetArchitec
     )
 
 -- Docker 29 + BuildKit may leave local repo-owned images as OCI indexes
--- with provenance attestations. Harbor publication is still Docker-push
+-- with provenance attestations. Registry publication is still Docker-push
 -- based for repo-owned images, and those indexed local images have produced
--- intermittent "blob ... not found" failures against the MinIO-backed Harbor
+-- intermittent "blob ... not found" failures against the MinIO-backed
 -- registry. Images rebuilt with --provenance=false inspect as plain image
 -- manifests; older Docker releases may omit Descriptor and are accepted after
 -- the normal inspect succeeds.
-dockerImageReusableForHarborPush :: String -> IO Bool
-dockerImageReusableForHarborPush imageRef = do
+dockerImageReusableForRegistryPush :: String -> IO Bool
+dockerImageReusableForRegistryPush imageRef = do
   inspectResult <-
     tryDiscoveredClusterCommand $ \_ ->
       Command.dockerInspectImageField
@@ -4687,21 +4679,21 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
   targetArchitecture <- resolveClusterWorkloadArchitecture paths runtimeMode
   let outputPath =
         buildRoot paths
-          </> ("harbor-image-overrides-" <> Text.unpack (runtimeModeId runtimeMode) <> ".yaml")
-      hostHarborAddress = "localhost:" <> show (harborPort state)
+          </> ("registry-image-overrides-" <> Text.unpack (runtimeModeId runtimeMode) <> ".yaml")
+      hostRegistryAddress = "localhost:" <> show (registryPort state)
   PublishImages.publishChartImagesFile
-    PublishImages.defaultHarborPublishOptions
-      { PublishImages.harborHost = hostHarborAddress,
-        PublishImages.harborClientHost = hostHarborAddress,
-        PublishImages.harborApiHost = harborApiHost paths runtimeMode (harborPort state),
-        PublishImages.harborTargetArchitecture = targetArchitecture
+    PublishImages.defaultRegistryPublishOptions
+      { PublishImages.registryHost = hostRegistryAddress,
+        PublishImages.registryClientHost = hostRegistryAddress,
+        PublishImages.registryApiHost = registryApiHost paths runtimeMode (registryPort state),
+        PublishImages.registryTargetArchitecture = targetArchitecture
       }
     ( \detail -> do
         -- Sprint 3.15: record the publish sub-phase for progress. The former
         -- ProcessMonitor heartbeat is retired here; liveness is now the
         -- bounded 'Subprocess.Timeout' on each publish command, not a
         -- heartbeat that could mask a hung pull.
-        _ <- startLifecyclePhase paths state "cluster-up" "publish-harbor-images" detail
+        _ <- startLifecyclePhase paths state "cluster-up" "publish-registry-images" detail
         pure ()
     )
     renderedChartPath
@@ -4817,13 +4809,13 @@ hydrateMissingHostWarmupImage paths state imageRef =
             )
           pure False
 
-preloadHarborBackedImagesOnKindWorker :: Paths -> ClusterState -> RuntimeMode -> FilePath -> IO ()
-preloadHarborBackedImagesOnKindWorker paths state runtimeMode imageOverridesPath = do
-  imageRefs <- harborOverlayImageRefs paths imageOverridesPath
+preloadRegistryBackedImagesOnKindWorker :: Paths -> ClusterState -> RuntimeMode -> FilePath -> IO ()
+preloadRegistryBackedImagesOnKindWorker paths state runtimeMode imageOverridesPath = do
+  imageRefs <- registryOverlayImageRefs paths imageOverridesPath
   workerContainers <- kindWorkerNodeNames paths runtimeMode
   let uniqueImageRefs = List.nub (filter shouldPreloadOnWorker (map trim imageRefs))
   unless (null uniqueImageRefs) $ do
-    putStrLn "preloading Harbor-backed final images on the Kind workers"
+    putStrLn "preloading registry-backed final images on the Kind workers"
     forM_ workerContainers $ \workerContainer ->
       mapM_
         ( \imageRef -> do
@@ -4832,20 +4824,20 @@ preloadHarborBackedImagesOnKindWorker paths state runtimeMode imageOverridesPath
                 paths
                 state
                 "cluster-up"
-                "preload-harbor-images"
-                ("preloading Harbor-backed image " <> imageRef <> " on " <> workerContainer)
-            preloadHarborImageOnNode paths imageState workerContainer imageRef
+                "preload-registry-images"
+                ("preloading registry-backed image " <> imageRef <> " on " <> workerContainer)
+            preloadRegistryImageOnNode paths imageState workerContainer imageRef
         )
         uniqueImageRefs
   where
     shouldPreloadOnWorker imageRef = not (null imageRef)
 
-harborOverlayImageRefs :: Paths -> FilePath -> IO [String]
-harborOverlayImageRefs _paths imageOverridesPath =
-  filter (not . null) <$> discoverHarborOverlayImageRefsFile imageOverridesPath
+registryOverlayImageRefs :: Paths -> FilePath -> IO [String]
+registryOverlayImageRefs _paths imageOverridesPath =
+  filter (not . null) <$> discoverRegistryOverlayImageRefsFile imageOverridesPath
 
-preloadHarborImageOnNode :: Paths -> ClusterState -> String -> String -> IO ()
-preloadHarborImageOnNode paths state nodeContainer imageRef = do
+preloadRegistryImageOnNode :: Paths -> ClusterState -> String -> String -> IO ()
+preloadRegistryImageOnNode paths state nodeContainer imageRef = do
   result <-
     tryClusterCommand
       paths
@@ -4857,7 +4849,7 @@ preloadHarborImageOnNode paths state nodeContainer imageRef = do
     Right _ -> pure ()
     Left pullFailure -> do
       putStrLn
-        ( "Anonymous Harbor-backed crictl preload failed for "
+        ( "Anonymous registry-backed crictl preload failed for "
             <> imageRef
             <> " on "
             <> nodeContainer
@@ -4868,8 +4860,8 @@ preloadHarborImageOnNode paths state nodeContainer imageRef = do
           paths
           state
           "cluster-up"
-          "preload-harbor-images"
-          ("stream-importing Harbor-backed image " <> imageRef <> " on " <> nodeContainer)
+          "preload-registry-images"
+          ("stream-importing registry-backed image " <> imageRef <> " on " <> nodeContainer)
       fallbackResult <-
         (try (streamImportImageOnNode paths fallbackState nodeContainer imageRef) :: IO (Either IOException ()))
       case fallbackResult of
@@ -4877,7 +4869,7 @@ preloadHarborImageOnNode paths state nodeContainer imageRef = do
         Left fallbackErr ->
           ioError
             ( userError
-                ( "Kind worker could not preload Harbor-backed image "
+                ( "Kind worker could not preload registry-backed image "
                     <> imageRef
                     <> ":\ncrictl pull failure:\n"
                     <> pullFailure
@@ -4903,37 +4895,33 @@ dockerImagePresent imageRef =
           Command.dockerInspectImage (Command.ImageRef imageRef)
       )
 
-waitForHarborRegistry :: Paths -> RuntimeMode -> Int -> IO ()
-waitForHarborRegistry paths runtimeMode harborPortValue = do
-  result <- waitForHarborRegistryResult paths runtimeMode harborPortValue 60 5000000
-  case result of
-    Right _ -> pure ()
-    Left err ->
-      ioError
-        (userError ("Harbor registry never became ready enough for image publication:\n" <> err))
-
-waitForHarborRegistryResult :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO (Either String String)
-waitForHarborRegistryResult paths runtimeMode harborPortValue attempts delayMicros = do
-  let registryApiUrl = "http://" <> harborApiHost paths runtimeMode harborPortValue <> "/api/v2.0/health"
+-- | Phase 3 Sprint 3.17: the registry's @\/v2\/@ API answered.
+--
+-- This is a /liveness/ probe and nothing more. @registry:2@ serves @\/v2\/@
+-- straight out of its own process without reading a byte from S3, so a 200 here
+-- says the registry is up and says nothing at all about whether any blob is
+-- retrievable. It may gate whether to keep waiting; it may never stand in for
+-- publication evidence. That remains the @BlobServable@ witness minted by a real
+-- bounded registry-only @skopeo copy@ in "Infernix.Cluster.PublishImages".
+waitForRegistryEndpointResult :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO (Either String String)
+waitForRegistryEndpointResult paths runtimeMode registryPortValue attempts delayMicros = do
+  let registryApiUrl = "http://" <> registryApiHost paths runtimeMode registryPortValue <> "/v2/"
       probeCommand = do
         response <-
           tryClusterCommand
             paths
-            (Command.curlHarborHealth (Command.Url registryApiUrl))
+            (Command.curlRegistryApi (Command.Url registryApiUrl))
         pure $
           response >>= \payload ->
             case parseCurlBodyAndStatus payload of
-              Just (responseBody, statusCode)
-                | statusCode `elem` ["200", "401", "403"]
-                    && let loweredBody = map toLower responseBody
-                        in "healthy" `List.isInfixOf` loweredBody || "status" `List.isInfixOf` loweredBody ->
-                    Right "ready"
+              Just (_, statusCode)
+                | statusCode `elem` ["200", "401", "403"] -> Right "ready"
               Just (_, statusCode) ->
-                Left ("unexpected Harbor registry status " <> statusCode)
+                Left ("unexpected registry status " <> statusCode)
               Nothing ->
-                Left "failed to parse Harbor registry probe output"
+                Left "failed to parse registry probe output"
   if attempts <= 1
-    then retryCommandOutput attempts delayMicros "wait for Harbor registry" probeCommand
+    then retryCommandOutput attempts delayMicros "wait for the in-cluster registry" probeCommand
     else
       let delaySeconds = max 1 ((delayMicros + 999999) `div` 1000000)
           totalSeconds = attempts * (30 + delaySeconds)
@@ -4944,123 +4932,71 @@ waitForHarborRegistryResult paths runtimeMode harborPortValue attempts delayMicr
                 totalSeconds
                 attempts
             )
-            "wait for Harbor registry"
+            "wait for the in-cluster registry"
             probeCommand
 
-bootstrapHarborWithRepair :: Paths -> ClusterState -> [FilePath] -> IO ()
-bootstrapHarborWithRepair paths state valuesPaths = go (3 :: Int)
+-- | Phase 3 Sprint 3.17: bring the in-cluster registry up.
+--
+-- This replaces a three-attempt retry loop that existed for one reason: the
+-- component this supersedes ran a first-boot schema migration against its own
+-- PostgreSQL database, that migration could leave the schema marked dirty, and
+-- a dirty schema wedged every later attempt until the migration job was deleted
+-- and the schema was dropped and recreated. Detecting that state, repairing it,
+-- and retrying around it was the bulk of this module's registry code.
+--
+-- @registry:2@ runs no migration because it has no database, so the failure
+-- mode is gone rather than handled: deploy the bootstrap values, wait for the
+-- endpoint, and fail with what the wait observed.
+bootstrapRegistry :: Paths -> ClusterState -> [FilePath] -> IO ()
+bootstrapRegistry paths state valuesPaths = do
+  deployResult <- tryDeployChartWithTimeout paths state valuesPaths False registryBootstrapHelmTimeout
+  case deployResult of
+    Right _ -> awaitBootstrapRegistryReady
+    Left err ->
+      ioError
+        (userError ("the registry bootstrap Helm reconcile failed:\n" <> err))
   where
-    go remainingAttempts = do
-      deployResult <- tryDeployChartWithTimeout paths state valuesPaths False harborBootstrapHelmTimeout
-      case deployResult of
-        Right _ -> do
-          outcome <- waitForHarborRegistryOrDirty paths state
-          case outcome of
-            HarborRegistryReady -> pure ()
-            HarborMigrationDirty
-              | remainingAttempts > 1 -> do
-                  repairHarborBootstrapState paths state Nothing
-                  go (remainingAttempts - 1)
-              | otherwise -> do
-                  repairHarborBootstrapState paths state Nothing
-                  waitForHarborRegistry paths (clusterRuntimeMode state) (harborPort state)
-            HarborBootstrapTimedOut err
-              | remainingAttempts > 1 -> do
-                  repairHarborBootstrapState paths state (Just err)
-                  go (remainingAttempts - 1)
-              | otherwise ->
-                  ioError
-                    (userError ("Harbor bootstrap never stabilized after retries:\n" <> err))
-        Left err
-          | remainingAttempts > 1 -> do
-              repairHarborBootstrapState paths state (Just err)
-              go (remainingAttempts - 1)
-          | otherwise ->
-              ioError
-                (userError ("Harbor bootstrap Helm reconcile failed after retries:\n" <> err))
+    awaitBootstrapRegistryReady = do
+      outcome <- Readiness.awaitReadiness registryReadinessDeadline probeRegistry
+      Readiness.foldReadiness (const (pure ())) onTimedOut onTimedOut outcome
+    probeRegistry = do
+      registryResult <-
+        waitForRegistryEndpointResult paths (clusterRuntimeMode state) (registryPort state) 1 0
+      pure $ case registryResult of
+        Right _ -> Right ()
+        Left err -> Left (Readiness.Progress 0 1 (Text.pack err))
+    onTimedOut progress =
+      ioError
+        ( userError
+            ( "the in-cluster registry never became ready during bootstrap:\n"
+                <> Text.unpack (Readiness.progressDetail progress)
+            )
+        )
 
-repairHarborBootstrapState :: Paths -> ClusterState -> Maybe String -> IO ()
-repairHarborBootstrapState _paths state _maybeError = do
-  cleanupHarborMigrationJob state
-  repairHarborDatabaseMigrationState state
-
-cleanupHarborMigrationJob :: ClusterState -> IO ()
-cleanupHarborMigrationJob state = do
-  _ <-
-    tryDiscoveredClusterCommand
-      ( \_ ->
-          Command.kubectlDeleteHarborMigrationJob
-            (clusterKubeTarget state)
-      )
-  pure ()
-
--- | Sprint 3.14 (managed-state-transition doctrine): a terminal Harbor probe
--- outcome. The registry being up and the migration state being dirty are both
--- terminal conditions a real probe can observe, so both are 'Right' evidence for
--- the readiness kernel; a still-unavailable registry is 'Left' progress that
--- keeps the wait polling until the deadline.
-data HarborRegistryProbe
-  = HarborRegistryUp
-  | HarborRegistryDirty
-
--- | Sprint 3.14: the required deadline for the Harbor registry readiness wait,
+-- | Sprint 3.14: the required deadline for the registry readiness wait,
 -- preserving the previous 24-attempt × 5s (~120s) budget as an explicit,
 -- data-carried bound instead of a bare recursion counter.
-harborRegistryReadinessDeadline :: Readiness.Deadline
-harborRegistryReadinessDeadline =
+registryReadinessDeadline :: Readiness.Deadline
+registryReadinessDeadline =
   Readiness.Deadline
     { Readiness.deadlinePollMicros = 5000000,
       Readiness.deadlineStallSeconds = 120,
       Readiness.deadlineCeilingSeconds = 120
     }
 
--- | Sprint 3.14: migrated onto the shared 'Infernix.Evidence.Readiness' kernel.
--- The wait returns the typed 'HarborBootstrapOutcome' evidence projected from
--- the kernel's 'Readiness' value: a ready/dirty terminal witness, or a
--- deadline-exhausted timeout carrying the last probe detail. Readiness is now
--- evidence a real probe minted, not a bare boolean or a defaulted success.
-waitForHarborRegistryOrDirty :: Paths -> ClusterState -> IO HarborBootstrapOutcome
-waitForHarborRegistryOrDirty paths state = do
-  outcome <- Readiness.awaitReadiness harborRegistryReadinessDeadline probeHarborRegistry
-  pure (Readiness.foldReadiness onReady onTimedOut onTimedOut outcome)
-  where
-    probeHarborRegistry = do
-      registryResult <- waitForHarborRegistryResult paths (clusterRuntimeMode state) (harborPort state) 1 0
-      case registryResult of
-        Right _ -> pure (Right HarborRegistryUp)
-        Left err -> do
-          dirty <- harborRegistryMigrationDirty state
-          if dirty
-            then pure (Right HarborRegistryDirty)
-            else pure (Left (Readiness.Progress 0 1 (Text.pack err)))
-    onReady HarborRegistryUp = HarborRegistryReady
-    onReady HarborRegistryDirty = HarborMigrationDirty
-    onTimedOut progress =
-      HarborBootstrapTimedOut (Text.unpack (Readiness.progressDetail progress))
-
-harborRegistryMigrationDirty :: ClusterState -> IO Bool
-harborRegistryMigrationDirty state = do
-  result <- runHarborDatabaseAction state Command.DetectDirtyHarborMigration
-  case result of
-    Right output -> pure ("dirty" `List.isInfixOf` output)
-    Left _ -> pure False
-
-repairHarborDatabaseMigrationState :: ClusterState -> IO ()
-repairHarborDatabaseMigrationState state = do
-  waitForHarborDatabaseReadyWithRepair state
-  repairResult <- runHarborDatabaseAction state Command.RepairDirtyHarborMigration
-  case repairResult of
-    Right _ -> pure ()
-    Left err ->
-      ioError
-        (userError ("failed to repair dirty Harbor database migration state:\n" <> err))
-
-waitForHarborDatabaseReadyWithRepair :: ClusterState -> IO ()
-waitForHarborDatabaseReadyWithRepair state = do
+-- | Phase 3 Sprint 3.17: wait for the one remaining Patroni cluster to be
+-- serving.
+--
+-- Retained from the retired registry database's readiness path and re-pointed
+-- at @keycloak-postgresql@. What is /not/ retained is the schema-migration
+-- repair that used to run alongside it: that was specific to the schema the
+-- registry component owned, and no such schema exists now.
+waitForPatroniDatabaseReady :: ClusterState -> IO ()
+waitForPatroniDatabaseReady state = do
   waitForWorkloadRollout state 900 postgresOperatorDeployment
-  waitForHarborPostgresPodsReady state
-  waitForWorkloadRollout state 900 ("deployment/" <> harborPostgresClusterName <> "-pgbouncer")
-  primaryPodName <- waitForHarborPostgresPrimaryPod state
+  waitForPatroniPostgresPodsReady state
+  waitForWorkloadRollout state 900 ("deployment/" <> patroniPostgresClusterName <> "-pgbouncer")
+  primaryPodName <- waitForPatroniPostgresPrimaryPod state
   runDiscoveredClusterCommand
     ( \_ ->
         Command.kubectlWaitPodReady
@@ -5070,16 +5006,8 @@ waitForHarborDatabaseReadyWithRepair state = do
           60
     )
 
--- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
--- 'Readiness' kernel under the legacy 72-attempt × 5 s budget. The mid-loop
--- repair state (whether a startup restart has already been issued), the attempt
--- counter the repair grace window keys on, and the retained
--- last non-empty error are carried in 'IORef's the probe threads, since the
--- kernel's 'Progress' carries only counts. Readiness is now the kernel's positive
--- outcome from a real all-pods-ready observation; the retained error is projected
--- into the timeout diagnostic.
-waitForHarborPostgresPodsReady :: ClusterState -> IO ()
-waitForHarborPostgresPodsReady state = do
+waitForPatroniPostgresPodsReady :: ClusterState -> IO ()
+waitForPatroniPostgresPodsReady state = do
   restartIssuedRef <- newIORef False
   attemptRef <- newIORef (0 :: Int)
   lastErrorRef <- newIORef ""
@@ -5087,40 +5015,40 @@ waitForHarborPostgresPodsReady state = do
       probe = do
         attemptsElapsed <- readIORef attemptRef
         modifyIORef' attemptRef (+ 1)
-        startupPods <- harborPostgresStartupPods state
+        startupPods <- patroniPostgresStartupPods state
         let dataPodCount =
               length
                 [ ()
                 | startupPod <- startupPods,
-                  "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+                  "keycloak-postgresql-instance" `List.isPrefixOf` patroniPostgresStartupPodName startupPod
                 ]
             repoHostCount =
               length
                 [ ()
                 | startupPod <- startupPods,
-                  "harbor-postgresql-repo-host-" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+                  "keycloak-postgresql-repo-host-" `List.isPrefixOf` patroniPostgresStartupPodName startupPod
                 ]
             allStartupPodsPresent =
-              dataPodCount >= harborPostgresExpectedDataClaims
+              dataPodCount >= patroniPostgresExpectedDataClaims
                 && repoHostCount >= 1
             currentError
-              | dataPodCount < harborPostgresExpectedDataClaims =
+              | dataPodCount < patroniPostgresExpectedDataClaims =
                   "expected "
-                    <> show harborPostgresExpectedDataClaims
-                    <> " Harbor PostgreSQL data pods but found "
+                    <> show patroniPostgresExpectedDataClaims
+                    <> " Patroni PostgreSQL data pods but found "
                     <> show dataPodCount
-              | repoHostCount < 1 = "expected Harbor PostgreSQL pgBackRest repo host pod but found none"
-              | all harborPostgresStartupPodReady startupPods = ""
+              | repoHostCount < 1 = "expected Patroni PostgreSQL pgBackRest repo host pod but found none"
+              | all patroniPostgresStartupPodReady startupPods = ""
               | otherwise =
-                  "Harbor PostgreSQL startup pods are not ready: "
+                  "Patroni PostgreSQL startup pods are not ready: "
                     <> List.intercalate
                       ", "
-                      [ harborPostgresStartupPodName startupPod
+                      [ patroniPostgresStartupPodName startupPod
                           <> " ["
-                          <> harborPostgresStartupPodStatus startupPod
+                          <> patroniPostgresStartupPodStatus startupPod
                           <> "]"
                       | startupPod <- startupPods,
-                        not (harborPostgresStartupPodReady startupPod)
+                        not (patroniPostgresStartupPodReady startupPod)
                       ]
         case currentError of
           "" -> pure (Right ())
@@ -5135,7 +5063,7 @@ waitForHarborPostgresPodsReady state = do
                 if restartIssued
                   then pure False
                   else
-                    restartHarborPostgresStartupPodsIfStuck
+                    restartPatroniPostgresStartupPodsIfStuck
                       state
                       allStartupPodsPresent
                       attemptsElapsed
@@ -5152,39 +5080,39 @@ waitForHarborPostgresPodsReady state = do
     onTimedOut progress =
       ioError
         ( userError
-            ( "Harbor PostgreSQL pods never became ready:\n"
+            ( "Patroni PostgreSQL pods never became ready:\n"
                 <> Text.unpack (Readiness.progressDetail progress)
             )
         )
 
-data HarborPostgresStartupPod = HarborPostgresStartupPod
-  { harborPostgresStartupPodName :: String,
-    harborPostgresStartupPodReady :: Bool,
-    harborPostgresStartupPodStatus :: String
+data PatroniPostgresStartupPod = PatroniPostgresStartupPod
+  { patroniPostgresStartupPodName :: String,
+    patroniPostgresStartupPodReady :: Bool,
+    patroniPostgresStartupPodStatus :: String
   }
 
-harborPostgresStartupPods :: ClusterState -> IO [HarborPostgresStartupPod]
-harborPostgresStartupPods state =
+patroniPostgresStartupPods :: ClusterState -> IO [PatroniPostgresStartupPod]
+patroniPostgresStartupPods state =
   mapMaybe parseStartupPodLine . lines
     <$> kubectlOutput
       state
-      (`Command.kubectlListPods` Command.HarborPostgresStartupPods)
+      (`Command.kubectlListPods` Command.PatroniPostgresStartupPods)
   where
     parseStartupPodLine lineValue =
       case words lineValue of
         podNameValue : readyValue : statusValue : _
-          | isHarborPostgresStartupPodName podNameValue ->
+          | isPatroniPostgresStartupPodName podNameValue ->
               Just
-                HarborPostgresStartupPod
-                  { harborPostgresStartupPodName = podNameValue,
-                    harborPostgresStartupPodReady = readyColumnSatisfied readyValue,
-                    harborPostgresStartupPodStatus = statusValue
+                PatroniPostgresStartupPod
+                  { patroniPostgresStartupPodName = podNameValue,
+                    patroniPostgresStartupPodReady = readyColumnSatisfied readyValue,
+                    patroniPostgresStartupPodStatus = statusValue
                   }
         _ -> Nothing
 
-    isHarborPostgresStartupPodName podNameValue =
-      "harbor-postgresql-instance" `List.isPrefixOf` podNameValue
-        || "harbor-postgresql-repo-host-" `List.isPrefixOf` podNameValue
+    isPatroniPostgresStartupPodName podNameValue =
+      "keycloak-postgresql-instance" `List.isPrefixOf` podNameValue
+        || "keycloak-postgresql-repo-host-" `List.isPrefixOf` podNameValue
 
     readyColumnSatisfied readyValue =
       case break (== '/') readyValue of
@@ -5194,8 +5122,8 @@ harborPostgresStartupPods state =
             _ -> False
         _ -> False
 
-restartHarborPostgresStartupPodsIfStuck :: ClusterState -> Bool -> Int -> [HarborPostgresStartupPod] -> IO Bool
-restartHarborPostgresStartupPodsIfStuck state _allStartupPodsPresent attemptsElapsed startupPods =
+restartPatroniPostgresStartupPodsIfStuck :: ClusterState -> Bool -> Int -> [PatroniPostgresStartupPod] -> IO Bool
+restartPatroniPostgresStartupPodsIfStuck state _allStartupPodsPresent attemptsElapsed startupPods =
   case NonEmpty.nonEmpty (map Command.PodName unreadyPodNames) of
     Just podNames
       | shouldRestart -> do
@@ -5210,45 +5138,45 @@ restartHarborPostgresStartupPodsIfStuck state _allStartupPodsPresent attemptsEla
     _ -> pure False
   where
     unreadyPodNames =
-      [ harborPostgresStartupPodName startupPod
+      [ patroniPostgresStartupPodName startupPod
       | startupPod <- startupPods,
-        not (harborPostgresStartupPodReady startupPod)
+        not (patroniPostgresStartupPodReady startupPod)
       ]
     shouldRestart =
       not (null unreadyPodNames)
         && ( any podLooksStuck startupPods
-               || attemptsElapsed >= harborPostgresStartupRepairGraceAttempts
+               || attemptsElapsed >= patroniPostgresStartupRepairGraceAttempts
            )
     podLooksStuck startupPod =
-      not (harborPostgresStartupPodReady startupPod)
-        && ( "CrashLoopBackOff" `List.isInfixOf` harborPostgresStartupPodStatus startupPod
-               || harborPostgresStartupPodStatus startupPod == "Error"
-               || harborPostgresStartupPodStatus startupPod == "Init:Error"
+      not (patroniPostgresStartupPodReady startupPod)
+        && ( "CrashLoopBackOff" `List.isInfixOf` patroniPostgresStartupPodStatus startupPod
+               || patroniPostgresStartupPodStatus startupPod == "Error"
+               || patroniPostgresStartupPodStatus startupPod == "Init:Error"
            )
 
 -- | Sprint 6.41: migrated onto the shared 'Readiness' kernel under the legacy
 -- 72-attempt × 5 s budget. The resolved primary pod name is the kernel's readiness
 -- evidence, minted only from a real non-empty pod observation.
-waitForHarborPostgresPrimaryPod :: ClusterState -> IO String
-waitForHarborPostgresPrimaryPod state = do
+waitForPatroniPostgresPrimaryPod :: ClusterState -> IO String
+waitForPatroniPostgresPrimaryPod state = do
   outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 72 5000000) probe
   Readiness.foldReadiness pure onTimedOut onTimedOut outcome
   where
     probe = do
-      podName <- harborPostgresPrimaryPodNameMaybe state
+      podName <- patroniPostgresPrimaryPodNameMaybe state
       if null podName
-        then pure (Left (Readiness.Progress 0 1 "Harbor PostgreSQL primary pod not yet present"))
+        then pure (Left (Readiness.Progress 0 1 "Patroni PostgreSQL primary pod not yet present"))
         else pure (Right podName)
     onTimedOut _ =
-      ioError (userError "Harbor PostgreSQL primary pod never appeared")
+      ioError (userError "Patroni PostgreSQL primary pod never appeared")
 
-harborPostgresPrimaryPodNameMaybe :: ClusterState -> IO String
-harborPostgresPrimaryPodNameMaybe state = do
+patroniPostgresPrimaryPodNameMaybe :: ClusterState -> IO String
+patroniPostgresPrimaryPodNameMaybe state = do
   podNames <-
     filter (not . null) . map trim . lines
       <$> kubectlOutput
         state
-        (`Command.kubectlListPods` Command.HarborPostgresPrimary)
+        (`Command.kubectlListPods` Command.PatroniPostgresPrimary)
   pure (firstOrEmpty podNames)
 
 firstOrEmpty :: [String] -> String
@@ -5256,37 +5184,6 @@ firstOrEmpty values =
   case values of
     firstValue : _ -> firstValue
     [] -> ""
-
-runHarborDatabaseAction ::
-  ClusterState ->
-  (Command.Password -> Command.PostgresAction) ->
-  IO (Either String String)
-runHarborDatabaseAction state buildAction = do
-  password <- harborPostgresPassword state
-  primaryPodName <- waitForHarborPostgresPrimaryPod state
-  tryDiscoveredClusterCommand
-    ( \_ ->
-        Command.kubectlRunPostgresAction
-          (clusterKubeTarget state)
-          (Command.PodName primaryPodName)
-          (buildAction (Command.Password password))
-    )
-
-harborPostgresPassword :: ClusterState -> IO String
-harborPostgresPassword state = do
-  encodedPassword <-
-    kubectlOutput
-      state
-      ( \target ->
-          Command.kubectlGetSecretField
-            target
-            (Command.Namespace "platform")
-            (Command.SecretName harborPostgresUserSecretName)
-            Command.PasswordField
-      )
-  case Base64.decode (ByteString8.pack (trim encodedPassword)) of
-    Left err -> ioError (userError ("failed to decode Harbor PostgreSQL password: " <> err))
-    Right decodedPassword -> pure (ByteString8.unpack decodedPassword)
 
 deployChart :: Paths -> ClusterState -> [FilePath] -> Bool -> IO ()
 deployChart paths state valuesPaths waitForRollout = do
@@ -5333,12 +5230,11 @@ tryDeployChartWithTimeoutAndHooks paths state valuesPaths waitForRollout timeout
           }
     )
 
-waitForHarborFinalPhaseRollouts :: ClusterState -> IO ()
-waitForHarborFinalPhaseRollouts state = do
-  putStrLn "waiting for final Harbor rollouts"
-  mapM_ (waitForWorkloadRollout state 1200) harborFinalPhaseStatefulSets
-  mapM_ (waitForWorkloadRollout state 900) harborFinalPhaseDeployments
-  waitForHarborDatabaseReadyWithRepair state
+waitForRegistryFinalPhaseRollouts :: ClusterState -> IO ()
+waitForRegistryFinalPhaseRollouts state = do
+  putStrLn "waiting for final registry rollouts"
+  mapM_ (waitForWorkloadRollout state 1200) registryFinalPhaseStatefulSets
+  mapM_ (waitForWorkloadRollout state 900) registryFinalPhaseDeployments
 
 waitForGatewayApiCrds :: ClusterState -> IO ()
 waitForGatewayApiCrds state =
@@ -5375,7 +5271,10 @@ waitForFinalPhaseRollouts paths state = do
   putStrLn "waiting for final platform rollouts"
   mapM_ (waitForFinalPhaseStatefulSetRollout paths state 1200) finalPhaseStatefulSets
   mapM_ (waitForWorkloadRollout state 900) (finalPhaseDeployments state)
-  waitForHarborDatabaseReadyWithRepair state
+  -- Phase 3 Sprint 3.17: the only Patroni cluster left belongs to Keycloak,
+  -- which is demo-gated, so a production `demo_ui = false` deploy has no
+  -- database to wait for.
+  when (clusterStateHasDemoUi state) (waitForPatroniDatabaseReady state)
 
 waitForPulsarReadyPhaseRollouts :: Paths -> ClusterState -> IO ()
 waitForPulsarReadyPhaseRollouts paths state = do
@@ -6063,8 +5962,6 @@ ensureHelmDependencyArchivePresent paths archiveRelativePath = do
 fetchHelmDependencyArchive :: Paths -> FilePath -> FilePath -> IO ()
 fetchHelmDependencyArchive paths archiveRelativePath destinationDirectory =
   case archiveRelativePath of
-    "chart/charts/harbor-1.18.3.tgz" ->
-      fetchDependency Command.HarborChart
     "chart/charts/pg-operator-2.9.0.tgz" ->
       fetchDependency Command.PostgresOperatorChart
     "chart/charts/pg-db-2.9.0.tgz" ->
@@ -6126,19 +6023,17 @@ ensureHelmRepositoryDefinitions paths =
     (runClusterCommand paths . Command.helmRepoAdd)
     helmRepositories
 
+-- | Phase 3 Sprint 3.17: bring the Percona operator up during warmup.
+--
+-- There is nothing for it to reconcile at this point any more. The Patroni
+-- cluster that used to back the image registry landed here, and the registry no
+-- longer has one; the only remaining cluster is Keycloak's, whose CR is applied
+-- later in 'reconcileFinalPhaseOperatorManagedPersistentVolumes'. The operator
+-- is still started here so it is already running when that CR lands.
 reconcileOperatorManagedPersistentVolumes :: Paths -> ClusterState -> IO ClusterState
-reconcileOperatorManagedPersistentVolumes paths state = do
+reconcileOperatorManagedPersistentVolumes _paths state = do
   waitForWorkloadRollout state 900 postgresOperatorDeployment
-  operatorClaims <- waitForOperatorManagedPersistentClaims state harborPostgresExpectedOperatorClaims
-  mapM_ (ensureClaimDirectoryReady paths (clusterRuntimeMode state)) operatorClaims
-  usesHostBindMounts <- kindUsesHostBindMounts paths (clusterRuntimeMode state)
-  unless usesHostBindMounts $
-    prepareKindNodeClaimDirectories paths state (clusterRuntimeMode state) operatorClaims
-  let updatedState = state {claims = mergePersistentClaims (claims state) operatorClaims}
-  reconcilePersistentVolumes updatedState
-  waitForPersistentClaimsBound updatedState operatorClaims
-  waitForHarborDatabaseReadyWithRepair updatedState
-  pure updatedState
+  pure state
 
 -- | Phase 7 Sprint 7.1: second pass over operator-managed PVCs after the
 -- FinalPhase chart deploy applies the @keycloak-postgresql@ PerconaPGCluster
@@ -6147,9 +6042,8 @@ reconcileOperatorManagedPersistentVolumes paths state = do
 -- pgbackrest repo) on the supported @infernix-manual@ storage class; we
 -- create the matching PVs and wait for them to bind so the Keycloak
 -- Deployment is not blocked behind a Pending database. Unlike the warmup
--- reconcile, this pass skips Harbor's database-ready repair because that
--- already ran during the earlier 'reconcileOperatorManagedPersistentVolumes'
--- call.
+-- reconcile, this is the first and only pass that binds operator-managed
+-- storage, because the warmup reconcile has no Patroni cluster to bind.
 reconcileFinalPhaseOperatorManagedPersistentVolumes :: Paths -> ClusterState -> IO ClusterState
 reconcileFinalPhaseOperatorManagedPersistentVolumes paths state = do
   operatorClaims <- waitForOperatorManagedPersistentClaims state finalPhaseExpectedOperatorClaims
@@ -6464,16 +6358,16 @@ reconcilePersistentVolumes state =
 -- from facts it is given, and the contract that carries the fleet is resolved
 -- by the lifecycle step that has already validated it.
 writeGeneratedKindConfig :: Paths -> RuntimeMode -> EngineMachineCount -> Int -> Int -> Int -> IO FilePath
-writeGeneratedKindConfig paths runtimeMode machineCount edgePortValue harborPortValue pulsarHttpPortValue = do
+writeGeneratedKindConfig paths runtimeMode machineCount edgePortValue registryPortValue pulsarHttpPortValue = do
   let outputPath =
         buildRoot paths
           </> "kind"
           </> ("cluster-" <> Text.unpack (runtimeModeId runtimeMode) <> ".generated.yaml")
   hostKindRoot <- resolveHostKindRoot paths runtimeMode
   usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
-  writeRegistryHostsConfig paths runtimeMode harborPortValue
+  writeRegistryHostsConfig paths runtimeMode registryPortValue
   hostRegistryHostsDirectory <- resolveHostRegistryHostsRoot paths runtimeMode
-  writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode machineCount edgePortValue harborPortValue pulsarHttpPortValue hostKindRoot hostRegistryHostsDirectory usesHostBindMounts))
+  writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode machineCount edgePortValue registryPortValue pulsarHttpPortValue hostKindRoot hostRegistryHostsDirectory usesHostBindMounts))
   pure outputPath
 
 -- | The fleet size the generated system contract declares.
@@ -6495,8 +6389,8 @@ resolveClusterEngineMachineCount paths runtimeMode = do
 -- target points containerd at @<kind-node>:30002@ (the in-cluster
 -- NodePort, which stays fixed).
 writeRegistryHostsConfig :: Paths -> RuntimeMode -> Int -> IO ()
-writeRegistryHostsConfig paths runtimeMode harborPortValue = do
-  let namespaceName = "localhost:" <> show harborPortValue
+writeRegistryHostsConfig paths runtimeMode registryPortValue = do
+  let namespaceName = "localhost:" <> show registryPortValue
       inClusterTarget = kindClusterName paths runtimeMode <> "-control-plane:30002"
   writeRegistryNamespace namespaceName inClusterTarget (localRegistryHostsRoot paths runtimeMode)
   where
@@ -6600,7 +6494,7 @@ resolveHostRepoPathFromNormalized hostRepoRoot normalizedRepoRoot repoRootPrefix
         Nothing -> normalizedContainerPath
 
 renderKindConfig :: Paths -> RuntimeMode -> EngineMachineCount -> Int -> Int -> Int -> FilePath -> FilePath -> Bool -> String
-renderKindConfig paths runtimeMode machineCount edgePortValue harborPortValue pulsarHttpPortValue hostKindRoot registryHostsDirectory usesHostBindMounts =
+renderKindConfig paths runtimeMode machineCount edgePortValue registryPortValue pulsarHttpPortValue hostKindRoot registryHostsDirectory usesHostBindMounts =
   unlines (preamble <> containerdConfigPatchesBlock <> ["nodes:"] <> nodeBlock "control-plane" initLabels edgePortLines <> workerNodeBlocks)
   where
     preamble =
@@ -6615,7 +6509,7 @@ renderKindConfig paths runtimeMode machineCount edgePortValue harborPortValue pu
     -- /etc/containerd/certs.d/<namespace>/hosts.toml as the authoritative
     -- mapping for that namespace. Without this, containerd ignores the
     -- registry-hosts files we mount via extraMounts and kubelet dials
-    -- @localhost:<harborPort>@ literally inside the node, which has
+    -- @localhost:<registryPort>@ literally inside the node, which has
     -- nothing listening and refuses the connection. Kind 0.31 does not
     -- emit @config_path@ by default; the patch matches what
     -- @writeRegistryHostsConfig@ already provisions under
@@ -6644,7 +6538,7 @@ renderKindConfig paths runtimeMode machineCount edgePortValue harborPortValue pu
         "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
         "      - containerPort: 30002",
-        "        hostPort: " <> show harborPortValue,
+        "        hostPort: " <> show registryPortValue,
         "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
         "      - containerPort: 30011",
@@ -6763,8 +6657,8 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
         pure ()
 
 primeKindNodeRegistryHosts :: Paths -> RuntimeMode -> Int -> IO ()
-primeKindNodeRegistryHosts paths runtimeMode harborPortValue = do
-  let namespaceDirName = "localhost:" <> show harborPortValue
+primeKindNodeRegistryHosts paths runtimeMode registryPortValue = do
+  let namespaceDirName = "localhost:" <> show registryPortValue
       registryDirectoryInNode = "/etc/containerd/certs.d/" <> namespaceDirName
       registryHostsPath = localRegistryHostsRoot paths runtimeMode </> namespaceDirName </> "hosts.toml"
   registryHostsContents <- readFile registryHostsPath
@@ -7161,10 +7055,9 @@ scrubRetainedStateUnderLease lease paths =
   case leasePayload lease of
     WriterQuiesced runtimeMode -> do
       scrubStalePatroniDirectories paths runtimeMode
-      scrubRetainedHarborRegistryCache paths runtimeMode
-      scrubRetainedHarborRegistryStorage paths runtimeMode
+      scrubRetainedRegistryStorage paths runtimeMode
   where
-    -- Patroni claim trees and Harbor publication data are rebuildable. Keeping
+    -- Patroni claim trees and registry publication data are rebuildable. Keeping
     -- these raw deletions local to the lease-consuming function prevents an
     -- ungated scrub from becoming a constructible cluster transition.
     scrubStalePatroniDirectories pathsValue runtimeMode =
@@ -7173,8 +7066,8 @@ scrubRetainedStateUnderLease lease paths =
         patroniWorkloadDirectories =
           [ "platform" </> "infernix" </> name
           | name <-
-              [ "harbor-postgresql-instance1",
-                "harbor-postgresql-pgbackrest",
+              [ "keycloak-postgresql-instance1",
+                "keycloak-postgresql-pgbackrest",
                 "keycloak-postgresql-instance1",
                 "keycloak-postgresql-pgbackrest"
               ]
@@ -7182,19 +7075,15 @@ scrubRetainedStateUnderLease lease paths =
         scrubDirectory relativePath =
           removeDirectoryWhenPresent (kindRuntimeRoot pathsValue runtimeMode </> relativePath)
 
-    scrubRetainedHarborRegistryCache pathsValue runtimeMode =
-      removeDirectoryWhenPresent
-        (kindRuntimeRoot pathsValue runtimeMode </> "platform" </> "infernix" </> "harbor-redis")
-
-    scrubRetainedHarborRegistryStorage pathsValue runtimeMode = do
+    scrubRetainedRegistryStorage pathsValue runtimeMode = do
       let minioRoot = kindRuntimeRoot pathsValue runtimeMode </> "platform" </> "infernix" </> "minio"
       minioPresent <- doesDirectoryExist minioRoot
       when minioPresent $ do
         ordinalNames <- listDirectory minioRoot
         forM_ ordinalNames $ \ordinalName -> do
           let dataRoot = minioRoot </> ordinalName </> "data"
-          removeDirectoryWhenPresent (dataRoot </> "harbor-registry")
-          removeDirectoryWhenPresent (dataRoot </> ".minio.sys" </> "buckets" </> "harbor-registry")
+          removeDirectoryWhenPresent (dataRoot </> "infernix-registry")
+          removeDirectoryWhenPresent (dataRoot </> ".minio.sys" </> "buckets" </> "infernix-registry")
           removeDirectoryWhenPresent (dataRoot </> ".minio.sys" </> "multipart")
           removeDirectoryWhenPresent (dataRoot </> ".minio.sys" </> "tmp")
 
@@ -7386,7 +7275,7 @@ syncClaimDirectoriesWhenAvailable paths stagingRoot maybeState claimNodeBindings
 isPatroniManagedClaim :: PersistentClaim -> Bool
 isPatroniManagedClaim persistentClaim =
   let workloadName = Text.unpack (workload persistentClaim)
-   in "harbor-postgresql-" `List.isPrefixOf` workloadName
+   in "keycloak-postgresql-" `List.isPrefixOf` workloadName
         || "keycloak-postgresql-" `List.isPrefixOf` workloadName
 
 syncClaimDirectoriesFromOwningNodes ::
@@ -7546,14 +7435,14 @@ clusterNameHash =
 currentKindEdgePort :: Paths -> RuntimeMode -> IO (Maybe Int)
 currentKindEdgePort paths runtimeMode = currentKindContainerPort paths runtimeMode "30090/tcp"
 
--- | Phase 3 follow-on (2026-05-29): the Harbor-facing Kind hostPort
+-- | Phase 3 follow-on (2026-05-29): the registry-facing Kind hostPort
 -- mapping is now dynamic. When the cluster already exists, the
 -- supported reconcile honors the port the existing Kind container is
 -- actually publishing rather than re-using a stale persisted value,
--- so the binary's Harbor health probe + publication path target the
+-- so the binary's registry health probe + publication path target the
 -- same address operators see from the host.
-currentKindHarborPort :: Paths -> RuntimeMode -> IO (Maybe Int)
-currentKindHarborPort paths runtimeMode = currentKindContainerPort paths runtimeMode "30002/tcp"
+currentKindRegistryPort :: Paths -> RuntimeMode -> IO (Maybe Int)
+currentKindRegistryPort paths runtimeMode = currentKindContainerPort paths runtimeMode "30002/tcp"
 
 currentKindPulsarHttpPort :: Paths -> RuntimeMode -> IO (Maybe Int)
 currentKindPulsarHttpPort paths runtimeMode = currentKindContainerPort paths runtimeMode "30080/tcp"
@@ -7598,7 +7487,7 @@ writeHelmValuesFile paths controlPlane state demoConfigPayload fleetMachineContr
     phaseSuffix phaseValue = case phaseValue of
       WarmupPhase -> "warmup"
       BootstrapPhase -> "bootstrap"
-      HarborFinalPhase -> "harbor-final"
+      RegistryFinalPhase -> "registry-final"
       KeycloakStoragePhase -> "keycloak-storage"
       PulsarReadyPhase -> "pulsar-ready"
       FinalPhase -> "final"
@@ -7636,13 +7525,6 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
         "  publishedPort: " <> show (edgePort state),
         "  publishedNodePort: 30090",
         "  listenerPort: 80",
-        -- Phase 3 follow-on (2026-05-29): Harbor's @externalURL@ in
-        -- the chart references the dynamically chosen host-side port
-        -- so Harbor's own redirect responses point clients at the
-        -- same address the binary's publication path and the
-        -- containerd registry-hosts namespace use.
-        "harbor:",
-        "  externalURL: \"http://localhost:" <> show (harborPort state) <> "\"",
         "demoConfig:",
         "  fileName: infernix.dhall",
         "  catalogPayload: |",
@@ -7700,7 +7582,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
         <> clusterConfigValueLines
         <> clusterSecretsValueLines
         <> phaseChartOverrides deployPhase
-        <> bootstrapHarborOverrides deployPhase
+        <> bootstrapRegistryOverrides deployPhase
         <> appleHostNativeLocalOverrides deployPhase
         <> appleHostedLinuxCpuLocalOverrides deployPhase
     )
@@ -7873,7 +7755,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
     repoWorkloadReplicaCount phaseValue = case phaseValue of
       WarmupPhase -> 0
       BootstrapPhase -> 0
-      HarborFinalPhase -> 0
+      RegistryFinalPhase -> 0
       KeycloakStoragePhase -> 0
       PulsarReadyPhase -> 0
       FinalPhase -> 1
@@ -7881,7 +7763,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
     repoCoordinatorReplicaCount phaseValue = case phaseValue of
       WarmupPhase -> 0
       BootstrapPhase -> 0
-      HarborFinalPhase -> 0
+      RegistryFinalPhase -> 0
       KeycloakStoragePhase -> 0
       PulsarReadyPhase -> 0
       FinalPhase -> 1
@@ -7901,7 +7783,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
     repoWorkloadEngineReplicaCount phaseValue = case (phaseValue, clusterRuntimeMode state) of
       (WarmupPhase, _) -> 0
       (BootstrapPhase, _) -> 0
-      (HarborFinalPhase, _) -> 0
+      (RegistryFinalPhase, _) -> 0
       (KeycloakStoragePhase, _) -> 0
       (PulsarReadyPhase, _) -> 0
       (FinalPhase, AppleSilicon) -> 0
@@ -7926,7 +7808,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
     repoPerEngineReplicaCount phaseValue = case (phaseValue, clusterRuntimeMode state) of
       (WarmupPhase, _) -> 0
       (BootstrapPhase, _) -> 0
-      (HarborFinalPhase, _) -> 0
+      (RegistryFinalPhase, _) -> 0
       (KeycloakStoragePhase, _) -> 0
       (PulsarReadyPhase, _) -> 0
       (FinalPhase, LinuxGpu) -> 0
@@ -7946,7 +7828,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
     phaseChartOverrides phaseValue = case phaseValue of
       WarmupPhase -> preFinalChartOverrides False
       BootstrapPhase -> preFinalChartOverrides False
-      HarborFinalPhase -> preFinalChartOverrides True
+      RegistryFinalPhase -> preFinalChartOverrides True
       KeycloakStoragePhase -> preFinalChartOverridesWithKeycloakPg True demoUiEnabledValue
       PulsarReadyPhase -> pulsarReadyChartOverrides
       FinalPhase -> finalChartOverrides
@@ -7967,11 +7849,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
       preFinalChartOverridesWithKeycloakPg envoyGatewayEnabled False
     pulsarReadyChartOverrides =
       [ "upstreamCharts:",
-        "  harbor:",
-        "    enabled: true",
         "  postgresOperator:",
-        "    enabled: true",
-        "  harborpg:",
         "    enabled: true",
         "  keycloakpg:",
         "    enabled: " <> yamlBool demoUiEnabledValue,
@@ -7992,19 +7870,13 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
       ]
     preFinalChartOverridesWithKeycloakPg envoyGatewayEnabled keycloakPgEnabled =
       [ "upstreamCharts:",
-        "  harbor:",
-        "    enabled: true",
         "  postgresOperator:",
         "    enabled: true",
-        "  harborpg:",
-        "    enabled: true",
-        -- Phase 7 Sprint 7.1: gate the Keycloak Patroni cluster the
-        -- same way Pulsar is gated. Pre-final phases bring up Harbor +
-        -- its Patroni backend; the demo-only Keycloak + its Patroni
-        -- backend only roll out in FinalPhase. Otherwise the warmup
-        -- helm-install can hang for 30m on the Keycloak Deployment
-        -- post-install readiness probe while waiting for its Patroni
-        -- replicas to come up alongside Harbor's.
+        -- Phase 7 Sprint 7.1: gate the Keycloak Patroni cluster the same way
+        -- Pulsar is gated. The demo-only Keycloak and its Patroni backend only
+        -- roll out in FinalPhase; otherwise the warmup helm-install can hang
+        -- for 30m on the Keycloak Deployment's post-install readiness probe
+        -- while waiting for its Patroni replicas.
         "  keycloakpg:",
         "    enabled: " <> yamlBool keycloakPgEnabled,
         "  minio:",
@@ -8022,57 +7894,22 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
         "  console:",
         "    enabled: false"
       ]
-    bootstrapHarborOverrides phaseValue = case phaseValue of
+    -- Phase 3 Sprint 3.17: hold the registry down during warmup and raise it
+    -- in the bootstrap phase, so the warmup Helm pass reconciles storage
+    -- without racing the registry against a MinIO bucket that does not exist
+    -- yet.
+    --
+    -- This used to gate six components independently and toggle a schema
+    -- migration hook in every phase. One Deployment with no migration replaces
+    -- both.
+    bootstrapRegistryOverrides phaseValue = case phaseValue of
       WarmupPhase ->
-        [ "harbor:",
-          "  enableMigrateHelmHook: false",
-          "  nginx:",
-          "    replicas: 0",
-          "  portal:",
-          "    replicas: 0",
-          "  core:",
-          "    replicas: 0",
-          "  jobservice:",
-          "    replicas: 0",
-          "  registry:",
-          "    replicas: 0",
-          "  trivy:",
-          "    replicas: 0"
+        [ "registry:",
+          "  replicas: 0"
         ]
-      -- Phase 3 Sprint 3.16: the bootstrap phase raises the components the
-      -- warmup phase zeroed back to the chart default of one each. The retired
-      -- `registry: replicas: 3` was the last place a Harbor component was
-      -- deliberately brought up multi-replica; one instance per platform
-      -- service is now the shape everywhere.
-      BootstrapPhase ->
-        [ "harbor:",
-          "  enableMigrateHelmHook: true",
-          "  portal:",
-          "    replicas: 1",
-          "  core:",
-          "    replicas: 1",
-          "  jobservice:",
-          "    replicas: 1",
-          "  registry:",
-          "    replicas: 1",
-          "  trivy:",
-          "    replicas: " <> show (if appleHostedLinuxCpuLocalTopology then (0 :: Int) else 1)
-        ]
-      HarborFinalPhase ->
-        [ "harbor:",
-          "  enableMigrateHelmHook: true"
-        ]
-      KeycloakStoragePhase ->
-        [ "harbor:",
-          "  enableMigrateHelmHook: true"
-        ]
-      PulsarReadyPhase ->
-        [ "harbor:",
-          "  enableMigrateHelmHook: true"
-        ]
-      FinalPhase ->
-        [ "harbor:",
-          "  enableMigrateHelmHook: true"
+      _ ->
+        [ "registry:",
+          "  replicas: 1"
         ]
     -- Apple host-native validation runs the Linux control-plane workloads
     -- on the operator's already-selected Colima daemon.
@@ -8081,24 +7918,20 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
     -- exception to chart default, so every replica and quorum line it used to
     -- carry is gone: repeating the default here would be a second place to
     -- change. What remains is the one thing that is genuinely Apple-specific —
-    -- routing Harbor at the external Patroni primary — plus disabling the
-    -- upstream metrics stack.
+    -- disabling the upstream metrics stack. The external-database routing
+    -- this block also carried went away with the registry's database.
     appleHostNativeLocalOverrides phaseValue
       | not appleHostNativeLocalTopology = []
       | not (appleHostNativeLocalPhase phaseValue) = []
       | otherwise =
-          [ "harbor:",
-            "  database:",
-            "    external:",
-            "      host: harbor-postgresql-primary.platform.svc.cluster.local",
-            "pulsar:",
+          [ "pulsar:",
             "  victoria-metrics-k8s-stack:",
             "    enabled: false"
           ]
     appleHostNativeLocalPhase phaseValue =
       case phaseValue of
         BootstrapPhase -> True
-        HarborFinalPhase -> True
+        RegistryFinalPhase -> True
         KeycloakStoragePhase -> True
         PulsarReadyPhase -> True
         FinalPhase -> True
@@ -8120,61 +7953,14 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
             "      cpu: 50m",
             "      memory: 128Mi",
             "    limits:",
-            "      memory: 384Mi",
-            "harbor:",
-            "  redis:",
-            "    internal:",
-            "      resources:",
-            "        requests:",
-            "          cpu: 25m",
-            "          memory: 64Mi",
-            "        limits:",
-            "          memory: 128Mi",
-            "  portal:",
-            "    resources:",
-            "      requests:",
-            "        cpu: 25m",
-            "        memory: 48Mi",
-            "      limits:",
-            "        memory: 96Mi",
-            "  core:",
-            "    resources:",
-            "      requests:",
-            "        cpu: 100m",
-            "        memory: 192Mi",
-            "      limits:",
-            "        memory: 512Mi",
-            "  jobservice:",
-            "    resources:",
-            "      requests:",
-            "        cpu: 50m",
-            "        memory: 96Mi",
-            "      limits:",
-            "        memory: 256Mi",
-            "  registry:",
-            "    registry:",
-            "      resources:",
-            "        requests:",
-            "          cpu: 75m",
-            "          memory: 256Mi",
-            "        limits:",
-            "          memory: 640Mi",
-            "    controller:",
-            "      resources:",
-            "        requests:",
-            "          cpu: 25m",
-            "          memory: 64Mi",
-            "        limits:",
-            "          memory: 128Mi",
-            "  trivy:",
-            "    replicas: 0",
-            "    resources:",
-            "      requests:",
-            "        cpu: 50m",
-            "        memory: 128Mi",
-            "      limits:",
-            "        cpu: 200m",
-            "        memory: 384Mi",
+            "      memory: 4Gi",
+            "registry:",
+            "  resources:",
+            "    requests:",
+            "      cpu: 75m",
+            "      memory: 192Mi",
+            "    limits:",
+            "      memory: 2Gi",
             "keycloak:",
             "  enabled: " <> yamlBool (keycloakEnabledForPhase phaseValue),
             "  externalBaseUrl: " <> clusterEdgeBaseUrl paths state <> "/auth",
@@ -8185,51 +7971,6 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
             "      memory: 384Mi",
             "    limits:",
             "      memory: 768Mi",
-            "harborpg:",
-            "  proxy:",
-            "    pgBouncer:",
-            "      resources:",
-            "        requests:",
-            "          cpu: 25m",
-            "          memory: 48Mi",
-            "        limits:",
-            "          cpu: 100m",
-            "          memory: 96Mi",
-            "  backups:",
-            "    pgbackrest:",
-            "      containers:",
-            "        pgbackrest:",
-            "          resources:",
-            "            requests:",
-            "              cpu: 25m",
-            "              memory: 96Mi",
-            "            limits:",
-            "              cpu: 100m",
-            "              memory: 192Mi",
-            "        pgbackrestConfig:",
-            "          resources:",
-            "            requests:",
-            "              cpu: 15m",
-            "              memory: 32Mi",
-            "            limits:",
-            "              cpu: 50m",
-            "              memory: 64Mi",
-            "      jobs:",
-            "        resources:",
-            "          requests:",
-            "            cpu: 25m",
-            "            memory: 96Mi",
-            "          limits:",
-            "            cpu: 100m",
-            "            memory: 192Mi",
-            "      repoHost:",
-            "        resources:",
-            "          requests:",
-            "            cpu: 25m",
-            "            memory: 96Mi",
-            "          limits:",
-            "            cpu: 100m",
-            "            memory: 192Mi",
             "keycloakpg:",
             "  proxy:",
             "    pgBouncer:",
@@ -8359,7 +8100,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
           ]
     appleHostedLinuxCpuLocalPhase phaseValue =
       case phaseValue of
-        HarborFinalPhase -> True
+        RegistryFinalPhase -> True
         KeycloakStoragePhase -> True
         PulsarReadyPhase -> True
         FinalPhase -> True
@@ -8371,14 +8112,14 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
         _ -> False
 
 -- | Phase 3 follow-on (2026-05-29): the host-side variant honors the
--- dynamic Harbor port chosen by 'chooseHarborPort' (passed in from
--- 'ClusterState.harborPort'). The outer-container variant stays on
+-- dynamic registry port chosen by 'chooseRegistryPort' (passed in from
+-- 'ClusterState.registryPort'). The outer-container variant stays on
 -- the fixed in-cluster NodePort because in-cluster wiring is
 -- independent of the operator's host port allocations.
-harborApiHost :: Paths -> RuntimeMode -> Int -> String
-harborApiHost paths runtimeMode harborPortValue
+registryApiHost :: Paths -> RuntimeMode -> Int -> String
+registryApiHost paths runtimeMode registryPortValue
   | Config.controlPlaneContext paths == OuterContainer = kindControlPlaneNodeName paths runtimeMode <> ":30002"
-  | otherwise = "127.0.0.1:" <> show harborPortValue
+  | otherwise = "127.0.0.1:" <> show registryPortValue
 
 persistentVolumeClaimName :: PersistentClaim -> String
 persistentVolumeClaimName persistentClaim =
@@ -8807,7 +8548,7 @@ splitTabs value =
     (prefix, suffix) = break (== '\t') value
 
 -- | Sprint 6.41 (managed-state-transition doctrine): the shared retry primitive
--- behind the cluster readiness waits (kind kubeconfig, kubernetes API, Harbor
+-- behind the cluster readiness waits (kind kubeconfig, kubernetes API, registry
 -- registry, Gateway CRDs, routed/direct Pulsar surfaces). It now polls through
 -- the 'Infernix.Evidence.Readiness' kernel under a required 'Deadline' derived
 -- from the legacy @attempts x delayMicros@ budget, so an unbounded wait is

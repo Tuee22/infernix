@@ -1,0 +1,65 @@
+{{/*
+Phase 3 Sprint 3.17: the whole `config.yml` for the single-binary CNCF
+distribution registry (`registry:2`), mounted over the image's stock config.
+
+This replaces the shipped config outright rather than layering onto it. The
+`registry:2` image ships a default `config.yml` declaring the `filesystem`
+driver, and distribution refuses to start when two storage drivers are
+configured -- so supplying only the S3 stanza (by env or by a partial overlay)
+yields a container that crash-loops on startup.
+
+`storage.redirect.disable: true` is mandatory rather than tuning. With the
+default redirect behavior the S3 driver answers blob requests with a 307 to
+`regionendpoint`, which is the cluster-only MinIO Service name. The Docker
+client that pushes to `localhost:30002` runs in host scope and cannot resolve
+it, so the push fails on DNS. Proxying blobs through the registry itself is the
+only correct delivery strategy for this topology.
+
+`health.storagedriver` makes the pod's own health surface exercise S3. That is
+a liveness signal, not publication evidence: `registry:2` serves `/v2/` without
+touching S3 at all, so the terminal gate for a published image remains the
+`BlobServable` witness minted by `probeRegistryPull` in
+`src/Infernix/Cluster/PublishImages.hs`.
+*/}}
+{{- if .Values.registry.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infernix-registry-config
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: infernix-registry
+    app.kubernetes.io/component: image-registry
+    app.kubernetes.io/part-of: infernix
+data:
+  config.yml: |
+    version: 0.1
+    log:
+      level: info
+      formatter: text
+    storage:
+      s3:
+        region: {{ .Values.registry.storage.region }}
+        bucket: {{ .Values.registry.storage.bucket }}
+        regionendpoint: {{ .Values.registry.storage.regionendpoint }}
+        accesskey: {{ .Values.registry.storage.accesskey }}
+        secretkey: {{ .Values.registry.storage.secretkey }}
+        secure: {{ .Values.registry.storage.secure }}
+        v4auth: {{ .Values.registry.storage.v4auth }}
+        chunksize: {{ .Values.registry.storage.chunksize }}
+      redirect:
+        disable: true
+      delete:
+        enabled: true
+      cache:
+        blobdescriptor: inmemory
+    http:
+      addr: :{{ .Values.registry.service.port }}
+      headers:
+        X-Content-Type-Options: [nosniff]
+    health:
+      storagedriver:
+        enabled: true
+        interval: 10s
+        threshold: 3
+{{- end }}

@@ -1,38 +1,8 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Active — Sprints 8.11 and 8.12 both closed on 2026-08-18. 8.12 dissolved the last
-blocker a single engine machine could not reach rather than waiting it out: the fleet validation
-topology is a `linux-cpu` multi-worker Kind cluster the lifecycle generates from the system
-contract's own machine count, not a second physical host, and it closed on a live two-machine fleet
-plus the paired single-machine run. Three sprints remain open — 8.9, 8.10, and 8.13 — all code-side
-closed, all consuming Phase 6 Sprint 6.44's `linux-gpu` plus `linux-cpu` wave rather than a wave of
-their own. Sprint 8.13 was **found by executing that wave**: the shared engine Deployment carried no
-`--engine-name`, which is invisible on `linux-cpu` (one declared member resolves with no selection)
-and refuses by name on `linux-gpu` (four declared members, one per framework engine image plus
-`native`). Sprint 8.12's fail-closed identity was working; the shared Deployment simply never
-declared one.
-
-**Historical implementation state (superseded by the header above).** Active. Sprint 8.9 and Sprint 8.10 are both
-validation-only, sharing the `linux-gpu` plus `linux-cpu` rebuild. Sprint 8.10 (delete the derivable
-wire fields) is code-side closed: Phase 4 Sprint 4.34's admission move discharged its blocker, and
-the reflected substrate schema went from 110 lines to 54 with every retired field absent rather than
-merely rejected. Executing 8.10 established
-that the machine contract it specifies — "the existing host manifest plus a `node` block" — has no
-home on the Linux lanes, where a pod's only host manifest is the one baked identically into every
-image, and where nothing yet makes two machines different members. That finding stands, and Sprint
-8.12 is where it is discharged: the fleet's pods no longer read the baked manifest at all. Treating
-it as a blocker on 8.11 had made that sprint depend on demonstrating something Phase 3 Sprint 3.16's
-single-node platform decision makes undemonstrable — the plan contradicting itself rather than a real
-design gap. The two
-topologies are now separated: 3.16 governs what the platform deploys, a fleet lane is a validation
-topology, and the work that genuinely needs more than one engine machine is Sprint 8.12. Sprint 8.9
-(proper-union generated execution-plan schema migration) is code-side closed:
-the budget wire carries the third `DualEnforced` union arm Phase 6 Sprint 6.44's dual RAM/VRAM
-capability needed, the renderer emits one shared union type whose agreement with the reflected
-decoder is asserted, a retired flat payload fails with a targeted migration diagnostic naming the
-regenerating command, and the dead `legacyDhall` decoder residue is removed. Its behavioral evidence
-is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus `linux-cpu` wave rather than a wave of its
-own, per its own validation rule. Sprints 8.1–8.8 are closed.
+**Status**: Done — Sprints 8.1 through 8.13 are implemented and validated. The generated system and
+machine contracts name every engine member, bind each machine to the system-contract digest, and
+drive eager model staging before routed readiness.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
@@ -167,8 +137,6 @@ None.
 ## Sprint 8.4: Binary-Generated ConfigMap + Secret Bodies [Done]
 
 **Status**: Done
-**Code-side closure**: `cabal build all`, `infernix test unit` (`defaultClusterConfig` decode + `renderHelmValues` body/manifest assertions), `infernix test lint`/`lint chart`/`lint files`/`lint docs`/`lint proto`, `docs check` all pass (machine-independent).
-**Cohort gate**: the in-pod decode of the binary-rendered `cluster.dhall` / `InfernixSecrets.dhall` is covered by the `linux-cpu` plus `linux-gpu` full-suite that closes Phase 8, under [cohort-validation-waves.md](cohort-validation-waves.md) Wave P.
 **Implementation**: `src/Infernix/ClusterConfig.hs` (`defaultClusterConfig` + default wirings), `src/Infernix/Cluster.hs` (`renderHelmValues` `clusterConfig.body` / `clusterSecrets.manifest`, `resolvedKeycloakWiring`), `chart/templates/configmap-cluster-config.yaml`, `chart/templates/secret-cluster-secrets.yaml`, `src/Infernix/Lint/Chart.hs`
 **Docs to update**: `documents/engineering/cluster_config_manifest.md`, `documents/architecture/configuration_doctrine.md`
 
@@ -190,11 +158,6 @@ Move all remaining Dhall generation out of Helm into the binary; Helm becomes a 
   Dhall manifest (the JSON credential files stay template-rendered from the MinIO/Keycloak wiring
   values — they are not `let`/schema Dhall) — no `let …`/schema Dhall inside any chart template
 - `renderHelmValues` also emits `clusterConfig.keycloak.{baseUrl,clientId,jwksUrl}` (from the same
-  resolved wiring) alongside `body`, because the operator-routes SecurityPolicy template reads those
-  Helm **values** (not the rendered body) to build its JWT `issuer` + `remoteJWKS`; the wiring resolves
-  to the routed edge base URL so the SecurityPolicy issuer matches the operator token, guarded by the
-  unit suite (`clusterConfig.keycloak.baseUrl` is the routed edge URL) and cohort-proven under
-  [cohort-validation-waves.md](cohort-validation-waves.md) Wave P
 - `infernix lint chart` rejects any Dhall `let`/`in {`/schema body inside a chart template
   (`dhallBodyRejectionPaths` + `isDhallBodyLine`)
 
@@ -210,8 +173,18 @@ None.
 
 ## Sprint 8.5: Coordinator Eager Model-Cache Staging [Done]
 
-**Status**: Done — cohort gate closed under [cohort-validation-waves.md](cohort-validation-waves.md) Wave P. The `linux-gpu` and `linux-cpu` full-suite `infernix test all` both passed with routed Playwright **9/9**, including the browser per-model smoke matrix exercising every catalog model — the 27 GB `video-wan21-t2v` row that previously timed out cold completes because the coordinator's eager sweep begins staging at cluster-up.
-**Implementation**: `src/Infernix/Runtime/Pulsar.hs` (`sweepEagerModelCache`, `waitForEagerModelCacheReady`), `src/Infernix/Runtime/Daemon.hs` (`startCoordinatorLoops`), `src/Infernix/Cluster.hs` (`warmModelCache` + `warm-model-cache` lifecycle phase, `resolveWarmModelCacheMinioHost` via `kindControlPlaneIpv4`), `src/Infernix/DemoConfig.hs` (`materializeEmptyModelsDemoConfigFile`), `src/Infernix/CommandRegistry.hs` (`--empty-models`), `src/Infernix/Models.hs` (demo-only-generator doc), `docker/Dockerfile`
+**Status**: Done — implemented and validated.
+The `linux-gpu` and `linux-cpu` full-suite `infernix test all` both passed with routed Playwright
+**9/9**, including the browser per-model smoke matrix exercising every catalog model — the 27 GB
+`video-wan21-t2v` row that previously timed out cold completes because the coordinator's eager
+sweep begins staging at cluster-up.
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs`
+(`sweepEagerModelCache`, `waitForEagerModelCacheReady`), `src/Infernix/Runtime/Daemon.hs`
+(`startCoordinatorLoops`), `src/Infernix/Cluster.hs` (`warmModelCache` + `warm-model-cache`
+lifecycle phase, `resolveWarmModelCacheMinioHost` via `kindControlPlaneIpv4`),
+`src/Infernix/DemoConfig.hs` (`materializeEmptyModelsDemoConfigFile`),
+`src/Infernix/CommandRegistry.hs` (`--empty-models`), `src/Infernix/Models.hs`
+(demo-only-generator doc), `docker/Dockerfile`
 **Docs to update**: `documents/engineering/model_lifecycle.md`, `documents/architecture/daemon_topology.md`
 
 > **Barrier scope.** The coordinator's forked eager sweep is the mechanism that delivers the outcome;
@@ -220,7 +193,7 @@ None.
 > poll actually observe the `.ready` sentinels is owned by Sprint 8.7 (typed readiness evidence) and
 > Sprint 8.8 (tri-state observation), not by this sprint.
 
-> **Apple-silicon cohort note.** This sprint's cohort gate was Wave P (`linux-gpu` + `linux-cpu`)
+> **Apple-silicon cohort note.** This sprint's cohort gate is `linux-gpu` + `linux-cpu`
 > only; no apple-silicon full-suite ran for Phase 8. The eager-stage-**all** behavior is still a disk
 > staging contract, not a memory-admission contract. The later resource-admission doctrine is owned
 > by Phase 4 Sprint 4.27, Phase 5 Sprint 5.11, and Phase 6 Sprint 6.38; this phase reopens only if
@@ -255,7 +228,7 @@ inference races a cold cache.
 
 - code-side: `infernix test unit` (registry `--empty-models` parse, empty-vs-full model rendering),
   `infernix lint chart`, `cabal build all`
-- cohort (closed under [Wave P](cohort-validation-waves.md)): the `linux-gpu` **and** `linux-cpu`
+- cohort (closed on the selected accelerator plus `linux-cpu`): the `linux-gpu` **and** `linux-cpu`
   full-suite `infernix test all` both passed with routed Playwright **9/9**; the per-model browser
   matrix exercises every catalog model and the 27 GB `video-wan21-t2v` row completes because the
   eager sweep starts staging at cluster-up
@@ -306,19 +279,11 @@ None (code-side); exercised end-to-end by the Phase 8 cohort full-suite.
 
 ## Sprint 8.7: Warm-Model-Cache Readiness Evidence [Done]
 
-**Status**: Done — the warm-model-cache barrier returns typed readiness evidence and the config-side
-state files persist fail-closed; code-side closure (machine-independent gates) plus the
-single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed under
-[Wave V](cohort-validation-waves.md).
-**Code-side closure**: closed — `cabal build all` (`-Wall -Werror`, clean),
-`cabal test infernix-unit` (typed warm-cache outcome consumption and the port-file fail-closed
-assertions pass), `cabal test infernix-haskell-style`, and `infernix lint docs` all pass on the
-apple-silicon lane. No native/Python change, so `poetry run check-code` does not apply.
-**Cohort gate**: closed under [Wave V](cohort-validation-waves.md) — apple-silicon plus linux-cpu full-suite `test all` clean.
+**Status**: Done — implemented and validated.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Cluster.hs`
 **Blocked by**: Sprint 3.14
-**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
-engineering/reference docs
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the
+phase's existing engineering/reference docs
 
 ### Objective
 
@@ -366,19 +331,7 @@ None.
 sentinel probe + Python cache revalidation), so a transport fault can no longer masquerade as a
 definitive absence and stall the retained-second-`cluster up` barrier; code-side closed on the
 machine-independent gate set, and the single-accelerator (apple-silicon) plus `linux-cpu` behavioral
-cohort sign-off closed under [Wave W](cohort-validation-waves.md) with no remaining work.
-**Supersession note**: this sprint supersedes Sprint 8.7's `IO Bool` sentinel observation
-(`sentinelReady = try @SomeException (minioObjectExists ...) >>= either (const (pure False)) pure`,
-coercing any transport fault into the same `False` as a genuine 404) and the Python
-`_mt3_pytorch_objects_are_valid :: … -> bool` fail-open revalidation (an `except Exception: return
-False` that deleted a valid retained `.ready` sentinel on a fallible read). Sprint 8.7's typed
-`WarmModelCacheOutcome` witness stands; this sprint fixes the observation feeding it.
-**Code-side closure**: complete on the machine-independent gate set — `cabal build all`
-(`-Wall -Werror`), `cabal test infernix-unit` (`classifyHeadOutcome` table + `tallyCensus` partition +
-the kernel transient-fault/persistent-unobservable cases), `cabal test infernix-haskell-style`,
-`infernix lint files/docs/proto/chart`, `infernix docs check`, and `poetry run check-code`.
-**Cohort gate**: apple-silicon + linux-cpu, closed under [Wave W](cohort-validation-waves.md) — the
-behavioral proof that a retained second `cluster up` warms the cache without the "11/16" stall.
+cohort sign-off closed on the selected accelerator plus `linux-cpu` with no remaining work.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_bootstrap.py`,
 `test/unit/Spec.hs`
 **Blocked by**: Sprint 1.18, Sprint 8.7
@@ -423,7 +376,7 @@ so a fault can never masquerade as absence. This consumes the Sprint 1.18 observ
   `infernix lint files/docs/proto/chart`, `infernix docs check`, and `poetry run check-code` — all
   clean on the apple-silicon lane
 - `infernix test all` on apple-silicon plus `linux-cpu` proves a retained second `cluster up` warms the
-  cache without the "11/16" stall — closed under [Wave W](cohort-validation-waves.md), paired with
+  cache without the "11/16" stall — closed on the selected accelerator plus `linux-cpu`, paired with
   [Sprint 1.18](phase-1-repository-and-control-plane-foundation.md)
 
 ### Remaining Work
@@ -436,15 +389,6 @@ None.
 union-typed: the budget union landed first, and the five items it named as explicit follow-on work
 are closed. Behavioral evidence is consumed from the Phase 6 Sprint 6.44 cohort, per this sprint's
 own validation rule that it must not create a dual-accelerator gate of its own.
-**Code-side closure**: complete. The machine-independent gate set passes
-(`cabal build all --enable-tests`, `infernix-unit`, `infernix-execution-plan-internal`,
-`infernix-capped-engine-observer`, `infernix-compile-fail`, `infernix-haskell-style`, and
-`lint files|chart|proto|docs` plus `docs check`).
-**Cohort gate**: [Wave Z](cohort-validation-waves.md) — met. Both lanes exited 0 against one frozen
-source, each decoding a freshly generated union payload end to end, and the browser-side over-budget
-reader ran on `linux-gpu` for the first time rather than returning null for every budget on that lane.
-This sprint opened no wave of its own, because its own validation rule forbids it from creating a
-dual-accelerator gate; it consumed Phase 6 Sprint 6.44's.
 **Blocked by**: nothing. Phase 6 Sprint 6.44's dual RAM/VRAM capability surface landed the third
 union arm this sprint's language needed.
 **Implementation**: `src/Infernix/Substrate/Internal.hs`, `src/Infernix/Types.hs`,
@@ -603,7 +547,7 @@ retired flat encoding when one is supplied.
 
 ### Remaining Work
 
-None; closed by the Phase 6 Sprint 6.44 wave.
+None.
 
 ---
 
@@ -614,14 +558,6 @@ reduced contract could be built on the corrected shape rather than on the defect
 carried is discharged: the substrate limit's `resource` / `source` and the partition's headroom term
 are the budget's own shape, and deleting them while the coordinator still admitted from a plan-global
 budget would have hidden the veto instead of removing it.
-**Code-side closure**: clean on the machine-independent gate set — `cabal build all --enable-tests`
-under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`, `infernix-compile-fail`,
-`infernix-execution-plan-internal`, `infernix-capped-engine-observer`,
-`infernix-artifact-transaction`, `infernix-apple-materializer`, `poetry run check-code`,
-`infernix lint files|chart|proto|docs`, `infernix docs check`.
-**Cohort gate**: [Wave Z](cohort-validation-waves.md) — met. The shared `linux-gpu` plus `linux-cpu`
-rebuild decoded the reduced payload on both lanes: every generated `.dhall` in the wave's closing run
-was written by the binary at the reduced shape and read back by a cluster daemon.
 **Implementation**: `src/Infernix/Substrate/Internal.hs`, `src/Infernix/Types.hs`,
 `src/Infernix/EngineRouting.hs`, `src/Infernix/Models.hs`, `src/Infernix/ExecutionPlan.hs`,
 `src/Infernix/DemoConfig/Internal.hs`, `test/unit/Spec.hs`
@@ -896,17 +832,7 @@ two-machine `linux-cpu` fleet plus the paired single-machine run. The blocker th
 dissolved rather than being waited out: the fleet validation topology is a multi-worker Kind cluster
 the lifecycle generates from the system contract's own machine count, not a second physical host.
 
-**Code-side closure**: complete. `cabal build all --enable-tests` under `-Wall -Werror`,
-`infernix-unit` (including this sprint's `runFleetMemberIdentityAssertions`), `infernix-compile-fail`,
-`infernix-execution-plan-internal`, `infernix-capped-engine-observer`, `infernix-apple-materializer`,
-`infernix-haskell-style` (`haskell-style-check: ok`), `infernix-cabal-format`, the web unit suite
-(83/83), and `lint files|chart|proto|docs|plan` plus `docs check` all pass.
 
-**Cohort gate**: closed. The `linux-cpu` fleet lane brought up two engine machines on one pool
-topic and both served work; the second machine adopting the first's identity was refused at the
-broker by name; a restart reacquired its own slot; a machine holding a contract the registrar had
-moved away from refused to start naming both digests; and the paired single-machine run reproduced
-the deployed topology unchanged. Recorded in [Wave AB](cohort-validation-waves.md).
 
 **Blocked by**: nothing.
 
@@ -1033,7 +959,7 @@ what the pod would actually read.
 workload's replica count is held at zero until the phase that brings Pulsar up, because an engine
 consumes Pulsar topics and would otherwise sit un-ready inside its own phase's rollout wait. The
 first fleet Deployments carried a literal `replicas: 1`, so both machines started at the
-Harbor-final phase, never became ready, and `helm upgrade` failed with `context deadline exceeded` —
+registry-final phase, never became ready, and `helm upgrade` failed with `context deadline exceeded` —
 a timeout that reads as an infrastructure problem and is in fact a gating one. The two counts now
 come from one function, so the shared workload and a fleet machine cannot drift on when an engine
 may start, and the unit suite pins that a pre-final phase asks for zero.
@@ -1095,23 +1021,14 @@ before the readiness sentinel and every pool subscription, which is the ordering
 
 ### Remaining Work
 
-None — the fleet lane and its paired single-machine run closed on 2026-08-18 under [Wave AB](cohort-validation-waves.md).
+None — the fleet lane and its paired single-machine run closed on 2026-08-18 on the selected accelerator plus `linux-cpu`.
 
 ---
 
 ## Sprint 8.13: Shared Engine Deployment Member Identity [Done]
 
-**Status**: Done. The shared engine Deployment names the member it is on every lane. Behavioral evidence is the [Wave Z](cohort-validation-waves.md) `linux-gpu` plus
-`linux-cpu` cohort this sprint's defect blocked, so it consumes that wave rather than opening one of
-its own.
-**Code-side closure**: complete. The machine-independent gate set passes —
-`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`,
-`infernix-haskell-style` (`haskell-style-check: ok`, `cabal-format-check: ok`), and
-`lint files|chart|proto|docs|plan` plus `docs check` all at zero.
-**Cohort gate**: the shared `linux-gpu` plus `linux-cpu` rebuild in Wave Z — met. The
-`infernix-engine` Deployment became ready on the four-member `linux-gpu` contract, which is exactly
-what attempt 6 could not get past, and on the single-member `linux-cpu` contract, and both lanes then
-served real inference through it.
+**Status**: Done. The shared engine Deployment names the member it is on every lane, and the selected
+`linux-gpu` accelerator plus `linux-cpu` full-suite gate validates the generated member contract.
 **Blocked by**: nothing. Sprint 8.12 landed the fail-closed member identity this completes.
 **Implementation**: `src/Infernix/Cluster.hs`, `chart/values.yaml`,
 `chart/templates/deployment-engine.yaml`, `test/unit/Spec.hs`
@@ -1178,7 +1095,7 @@ That is the fail-closed rule working, not a defect in it. The defect is the miss
 
 ### Remaining Work
 
-None; closed by the Wave Z run that cleared it.
+None.
 
 ---
 

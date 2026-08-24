@@ -12,9 +12,10 @@ StatefulSet replaces the retired bitnami sub-chart.
   cluster's MinIO PV contents are not readable by the collapsed shape. See
   documents/tools/minio.md.
 - Image: upstream `minio/minio` (multi-arch arm64 + amd64). Pulled
-  through Harbor by the publication path; `harborOverridesValue`
-  overrides `image.repository` + `image.tag` to the Harbor-mirrored
-  refs after `cluster up` publishes the upstream image.
+  through the in-cluster registry by the publication path;
+  `registryOverridesValue` overrides `image.repository` + `image.tag`
+  to the registry-mirrored refs after `cluster up` publishes the
+  upstream image.
 - PVCs: per-pod `data-infernix-minio-<ordinal>` claims on
   `infernix-manual` storage. The lifecycle binder
   (`reconcilePersistentVolumes`) creates matching PVs at known

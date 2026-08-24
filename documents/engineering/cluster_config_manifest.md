@@ -177,6 +177,6 @@ never receives a presigned MinIO URL — the webapp `/api/objects` proxy signs a
 - [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md) — overall
   configuration substrate.
 - [host_tools_manifest.md](host_tools_manifest.md) — the matching host-tools manifest.
-- [../tools/{harbor,minio,pulsar,keycloak}.md](../tools/keycloak.md) — per-tool docs each name
+- [../tools/{registry,minio,pulsar,keycloak}.md](../tools/keycloak.md) — per-tool docs each name
   the cluster Dhall field that wires them; Keycloak doc additionally documents the `KC_DB_*`
   third-party-upstream exception.

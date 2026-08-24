@@ -33,7 +33,7 @@ from them without operator intervention:
 | State class | Owner | Authoritative home | Durability | Rebuild rule |
 |-------------|-------|--------------------|------------|--------------|
 | PVC-backed retained data for MinIO and Pulsar, excluding the explicitly rebuildable platform-bootstrap paths below | `infernix cluster up` storage reconciliation plus the workload itself | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | durable | ordinary lifecycle reruns preserve and replay the same retained data within the active runtime lane |
-| Rebuildable platform-bootstrap paths: Harbor and Keycloak Patroni claim roots, Harbor Redis, and the MinIO `harbor-registry` bucket plus its bucket metadata, multipart, and temporary state | cluster lifecycle bootstrap and publication reconciliation | selected paths inside `./.data/kind/<runtime-mode>/platform/infernix/...` | derived | may be removed only after `WriterQuiesced` proves the Kind writer absent under the lifecycle lock; the next `cluster up` rebuilds database/bootstrap state and republishes Harbor content |
+| Rebuildable platform-bootstrap paths: Keycloak Patroni claim roots, and the MinIO `infernix-registry` bucket plus its bucket metadata, multipart, and temporary state | cluster lifecycle bootstrap and publication reconciliation | selected paths inside `./.data/kind/<runtime-mode>/platform/infernix/...` | derived | may be removed only after `WriterQuiesced` proves the Kind writer absent under the lifecycle lock; the next `cluster up` rebuilds database/bootstrap state and republishes registry content |
 | MinIO `infernix-models` bucket contents | coordinator's bootstrap Failover subscription + every engine pod (read) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable | platform model weights, tokenizers, configs under `<modelId>/<filename>` with a `<modelId>/.ready` sentinel; eagerly staged at coordinator startup and never disposed except by deliberate operator intent |
 | MinIO `infernix-demo-objects` bucket contents | demo backend (webapp object-proxy, server-side PUT/GET) + engine adapters (PUT for generated artifacts) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable and user-visible | per-user prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`; browsers reach it only through the webapp `/api/objects` proxy; bucket only exists when `demo_ui = true` |
 | Pulsar ledgers and BookKeeper journals | Pulsar | Pulsar PVCs under `./.data/kind/<runtime-mode>/...` | durable | deletion resets message durability and is therefore explicit operator intent |
@@ -53,7 +53,7 @@ from them without operator intervention:
 - `cluster down` plus `cluster up` must preserve retained MinIO model/demo-object data and Pulsar
   data. Apple/non-bind teardown commits a writer-frozen detached snapshot before Kind deletion and
   the next bring-up replays it before workloads start.
-- Harbor/Keycloak PostgreSQL, Harbor Redis, and Harbor registry content are the explicit
+- Keycloak PostgreSQL and registry blob content are the explicit
   rebuildable exception. Their removal is legal only inside the post-delete `WriterQuiesced`
   region, never while a live workload can write them.
 - when retained Pulsar ZooKeeper state is self-inconsistent and blocks `cluster up`, the supported
@@ -105,7 +105,7 @@ from them without operator intervention:
 ## Validation
 
 - `infernix docs check` fails if this document loses its required structure or metadata contract.
-- `infernix test integration` verifies publication-state regeneration, deterministic Harbor
+- `infernix test integration` verifies publication-state regeneration, deterministic Patroni
   PostgreSQL PV reuse across `cluster down` plus `cluster up`, and the active generated demo-config
   publication path.
 - `infernix cluster status` reports the build or data roots that hold the active

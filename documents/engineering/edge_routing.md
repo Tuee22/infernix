@@ -9,10 +9,10 @@
 
 - One Haskell-owned route registry defines the supported public prefixes, rendered HTTPRoutes,
   route-aware docs, and route validation expectations.
-- The routed surface always publishes Harbor and Pulsar, and publishes the demo routes
+- The routed surface always publishes the registry and Pulsar, and publishes the demo routes
   only when the active generated config enables the demo UI. MinIO has no external gateway route.
 - When the demo UI is enabled, `SecurityPolicy/infernix-operator-routes-jwt` both **authenticates and
-  admin-authorizes** direct browser access to the operator route family — `/harbor`, `/harbor/api`,
+  admin-authorizes** direct browser access to the operator route family — `/registry`,
   `/pulsar/admin`, and `/pulsar/ws`: it accepts the SPA's `infernix_operator_token` cookie or
   a direct `Authorization: Bearer ...` header, then requires the `infernix-admin` realm role
   (`defaultAction: Deny`). A valid non-admin token is rejected with HTTP 403. See
@@ -47,8 +47,7 @@
 |---------------|------------|---------|---------|---------|
 | `/` | demo-only | Demo SPA | `infernix-demo:80` | no rewrite |
 | `/api` | demo-only | Demo API | `infernix-demo:80` | no rewrite |
-| `/harbor/api` | always published | Harbor API | `infernix-harbor-core:80` | `/harbor/api` -> `/api` |
-| `/harbor` | always published | Harbor portal | `infernix-harbor-portal:80` | `/harbor` -> `/` |
+| `/registry` | always published | Image registry API | `infernix-registry:5000` | `/registry` -> `/v2` |
 | `/pulsar/admin` | always published | Pulsar admin surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/admin` -> `/` |
 | `/pulsar/ws` | always published | Pulsar websocket surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/ws` -> `/ws` |
 | `/auth` | demo-only | Keycloak SSO | `infernix-keycloak:8080` | no rewrite |
@@ -91,8 +90,8 @@
 
 - `infernix docs check` fails if this document loses its governed metadata, required structure, or
   the registry-generated route-inventory section.
-- `infernix test integration` exercises the published Harbor, MinIO, Pulsar, publication, and
-  demo routes and requires the real Harbor, MinIO, and Pulsar upstream responses on the
+- `infernix test integration` exercises the published registry, MinIO, Pulsar, publication, and
+  demo routes and requires the real registry, MinIO, and Pulsar upstream responses on the
   tool-route probes.
 - `infernix test e2e` verifies the routed demo surface through the shared edge port when the demo
   UI is enabled for the selected runtime mode, including the JWT-gated operator route checks.

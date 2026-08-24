@@ -93,7 +93,7 @@ the themed login and registration titles so theme fallback is visible in the aut
 The authenticated app shell includes an operator ribbon with links to the cluster-wide operator
 route family — but it is **admin-only**:
 
-- `Harbor` -> `/harbor`
+- `Registry` -> `/registry`
 - `Pulsar Admin` -> `/pulsar/admin/admin/v2/clusters`
 
 The ribbon is part of `.app-shell`, so the auth gate hides it before login; after login it is shown
@@ -105,7 +105,7 @@ and redirects through Keycloak OIDC logout so switching to the separate admin ac
 prior non-admin SSO session.
 Envoy Gateway's `SecurityPolicy/infernix-operator-routes-jwt` both **authenticates and
 admin-authorizes**: it validates that cookie (or an explicit `Authorization: Bearer ...` header) and
-then requires the `infernix-admin` realm role before forwarding `/harbor`, `/harbor/api`,
+then requires the `infernix-admin` realm role before forwarding `/registry`,
 `/pulsar/admin`, or `/pulsar/ws` to their upstream services — so a non-admin token is rejected at the
 edge (403) regardless of the ribbon. The same cookie authenticates browser-issued media `src` GETs
 against the webapp `/api/objects/download` proxy. Non-admin users get chat / artifacts / files and a

@@ -3,7 +3,7 @@
 # Splits the Sprint 4.16 monolith: instead of baking every framework venv into
 # one ~121 GB image, each framework engine gets its own image carrying only its
 # CUDA framework venv. An engine pod then pulls only its own framework through
-# the Harbor/Kind flow.
+# the registry/Kind flow.
 #
 # The image reuses the slim control-plane image as the source of the built
 # `infernix` binary, the framework-free `python/` project, the generated proto

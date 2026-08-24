@@ -1,21 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.Cluster.PublishImages
-  ( HarborPublishOptions (..),
+  ( RegistryPublishOptions (..),
     PublishedImage,
-    buildHarborOverridesValue,
+    buildRegistryOverridesValue,
     classifyRegistryApiStatus,
     contentAddressTagFromInspectPayload,
     contentAddressTagFromManifestPayload,
     dockerHubMirrorRef,
     ensureLocalImageAvailable,
-    defaultHarborPublishOptions,
+    defaultRegistryPublishOptions,
     normalizeRepositoryPath,
     prioritizePublishableImages,
     publishChartImagesFile,
-    skopeoTargetRefForHarborApiHost,
-    withHarborRegistryAuthFile,
-    writeHarborOverridesFile,
+    skopeoTargetRefForRegistryApiHost,
+    withRegistryAuthFile,
+    writeRegistryOverridesFile,
   )
 where
 
@@ -35,7 +35,6 @@ import Data.Aeson
     (.=),
   )
 import Data.Aeson.Key qualified as Key
-import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (find, intercalate, isSuffixOf, nub, partition)
@@ -44,7 +43,6 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
-import Data.Text.Encoding qualified as TextEncoding
 import Data.Yaml qualified as Yaml
 import Infernix.Cluster.Command qualified as Command
 import Infernix.Cluster.Discover (discoverChartImagesFile)
@@ -67,7 +65,6 @@ import Network.HTTP.Client
     httpLbs,
     newManager,
     parseRequest,
-    requestHeaders,
     responseBody,
     responseStatus,
     responseTimeout,
@@ -84,13 +81,15 @@ import System.Posix.Files (ownerModes, setFileMode)
 import System.Posix.Process (getProcessID)
 import Text.Read (readMaybe)
 
-data HarborPublishOptions = HarborPublishOptions
-  { harborHost :: String,
-    harborClientHost :: String,
-    harborApiHost :: String,
-    harborProject :: String,
-    harborUser :: String,
-    harborPassword :: String,
+data RegistryPublishOptions = RegistryPublishOptions
+  { registryHost :: String,
+    registryClientHost :: String,
+    registryApiHost :: String,
+    -- | The repository path prefix every published image is written under
+    -- (@localhost:30002\/\<namespace>\/\<repository>@). @registry:2@ creates a
+    -- repository implicitly on first push, so this is a naming convention
+    -- rather than a resource that has to be provisioned ahead of the push.
+    registryNamespace :: String,
     -- | Phase 3 Sprint 3.11 (2026-05-29): the substrate-matched
     -- container architecture (@\"amd64\"@ or @\"arm64\"@) the
     -- publication path pins on every @docker pull --platform
@@ -99,24 +98,22 @@ data HarborPublishOptions = HarborPublishOptions
     -- host-aware architecture selector; the default below stays at
     -- @\"amd64\"@ for backward compat with callers that have not
     -- yet been updated.
-    harborTargetArchitecture :: String
+    registryTargetArchitecture :: String
   }
   deriving (Eq)
 
-instance Show HarborPublishOptions where
+instance Show RegistryPublishOptions where
   show options =
-    "HarborPublishOptions {harborHost = "
-      <> show (harborHost options)
-      <> ", harborClientHost = "
-      <> show (harborClientHost options)
-      <> ", harborApiHost = "
-      <> show (harborApiHost options)
-      <> ", harborProject = "
-      <> show (harborProject options)
-      <> ", harborUser = "
-      <> show (harborUser options)
-      <> ", harborPassword = <redacted>, harborTargetArchitecture = "
-      <> show (harborTargetArchitecture options)
+    "RegistryPublishOptions {registryHost = "
+      <> show (registryHost options)
+      <> ", registryClientHost = "
+      <> show (registryClientHost options)
+      <> ", registryApiHost = "
+      <> show (registryApiHost options)
+      <> ", registryNamespace = "
+      <> show (registryNamespace options)
+      <> ", registryTargetArchitecture = "
+      <> show (registryTargetArchitecture options)
       <> "}"
 
 type PublishedImage = (String, String)
@@ -131,9 +128,10 @@ type PublishPhaseHook = String -> IO ()
 
 -- | Sprint 3.15 (managed-state-transition doctrine): opaque evidence that a
 -- specific image reference is actually /servable/ — that a bounded,
--- registry-only @skopeo copy@ from local Harbor returned every selected blob.
--- This is strictly stronger than 'observeRegistryApi' (Harbor's @/v2/@ answered) and
--- than @harborTagMetadataPresent@ (a tag row exists in Harbor's
+-- registry-only @skopeo copy@ from the in-cluster registry returned every
+-- selected blob. This is strictly stronger than 'observeRegistryApi' (the
+-- registry's @/v2/@ answered) and than @registryTagMetadataPresent@ (a tag row
+-- exists in the registry's
 -- retained-state-replayed Postgres). The constructor is hidden and
 -- 'probeRegistryPull' is the sole minter, so "the tag metadata exists ⇒ the
 -- blob is servable" is not a constructible term — this closes the
@@ -145,20 +143,26 @@ data PushAttemptResult
   = PushSucceeded
   | PushFailed String
 
-defaultHarborPublishOptions :: HarborPublishOptions
-defaultHarborPublishOptions =
-  HarborPublishOptions
-    { harborHost = "localhost:30002",
-      harborClientHost = "localhost:30002",
-      harborApiHost = "localhost:30002",
-      harborProject = "library",
-      harborUser = "admin",
-      harborPassword = "Harbor12345",
-      harborTargetArchitecture = "amd64"
+defaultRegistryPublishOptions :: RegistryPublishOptions
+defaultRegistryPublishOptions =
+  RegistryPublishOptions
+    { registryHost = "localhost:30002",
+      registryClientHost = "localhost:30002",
+      registryApiHost = "localhost:30002",
+      registryNamespace = "library",
+      registryTargetArchitecture = "amd64"
     }
 
-harborPrefixes :: [String]
-harborPrefixes = ["goharbor/", "docker.io/goharbor/", "quay.io/goharbor/"]
+-- | Image prefixes belonging to the in-cluster registry itself.
+--
+-- These are excluded from publication because publishing them would require
+-- the registry to already be serving in order to stand the registry up. They
+-- are the bounded bootstrap exception the image doctrine names: the registry
+-- and its storage backend pull from upstream, and every later workload pulls
+-- registry-backed refs.
+registryComponentPrefixes :: [String]
+registryComponentPrefixes =
+  ["registry:", "library/registry:", "docker.io/library/registry:"]
 
 requiredRenderedChartImageAlternatives :: [[String]]
 requiredRenderedChartImageAlternatives =
@@ -166,7 +170,12 @@ requiredRenderedChartImageAlternatives =
   ]
 
 alwaysPublishedImages :: [String]
-alwaysPublishedImages = []
+alwaysPublishedImages =
+  [ postgresOperatorImage,
+    postgresDatabaseImage,
+    postgresPgBouncerImage,
+    postgresPgBackRestImage
+  ]
 
 postgresOperatorImage :: String
 postgresOperatorImage = "docker.io/percona/percona-postgresql-operator:2.9.0"
@@ -199,14 +208,14 @@ registryApiReadinessDeadline =
       Readiness.deadlineCeilingSeconds = registryApiReadinessSeconds
     }
 
--- Each local Harbor request is independently bounded well inside the registry
+-- Each local registry request is independently bounded well inside the registry
 -- readiness ceiling. This applies to both the /v2/ readiness probe and the
 -- authenticated artifact metadata request.
-harborHttpResponseTimeout :: ResponseTimeout
-harborHttpResponseTimeout = responseTimeoutMicro 5000000
+registryHttpResponseTimeout :: ResponseTimeout
+registryHttpResponseTimeout = responseTimeoutMicro 5000000
 
 publishChartImagesFile ::
-  HarborPublishOptions ->
+  RegistryPublishOptions ->
   PublishPhaseHook ->
   FilePath ->
   FilePath ->
@@ -214,12 +223,12 @@ publishChartImagesFile ::
 publishChartImagesFile options startPublishPhase renderedChartPath outputPath = do
   manager <- newManager tlsManagerSettings
   images <- discoverChartImagesFile renderedChartPath
-  let chartPublishableImages = filter (not . isHarborImage) images
+  let chartPublishableImages = filter (not . isRegistryComponentImage) images
       publishableImages = prioritizePublishableImages (nub (alwaysPublishedImages <> chartPublishableImages))
   mapM_ (requireOnePresent chartPublishableImages) requiredRenderedChartImageAlternatives
-  loginHarbor manager options
+  waitForRegistry manager options
   publishedImages <- mapM (publishImage manager options startPublishPhase) publishableImages
-  writeHarborOverridesFile (Map.fromList publishedImages) outputPath
+  writeRegistryOverridesFile (Map.fromList publishedImages) outputPath
   where
     requireOnePresent imageSet imageRefs
       | any (`elem` imageSet) imageRefs = pure ()
@@ -232,7 +241,7 @@ publishChartImagesFile options startPublishPhase renderedChartPath outputPath = 
 -- type PublishedImage = (String, String)
 publishImage ::
   Manager ->
-  HarborPublishOptions ->
+  RegistryPublishOptions ->
   PublishPhaseHook ->
   String ->
   IO (String, PublishedImage)
@@ -243,12 +252,12 @@ publishImage manager options startPublishPhase sourceImage = do
       Just sourceDigest -> pure (replaceColon sourceDigest)
       Nothing -> contentAddressTag options sourceImage
   let repositoryPath = normalizeRepositoryPath sourceImage
-      publishedRepository = harborHost options <> "/" <> harborProject options <> "/" <> repositoryPath
-      clientRepository = harborClientHost options <> "/" <> harborProject options <> "/" <> repositoryPath
+      publishedRepository = registryHost options <> "/" <> registryNamespace options <> "/" <> repositoryPath
+      clientRepository = registryClientHost options <> "/" <> registryNamespace options <> "/" <> repositoryPath
   publishIfNeeded manager options startPublishPhase maybeSourceDigest fallbackSourceImage sourceImage clientRepository repositoryPath targetTag
   pure (sourceImage, (publishedRepository, targetTag))
 
-ensureLocalImageAvailable :: HarborPublishOptions -> PublishPhaseHook -> String -> IO (Maybe String, String)
+ensureLocalImageAvailable :: RegistryPublishOptions -> PublishPhaseHook -> String -> IO (Maybe String, String)
 ensureLocalImageAvailable options startPublishPhase imageRef = do
   maybePresent <-
     tryRunPublishCommand
@@ -303,7 +312,7 @@ ensureLocalImageAvailable options startPublishPhase imageRef = do
 -- downstream code ('pinLocalImageToTargetArchitecture' +
 -- 'pushUpstreamMultiArchViaImagetools') should keep using so a Docker
 -- Hub rate limit does not force a later registry roundtrip.
-pullUpstreamMultiArchImage :: HarborPublishOptions -> PublishPhaseHook -> String -> IO String
+pullUpstreamMultiArchImage :: RegistryPublishOptions -> PublishPhaseHook -> String -> IO String
 pullUpstreamMultiArchImage _options startPublishPhase imageRef = do
   startPublishPhase ("docker pull " <> imageRef)
   pullResult <-
@@ -334,7 +343,7 @@ pullUpstreamMultiArchImage _options startPublishPhase imageRef = do
                     <> mirrorFailure
                 )
 
-pullImageWithFallback :: HarborPublishOptions -> PublishPhaseHook -> String -> IO ()
+pullImageWithFallback :: RegistryPublishOptions -> PublishPhaseHook -> String -> IO ()
 pullImageWithFallback options startPublishPhase imageRef = do
   startPublishPhase ("docker pull " <> imageRef)
   pullResult <-
@@ -369,7 +378,7 @@ pullImageWithFallback options startPublishPhase imageRef = do
                     <> mirrorFailure
                 )
 
-requireLocalImagePresent :: HarborPublishOptions -> String -> String -> IO ()
+requireLocalImagePresent :: RegistryPublishOptions -> String -> String -> IO ()
 requireLocalImagePresent _options imageRef message = do
   imagePresent <-
     tryRunPublishCommand
@@ -410,7 +419,7 @@ dockerHubMirrorRef imageRef =
 
 publishIfNeeded ::
   Manager ->
-  HarborPublishOptions ->
+  RegistryPublishOptions ->
   PublishPhaseHook ->
   Maybe String ->
   String ->
@@ -421,13 +430,13 @@ publishIfNeeded ::
   IO ()
 publishIfNeeded manager options startPublishPhase maybeSourceDigest fallbackSourceImage sourceImage clientRepository repositoryPath targetTag = do
   let targetRef = clientRepository <> ":" <> targetTag
-  -- Sprint 3.15: tag metadata presence (Harbor Postgres/Redis, part of the
+  -- Sprint 3.15: tag metadata presence (the registry's metadata store, part of the
   -- replayed retained state) may only shortcut the push via a real servability
   -- probe; it is not itself terminal. If the blob is not yet servable (e.g. the
   -- retained-state MinIO replay has not rehydrated it on a second cluster-up)
   -- the probe returns Nothing and we fall through to a real push. "Publish
   -- done" is reached only holding a 'BlobServable'.
-  metadataPresent <- harborTagMetadataPresent manager options repositoryPath targetTag
+  metadataPresent <- registryTagMetadataPresent manager options repositoryPath targetTag
   fastPath <-
     if metadataPresent
       then probeRegistryPull manager options startPublishPhase targetRef
@@ -441,7 +450,7 @@ publishIfNeeded manager options startPublishPhase maybeSourceDigest fallbackSour
 
 pushImageWithinPolicyDeadline ::
   Manager ->
-  HarborPublishOptions ->
+  RegistryPublishOptions ->
   PublishPhaseHook ->
   Maybe String ->
   String ->
@@ -496,12 +505,12 @@ pushImageWithinPolicyDeadline manager options startPublishPhase maybeSourceDiges
           -- 29.x + containerd snapshotter, @docker push@ of a tag
           -- derived from an upstream multi-arch image (e.g.
           -- @envoyproxy/gateway:v1.7.2@) re-emits the manifest list
-          -- even after a digest pin to @linux/amd64@. Harbor then
+          -- even after a digest pin to @linux/amd64@. The registry then
           -- rejects the push with @NotFound: content digest …: not
           -- found@ because the other platform manifests are not in
           -- the local store. The supported fallback is to copy the
           -- amd64 digest straight from the upstream registry into
-          -- Harbor via @skopeo copy@, which bypasses the local
+          -- the registry via @skopeo copy@, which bypasses the local
           -- docker store entirely and operates on the registry API. See
           -- 'pushUpstreamMultiArchViaImagetools' for the helper.
           startPublishPhase ("docker push " <> targetRef)
@@ -525,7 +534,7 @@ pushImageWithinPolicyDeadline manager options startPublishPhase maybeSourceDiges
               | otherwise -> recoverCompletedPush failureMessage
 
     recoverCompletedPush failureMessage = do
-      tagPresent <- harborTagMetadataPresent manager options repositoryPath targetTag
+      tagPresent <- registryTagMetadataPresent manager options repositoryPath targetTag
       pure $
         if tagPresent
           then PushSucceeded
@@ -539,22 +548,22 @@ prioritizePublishableImages imageRefs =
    in localImages <> otherImages
 
 -- | Sprint 3.15: probe whether @targetRef@'s blob is servable from the local
--- Harbor registry, minting 'BlobServable' evidence only after a bounded
+-- in-cluster registry, minting 'BlobServable' evidence only after a bounded
 -- registry-only pull copies the selected manifest, config, and every layer into
 -- a fresh empty directory. The pull cannot reuse Docker's shared content store.
 -- This is the sole minter of 'BlobServable'.
 probeRegistryPull ::
   Manager ->
-  HarborPublishOptions ->
+  RegistryPublishOptions ->
   PublishPhaseHook ->
   String ->
   IO (Maybe BlobServable)
 probeRegistryPull manager options startPublishPhase targetRef = do
   waitForRegistry manager options
   startPublishPhase ("skopeo registry-only pull verify " <> targetRef)
-  let registryRef = skopeoTargetRefForHarborApiHost options targetRef
+  let registryRef = skopeoTargetRefForRegistryApiHost options targetRef
   result <-
-    withHarborRegistryAuthFile options $ \authFilePath -> do
+    withRegistryAuthFile options $ \authFilePath -> do
       let verificationRoot = takeDirectory authFilePath </> "registry-pull-verification"
       bracketPreservingPrimary
         ( do
@@ -566,7 +575,7 @@ probeRegistryPull manager options startPublishPhase targetRef = do
         ( \emptyVerificationRoot ->
             tryRunPublishCommand
               ( Command.publishVerifyRegistry
-                  (Command.Architecture (harborTargetArchitecture options))
+                  (Command.Architecture (registryTargetArchitecture options))
                   (Command.RegistryAuthFile authFilePath)
                   (Command.ImageRef registryRef)
                   (emptyVerificationRoot </> "image")
@@ -583,7 +592,7 @@ probeRegistryPull manager options startPublishPhase targetRef = do
 -- succeeding.
 verifyRegistryPull ::
   Manager ->
-  HarborPublishOptions ->
+  RegistryPublishOptions ->
   PublishPhaseHook ->
   String ->
   IO BlobServable
@@ -595,34 +604,15 @@ verifyRegistryPull manager options startPublishPhase targetRef = do
       failWith
         ( "registry-only pull verification failed for "
             <> targetRef
-            <> ": the blob is not servable from the local Harbor registry"
+            <> ": the blob is not servable from the in-cluster registry"
         )
 
-loginHarbor :: Manager -> HarborPublishOptions -> IO ()
-loginHarbor manager options = do
-  waitForRegistry manager options
-  result <-
-    tryRunPublishCommand
-      ( Command.publishLogin
-          (Command.RegistryHost (harborClientHost options))
-          (harborRegistryCredentials options)
-      )
-  case result of
-    Right _ -> pure ()
-    Left failureMessage ->
-      failWith
-        ( "docker login failed for "
-            <> harborClientHost options
-            <> "\n"
-            <> failureMessage
-        )
-
-waitForRegistry :: Manager -> HarborPublishOptions -> IO ()
+waitForRegistry :: Manager -> RegistryPublishOptions -> IO ()
 waitForRegistry manager options = do
   outcome <-
     Readiness.awaitReadinessObservable
       registryApiReadinessDeadline
-      (observeRegistryApi manager (harborApiHost options))
+      (observeRegistryApi manager (registryApiHost options))
   Readiness.foldReadiness
     (const (pure ()))
     registryNotReady
@@ -631,13 +621,13 @@ waitForRegistry manager options = do
   where
     registryNotReady progress =
       failWith
-        ( "Harbor registry at "
-            <> harborApiHost options
-            <> " never became ready for docker login: "
+        ( "the in-cluster registry at "
+            <> registryApiHost options
+            <> " never became ready to accept a publication: "
             <> Text.unpack (Readiness.progressDetail progress)
         )
 
--- | Sprint 3.15: Harbor's @/v2/@ registry API answered (200/401/403). This is
+-- | Sprint 3.15: the registry's @/v2/@ API answered (200/401/403). This is
 -- strictly weaker than 'BlobServable' — it proves only that the registry
 -- endpoint is up, not that any specific blob is servable — so it may gate
 -- /whether to keep polling/, never "publish done".
@@ -645,13 +635,13 @@ observeRegistryApi :: Manager -> String -> IO (Readiness.PollOutcome ())
 observeRegistryApi manager apiHost = do
   request <- parseRequest ("http://" <> apiHost <> "/v2/")
   responseResult <-
-    try (httpLbs (boundedHarborRequest request) manager) ::
+    try (httpLbs (boundedRegistryRequest request) manager) ::
       IO (Either SomeException (Response LazyChar8.ByteString))
   case responseResult of
     Left err ->
       pure
         ( Readiness.Unobservable
-            (Text.pack ("Harbor registry transport failure: " <> displayException err))
+            (Text.pack ("registry transport failure: " <> displayException err))
         )
     Right response ->
       pure
@@ -669,22 +659,28 @@ classifyRegistryApiStatus responseStatusCode
             Readiness.progressExpected = 1,
             Readiness.progressDetail =
               Text.pack
-                ( "Harbor registry returned measured non-ready HTTP status "
+                ( "the registry returned measured non-ready HTTP status "
                     <> show responseStatusCode
                 )
           }
 
--- | Sprint 3.15: a tag /metadata/ row for @targetTag@ exists in Harbor's
--- artifact API (backed by Postgres/Redis, which the retained-state replay
--- rehydrates). This is metadata presence only — NOT evidence the underlying
--- blob is servable — so it may shortcut the push (via a real 'probeRegistryPull'
+-- | Sprint 3.15: a tag /metadata/ row for @targetTag@ exists in the registry's
+-- tag list. This is metadata presence only — NOT evidence the underlying blob
+-- is servable — so it may shortcut the push (via a real 'probeRegistryPull'
 -- servability check) but is never itself a terminal "published" state.
-harborTagMetadataPresent :: Manager -> HarborPublishOptions -> String -> String -> IO Bool
-harborTagMetadataPresent manager options repositoryPath targetTag = do
-  let requestUrl = harborRepositoryUrl (harborApiHost options) (harborProject options) repositoryPath
-  request <- authenticatedHarborRequest options requestUrl
+--
+-- Sprint 3.17: read from the OCI distribution @\/v2\/\<name>\/tags\/list@
+-- endpoint. The distinction the doctrine rests on is unchanged and, if
+-- anything, sharper here: @registry:2@ answers this route out of its metadata
+-- store without reading a single blob from S3, so a tag named in this list is
+-- exactly the case a retained-state cluster with an unrehydrated object store
+-- would get wrong.
+registryTagMetadataPresent :: Manager -> RegistryPublishOptions -> String -> String -> IO Bool
+registryTagMetadataPresent manager options repositoryPath targetTag = do
+  let requestUrl = registryTagListUrl (registryApiHost options) (registryNamespace options) repositoryPath
+  request <- boundedRegistryRequest <$> parseRequest requestUrl
   responseResult <-
-    try (httpLbs (boundedHarborRequest request) manager) ::
+    try (httpLbs (boundedRegistryRequest request) manager) ::
       IO (Either SomeException (Response LazyChar8.ByteString))
   case responseResult of
     Left _ -> pure False
@@ -693,52 +689,25 @@ harborTagMetadataPresent manager options repositoryPath targetTag = do
       | statusCode (responseStatus response) < 200 || statusCode (responseStatus response) >= 300 -> pure False
       | otherwise ->
           case eitherDecode (responseBody response) of
-            Right artifacts ->
-              pure
-                ( any
-                    ( any (\tagValue -> harborTagName tagValue == targetTag)
-                        . harborArtifactTags
-                    )
-                    (artifacts :: [HarborArtifact])
-                )
+            Right tagList -> pure (targetTag `elem` registryTagListTags tagList)
             Left _ -> pure False
 
-authenticatedHarborRequest :: HarborPublishOptions -> String -> IO Request
-authenticatedHarborRequest options requestUrl = do
-  request <- parseRequest requestUrl
-  pure
-    request
-      { requestHeaders =
-          ("Authorization", harborAuthorizationHeader options)
-            : requestHeaders request,
-        responseTimeout = harborHttpResponseTimeout
-      }
+boundedRegistryRequest :: Request -> Request
+boundedRegistryRequest request =
+  request {responseTimeout = registryHttpResponseTimeout}
 
-boundedHarborRequest :: Request -> Request
-boundedHarborRequest request =
-  request {responseTimeout = harborHttpResponseTimeout}
-
-harborAuthorizationHeader :: HarborPublishOptions -> ByteString8.ByteString
-harborAuthorizationHeader options =
-  "Basic "
-    <> Base64.encode (harborCredentialBytes options)
-
-harborCredentialBytes :: HarborPublishOptions -> ByteString8.ByteString
-harborCredentialBytes options =
-  TextEncoding.encodeUtf8
-    (Text.pack (harborUser options <> ":" <> harborPassword options))
-
-harborRepositoryUrl :: String -> String -> String -> String
-harborRepositoryUrl apiHost project repositoryPath =
+-- | The OCI distribution tag-list route for one published repository.
+registryTagListUrl :: String -> String -> String -> String
+registryTagListUrl apiHost namespace repositoryPath =
   "http://"
     <> apiHost
-    <> "/api/v2.0/projects/"
-    <> urlEncodeString project
-    <> "/repositories/"
-    <> urlEncodeString (urlEncodeString repositoryPath)
-    <> "/artifacts?page_size=100&with_tag=true"
+    <> "/v2/"
+    <> urlEncodeString namespace
+    <> "/"
+    <> urlEncodeString repositoryPath
+    <> "/tags/list"
 
-contentAddressTag :: HarborPublishOptions -> String -> IO String
+contentAddressTag :: RegistryPublishOptions -> String -> IO String
 contentAddressTag options imageRef = do
   inspectResult <-
     tryRunPublishCommand
@@ -755,7 +724,7 @@ contentAddressTag options imageRef = do
               (Command.publishInspectManifest (Command.ImageRef imageRef))
           case manifestResult of
             Right manifestPayload ->
-              case contentAddressTagFromManifestPayload (harborTargetArchitecture options) manifestPayload of
+              case contentAddressTagFromManifestPayload (registryTargetArchitecture options) manifestPayload of
                 Right tagValue -> pure tagValue
                 Left err -> failWith (err <> "\n" <> inspectFailure)
             Left manifestFailure ->
@@ -819,14 +788,14 @@ contentAddressTagFromManifestPayload targetArchitecture manifestPayload =
 -- failure is benign (the tag wasn't present yet).
 --
 -- Phase 3 Sprint 3.11 (2026-05-29): the platform pin is now derived
--- from @options.harborTargetArchitecture@ instead of hardcoded amd64,
+-- from @options.registryTargetArchitecture@ instead of hardcoded amd64,
 -- so Apple Silicon substrates publish arm64 sub-images natively
 -- without Rosetta emulation.
-pinLocalImageToTargetArchitecture :: HarborPublishOptions -> PublishPhaseHook -> String -> String -> IO (Maybe (String, String))
+pinLocalImageToTargetArchitecture :: RegistryPublishOptions -> PublishPhaseHook -> String -> String -> IO (Maybe (String, String))
 pinLocalImageToTargetArchitecture options startPublishPhase imageRef preferredManifestSource =
   tryManifestSources manifestSources
   where
-    targetArchitecture = harborTargetArchitecture options
+    targetArchitecture = registryTargetArchitecture options
     platformFlagValue = "linux/" <> targetArchitecture
 
     manifestSources =
@@ -940,7 +909,7 @@ instance FromJSON ManifestEntry where
         }
 
 -- | Push the @linux/amd64@ manifest of an upstream multi-arch image
--- straight into Harbor via @skopeo copy@. The copy path operates on
+-- straight into the registry via @skopeo copy@. The copy path operates on
 -- the registry API and accepts a digest-pinned source, so the Docker
 -- 29.x + containerd snapshotter pitfalls that block @docker push@ for
 -- multi-arch tags do not apply. The helper reuses an earlier manifest
@@ -949,7 +918,7 @@ instance FromJSON ManifestEntry where
 -- @docker://SRC\@DIGEST@ to @docker://DEST@.
 -- Returns 'Left' with the captured stderr on any step that fails.
 pushUpstreamMultiArchViaImagetools ::
-  HarborPublishOptions ->
+  RegistryPublishOptions ->
   PublishPhaseHook ->
   Maybe String ->
   String ->
@@ -971,7 +940,7 @@ pushUpstreamMultiArchViaImagetools options startPublishPhase maybeKnownSourceDig
               pure (Left ("no linux/" <> targetArchitecture <> " entry in upstream manifest for " <> sourceImage))
             Just archDigest -> copyDigest archDigest
   where
-    targetArchitecture = harborTargetArchitecture options
+    targetArchitecture = registryTargetArchitecture options
 
     copyDigest archDigest = do
       let sourceRepository = takeBefore ':' sourceImage
@@ -980,21 +949,21 @@ pushUpstreamMultiArchViaImagetools options startPublishPhase maybeKnownSourceDig
           -- @docker buildx imagetools create@ fallback in favor
           -- of @skopeo copy@. The buildx imagetools path delegates
           -- to a buildkit container that runs on docker's default
-          -- bridge network, so it cannot reach Harbor's NodePort
+          -- bridge network, so it cannot reach the registry's NodePort
           -- 30002. @skopeo copy@ runs wherever the launcher command
-          -- is executed, so it must dial the Harbor API host for the
+          -- is executed, so it must dial the registry API host for the
           -- active control-plane context: @127.0.0.1:<port>@ for
           -- host-native execution and @<kind-control-plane>:30002@
           -- for the Linux outer-container lane. The rendered image
-          -- refs and docker push target remain on 'harborHost' /
-          -- 'harborClientHost'; only the skopeo transport target is
+          -- refs and docker push target remain on 'registryHost' /
+          -- 'registryClientHost'; only the skopeo transport target is
           -- rewritten.
           -- Phase 3 Sprint 3.11 (2026-05-29):
           -- @--override-os=linux@ + @--override-arch=<arch>@
           -- ensure the copy is the substrate-matched
           -- single-platform variant. On Apple Silicon this is
           -- @arm64@; on Linux substrates it stays @amd64@.
-          skopeoTargetRef = skopeoTargetRefForHarborApiHost options targetRef
+          skopeoTargetRef = skopeoTargetRefForRegistryApiHost options targetRef
           skopeoSource = "docker://" <> sourceByDigest
           skopeoTarget = "docker://" <> skopeoTargetRef
           archOverrideArg = "--override-arch=" <> targetArchitecture
@@ -1006,7 +975,7 @@ pushUpstreamMultiArchViaImagetools options startPublishPhase maybeKnownSourceDig
       -- @skopeo@ ship the policy file by default; the flag is a
       -- no-op there because the policy in the file is already the
       -- supported @\"insecureAcceptAnything\"@ default. The supported
-      -- contract uses HTTP against Harbor inside the cluster's
+      -- contract uses HTTP against the registry inside the cluster's
       -- private network, so insecure-policy + insecure-tls is the
       -- intended posture. A protected short-lived @--dest-authfile@ is also
       -- required because
@@ -1024,7 +993,7 @@ pushUpstreamMultiArchViaImagetools options startPublishPhase maybeKnownSourceDig
             <> skopeoTarget
         )
       skopeoResult <-
-        withHarborRegistryAuthFile options $ \authFilePath ->
+        withRegistryAuthFile options $ \authFilePath ->
           tryRunPublishCommand
             ( Command.publishCopyDigest
                 (Command.Architecture targetArchitecture)
@@ -1042,7 +1011,7 @@ pushUpstreamMultiArchViaImagetools options startPublishPhase maybeKnownSourceDig
                     <> " -> "
                     <> targetRef
                     <> "\n"
-                    <> redactSecret (harborPassword options) skopeoFailure
+                    <> skopeoFailure
                 )
             )
 
@@ -1088,26 +1057,26 @@ normalizeRepositoryPath rawImage =
     withoutDigest = takeBefore '@' rawImage
     withoutTag = fromMaybe withoutDigest (breakTagSuffix withoutDigest)
 
-isHarborImage :: String -> Bool
-isHarborImage imageRef = any (`isPrefixOfString` imageRef) harborPrefixes
+isRegistryComponentImage :: String -> Bool
+isRegistryComponentImage imageRef = any (`isPrefixOfString` imageRef) registryComponentPrefixes
 
 -- type PublishedImage = (String, String)
-writeHarborOverridesFile :: Map String PublishedImage -> FilePath -> IO ()
-writeHarborOverridesFile publishedImages outputPath =
-  case buildHarborOverridesValue publishedImages of
+writeRegistryOverridesFile :: Map String PublishedImage -> FilePath -> IO ()
+writeRegistryOverridesFile publishedImages outputPath =
+  case buildRegistryOverridesValue publishedImages of
     Right overlayValue -> Yaml.encodeFile outputPath overlayValue
     Left err -> failWith err
 
 -- type PublishedImage = (String, String)
-buildHarborOverridesValue :: Map String PublishedImage -> Either String Value
-buildHarborOverridesValue publishedImages = do
+buildRegistryOverridesValue :: Map String PublishedImage -> Either String Value
+buildRegistryOverridesValue publishedImages = do
   runtimeImage <- requiredRuntimeImage publishedImages
   -- Phase 3 Sprint 3.11 (2026-05-29): the hand-authored MinIO
   -- StatefulSet under `chart/templates/minio/` consumes its image
   -- repository + tag from the `infernixMinio` block in
-  -- `chart/values.yaml`. The Harbor overlay therefore overrides
+  -- `chart/values.yaml`. The publication overlay therefore overrides
   -- `infernixMinio.image` / `clientImage` / `initImage` to the
-  -- Harbor-mirrored refs after publication, replacing the retired
+  -- registry-mirrored refs after publication, replacing the retired
   -- bitnami sub-chart's per-component overlay structure.
   minioImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/minio:RELEASE.2025-09-07T16-13-09Z" publishedImages)
   minioInitImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/busybox:1.36" publishedImages)
@@ -1122,7 +1091,7 @@ buildHarborOverridesValue publishedImages = do
           [ "service" .= workloadImageOverlay runtimeImage,
             "demo" .= workloadImageOverlay runtimeImage,
             -- Phase 7 Sprint 7.7: the supported three-role split routes
-            -- coordinator + engine images through the same Harbor-mirrored
+            -- coordinator + engine images through the same registry-mirrored
             -- runtime image. Without these overlays the new pods pull
             -- the bare `infernix-linux-{cpu,gpu}:local` ref which is not
             -- present on Kind worker nodes.
@@ -1134,8 +1103,11 @@ buildHarborOverridesValue publishedImages = do
               .= pulsarImageOverlay pulsarImage,
             "postgresOperator"
               .= postgresOperatorOverlay postgresOperatorPublished,
-            "harborpg"
-              .= harborPostgresOverlay postgresDatabasePublished postgresPgBackRestPublished postgresPgBouncerPublished
+            -- Phase 3 Sprint 3.17: `keycloakpg` is the platform's only
+            -- Patroni cluster now that the registry carries no database, so
+            -- it is the overlay target for the published Percona images.
+            "keycloakpg"
+              .= postgresDatabaseOverlay postgresDatabasePublished postgresPgBackRestPublished postgresPgBouncerPublished
           ]
   pure baseOverlay
   where
@@ -1175,7 +1147,7 @@ buildHarborOverridesValue publishedImages = do
         [ "image" .= renderRepositoryAndTag published,
           "imagePullPolicy" .= ("IfNotPresent" :: String)
         ]
-    harborPostgresOverlay databasePublished pgBackRestPublished pgBouncerPublished =
+    postgresDatabaseOverlay databasePublished pgBackRestPublished pgBouncerPublished =
       object
         [ "image" .= renderRepositoryAndTag databasePublished,
           "imagePullPolicy" .= ("IfNotPresent" :: String),
@@ -1187,14 +1159,14 @@ buildHarborOverridesValue publishedImages = do
     -- templates reference `infernixMinio.image.repository`,
     -- `infernixMinio.image.tag`, `infernixMinio.clientImage.*`, and
     -- `infernixMinio.initImage.*`; the overlay rewrites those to
-    -- point at the Harbor-mirrored content-addressed tags.
+    -- point at the registry-mirrored content-addressed tags.
     infernixMinioOverlay minioPublished minioClientPublished minioInitPublished =
       object
-        [ "image" .= harborImageWithPullPolicy minioPublished,
-          "clientImage" .= harborImageWithPullPolicy minioClientPublished,
-          "initImage" .= harborImageWithPullPolicy minioInitPublished
+        [ "image" .= publishedImageWithPullPolicy minioPublished,
+          "clientImage" .= publishedImageWithPullPolicy minioClientPublished,
+          "initImage" .= publishedImageWithPullPolicy minioInitPublished
         ]
-    harborImageWithPullPolicy (repository, tagValue) =
+    publishedImageWithPullPolicy (repository, tagValue) =
       object
         [ "repository" .= repository,
           "tag" .= tagValue,
@@ -1221,7 +1193,7 @@ findPublishedImageWithSuffix suffix =
 requireDiscoveredImage :: Maybe a -> Either String a
 requireDiscoveredImage =
   maybe
-    (Left "did not discover every non-Harbor third-party image required for the final Harbor-backed rollout")
+    (Left "did not discover every third-party image required for the final registry-backed rollout")
     Right
 
 -- type PublishedImage = (String, String)
@@ -1240,7 +1212,7 @@ requirePublishCommand failureContext command = do
 -- module cannot attach a caller-chosen budget to an arbitrary executable.
 tryRunPublishCommand :: Command.ClusterCommand -> IO (Either String String)
 tryRunPublishCommand command = do
-  environment <- harborSubprocessEnv
+  environment <- registrySubprocessEnv
   boundedCommand <-
     either
       failWith
@@ -1267,8 +1239,8 @@ commandOutcomeToEither outcome =
 -- | The typed subprocess environment for host publish commands. Fails closed
 -- when the host manifest is absent (the kernel builder requires it), so a
 -- publish exec without @HOME@/@TMPDIR@ is unrepresentable.
-harborSubprocessEnv :: IO Subprocess.SubprocessEnv
-harborSubprocessEnv = do
+registrySubprocessEnv :: IO Subprocess.SubprocessEnv
+registrySubprocessEnv = do
   paths <- Config.discoverPaths
   Subprocess.clusterSubprocessEnv paths
 
@@ -1283,7 +1255,7 @@ takeBefore delimiter = takeWhile (/= delimiter)
 
 -- | Phase 7 Sprint 7.14 follow-on (May 25, 2026): rewrite a
 -- @localhost@-prefixed host to @127.0.0.1@ so host-native @skopeo
--- dials Harbor's IPv4-only NodePort listener instead of the unbound
+-- dials the registry's IPv4-only NodePort listener instead of the unbound
 -- IPv6 loopback (glibc prefers IPv6 for @localhost@).
 substituteLocalhostWithLoopbackV4 :: String -> String
 substituteLocalhostWithLoopbackV4 imageRef =
@@ -1292,18 +1264,18 @@ substituteLocalhostWithLoopbackV4 imageRef =
     Nothing -> imageRef
 
 -- | Return the transport ref used by @skopeo copy@. Docker push uses
--- 'harborClientHost' because the host Docker daemon owns the push, but
+-- 'registryClientHost' because the host Docker daemon owns the push, but
 -- skopeo runs in the caller's network namespace. The registry host in
--- the destination ref is therefore replaced with 'harborApiHost'.
-skopeoTargetRefForHarborApiHost :: HarborPublishOptions -> String -> String
-skopeoTargetRefForHarborApiHost options =
+-- the destination ref is therefore replaced with 'registryApiHost'.
+skopeoTargetRefForRegistryApiHost :: RegistryPublishOptions -> String -> String
+skopeoTargetRefForRegistryApiHost options =
   replaceImageRegistryHost (skopeoRegistryHost options)
 
 -- Skopeo resolves credentials by the destination authority string, so the
 -- auth-file key must use the same IPv4 loopback normalization as the ref.
-skopeoRegistryHost :: HarborPublishOptions -> String
+skopeoRegistryHost :: RegistryPublishOptions -> String
 skopeoRegistryHost =
-  substituteLocalhostWithLoopbackV4 . harborApiHost
+  substituteLocalhostWithLoopbackV4 . registryApiHost
 
 replaceImageRegistryHost :: String -> String -> String
 replaceImageRegistryHost replacementHost imageRef =
@@ -1331,14 +1303,14 @@ trailingWhitespaceCharacters = " \n\r\t"
 -- list back) so the downstream @pushUpstreamMultiArchViaImagetools@
 -- fallback can do the work. Failure here is silent because the
 -- caller already failed to pin and is doing best-effort recovery.
-recoverOriginalTag :: HarborPublishOptions -> PublishPhaseHook -> String -> String -> IO ()
+recoverOriginalTag :: RegistryPublishOptions -> PublishPhaseHook -> String -> String -> IO ()
 recoverOriginalTag options startPublishPhase imageRef manifestSource = do
-  let platformFlagValue = "linux/" <> harborTargetArchitecture options
+  let platformFlagValue = "linux/" <> registryTargetArchitecture options
   startPublishPhase ("docker pull --platform " <> platformFlagValue <> " " <> manifestSource)
   _ <-
     tryRunPublishCommand
       ( Command.publishPullUpstream
-          (Command.LinuxPlatform (Command.Architecture (harborTargetArchitecture options)))
+          (Command.LinuxPlatform (Command.Architecture (registryTargetArchitecture options)))
           (Command.ImageRef manifestSource)
       )
   _ <-
@@ -1349,20 +1321,14 @@ recoverOriginalTag options startPublishPhase imageRef manifestSource = do
           (Command.publishTag (Command.ImageRef manifestSource) (Command.ImageRef imageRef))
   pure ()
 
-harborRegistryCredentials :: HarborPublishOptions -> Command.RegistryCredentials
-harborRegistryCredentials options =
-  Command.RegistryCredentials
-    (Command.Username (harborUser options))
-    (Command.Password (harborPassword options))
-
 -- | Supply skopeo with Docker-compatible authentication without placing a
 -- credential in argv. 'openBinaryTempFile' creates the file mode 0600; the
 -- bracket removes it on success, failure, and asynchronous cancellation.
-withHarborRegistryAuthFile ::
-  HarborPublishOptions ->
+withRegistryAuthFile ::
+  RegistryPublishOptions ->
   (FilePath -> IO a) ->
   IO a
-withHarborRegistryAuthFile options action = do
+withRegistryAuthFile options action = do
   paths <- Config.discoverPaths
   processId <- fromIntegral <$> getProcessID
   processIdentity <-
@@ -1370,7 +1336,7 @@ withHarborRegistryAuthFile options action = do
       >>= maybe
         ( ioError
             ( userError
-                "Harbor publication refused: the kernel did not provide a process birth identity for protected credential transport"
+                "publication refused: the kernel did not provide a process birth identity for the owned registry scratch root"
             )
         )
         pure
@@ -1393,7 +1359,7 @@ withHarborRegistryAuthFile options action = do
         (openBinaryTempFile secretDirectory "skopeo-auth.json.")
         (hClose . snd)
         ( \(authFilePath, authHandle) -> do
-            LazyChar8.hPutStr authHandle (harborRegistryAuthPayload options)
+            LazyChar8.hPutStr authHandle (registryAuthPayload options)
             pure authFilePath
         )
     removeAuthFile authFilePath = do
@@ -1494,34 +1460,25 @@ reconcileStaleAuthDirectories authRoot = do
             (observedIdentity == Just expectedIdentity)
             (removePathForcibly (authRoot </> entry))
 
-harborRegistryAuthPayload :: HarborPublishOptions -> LazyChar8.ByteString
-harborRegistryAuthPayload options =
+-- | Sprint 3.17: the in-cluster registry serves anonymously, so the file
+-- skopeo is pointed at declares an entry for the registry host carrying no
+-- credential at all.
+--
+-- The file has not become pointless with the credential gone — what it always
+-- protected, and still protects, is the mode-0700 birth-identity-owned
+-- directory it lives in. 'probeRegistryPull' builds its throwaway @dir:@ store
+-- as a sibling of this file, so that directory holds real pulled image layers
+-- and its ownership is the property that matters.
+registryAuthPayload :: RegistryPublishOptions -> LazyChar8.ByteString
+registryAuthPayload options =
   encode
     ( object
         [ "auths"
             .= object
-              [ Key.fromString (skopeoRegistryHost options)
-                  .= object
-                    [ "auth" .= encodedCredential
-                    ]
+              [ Key.fromString (skopeoRegistryHost options) .= object []
               ]
         ]
     )
-  where
-    encodedCredential =
-      ByteString8.unpack
-        (Base64.encode (harborCredentialBytes options))
-
-redactSecret :: String -> String -> String
-redactSecret secret
-  | null secret = id
-  | otherwise = go
-  where
-    go [] = []
-    go remaining@(character : remainingSuffix) =
-      case stripPrefix secret remaining of
-        Just matchedSuffix -> "<redacted>" <> go matchedSuffix
-        Nothing -> character : go remainingSuffix
 
 breakTagSuffix :: String -> Maybe String
 breakTagSuffix value =
@@ -1588,21 +1545,13 @@ instance FromJSON DockerImageInspect where
         <$> value .:? "RepoDigests" .!= []
         <*> value .:? "Id"
 
-newtype HarborArtifact = HarborArtifact
-  { harborArtifactTags :: [HarborTag]
+-- | The OCI distribution @\/v2\/\<name>\/tags\/list@ response body.
+newtype RegistryTagList = RegistryTagList
+  { registryTagListTags :: [String]
   }
 
-instance FromJSON HarborArtifact where
+instance FromJSON RegistryTagList where
   parseJSON =
-    withObject "HarborArtifact" $ \value ->
-      HarborArtifact
+    withObject "RegistryTagList" $ \value ->
+      RegistryTagList
         <$> value .:? "tags" .!= []
-
-newtype HarborTag = HarborTag
-  { harborTagName :: String
-  }
-
-instance FromJSON HarborTag where
-  parseJSON =
-    withObject "HarborTag" $ \value ->
-      HarborTag <$> value .: "name"

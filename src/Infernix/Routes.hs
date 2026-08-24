@@ -7,7 +7,7 @@ module Infernix.Routes
     renderChartRouteRegistryCommentSection,
     renderClusterBootstrapRouteChecksSection,
     renderEdgeRoutingInventorySection,
-    renderHarborRouteSummarySection,
+    renderRegistryRouteSummarySection,
     renderMinioRouteSummarySection,
     renderPulsarRouteSummarySection,
     renderReadmeRouteSummarySection,
@@ -93,9 +93,13 @@ renderWebPortalRoutesSection =
         <> map renderWebPortalRow (alwaysPublishedRoutes routeSpecs)
     )
 
-renderHarborRouteSummarySection :: String
-renderHarborRouteSummarySection =
-  renderToolRouteSummarySection (filter (\routeSpec -> routePathPrefix routeSpec `elem` ["/harbor/api", "/harbor"]) routeSpecs)
+-- | Phase 3 Sprint 3.17: the in-cluster image repository is the single-binary
+-- @registry:2@ distribution registry, which serves the OCI @\/v2@ API and
+-- nothing else. It ships no portal, so the operator surface is one API prefix
+-- rather than a browser console.
+renderRegistryRouteSummarySection :: String
+renderRegistryRouteSummarySection =
+  renderToolRouteSummarySection (filter (\routeSpec -> routePathPrefix routeSpec == "/registry") routeSpecs)
 
 -- | Phase 3 Sprint 3.13 removed the external @/minio/s3@ gateway route. MinIO
 -- is no longer browser-reachable; the @infernix-demo@ webapp @/api/objects@
@@ -112,8 +116,8 @@ renderPulsarRouteSummarySection =
 renderClusterBootstrapRouteChecksSection :: String
 renderClusterBootstrapRouteChecksSection =
   unlines
-    [ "- `curl http://127.0.0.1:<port>/harbor` checks the Harbor portal route.",
-      "- `curl http://127.0.0.1:<port>/harbor/api/v2.0/projects` checks the `/harbor/api -> /api` rewrite into the Harbor core service.",
+    [ "- `curl http://127.0.0.1:<port>/registry/` checks the `/registry -> /v2` rewrite into the in-cluster registry Service.",
+      "- `curl http://127.0.0.1:<port>/registry/_catalog` lists the published repositories through the same rewrite.",
       "- `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.",
       "- `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/infernix/demo/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path."
     ]
@@ -181,27 +185,16 @@ routeSpecs =
       Nothing
       Nothing,
     RouteSpec
-      "infernix-harbor-api"
-      "/harbor/api"
-      "Harbor API"
-      "infernix-harbor-core"
-      80
-      (Just "/api")
+      "infernix-registry-api"
+      "/registry"
+      "Image registry API"
+      "infernix-registry"
+      5000
+      (Just "/v2")
       False
-      Nothing
-      Nothing
-      Nothing,
-    RouteSpec
-      "infernix-harbor-portal"
-      "/harbor"
-      "Harbor portal"
-      "infernix-harbor-portal"
-      80
-      (Just "/")
-      False
-      (Just "harbor")
-      (Just "HTTPRoute -> Harbor portal Service")
-      (Just "envoy-gateway-routed harbor deployment"),
+      (Just "registry")
+      (Just "HTTPRoute -> in-cluster registry Service")
+      (Just "envoy-gateway-routed registry deployment"),
     RouteSpec
       "infernix-pulsar-admin"
       "/pulsar/admin"
@@ -363,8 +356,7 @@ webPortalNotes routeSpec =
   case routePathPrefix routeSpec of
     "/" -> "PureScript demo SPA served by `infernix-demo`."
     "/api" -> "Covers `/api/publication`, `/api/cache`, `/api/models`, and `/api/demo-config`."
-    "/harbor/api" -> "Rewrites to upstream `/api` before forwarding to `infernix-harbor-core:80`."
-    "/harbor" -> "Rewrites to upstream `/` before forwarding to `infernix-harbor-portal:80`."
+    "/registry" -> "Rewrites to upstream `/v2` before forwarding to `infernix-registry:5000`."
     "/pulsar/admin" -> "Rewrites to upstream `/` before forwarding to `infernix-infernix-pulsar-proxy:80`."
     "/pulsar/ws" -> "Rewrites to upstream `/ws` before forwarding to `infernix-infernix-pulsar-proxy:80`."
     _ -> "Registry-defined route."

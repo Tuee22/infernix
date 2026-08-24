@@ -28,12 +28,12 @@
   and `cluster up` manually creates and pre-binds the matching PVs before rollout
 - every in-cluster PostgreSQL dependency uses a Patroni cluster managed by the Percona Kubernetes
   operator through that same Helm-owned workflow
-- `cluster up` bootstraps Harbor first through Helm on a pristine cluster, allowing Harbor and only
-  the support services Harbor needs during bootstrap to pull from public container repositories
-- after Harbor is ready, `cluster up` uses Harbor as the image authority for every remaining
-  non-Harbor pod, mirrors third-party images, and publishes the active `infernix` runtime image
+- `cluster up` brings the in-cluster registry up first through Helm on a pristine cluster, allowing
+  the registry and only the MinIO storage it needs to pull from public container repositories
+- after the registry is ready, `cluster up` uses it as the image authority for every remaining
+  cluster pod, mirrors third-party images, and publishes the active `infernix` runtime image
   before the final Helm rollout on every substrate
-- because Pulsar is first enabled in the final Harbor-backed Helm phase, `cluster up` forces the
+- because Pulsar is first enabled in the final registry-backed Helm phase, `cluster up` forces the
   upstream Pulsar initialization jobs there before final broker or proxy readiness gates close
 - `cluster up` publishes generated engine bindings in `infernix.dhall`; the worker derives a closed
   invocation from the compiled binding, and no cluster ConfigMap field can inject an arbitrary
@@ -41,7 +41,7 @@
 - the plan contract for the `linux-gpu` Kind path requires NVIDIA container runtime support
   inside Kind plus usable `nvidia.com/gpu` resources for scheduled workloads
 - the supported real-cluster `linux-gpu` path also requires enough host disk headroom for Kind
-  image preload, Harbor-backed image publication, and Pulsar BookKeeper durability during final
+  image preload, registry-backed image publication, and Pulsar BookKeeper durability during final
   rollout
 
 ## Cross-References

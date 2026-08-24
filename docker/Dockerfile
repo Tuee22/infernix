@@ -149,7 +149,6 @@ COPY --from=nvkind-builder /go/bin/nvkind /usr/local/bin/nvkind
 # + `busybox` (see chart/values.yaml.infernixMinio).
 RUN set -eu; \
     mkdir -p /opt/infernix/chart/charts; \
-    helm pull harbor --repo https://helm.goharbor.io --version 1.18.3 --destination /opt/infernix/chart/charts; \
     helm pull pg-operator --repo https://percona.github.io/percona-helm-charts --version 2.9.0 --destination /opt/infernix/chart/charts; \
     helm pull pg-db --repo https://percona.github.io/percona-helm-charts --version 2.9.0 --destination /opt/infernix/chart/charts; \
     helm pull pulsar --repo https://pulsar.apache.org/charts --version 4.5.0 --destination /opt/infernix/chart/charts; \

@@ -284,10 +284,10 @@ dispatch command =
       mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
     InternalDiscoverClaimsCommand renderedChartPath ->
       mapM_ (putStrLn . renderPersistentClaimLine) =<< discoverChartClaimsFile renderedChartPath
-    InternalDiscoverHarborOverlayCommand overlayPath ->
-      mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
+    InternalDiscoverRegistryOverlayCommand overlayPath ->
+      mapM_ putStrLn =<< discoverRegistryOverlayImageRefsFile overlayPath
     InternalPublishChartImagesCommand renderedChartPath outputPath ->
-      PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions (\_ -> pure ()) renderedChartPath outputPath
+      PublishImages.publishChartImagesFile PublishImages.defaultRegistryPublishOptions (\_ -> pure ()) renderedChartPath outputPath
     InternalMaterializeSubstrateCommand runtimeMode maybeEngineMachines demoUiEnabledValue emptyModels ->
       withRuntimeConfigWriteAccess $ do
         paths <- discoverPaths

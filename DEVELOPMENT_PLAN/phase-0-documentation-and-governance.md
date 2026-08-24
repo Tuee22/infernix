@@ -41,8 +41,8 @@ host daemons. The repository and README matrix name `apple-silicon` as the Apple
 lane.
 
 The governed runbooks, testing docs, CLI references, and plan describe the supported first-run
-convergence windows in `cluster up` and `cluster down`, name the long-running Docker build, Harbor
-publication, Harbor-backed final-image preload, and Apple teardown data-sync phases explicitly, and
+convergence windows in `cluster up` and `cluster down`, name the long-running Docker build, registry
+publication, registry-backed final-image preload, and Apple teardown data-sync phases explicitly, and
 use inactivity-aware language instead of treating elapsed duration alone as product failure.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
@@ -105,7 +105,7 @@ None.
 
 **Status**: Done
 **Implementation**: `documents/`
-**Docs to update**: `documents/architecture/overview.md`, `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`, `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/edge_routing.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/k8s_storage.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/storage_and_state.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/postgresql.md`, `documents/tools/pulsar.md`
+**Docs to update**: `documents/architecture/overview.md`, `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`, `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/edge_routing.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/k8s_storage.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/storage_and_state.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/registry.md`, `documents/tools/minio.md`, `documents/tools/postgresql.md`, `documents/tools/pulsar.md`
 
 ### Objective
 
@@ -244,7 +244,7 @@ model, build-artifact hygiene, and the later DRY cleanup direction.
 
 ### Validation
 
-- the listed docs use the Gateway, Harbor-first, manual-storage, and generated-artifact vocabulary
+- the listed docs use the Gateway, registry-first, manual-storage, and generated-artifact vocabulary
 - later phases can reference these docs without redefining the same governance baseline
 
 ### Remaining Work
@@ -360,8 +360,6 @@ distinct from the pre-existing substrate schema implemented in Phase 6 Sprint 6.
 - The seven cleanup rows in `legacy-tracking-for-deletion.md` each name a specific later
   sprint as the owning sprint (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17).
 - the seven cleanup sprints are implemented; the Apple cohort closed under
-  [Wave A](cohort-validation-waves.md) and the CUDA Linux cohort under
-  [Wave C](cohort-validation-waves.md), with both `linux-cpu` and `linux-gpu` passing.
 
 ### Remaining Work
 
@@ -442,17 +440,6 @@ None.
 ## Sprint 0.11: Realness Doctrine and Matrix Reconciliation [Done]
 
 **Status**: Done
-**Code-side closure**: Complete (machine-independent; validated on the rebuilt `linux-cpu` image
-by `infernix lint docs` + `infernix docs check`) — recorded the realness-by-construction program
-in the governed docs: update the README "Comprehensive Model / Format / Engine Matrix" + Coverage Closure Rules
-(the latter from "real-output proof remains a substrate cohort gate" to the realness invariant) in
-lockstep with `Models.hs` and `model_catalog.md` so the `infernix lint docs` matrix↔catalog parity holds;
-rewrite `model_catalog.md`, `testing_strategy.md`, and `python_policy.md` to the realness invariant; add
-the new realness doctrine home (a dedicated `documents/architecture/realness_contract.md` or a canonical
-`model_catalog.md` section); add the retired wordings ("real-output proof remains", "Wave I still
-owns replacing") to `src/Infernix/Lint/Docs.hs` `forbiddenPhrases` and purge them
-from the governed docs; and review `README.md` + `AGENTS.md` + `CLAUDE.md` together for the new
-prerequisites and the realness lint gate. Validated by `infernix lint docs` + `infernix docs check`.
 **Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/development/python_policy.md`, `documents/architecture/realness_contract.md`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Models.hs`
 **Docs to update**: as above
 
@@ -473,9 +460,6 @@ with the generated catalog and lint.
 - `infernix lint docs` + `infernix docs check` pass (metadata, links, README route block,
   matrix↔catalog parity, forbidden phrases purged)
 - the matrix↔catalog lockstep (`Models.hs` + README + `model_catalog.md`), the
-  `testing_strategy.md` / `python_policy.md` rewrites, the `realness_contract.md` doctrine home, and
-  the `forbiddenPhrases` additions (`real-output proof remains`, `Wave I still owns replacing`) are
-  all landed and validated
 
 ### Remaining Work
 
@@ -486,20 +470,6 @@ None.
 ## Sprint 0.12: Realness Lint Enforcement Infrastructure [Done]
 
 **Status**: Done
-**Code-side closure**: Complete (machine-independent; validated on the rebuilt `linux-cpu`
-image by `infernix test lint` + `poetry run check-code`) — the realness-by-construction invariant
-([../documents/architecture/realness_contract.md](../documents/architecture/realness_contract.md)) is
-mechanically enforced by two machine-independent lints owned here as governance: the Python
-`_run_realness_ast_check` in `python/adapters/common.py` `run_check_code` (forbids `return` inside
-`except`, `bytes([...])` / `b64decode` constant artifacts, and `_validation_*` / `*_smoke*` /
-`*_fallback*` helper definitions across the `*_python.py` transform modules) and the Haskell
-`realnessFabricationViolations` in `src/Infernix/Lint/HaskellStyle.hs` (run under the
-`infernix-haskell-style` cabal test; forbids `emit_fallback_result`, `infernix_emit_validation_result`,
-`native-validation`, `b64decode`, `native fallback` — `np.zeros` is intentionally not token-forbidden
-since real engines use it for scratch buffers). The lint **mechanism** is Phase 0
-governance; its **per-runner scope** (`realnessScopedFiles`) is extended by each accelerator phase as it
-de-stubs — Phase 4 adds `Engines/LinuxNative.hs`, Phase 1 adds `Engines/AppleSilicon.hs` — so the lint
-is green at every phase's closure and no accelerator phase waits on another.
 **Implementation**: `python/adapters/common.py`, `src/Infernix/Lint/HaskellStyle.hs`
 **Docs to update**: `documents/architecture/realness_contract.md`, `documents/development/python_policy.md`
 
@@ -525,19 +495,11 @@ None.
 
 ## Sprint 0.13: Managed-State-Transition Doctrine and Escape-Token Lint [Done]
 
-**Status**: Done — the Managed-State-Transition Doctrine doc and the `unsafeCoerce` /
-`unsafePerformIO` escape-token lint are code-side closed on the machine-independent gates, and the
-single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed under
-[Wave V](cohort-validation-waves.md).
-**Code-side closure**: `cabal build all` (`-Wall -Werror`, clean),
-`cabal test infernix-unit`, `cabal test infernix-haskell-style` (the new escape-token check is
-clean on the tree and was verified to fail on a reintroduced `unsafeCoerce` / `unsafePerformIO` in
-an evidence module), `infernix lint docs`, and `infernix docs check` all pass on the apple-silicon
-lane. No native/Python change in this sprint, so `poetry run check-code` does not apply.
-**Cohort gate**: closed under [Wave V](cohort-validation-waves.md) — apple-silicon plus
-linux-cpu full-suite `test all` clean.
-**Implementation**: `documents/architecture/managed_state_transitions.md`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/HaskellStyle.hs`
-**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
+**Status**: Done — implemented and validated.
+**Implementation**: `documents/architecture/managed_state_transitions.md`,
+`src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/HaskellStyle.hs`
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
 
 ### Objective
 
@@ -573,7 +535,7 @@ generalizes the results-side realness contract to state transitions and is canon
   links, and `requiredDocs` registration; the escape-token lint is the code delta that lands this
   sprint
 - `poetry run check-code` is not applicable — no native/Python surface changed
-- the linux-cpu lane rerun of the code-side gates closed under [Wave V](cohort-validation-waves.md)
+- the linux-cpu lane rerun of the code-side gates closed on the selected accelerator plus `linux-cpu`
 
 ### Remaining Work
 
@@ -583,32 +545,22 @@ None.
 
 ## Sprint 0.14: Bounded-Command/Bounded-HTTP Doctrine Documentation [Done]
 
-**Status**: Done — the `managed_state_transitions.md` bounded-command/bounded-HTTP governance
-extension and the three-way non-negotiable mirror are code-side closed on the machine-independent
-gates, and the single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed under
-[Wave V](cohort-validation-waves.md).
-**Code-side closure**: this is a docs-and-governance sprint, so the applicable
-machine-independent gates are `infernix lint docs` and `infernix docs check`, both passing on the
-apple-silicon lane; `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit`, and
-`cabal test infernix-haskell-style` are unaffected by the Markdown-only change. No Python/native
-change, so `poetry run check-code` does not apply.
-**Cohort gate**: closed under [Wave V](cohort-validation-waves.md) — apple-silicon plus
-linux-cpu full-suite `test all` clean.
-**Implementation**: `documents/architecture/managed_state_transitions.md`, `README.md`, `AGENTS.md`,
-`CLAUDE.md`, `documents/development/assistant_workflow.md`, `documents/tools/harbor.md`,
-`documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`,
-`documents/development/no_env_vars.md`, `documents/development/haskell_style.md`,
-`DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Status**: Done — implemented and validated.
+**Implementation**: `documents/architecture/managed_state_transitions.md`, `README.md`,
+`AGENTS.md`, `CLAUDE.md`, `documents/development/assistant_workflow.md`,
+`documents/tools/registry.md`, `documents/engineering/model_lifecycle.md`,
+`documents/engineering/object_storage.md`, `documents/development/no_env_vars.md`,
+`documents/development/haskell_style.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Blocked by**: Sprint 0.13
-**Docs to update**: `documents/architecture/managed_state_transitions.md`, the three-way non-negotiable
-mirror (`README.md` / `AGENTS.md` / `CLAUDE.md` plus `documents/development/assistant_workflow.md`),
-and the phase's existing engineering/reference docs
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, the three-way non-negotiable mirror
+(`README.md` / `AGENTS.md` / `CLAUDE.md` plus `documents/development/assistant_workflow.md`), and
+the phase's existing engineering/reference docs
 
 ### Objective
 
 This sprint is the Bounded-Command Application & Bounded-HTTP reopen work for this phase — record the
 governance surface of the follow-on that applies the Sprint 1.16/3.14/4.28 managed-state kernels at
-the two flake sites a single-accelerator cohort run surfaced (the Harbor `docker pull` verify hang
+the two flake sites a single-accelerator cohort run surfaced (the registry `docker pull` verify hang
 and the rate-limited upstream model download). Governance is current-state and honest: the doctrine
 doc, the non-negotiable mirror, and the deletion ledger record what the code does now
 (bounded publish exec,
@@ -629,7 +581,7 @@ retirement (Sprint 6.41) are tracked as remaining, not claimed done. The doctrin
   and a new peer hard-stop for raw unbounded upstream-model-download HTTP (enforced by
   `unboundedHttpViolations`) in `documents/development/assistant_workflow.md` (canonical) mirrored
   byte-identically into `AGENTS.md` and `CLAUDE.md`, with `README.md` carrying the prose form
-- the current-state operator-doc touch-ups (`documents/tools/harbor.md`,
+- the current-state operator-doc touch-ups (`documents/tools/registry.md`,
   `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`,
   `documents/development/no_env_vars.md`, `documents/development/haskell_style.md`) and the
   `legacy-tracking-for-deletion.md` ledger rows
@@ -651,23 +603,18 @@ None.
 
 ## Sprint 0.15: Bounded-Inference-Memory Doctrine and Non-Negotiable Mirror [Done]
 
-**Status**: Done — the `bounded_inference_memory.md` memory-safety-by-construction doctrine doc, its
-docs-lint registration, and the three-way non-negotiable mirror are doc-only and machine-independent;
-closed on `infernix lint docs` + `infernix docs check` + `cabal build all` on the apple-silicon
-lane. The enforcing Phase 4 Sprints 4.30/4.31 and Phase 6 Sprint 6.42 scope is closed under
-[Wave W](cohort-validation-waves.md). A later audit superseded that first unindexed admission API:
-the governed doctrine and mirrors describe Phase 1's indexed compile/refine/executable boundary, and
-the enforcement work that follows from it belongs to Phase 4 Sprint 4.32 and Phase 6 Sprint 6.44.
-**Code-side closure**: this is a docs-and-governance sprint, so the applicable
-machine-independent gates are `infernix lint docs` and `infernix docs check` (both green: the new
-doctrine doc's metadata, links, broad-doctrine-doc structure, and `requiredDocs` / `DocumentStructureRule`
-registration validate), plus `cabal build all` (`-Wall -Werror`, unaffected by the Markdown-only
-change). No Python/native change, so `poetry run check-code` does not apply.
-**Implementation**: `documents/architecture/bounded_inference_memory.md`, `src/Infernix/Lint/Docs.hs`,
-`README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/assistant_workflow.md`
-**Docs to update**: `documents/architecture/bounded_inference_memory.md`, the three-way non-negotiable
-mirror (`README.md` / `AGENTS.md` / `CLAUDE.md` plus `documents/development/assistant_workflow.md`),
-and `documents/README.md`
+**Status**: Done — the `bounded_inference_memory.md` memory-safety-by-construction doctrine doc,
+its docs-lint registration, and the three-way non-negotiable mirror are doc-only and
+machine-independent; closed on `infernix lint docs` + `infernix docs check` + `cabal build all` on
+the apple-silicon lane. A later audit superseded that first unindexed admission API: the governed
+doctrine and mirrors describe Phase 1's indexed compile/refine/executable boundary, and the
+enforcement work that follows from it belongs to Phase 4 Sprint 4.32 and Phase 6 Sprint 6.44.
+**Implementation**: `documents/architecture/bounded_inference_memory.md`,
+`src/Infernix/Lint/Docs.hs`, `README.md`, `AGENTS.md`, `CLAUDE.md`,
+`documents/development/assistant_workflow.md`
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`, the three-way non-negotiable mirror
+(`README.md` / `AGENTS.md` / `CLAUDE.md` plus `documents/development/assistant_workflow.md`), and
+`documents/README.md`
 
 ### Objective
 
@@ -715,7 +662,7 @@ as `Planned` Phase 4/6 work. The doctrine is canonical at
 The enforcing code — the `MemoryGrant`-gated capped-engine kernel, the checked
 `HostMemoryPartition`, the required `ModelMemoryFootprint`, the budget-enforcer split, and the
 `unboundedEngineSpawnViolations` lint — belongs to Phase 4 Sprints 4.30/4.31 and Phase 6 Sprint
-6.42, whose behavioral sign-off closed under [Wave W](cohort-validation-waves.md).
+6.42, whose behavioral sign-off closed on the selected accelerator plus `linux-cpu`.
 
 ### Remaining Work
 
@@ -730,16 +677,9 @@ None.
 `documentation_standards.md` Update Rule, and the operator / test-harness / persistence doc
 reconciliation are doc-only and machine-independent; closed on `infernix lint docs` +
 `infernix docs check` + `cabal build all` on the apple-silicon lane. The enforcing code in Phase 2
-Sprint 2.15 and Phase 6 Sprint 6.43 is closed under [Wave X](cohort-validation-waves.md); the later
+Sprint 2.15 and Phase 6 Sprint 6.43 is closed on the selected accelerator plus `linux-cpu`; the later
 owner-atomic reservation/teardown correction is outside that scope and is tracked with the phases
 that own it.
-**Code-side closure**: this is a docs-and-governance sprint, so the applicable
-machine-independent gates are `infernix lint docs` and `infernix docs check` (both green: the extended
-doctrine doc's links and structure, the new `documentation_standards.md` Update Rule, and the reconciled
-operator / test-harness / persistence docs validate), plus `cabal build all` (`-Wall -Werror`, unaffected
-by the Markdown-only change). No new required doc is registered (the doctrine extends the
-already-registered `managed_state_transitions.md`), and no Python/native change, so `poetry run check-code`
-does not apply.
 **Implementation**: `documents/architecture/managed_state_transitions.md`, `README.md`, `AGENTS.md`,
 `CLAUDE.md`, `documents/development/assistant_workflow.md`, `documents/documentation_standards.md`
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, the three-way non-negotiable
@@ -852,7 +792,7 @@ language, deadline, provenance, output-bound, or cleanup contracts.
   extensions and Cabal `c-sources:`, `cxx-sources:`, `asm-sources:`, and `cmm-sources:`
   declarations; Cabal native-token CPP definitions; and embedded native source, writers, or
   compiler invocations in another implementation language, with unit and negative coverage
-- Phase 2 and Wave Y status that treats every pre-correction source/binary digest, review, Stage 1,
+- Phase 2 status that treats every pre-correction source/binary digest, review, Stage 1,
   and cohort assertion as superseded and nonreusable for the correction
 - deletion-ledger records for the removed lifecycle and subprocess C/FFI/Cabal boundaries, kept
   separate from the focused runtime and aggregate validation evidence that closed the correction
@@ -886,9 +826,6 @@ None.
 corrections, and the three-way non-negotiable mirror are landed, and the serialization claim they
 originally carried is replaced by the one-pool/two-alternative-occupants ledger, the admission
 clause, and the account's declared scope. Machine-independent (Axis-1 only); no accelerator gate.
-**Historical doctrine evidence**: the first closure covers the ledger's structure, its lint
-registration, and the mirror mechanism only; the corrected admission clause and the scope of the
-account are covered by this closure instead.
 **Implementation**: `documents/architecture/bounded_host_memory.md`, `src/Infernix/Lint/Docs.hs`,
 `documents/README.md`, `documents/documentation_standards.md`, the root-document mirror
 **Docs to update**: `documents/architecture/bounded_host_memory.md`,
@@ -1067,8 +1004,6 @@ None.
 **Status**: Done — the co-resident pledge is named and subtracted, and the same argument now runs
 one level up: the toolchain account and the inference partition draw on the one non-virtual-machine
 pool, and the doctrine records the supported-host arithmetic that leaves that pool with no residue.
-**Historical doctrine evidence**: the first closure covers the pledge subtraction and its
-fail-closed observation only; the pool-level argument is covered by this closure instead.
 **Implementation**: `documents/architecture/bounded_host_memory.md`
 **Docs to update**: `documents/architecture/bounded_host_memory.md`
 
@@ -1234,7 +1169,7 @@ the section with no scan, no threshold, and no owner.
   stayed outside the aggregate gate only while they measured the backlog that preceded them;
   leaving them out once the corpus is clean is what would let that backlog silently return.
 - The corpus driven to zero. Every phase document is a declarative description of its target
-  again: the attempt-by-attempt chronology is deleted rather than relocated, per-lane attestations
+  again: the attempt-by-attempt chronology is deleted rather than relocated, open cohort gates
   are left to [cohort-validation-waves.md](cohort-validation-waves.md), the design decisions those
   attempts produced survive as present-tense statements in the sprint that owns each, `Done`
   sprints carry no remaining work, and one phase-status table exists across the whole plan.

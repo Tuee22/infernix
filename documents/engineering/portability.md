@@ -14,7 +14,7 @@
 - Development and validation are native-only. `linux-cpu` supports native Linux amd64 and native
   Linux arm64; Apple Silicon does not run an emulated amd64 Linux lane and must not create or
   switch Docker contexts or create a Colima VM.
-- Harbor-first bootstrap, manual storage, operator-managed Patroni PostgreSQL, Gateway API
+- registry-first bootstrap, manual storage, operator-managed Patroni PostgreSQL, Gateway API
   routing, generated catalog behavior, and Pulsar-only production inference are platform invariants.
 - Tool bootstrap, build-root paths, Docker setup, launcher build mechanics, and CUDA device access
   are substrate detail; Kind, Kubernetes manifests, image preparation, validation, and teardown
@@ -47,7 +47,7 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 ## Portable Platform Invariants
 
 - the supported runtime-mode ids are `apple-silicon`, `linux-cpu`, and `linux-gpu`
-- Harbor-first bootstrap, the `infernix-manual` storage doctrine, operator-managed Patroni
+- registry-first bootstrap, the `infernix-manual` storage doctrine, operator-managed Patroni
   PostgreSQL, Gateway API routing, and Pulsar-only production inference do not vary by substrate
 - the generated active-mode catalog, publication contract, route inventory, and browser-visible
   base URL stay stable across supported runtime modes
@@ -86,7 +86,7 @@ operator-facing kubeconfig remains repo-local in the active execution context.
   emulation
 - creating or switching Docker contexts, or creating a Colima VM, from the Apple Silicon workflow
 - bootstrap shell code that directly manages Kind clusters, Kubernetes manifests, Helm rollout,
-  cluster workload image pulls, Harbor publication, validation internals, or destructive artifact
+  cluster workload image pulls, registry publication, validation internals, or destructive artifact
   cleanup
 - `docker compose up` or `docker compose exec` as operator entrypoints
 - per-substrate Python projects, handwritten source under `Generated/`, or a separate web runtime image
