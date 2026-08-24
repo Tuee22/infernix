@@ -2378,7 +2378,14 @@ appleWatchdogOutcomeForTest ::
 #if defined(darwin_HOST_OS)
 appleWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
   terminationRef <- newIORef Nothing
-  runAppleWatchdog ceilingMib defaultEngineMemberBound processHandle processGroup terminationRef
+  peakRef <- newIORef Map.empty
+  runAppleWatchdog
+    ceilingMib
+    defaultEngineMemberBound
+    processHandle
+    processGroup
+    terminationRef
+    peakRef
   classifyWatchdogTermination <$> readIORef terminationRef
 #else
 appleWatchdogOutcomeForTest _ _ _ =

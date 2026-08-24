@@ -89,6 +89,7 @@ requiredDocs =
     "documents/engineering/model_lifecycle.md",
     "documents/engineering/object_storage.md",
     "documents/engineering/portability.md",
+    "documents/engineering/shared_host_resource_protocol.md",
     "documents/engineering/storage_and_state.md",
     "documents/engineering/testing.md",
     "documents/operations/apple_silicon_runbook.md",
