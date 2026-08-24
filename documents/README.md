@@ -97,10 +97,11 @@
   integration, and E2E validation surface for the multi-user durable-context demo, including the
   per-model smoke matrix and the multi-user throughput / fan-in batching / fan-out test
 - [engineering/shared_host_resource_protocol.md](engineering/shared_host_resource_protocol.md) is
-  the independently re-derived four-project Finite Resource Execution Authority Protocol: one
-  host/boot/capability-indexed algebra, permanent epoch and parent-scope locks interpreted precisely
-  on Darwin, Linux, and Windows, applied-wall evidence, crash/reboot reconciliation, and Metal,
-  CUDA/MIG/MPS, CPU, RAM, storage, and VM profiles without a shared codebase or daemon
+  the target five-project host-sharing topology: a standalone neutral Haskell kernel, independently
+  versioned resource-family and mechanism releases, signed static catalogs, project-local adapters
+  and anchors, direct kernel locks, base/turn leases, progressive MISU assurance, and explicit
+  later amoebius ownership without adding a new seed-to-seed dependency, an early seed-to-amoebius
+  dependency, or a shared daemon
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
 - [engineering/host_tools_manifest.md](engineering/host_tools_manifest.md) defines the host-manifest
   record reflected from the `Infernix.HostConfig` decoder types
