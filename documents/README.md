@@ -97,11 +97,11 @@
   integration, and E2E validation surface for the multi-user durable-context demo, including the
   per-model smoke matrix and the multi-user throughput / fan-in batching / fan-out test
 - [engineering/shared_host_resource_protocol.md](engineering/shared_host_resource_protocol.md) is
-  the target five-project host-sharing topology: a standalone neutral Haskell kernel, independently
-  versioned resource-family and mechanism releases, signed static catalogs, project-local adapters
-  and anchors, direct kernel locks, base/turn leases, progressive MISU assurance, and explicit
-  later amoebius ownership without adding a new seed-to-seed dependency, an early seed-to-amoebius
-  dependency, or a shared daemon
+  the not-adopted record of how Infernix would participate in the operator-installed host claim
+  ledger: a machine-global object for the defect the cluster source already names, `Transient`
+  toolchain claims attached at the existing host-admission seam, a whole-device domain for Metal
+  and CUDA execution, one engine per physical machine preserved independently of slot count, and
+  the unresolved container and Colima rendezvous
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
 - [engineering/host_tools_manifest.md](engineering/host_tools_manifest.md) defines the host-manifest
   record reflected from the `Infernix.HostConfig` decoder types
