@@ -97,11 +97,10 @@
   integration, and E2E validation surface for the multi-user durable-context demo, including the
   per-model smoke matrix and the multi-user throughput / fan-in batching / fan-out test
 - [engineering/shared_host_resource_protocol.md](engineering/shared_host_resource_protocol.md) is
-  the not-adopted record of what participation in the operator-installed host claim ledger would
-  mean: the fixed per-user root that carries the authority, the single-writer record and its one
-  short admission section, what a granted claim does and does not establish, the rule that
-  release-directed work is always admitted, the progressive consumption a one-shot admission cannot
-  see, and the point-of-use observation that complements it
+  the host resource coordination policy: kernel scopes rather than machines, an open domain algebra
+  that conflicts by prefix at a segment boundary, one grant held by the supervising process with
+  standing capacity declared as a reserve instead, the measured lock-mechanism results the OFD
+  mandate rests on, and an explicit register of what is not verified
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
 - [engineering/host_tools_manifest.md](engineering/host_tools_manifest.md) defines the host-manifest
   record reflected from the `Infernix.HostConfig` decoder types
