@@ -3,96 +3,108 @@
 **Status**: Draft
 **Referenced by**: [Documentation index](../README.md)
 
-> **Purpose**: Record how Infernix would participate in the shared host claim ledger installed on a
-> development machine, and the exact seam it would attach to.
-> **Read this if**: you are deciding whether a toolchain spawn, an engine launch, or a cluster operation may
-> proceed on a machine shared with another project.
+> **Purpose**: Record what participation in the shared host claim ledger would mean for Infernix, and what
+> adopting it would require.
 
-**Not adopted.** No Infernix code reads or writes the ledger, no command depends on it, and no phase owns the
-work. The ledger is host configuration owned by the machine's operator; its authority is the installed root
-and the `spec-version` that root carries, never a copy of a document in any repository, including this one.
-This file records only what Infernix would do, so no dependency on another project is created by writing it.
+## 1. What this records
 
-## Contents
+No code in this repository reads or writes the ledger, and no command depends on it. This file records what
+participation would mean, so that a later decision starts from a written position rather than from nothing.
+Writing it creates no dependency on another project.
 
-- [1. The problem here](#1-the-problem-here)
-- [2. What Infernix would claim](#2-what-infernix-would-claim)
-- [3. Where it would attach](#3-where-it-would-attach)
-- [4. The rendezvous question](#4-the-rendezvous-question)
-- [5. Coverage, which does not cross the boundary](#5-coverage-which-does-not-cross-the-boundary)
-- [6. Open before adoption](#6-open-before-adoption)
+The ledger is host configuration owned by the machine's operator, in the same category as an `/etc` file or a
+port assignment. Every participant resolves one fixed path and no other: `$HOME/.hostclaim` on Linux and
+Darwin, `%UserProfile%\.hostclaim` on Windows. Its authority is that installed root and the `spec-version`
+the root carries, never a copy of a document in any repository, including this one.
 
-## 1. The problem here
+The path is never repository-relative, never version-suffixed, and never selected by an environment
+variable. Two participants that resolve different paths silently fail to coordinate, which is the one
+failure the ledger exists to prevent, so the resolution rule admits no configuration.
 
-Both existing exclusion mechanisms already say what they are not. Toolchain host admission is an observation
-at an instant rather than a lease, which is why the child boundary re-takes it instead of trusting the answer
-taken at mint. The engine lock is `runtimeRoot </> "engine.lock"`, and `runtimeRoot` resolves against the
-repository, so it cannot exclude a second checkout.
+## 2. What the ledger is
 
-The source states the consequence directly: the lifecycle lock, the harness reservation, and the persisted
-state are all repository-local, while the Kind cluster they claim to protect is machine-global. A ledger
-gives those three a machine-global object to name.
+A per-user root holding one fixed-size record per claim, plus a budget the operator edits and a single lock
+that serializes admission. Installation is creating a directory. Enrolling a participant is creating one
+directory named after it. There is no privileged installer, no signing ceremony, and no key custody.
 
-## 2. What Infernix would claim
+Five properties carry the design:
 
-- A `Transient` claim for a toolchain invocation, charging host memory and processor time. `Transient` is
-  honest for supervised foreground compilation: when it dies, the operating system has reclaimed what was
-  charged.
-- A claim holding the whole-device domain for a Metal or CUDA execution, so two participants cannot select
-  the same physical accelerator.
-- A `Persistent` claim for a retained cluster and for the engine process, if either is claimed at all. The
-  engine claim is the candidate replacement for the checkout-local `engine.lock` — a replacement, not a second
-  authority beside it with no declared precedence.
+- **A participant writes only beneath its own directory.** Every record has exactly one writer, so a torn
+  write is the only reachable corruption and its cost falls on its own author.
+- **Free is a positive value a writer must deliberately produce.** A truncated file, an unfamiliar revision,
+  and a corrupted byte all decode as occupied, so no failure of the encoding can release capacity.
+- **Every claim is created inside one short critical section.** Participants never hold a partial set of
+  objects and never acquire objects in different orders, so no ordering rule is needed.
+- **Charges are declared in a frozen set of dimensions**, so two participants that have never heard of each
+  other still add their consumption the same way.
+- **Conflicts are a prefix test over opaque identifiers.** A participant that has never heard of a hardware
+  family still refuses to double-book its domains, so adding hardware costs no revision.
 
-One property must survive the adapter: one engine process per physical machine is an Infernix correctness
-rule, not operator policy. The ledger's slot count is policy and must never be read as permission to run a
-second engine that independently admits against the same machine.
+Each claim declares one of two kinds, and the kind is a statement about what the holder's death proves.
+`Transient` means the operating system has reclaimed everything charged. `Persistent` means the holder's
+death proves nothing, and is required for anything that outlives a process — a container, a cluster, a
+virtual machine, a mount, retained bytes, or a request to an external system that may still complete.
 
-Refusal outcomes must stay distinct, because delivery semantics depend on it. A contended claim is transient
-and must not be published as a model-capacity failure; a request that cannot fit is terminal and must not be
-retried as though it were merely contended.
+## 3. What a granted claim establishes, and what it does not
 
-## 3. Where it would attach
+A granted claim establishes two things: no other conforming participant holds a conflicting domain, and the
+sum of declared charges plus the operator's reserve fits the budget.
 
-At the existing toolchain host-admission seam, which already observes the machine and already refuses at the
-right moment. Participation replaces an instantaneous observation with a claim that persists for the work,
-which is precisely the gap that seam documents about itself.
+That is a statement about **declarations**, not about behaviour. No limit is applied and no device is
+fenced. A participant that declares four gibibytes and then allocates twelve is not detected. The ledger is
+advisory between cooperating programs on one machine, offers no defence against a program that does not
+participate, and none against a hostile process running as the same operating-system user.
 
-The claim is an input to the existing typed authorities, never a replacement for them. Plan derivation, live
-refinement, ceiling installation, observer readiness, and terminal-result behaviour keep their evidence; the
-claim only establishes that the machine's capacity was not already spent.
+Stating this plainly is the design rather than an apology for it. The failure the ledger actually prevents
+is the common one: two programs that each observed the machine correctly, and each then started work the
+machine cannot hold together.
 
-## 4. The rendezvous question
+## 4. Release-directed work is always admissible
 
-This is the hardest part of adoption here and is unresolved.
+Work directed at releasing a claim the participant already holds is never refused.
 
-Supported Linux commands run through `docker compose run --rm`, one fresh container per invocation, and there
-is no supported Linux host-native command path. On Apple hosts, `linux-cpu` work runs in the Colima Linux VM
-while control-plane and Metal execution are host-native.
+Without that rule the protocol deadlocks against itself, because tearing something down is also a mutation
+of the host. A refused admission would prevent cleanup; absent cleanup there is no evidence the effect is
+gone; absent that evidence the claim cannot be released; and the contention persists. A participant must
+therefore never make its own cleanup path conditional on an admission it could be refused.
 
-A container coordinates with the host only if the host root is bind-mounted at the same path inside it. A
-guest-local file with that name is a different object and coordinates nothing. Adding one mount alongside the
-repository and Docker-socket mounts is small; deciding whether an Apple-hosted Linux container claims against
-the host machine or believes itself to be a separate one is not, and that decision has to be made before any
-claim from inside a container means anything.
+## 5. What the ledger does not cover
 
-Until it is settled, participation is honest only for host-native invocations.
+Admission is taken once, when the claim is made. It cannot observe a participant that declares honestly and
+then consumes progressively — a store that fills during a long run, a cache that grows, an image set that
+accumulates. Contention of that shape is the kind a shared development machine produces most often, and it
+is outside what a one-shot admission decision can see.
 
-## 5. Coverage, which does not cross the boundary
+This is a real limit, not a gap awaiting a patch. A participant that needs a bound on progressive
+consumption applies its own mechanism and does not expect the ledger to supply one.
 
-Infernix's layered host-memory enforcement is the reason a single strength label cannot describe a mechanism.
-A data-segment ceiling installed before the engine's first instruction covers private writable mappings and
-cannot be raised by the process it binds; a fixed-cadence observer covers the shared and pinned memory that
-ceiling does not charge. Both are required, and calling the pair either "hard" or "reactive" misdescribes it.
+## 6. The complementary mechanism
 
-Nothing about that is shared. A claim states demand; the walls a participant applies to itself are its own,
-and no other participant needs to agree on them. The coverage model belongs in this repository's own
-enforcement doctrine.
+Observing foreign work at the point of use is a different mechanism with a different reach, and the two are
+complementary rather than alternatives.
 
-## 6. Open before adoption
+Observation binds a peer that never opted in, needs no installed root and no agreement, and is available to
+any participant unilaterally. What it cannot see is capacity with no process to observe: an idle cluster, a
+stopped virtual machine, a registered guest, or retained bytes on disk. It also does not reach across
+language ecosystems, because it must already know what a peer's processes are called.
 
-- No phase or sprint owns the record reader, the adapter, or the seam change. The cross-checkout defect the
-  cluster source names already has an owner; a machine-global object is what that work needs.
-- The container and VM rendezvous above.
-- Release evidence. A claim is only as good as its release: the engine and cluster paths must gate release on
-  their existing teardown evidence, and hold rather than release when that evidence is partial.
+The ledger covers exactly what observation cannot — persistent, processless, cross-language capacity — and
+observation covers what a one-shot declaration cannot. Neither subsumes the other, and a participant may
+adopt either without the other.
+
+## 7. What adoption would require
+
+Adoption is not a document change, and the work is a participant's own. Three obligations hold for any
+participant, and none of them is stated here for any particular one:
+
+- **Name the seams.** Every path that acquires capacity needs a claim, and every path that releases it needs
+  a release. A participant that names one seam covers one seam; the paths it did not name stay uncovered,
+  and a claim taken on one of them says nothing about the others.
+- **Derive the charge once.** A participant that already computes what it needs converts that figure rather
+  than authoring a second one. Two independently authored figures drift, and the drift is silent.
+- **Establish release evidence.** A claim is only as good as its release. What counts as established is the
+  participant's business, but a `Persistent` claim released without evidence is worse than no claim, because
+  it reports capacity that is still spent.
+
+A participant that cannot meet these keeps observing the machine and says so, rather than writing a record
+nothing consults.
