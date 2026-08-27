@@ -28,6 +28,7 @@ import Infernix.ExecutionPlan
     compiledPlanPlacementEnforcedResources,
     executableModelDescriptor,
     executableModelEngine,
+    executableModelGpuVramArenaMib,
     executableModelGpuVramCeilingMib,
     executableModelId,
     executableModelResidentCeilingMib,
@@ -734,6 +735,15 @@ assertBreachPayloadFidelity =
         Just executable -> do
           let model = executableModelDescriptor executable
               deviceCeilingMib = modelFootprintMib
+              deviceArenaMib = gpuVramLimitMib
+              installed =
+                CappedEngine.executableEngineCeiling
+                  Ceiling.NoEngineProjection
+                  executable
+              watchdogCeilings =
+                fromRight
+                  []
+                  (CappedEngine.executableWatchdogCeilingsForTest installed executable)
               observedMib = deviceCeilingMib + 37
               breach =
                 modelCeilingBreachError
@@ -758,6 +768,19 @@ assertBreachPayloadFidelity =
           assert
             (Types.inferenceErrorRequiredMib breach > Types.inferenceErrorAvailableMib breach)
             "Sprint 4.37: requiredMib strictly exceeds availableMib on every runtime breach payload"
+          assert
+            ( executableModelGpuVramCeilingMib executable == Just deviceCeilingMib
+                && executableModelGpuVramArenaMib executable == Just deviceArenaMib
+                && deviceArenaMib > deviceCeilingMib
+            )
+            ( "Sprint 6.51: the GPU fixture distinguishes the artifact-derived "
+                <> "admission requirement from the framework arena"
+            )
+          assert
+            (lookup Types.NvidiaVram watchdogCeilings == Just deviceArenaMib)
+            ( "Sprint 6.51: the NVIDIA backstop watches the same device arena "
+                <> "that sizes the framework engine"
+            )
           assert
             (Types.inferenceErrorSource breach == Types.cappedEngineResidentCeilingSource)
             "Sprint 4.37: a runtime breach names the capped-engine ceiling as its source"

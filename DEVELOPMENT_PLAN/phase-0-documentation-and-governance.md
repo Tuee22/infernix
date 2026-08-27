@@ -4,9 +4,10 @@
 plan and those documents aligned, and the enforcement that makes both mechanical. Sprint 0.24 landed
 `infernix lint plan`, which implements the Section C, D, I, J, and Q scans the standards had
 declared only in prose, drove the corpus to zero against them, and wired the scans into `runLint`.
-Sprints 0.19 and 0.21 re-closed on the corrected host-memory ledger they own; every sprint in this
-phase is closed on the machine-independent gate set. The phase is machine-independent throughout and
-carries no accelerator cohort.
+Sprints 0.19 and 0.21 re-closed on the corrected host-memory ledger they own; Sprint 0.26 keeps the
+governed-doc registry and index exact when a target document is retired. Every sprint in this phase
+is closed on the machine-independent gate set. The phase is machine-independent throughout and carries
+no accelerator cohort.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -29,7 +30,8 @@ suite, the documentation standards, the docs validator, and the
 plan-standards validator are in place. `infernix lint docs` and `infernix docs check` are the
 governed validation entrypoints for documentation change; `infernix lint plan` is the mechanical
 half of the plan standards, reports zero against the corpus, and runs inside the aggregate
-`infernix test lint` gate.
+`infernix test lint` gate. The governed-doc inventory contains no retired target, broken index link,
+or orphaned conformance probe.
 
 The governed docs, the root documents, and the development plan describe the same explicit-init
 runtime-config mechanics and the Apple split-executor product shape. `infernix init` creates
@@ -1243,6 +1245,39 @@ Make an earlier phase completable and validatable without any later phase, and e
   sprint's supersession field is exempt.
 - `infernix lint plan` reports all eight scans at zero, and `infernix lint docs` plus `docs check`
   stay clean.
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 0.26: Retired Governed-Document Inventory Closure [Done]
+
+**Status**: Done — machine-independent. This sprint carries no accelerator cohort and blocks no
+accelerator phase.
+**Implementation**: `src/Infernix/Lint/Docs.hs`, `documents/README.md`
+**Docs to update**: `documents/README.md`
+
+### Objective
+
+Keep the mechanically required governed-document inventory identical to the target documentation
+suite after a target document is retired.
+
+### Deliverables
+
+- `requiredDocs` names only governed Markdown documents that exist
+- the documentation index links only to target documents that the suite still owns
+- the conformance probe whose sole contract was the retired document is absent rather than retained
+  as an unsupported implementation surface
+- missing required documents and newly added unregistered documents remain fail-closed lint errors
+
+### Validation
+
+- `infernix lint docs` exits zero with the retired path absent from both the inventory and the tree
+- `infernix lint plan` and `infernix docs check` exit zero
+- `infernix test lint` exits zero with the Haskell style, Cabal format, Python, file, chart, proto,
+  docs, and plan gates running through the closed CLI surface
 
 ### Remaining Work
 

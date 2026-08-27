@@ -85,6 +85,7 @@ import Infernix.DescriptorSpace (requireBoundedDescriptorSpace)
 import Infernix.DescriptorSpace qualified as DescriptorSpace
 import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
 import Infernix.Engines.Artifact qualified as Artifact
+import Infernix.ExecutionPlan (executableModelGpuVramArenaMib)
 import Infernix.ExecutionPlan.Internal
   ( EnforcedGrant (EnforcedGrant),
     Enforcer
@@ -1632,11 +1633,6 @@ maximumEngineOutputBytes = 16 * 1024 * 1024
 maximumEngineOutputFailureChars :: Int
 maximumEngineOutputFailureChars = 4096
 
--- | Eliminate the existential executable placement while retaining each
--- enforcer/grant resource index. A GPU placement must satisfy both independent
--- grants: the pod resident-set watchdog and the NVIDIA per-process-group VRAM
--- watchdog each run against their own admitted ceiling, and neither a pod limit
--- nor an exit code is ever accepted as a substitute for the other's evidence.
 -- | Phase 4 Sprint 4.43 — the sampled backstop watches the quantity that was
 -- actually installed.
 --
@@ -1660,8 +1656,9 @@ executableWatchdogs installed executable@(ExecutableModel _ _ _ resources) =
     RuntimePodResources podGrant ->
       (: []) <$> watchdogForGrant declaredMembers effectiveCeiling podGrant
     RuntimeGpuResources podGrant vramGrant -> do
+      deviceArenaMib <- executableDeviceArenaMib executable
       podWatchdog <- watchdogForGrant declaredMembers effectiveCeiling podGrant
-      vramWatchdog <- watchdogForGrant declaredMembers effectiveCeiling vramGrant
+      vramWatchdog <- watchdogForDeviceArena declaredMembers deviceArenaMib vramGrant
       pure [podWatchdog, vramWatchdog]
   where
     declaredMembers = executableEngineMemberBound executable
@@ -1763,11 +1760,30 @@ enforcedGrantBudget (EnforcedGrant enforcer _) = enforcerBudgetMib enforcer
 -- memory immediately before its engine starts; a placement with no device grant
 -- observes nothing, because it takes no device arena.
 requireDeviceArenaAvailable :: ExecutableModel -> IO (Either Text ())
-requireDeviceArenaAvailable (ExecutableModel _ _ _ resources) =
+requireDeviceArenaAvailable executable@(ExecutableModel _ _ _ resources) =
   case resources of
-    RuntimeGpuResources _ deviceGrant ->
-      observeDeviceArenaAvailability (enforcedGrantCeiling deviceGrant)
+    RuntimeGpuResources _ _ ->
+      case executableDeviceArenaMib executable of
+        Left reason -> pure (Left reason)
+        Right arenaMib -> observeDeviceArenaAvailability arenaMib
     _ -> pure (Right ())
+
+-- | Phase 6 Sprint 6.51 — one device-sizing quantity for every consumer.
+--
+-- The worker request, the free-memory observation, and the namespace-local
+-- sampled backstop must all name the arena the engine is actually sized by.
+-- Retaining the artifact-derived grant for the latter two made a framework
+-- engine correctly sized to the lane's per-execution budget fail its own
+-- backstop at the smaller admission requirement. A GPU placement without an
+-- arena is a construction defect and fails closed rather than falling back to
+-- the grant.
+executableDeviceArenaMib :: ExecutableModel -> Either Text Int
+executableDeviceArenaMib executable =
+  case executableModelGpuVramArenaMib executable of
+    Nothing -> Left "a device-using executable carries no device arena"
+    Just arenaMib
+      | arenaMib <= 0 -> Left "the executable model carries a non-positive device arena"
+      | otherwise -> Right arenaMib
 
 watchdogForGrant ::
   Int ->
@@ -1788,6 +1804,18 @@ watchdogForGrant declaredMembers effectiveCeiling (EnforcedGrant enforcer grant)
       positiveWatchdog
         (effectiveCeiling NvidiaVram ceilingMib)
         (`NvidiaVramWatchdog` declaredMembers)
+
+-- | The NVIDIA backstop watches the arena the engine receives, not the
+-- artifact-derived requirement that admission compared with capacity. The
+-- resource index makes this function device-only, so no host grant can be
+-- substituted for the arena quantity.
+watchdogForDeviceArena ::
+  Int ->
+  Int ->
+  EnforcedGrant 'NvidiaVram ->
+  Either Text SomeWatchdogSpec
+watchdogForDeviceArena declaredMembers arenaMib (EnforcedGrant (NvidiaVramAccountingEnforcer _) _) =
+  positiveWatchdog arenaMib (`NvidiaVramWatchdog` declaredMembers)
 
 positiveWatchdog ::
   Int ->

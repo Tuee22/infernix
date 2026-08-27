@@ -3,7 +3,6 @@
 **Status**: Authoritative source
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md),
 [development_plan_standards.md](development_plan_standards.md),
-[phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md),
 [phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md)
 
 > **Purpose**: Operationalize Section Q of
@@ -23,58 +22,11 @@
 
 | Wave | Machine | Scope |
 |------|---------|-------|
-| AC | Apple Silicon (`apple-silicon` + `linux-cpu`) | Phase 4 Sprints 4.37 through 4.42 — Bounded Engine Launch, host half |
 | AD | CUDA Linux (`linux-gpu` + `linux-cpu`) | Phase 6 Sprint 6.51 — Bounded Engine Launch, device half calibration |
 
-Scheduling follows numerical phase order: Wave AC is the first open execution gate, and Wave AD
-cannot run until Phase 4 closes. Wave AC is code-side closed and awaits its Apple run; Wave AD
-retains its own device-side correction and observations.
-
-## Wave AC: Bounded Engine Launch, Host Half (Open)
-
-**Machine**: the Apple accelerator plus its paired `linux-cpu` lane, which is Phase 4's existing
-selected accelerator. This wave does not select `linux-gpu`, and Section Q forbids it from doing so:
-the device half of the same architecture is a separate contract with its own wave below.
-
-**Scope**: Phase 4 Sprints 4.37 through 4.42 — the resource-tagged breach, the resource-indexed
-requirement, derivation from artifact bytes, the one sampling kernel, the installed ceiling, and the
-execution shape reaching the engine.
-
-**What this wave must prove, beyond an ordinary green run**:
-
-1. The installed ceiling is read back from inside the process it binds, after the process image is
-   replaced and before a weight loads, and both the soft and hard values equal what the plan
-   installed. Setting a limit and fitting under it are different claims, and only the second is
-   evidence.
-2. A requirement derived from an artifact's own bytes matches the artifact exactly, and a malformed
-   header yields no requirement rather than a small one.
-3. A measured breach names the resource it breached and reports an observation strictly above the
-   ceiling. Reporting the ceiling back is the defect, not the evidence.
-4. On the Apple lane the outcome is a *declared* detection-only lane rather than a failure: that lane
-   installs no kernel ceiling by construction, and proving it says so is the deliverable.
-5. On the Linux CPU lane an uncalibrated declaration remains detection-only, a prevention-required
-   readiness contract refuses it, and only the real-engine calibration observation can promote the
-   declaration.
-
-**What this wave explicitly does NOT prove.** Nothing about device memory. No lane's claim to
-prevention is established for `linux-gpu` here, and no result here substitutes for the device wave.
-
-**Status**: Open. Code-side closure is complete: `linux-cpu` prevention is calibration-gated, the
-production readiness consumer refuses weaker strength when prevention is required, and the carried
-execution shape reaches the native engine. The current `linux-cpu` full suite passes with real
-native output, fail-closed unsupported artifacts, durable throughput, lifecycle reconciliation, and
-the routed browser matrix. The required Apple Silicon host is not reachable from the current
-machine, and Section Q forbids substituting `linux-gpu` for the accelerator this phase selected. The
-Apple lane must resolve detection-only with artifact-alone provenance against the current code
-state; repeat `linux-cpu` only if implementation changes first.
-
-**One property this wave must read carefully.** Sprint 4.39's derivation admits only the rows whose
-checkpoint header the two landed readers understand — safetensors and GGUF — and retains every other
-row as an explicit unavailable placement naming the artifact family whose reader is absent. A run
-that reports most of the catalog refused is this wave working, not this wave failing, and the
-distinguishing evidence is the refusal's own shape: a `ModelRequirementUnderivable` payload naming
-the family and the reason is the declared outcome, while a `ModelMemoryLimitExceeded` payload on a
-row that should have derived cleanly is not.
+Wave AD is the first open execution gate. Its device-side correction and machine-independent gate
+set are complete. A current native arm64 `linux-cpu` full suite passes through the supported
+Apple/Colima launcher; the paired CUDA-host cohort observations remain.
 
 ## Wave AD: Bounded Engine Launch, Device Half (Open)
 
@@ -99,9 +51,12 @@ prevention.
 lane; the device half is admission, arena sizing, and detection, and a green run here must not be read
 as establishing a bound the mechanism cannot provide.
 
-**Status**: Open. Sprint 6.51 first needs the device-backstop code correction; this wave then runs
-Linux GPU host-ceiling calibration and device-peak remeasurement, neither of which an ordinary green
-run performs. It follows the Phase 4 host half.
+**Status**: Open. Sprint 6.51's correction and machine-independent validation are complete. This wave
+runs Linux GPU host-ceiling calibration, device-peak remeasurement, the competing-tenant refusal,
+and current `linux-gpu` plus its paired CUDA-host `linux-cpu` full suites; the first three are
+observations an ordinary green run does not make. The current native arm64 `linux-cpu` full suite is
+green, including integration, recovery, real-output, and 16/16 routed Playwright coverage, but it
+ran through Apple/Colima and therefore does not replace the wave's same-host paired lane.
 
 ## Cadence Rule
 
@@ -140,9 +95,9 @@ available cohort during the active wave and record only the phase's chosen accel
 | 1 | No open disposition |
 | 2 | No open disposition |
 | 3 | No open disposition |
-| 4 | Open: the Bounded Engine Launch host half, Sprints 4.37 through 4.42, under Wave AC |
+| 4 | No open disposition |
 | 5 | No open disposition |
-| 6 | Open: Sprint 6.51's device-backstop correction, Linux GPU host-ceiling calibration, and device-peak remeasurement under Wave AD |
+| 6 | Open: Sprint 6.51 is code-side closed and a current native arm64 `linux-cpu` supporting suite passes; Linux GPU host-ceiling calibration, device-peak remeasurement, competing-tenant refusal, and current `linux-gpu` plus paired CUDA-host `linux-cpu` suites remain under Wave AD |
 | 7 | No open disposition |
 | 8 | No open disposition |
 | 9 | No open disposition |

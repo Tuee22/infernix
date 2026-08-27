@@ -46,21 +46,21 @@ surface the repository no longer has.
 
 ## Current Repo Assessment
 
-Phase 4 is the first execution gate. Phases 0 through 3, 5, and 7 through 9 are `Done`; Phase 4 and
-Phase 6 are `Active`. Phase 4 is code-side closed: an uncalibrated Linux host lane declares
-detection-only, calibrated `linux-cpu` declares prevention, and a prevention-required production
-readiness contract consumes the declaration and refuses weaker strength. The remaining Phase 4 work
-is its Apple cohort gate; Phase 6 retains its own device-side correction and cohort observations. A
-phase's status describes only the scope it owns, so an earlier phase gaining work does not revert a
-later one, and every phase remains completable using only equal-or-lower-numbered phases.
+Phase 6 is the first execution gate. Phases 0 through 5 and 7 through 9 are `Done`; only Phase 6 is
+`Active`. Phase 4's selected Apple accelerator plus `linux-cpu` validate the Bounded Engine Launch
+host half: Apple declares detection-only, calibrated `linux-cpu` declares prevention, and a
+prevention-required production readiness contract consumes the declaration and refuses weaker
+strength. Phase 6's device-side correction and machine-independent validation are complete, a
+current native arm64 `linux-cpu` supporting full suite passes through Apple/Colima, and its paired
+CUDA-host cohort observations remain. A phase's status
+describes only the scope it owns, so an earlier phase gaining work does not revert a later one, and
+every phase remains completable using only equal-or-lower-numbered phases.
 
-Phase 4 Sprints 4.37 through 4.42 form the Bounded Engine Launch host half and require the selected
-Apple accelerator plus `linux-cpu` under [Wave AC](cohort-validation-waves.md). Phase 6 Sprint 6.51
-forms the device half and retains the CUDA calibration and device-peak remeasurement under [Wave
-AD](cohort-validation-waves.md). Section Q forbids substituting one accelerator for the other, and
-strict numerical order keeps Wave AD behind Wave AC.
+Phase 6 Sprint 6.51 forms the device half and retains the CUDA calibration and device-peak
+remeasurement under [Wave AD](cohort-validation-waves.md). Section Q forbids substituting the Apple
+accelerator for that CUDA evidence.
 
-[cohort-validation-waves.md](cohort-validation-waves.md) holds only those two open gates, while
+[cohort-validation-waves.md](cohort-validation-waves.md) holds only that open gate, while
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) inventories only surfaces that
 still require removal. [README.md](README.md) holds the plan's single phase-status table.
 
