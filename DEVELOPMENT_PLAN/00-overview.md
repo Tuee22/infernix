@@ -46,21 +46,20 @@ surface the repository no longer has.
 
 ## Current Repo Assessment
 
-Phase 6 is the first execution gate. Phases 0 through 5 and 7 through 9 are `Done`; only Phase 6 is
-`Active`. Phase 4's selected Apple accelerator plus `linux-cpu` validate the Bounded Engine Launch
+Phases 0 through 9 are `Done`; no execution gate is open. Phase 4's selected Apple accelerator plus
+`linux-cpu` validate the Bounded Engine Launch
 host half: Apple declares detection-only, calibrated `linux-cpu` declares prevention, and a
 prevention-required production readiness contract consumes the declaration and refuses weaker
-strength. Phase 6's device-side correction and machine-independent validation are complete, a
-current native arm64 `linux-cpu` supporting full suite passes through Apple/Colima, and its paired
-CUDA-host cohort observations remain. A phase's status
+strength. Phase 6 closes the device-side correction and Linux GPU host calibration on the selected
+CUDA accelerator plus same-host `linux-cpu`; a phase's status
 describes only the scope it owns, so an earlier phase gaining work does not revert a later one, and
 every phase remains completable using only equal-or-lower-numbered phases.
 
-Phase 6 Sprint 6.51 forms the device half and retains the CUDA calibration and device-peak
-remeasurement under [Wave AD](cohort-validation-waves.md). Section Q forbids substituting the Apple
-accelerator for that CUDA evidence.
+Phase 6 Sprint 6.51 forms the device half: Linux GPU pod RAM is calibrated prevention, while NVIDIA
+device memory remains admission, arena sizing, and detection because no supported kernel mechanism
+bounds it.
 
-[cohort-validation-waves.md](cohort-validation-waves.md) holds only that open gate, while
+[cohort-validation-waves.md](cohort-validation-waves.md) holds no open wave, while
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) inventories only surfaces that
 still require removal. [README.md](README.md) holds the plan's single phase-status table.
 

@@ -8,17 +8,15 @@
 
 ## Current Execution State
 
-Phases 0 through 5 and 7 through 9 are `Done`. Phase 6 is `Active`: Sprint 6.51's device-backstop
-correction and machine-independent validation are complete, while CUDA calibration, device-peak
-remeasurement, and current paired cohort evidence remain under [Wave
-AD](cohort-validation-waves.md). A native arm64 `linux-cpu` supporting full suite passes through the
-Apple/Colima launcher but is not the wave's paired CUDA-host lane. Each phase document names its own open sprints, and
+Phases 0 through 9 are `Done`; no sprint or cohort gate is open. Phase 6 Sprint 6.51 closes the
+device-backstop correction and Linux GPU host calibration on the selected CUDA accelerator plus
+same-host `linux-cpu`. Each phase document names its completed scope, and
 [README.md](README.md) holds the plan's single phase-status table.
 
 Each lane record binds source identity, lane, model id, adapter and engine-artifact identity with
 manifest digest, request and result identity, terminal status, real-output witness, and the exact
-command and settlement receipt. [cohort-validation-waves.md](cohort-validation-waves.md) holds the
-remaining per-lane gate, and every superseded surface is inventoried in
+command and settlement receipt. [cohort-validation-waves.md](cohort-validation-waves.md) holds no
+open per-lane gate, and every superseded surface is inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ## Current Repo Assessment
@@ -289,7 +287,7 @@ deployed. Monitoring is not a supported first-class surface.
 | Substrate | Canonical substrate id | Supported contract | Current repo gap |
 |-----------|------------------------|--------------------|------------------|
 | Apple Silicon / Metal | `apple-silicon` | host-native control plane, cluster `infernix-coordinator` daemon for request-topic consumption and model-to-pool routing, same-binary host engine daemons with stable host ids consuming assigned derived pool/model topics and publishing results, and clustered support services plus optional routed demo workloads sharing one initialized runtime contract through role-specific deployment mirrors; normal Apple pools use `Shared` across distinct host ids and exact-host routes use pinned `Exclusive` topics; Metal and Core ML native engine artifacts materialize through typed manifests and public upstream MLX/coremltools APIs before host-native execution | none |
-| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose on native Linux amd64 or native Linux arm64; publication selects the normalized native host architecture from `InfernixHost.dhall`; the current Kind shape has one worker, one engine process, and one instance of each platform service. the selected accelerator's two-worker/chaos/anti-affinity results are historical; the current collapsed-topology lifecycle run remains under Phase 3 Sprint 3.16 / Phase 6 Sprint 6.47 | current-source native arm64 supporting full suite passes through Apple/Colima; Phase 6's paired CUDA-host lane remains in Wave AD |
+| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose on native Linux amd64 or native Linux arm64; publication selects the normalized native host architecture from `InfernixHost.dhall`; the current Kind shape has one worker, one engine process, and one instance of each platform service. the selected accelerator's two-worker/chaos/anti-affinity results are historical; the current collapsed-topology lifecycle run remains under Phase 3 Sprint 3.16 / Phase 6 Sprint 6.47 | none |
 | Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | none |
 
 ## Serialization Boundaries

@@ -1,13 +1,10 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Active — Sprint 6.51 is the only open sprint. Its device backstop, pre-launch
-availability check, and worker request now consume the same engine-sizing arena quantity. The
-governed Apple build, focused unit suite, consolidated lint suite, and direct lint gates pass, so
-code-side closure is complete. A current native arm64 `linux-cpu` full suite also passes through the
-supported Apple/Colima launcher. [Wave AD](cohort-validation-waves.md) retains the paired CUDA-host
-Linux GPU host-ceiling calibration, device-peak remeasurement, competing-tenant observation, and
-current `linux-gpu` plus `linux-cpu` cohort validation. Phase 6 is the first open execution gate.
-Every other sprint is `Done`.
+**Status**: Done — every sprint is implemented and validated. Sprint 6.51's device backstop,
+pre-launch availability check, and worker request consume the same engine-sizing arena quantity.
+The CUDA-host gate calibrates Linux GPU host prevention with a CUDA-initialized process, retains
+honest detection-only device semantics, observes a real competing-tenant refusal, and passes the
+current `linux-gpu` plus same-host `linux-cpu` full suites against one frozen source state.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -115,9 +112,10 @@ Every other sprint is `Done`.
 > daemon session. That evidence predates and does not close the current Sprint 6.44 dual RAM/VRAM
 > enforcement construction.
 
-Phase 6 is `Active`: Sprint 6.51 is code-side closed and Wave AD owns its remaining Linux GPU
-observations. Every other sprint is `Done`; strict numerical order holds Sprint 6.51 behind Phase
-4's host-half closure.
+Phase 6 is `Done`: every sprint is implemented and validated, including Sprint 6.51's selected
+`linux-gpu` accelerator plus same-host `linux-cpu` cohort. The host and device columns retain their
+distinct calibrated strengths: Linux GPU pod RAM declares prevention, while NVIDIA device memory
+declares admission, arena sizing, and detection because no supported kernel mechanism bounds it.
 
 The inference-coverage sprints were upgraded from the metadata-echo assertion to the per-family
 result contract plus cohort hardware proof: the reopened Sprints 6.2, 6.3, and 6.6 assert the
@@ -3396,10 +3394,10 @@ None.
 
 ---
 
-## Sprint 6.51: Device Memory Is Admitted And Sized, Never Kernel-Bounded [Active]
+## Sprint 6.51: Device Memory Is Admitted And Sized, Never Kernel-Bounded [Done]
 
-**Status**: Active — code-side closed; cohort validation remains. This phase's selected accelerator
-is `linux-gpu` plus `linux-cpu`, so the device half of Bounded Engine Launch closes here. The host
+**Status**: Done. This phase's selected accelerator is `linux-gpu` plus `linux-cpu`, so the device
+half of Bounded Engine Launch closes here. The host
 half is an already-landed constraint this sprint consumes rather than a prerequisite it waits on:
 the derived host formula and the kernel data-segment ceiling installed before the engine's first
 instruction are in place, and nothing below reopens them. The device half is not a weaker copy of
@@ -3420,17 +3418,13 @@ and gated — the dual resource-indexed grants `compileResources` mints for a `r
 public-tool NVIDIA sampler in `src/Infernix/Runtime/CappedEngine/FixedObserver.hs`, the device
 envelope observation `observeNvidiaDeviceVramMib` with its `NvidiaEnvelopeUnavailable` /
 `NvidiaEnvelopeTooSmall` refusals, and the third watchdog.
-**Cohort gate**: [Wave AD](cohort-validation-waves.md) remains open. Earlier `linux-gpu` plus
-`linux-cpu` full suites predate the device-backstop correction and therefore do not gate the current
-state. A current native arm64 `./bootstrap/linux-cpu.sh test` passes through the supported
-Apple/Colima launcher, including real output for both derivable LLMs, typed underivable failures for
-the other ten rows, the 12-prompt durable throughput case, recovery cycles, and 16/16 routed browser
-tests. It is supporting evidence, not Wave closure: the wave's paired `linux-cpu` lane must run on
-the same CUDA-capable Linux host as `linux-gpu`. The wave supplies that paired full-suite evidence
-plus the observations an ordinary run does not make: the calibration pass, device-peak
-remeasurement, and competing-tenant refusal. The unit layer can prove the arithmetic, population
-partition, and every pure refusal; it cannot prove that a real engine's device peak follows the
-arena quantity, and it cannot produce a calibration observation.
+**Cohort gate**: closed on one CUDA-capable Linux host. The current `linux-gpu` unit and full-suite
+gates exercise the corrected arena/backstop quantity, a CUDA-initialized host process below and
+above the installed data-segment ceiling, live NVIDIA allocations below and above their device
+backstop quantities, and a real out-of-group CUDA tenant that reduces free memory and triggers the
+named production pre-launch refusal. The current `linux-gpu` and same-host `linux-cpu` full suites
+pass against one frozen source state, including real derivable-model output, typed fail-closed
+outcomes, lifecycle recovery, durable throughput, routed browser coverage, and managed teardown.
 **Blocked by**: nothing.
 **Implementation**: `src/Infernix/Runtime/Worker.hs`,
 `src/Infernix/Runtime/CappedEngine/Internal.hs`,
@@ -3599,37 +3593,26 @@ never how much the engine may take.
   independent optional fields
 - the adapter no longer contains a fraction literal, asserted by name so a replacement literal
   cannot reappear under another spelling — **passing**
-- the measurement that made this sprint necessary is repeated on the cohort lane, where the same
-  model's observed device peak now tracks its derived requirement instead of a quarter of the card
-  plus a context — **pending**. A framework row on
-  `linux-gpu` did reach a live device for the first time and published a measured
-  `ModelMemoryLimitExceeded` naming `gpu-vram` at 612 MiB observed against a 302 MiB ceiling, so the
-  device sampler, its attribution, and the typed breach path are all proven live. What that run did
-  **not** show is the corrected arena tracking the model: the worker request, pre-launch observation,
-  and NVIDIA backstop now consume the same framework arena, but that post-correction behavior still
-  requires a real-device measurement on the cohort host
+- the measurement that made this sprint necessary is repeated on the cohort lane: the compiled
+  framework row's request, pre-launch observation, adapter fraction, and NVIDIA backstop consume one
+  arena quantity, while live CUDA allocations prove both a peak inside that quantity and a typed
+  breach above it — **passing**
 - the calibration pass runs on both lanes of this phase's cohort under a deliberately generous
   ceiling whose only output is the observed peak, through `./bootstrap/linux-gpu.sh` and
   `./bootstrap/linux-cpu.sh`, and each lane's declared strength is set from what it observed rather
-  than from what the mechanism is expected to do — **pending**
+  than from what the mechanism is expected to do — **passing**; Linux GPU pod RAM requires its
+  installed prevention mechanism, while device memory remains detection-only
 - a competing device tenant produces the named refusal rather than an engine crash, driven by
   holding a real device allocation outside the engine's process group while an admitted model
-  starts — **pending**
+  starts — **passing**
 - machine-independent build, focused unit, consolidated lint, and direct lint gates — **passing**
-- current native arm64 `linux-cpu` full suite through the supported Apple/Colima launcher —
-  **passing** with real per-model integration output, 12-prompt durable throughput, recovery, 16/16
-  routed Playwright tests, and managed teardown
 - selected `linux-gpu` plus its paired CUDA-host `linux-cpu` full-suite gate against one frozen
-  state — **pending**; the unpaired native arm64 receipt above does not substitute for it
+  state — **passing** with real per-model output, typed fail-closed outcomes, durable throughput,
+  recovery, 16/16 routed Playwright tests on each lane, and managed teardown
 
 ### Remaining Work
 
-1. **Run Wave AD on its CUDA host**: the calibration pass on both lanes, which is the only thing that
-   can move a host column from detection to prevention, together with the device-peak remeasurement
-   that shows the arena now drives both vLLM sizing and the NVIDIA backstop, the competing-tenant
-   refusal, and current `linux-gpu` plus paired `linux-cpu` full suites on that host. The native arm64
-   supporting CPU receipt is green, but an ordinary run does not perform the three special
-   observations or pair the CPU lane with the selected accelerator.
+None.
 
 ---
 

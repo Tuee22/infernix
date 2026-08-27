@@ -9,7 +9,7 @@ on the one before: a breach names the resource it breached, the requirement beco
 the requirement is derived from the artifact's own bytes, three sampling loops become one, a kernel
 ceiling is installed before the engine's first allocation on the lane that can install one, and the
 admitted quantities plus the execution shape reach the engine on the message it already reads. The
-architecture's device half is Phase 6 Sprint 6.51 and is not owned here. Sprints 4.31, 4.32, 4.34,
+architecture's device half is closed by Phase 6 Sprint 6.51 and is not owned here. Sprints 4.31, 4.32, 4.34,
 and 4.35 were the last four before this group, and each closed on that shared cohort. Sprint 4.35 (native runner front-end correction
 and failure diagnosability) was opened by a `linux-cpu` cohort failure found while executing Phase 3
 Sprint 3.16's gate: post-split llama.cpp made `llama-cli` an interactive chat front-end, so a

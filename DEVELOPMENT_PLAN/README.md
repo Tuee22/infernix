@@ -13,19 +13,16 @@ govern this plan.
 
 ## Current execution gate
 
-Phases 0 through 5 and 7 through 9 are `Done`. Phase 6 is `Active` and Sprint 6.51 is the first open
-work: its device-side correction and machine-independent validation are complete, and the selected
-CUDA cohort observations remain. A current native arm64 `linux-cpu` full suite passes through the
-supported Apple/Colima launcher but does not replace Wave AD's paired CUDA-host CPU lane.
+Phases 0 through 9 are `Done`; no execution gate is open. Phase 6 Sprint 6.51 closes the final
+selected CUDA cohort with Linux GPU host-ceiling calibration, live device-backstop and
+competing-tenant observations, and current `linux-gpu` plus same-host `linux-cpu` full suites.
 
 The Bounded Engine Launch host and device halves remain separate contracts on separate accelerators.
 Phase 4 owns the artifact-derived, resource-indexed host requirement, unified charged-field sampling,
 installed host ceiling, and execution-shape propagation. Phase 6 owns device admission, arena sizing,
 and the sampled device backstop; no lane claims a kernel device-memory bound.
 
-| Open item | Blocker |
-|-----------|---------|
-| Phase 6 Sprint 6.51 | Run [Wave AD](cohort-validation-waves.md) for Linux GPU host-ceiling calibration, device-peak remeasurement, competing-tenant refusal, and current `linux-gpu` plus paired CUDA-host `linux-cpu` full suites; the device-arena/backstop correction is code-side closed and a current native arm64 `linux-cpu` supporting suite passes |
+There are no open items or blockers.
 
 Under Section C, an earlier phase reopening does not revert a later one: each phase's `Done` is scoped
 to its own deliverables and validation gate.
@@ -84,12 +81,10 @@ contract.
 
 ## Current Repo Assessment
 
-Phases 0 through 5 and 7 through 9 are `Done` with no open sprint. Phase 4's Bounded Engine Launch
-host half passes on the selected Apple accelerator plus `linux-cpu`. Phase 6 Sprint 6.51 has landed
-its device-arena/backstop correction and completed machine-independent validation; it now retains
-[Wave AD](cohort-validation-waves.md), making Phase 6 the first open execution gate. A current native
-arm64 `linux-cpu` supporting full suite passes, but it ran through Apple/Colima rather than as Wave
-AD's paired lane on the CUDA host.
+Phases 0 through 9 are `Done` with no open sprint. Phase 4's Bounded Engine Launch host half passes
+on the selected Apple accelerator plus `linux-cpu`. Phase 6 Sprint 6.51 closes the device half and
+the Linux GPU host calibration on the selected CUDA accelerator plus same-host `linux-cpu`; device
+memory remains honestly detection-only because no supported kernel mechanism bounds it.
 
 The repository implements the explicit-init runtime-config architecture, the baked Linux
 outer-container launcher, the single-instance platform services, the Gateway-owned routed edge, the
@@ -277,7 +272,7 @@ construction, `nvkind`, or NVIDIA scheduling.
 | 3 | Done | Every sprint is closed. Sprint 3.17 validates anonymous single-binary registry publication, the routed catalog, populated backing, and stateless pod rescheduling on the selected `linux-gpu` accelerator plus `linux-cpu`; Sprint 3.16 enforces the one-worker topology, and Sprints 3.14 and 3.15 own the readiness and bounded-publication evidence boundaries. |
 | 4 | Done | Every sprint is closed. Sprints 4.37 through 4.42 validate the Bounded Engine Launch host half on the selected `apple-silicon` accelerator plus `linux-cpu`: Apple declares detection-only, calibrated Linux CPU declares prevention, derivable LLM rows return real output, underivable artifact families fail closed with typed reasons, and the full unit, integration, recovery, and routed browser surfaces pass. |
 | 5 | Done | Every sprint is closed and no code-side work is open. |
-| 6 | Active | Sprint 6.51 is the only open item. Its device backstop, pre-launch availability check, and worker request now consume the same framework arena quantity; the governed build, focused unit, consolidated lint, and direct lint gates pass, so code-side closure is complete. A current native arm64 `linux-cpu` supporting full suite also passes. [Wave AD](cohort-validation-waves.md) requires Linux GPU host-ceiling calibration, device-peak remeasurement, competing-tenant refusal, and current `linux-gpu` plus paired CUDA-host `linux-cpu` full suites. Every other sprint is `Done`. |
+| 6 | Done | Every sprint is closed. Sprint 6.51 validates the device arena/backstop quantity, calibrated Linux GPU host prevention, detection-only NVIDIA device semantics, live competing-tenant refusal, and current `linux-gpu` plus same-host `linux-cpu` full suites. |
 | 7 | Done | Every sprint is closed and no code-side work is open. |
 | 8 | Done | Every sprint is closed. The generated system contract carries substrate and pool/model descriptors; the machine contract carries role, member identities, cache quota, and the system-contract digest; coordinator topic metadata and daemon startup checks reject disagreement; eager staging completes before routed readiness. |
 | 9 | Done | Every sprint is closed and no code-side work is open. |

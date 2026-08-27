@@ -403,6 +403,7 @@ import System.Process
     getPid,
     proc,
     readCreateProcessWithExitCode,
+    terminateProcess,
     waitForProcess,
   )
 import System.Timeout (timeout)
@@ -2757,6 +2758,49 @@ cudaAllocationFixtureProgram =
       "time.sleep(hold)"
     ]
 
+-- | CUDA-host calibration for the resident-memory mechanism. The CUDA context
+-- is established before the host allocation, so the refusal case demonstrates
+-- the Linux GPU lane rather than a Python process which never reached its
+-- device runtime. A caught 'MemoryError' exits non-zero; no successful result
+-- is fabricated from the refusal.
+cudaHostCeilingCalibrationProgram :: String
+cudaHostCeilingCalibrationProgram =
+  intercalate
+    "\n"
+    [ "import ctypes, sys, time",
+      "host_requested = int(sys.argv[1])",
+      "hold = float(sys.argv[2])",
+      "try:",
+      "    driver = ctypes.CDLL('libcuda.so.1')",
+      "except OSError as failure:",
+      "    sys.stdout.write('unavailable libcuda.so.1 ' + str(failure) + '\\n')",
+      "    sys.stdout.flush()",
+      "    raise SystemExit(73)",
+      "if driver.cuInit(0) != 0:",
+      "    sys.stdout.write('unavailable cuInit\\n')",
+      "    sys.stdout.flush()",
+      "    raise SystemExit(73)",
+      "device = ctypes.c_int(0)",
+      "if driver.cuDeviceGet(ctypes.byref(device), 0) != 0:",
+      "    sys.stdout.write('unavailable cuDeviceGet\\n')",
+      "    sys.stdout.flush()",
+      "    raise SystemExit(73)",
+      "context = ctypes.c_void_p()",
+      "if driver.cuCtxCreate_v2(ctypes.byref(context), 0, device) != 0:",
+      "    sys.stdout.write('unavailable cuCtxCreate_v2\\n')",
+      "    sys.stdout.flush()",
+      "    raise SystemExit(73)",
+      "try:",
+      "    resident = bytearray(host_requested * 1024 * 1024)",
+      "except MemoryError:",
+      "    sys.stdout.write('host-refused\\n')",
+      "    sys.stdout.flush()",
+      "    raise SystemExit(42)",
+      "sys.stdout.write('allocated\\n')",
+      "sys.stdout.flush()",
+      "time.sleep(hold)"
+    ]
+
 -- | Launch a device-allocating child and wait for its gate line.
 --
 -- Returns the process handle, its process-group pid, and the gate line. The
@@ -2783,6 +2827,36 @@ startCudaAllocationFixture requestedMib holdSeconds = do
   -- The gate is bounded: a driver that never returns must not hang the suite.
   gate <- timeout cudaFixtureGateTimeoutMicros (System.IO.hGetLine outHandle)
   pure ((,,) handle childPid <$> gate)
+
+-- | Start the CUDA-initialized host allocation fixture behind the same pinned
+-- data-segment installer and exact soft/hard value used by production.
+startCudaHostCeilingCalibrationFixture ::
+  Int ->
+  Int ->
+  Double ->
+  IO (Maybe (ProcessHandle, String))
+startCudaHostCeilingCalibrationFixture ceilingMib requestedMib holdSeconds = do
+  let ceilingBytes = ceilingMib * 1024 * 1024
+  (_, maybeOut, _, handle) <-
+    createProcess
+      ( proc
+          Ceiling.ceilingEnforcementTool
+          [ "--data=" <> show ceilingBytes <> ":" <> show ceilingBytes,
+            "--",
+            cudaFixtureInterpreter,
+            "-c",
+            cudaHostCeilingCalibrationProgram,
+            show requestedMib,
+            show holdSeconds
+          ]
+      )
+        { create_group = True,
+          std_out = CreatePipe
+        }
+  outHandle <-
+    maybe (fail "CUDA host-ceiling calibration fixture exposed no stdout pipe") pure maybeOut
+  gate <- timeout cudaFixtureGateTimeoutMicros (System.IO.hGetLine outHandle)
+  pure ((,) handle <$> gate)
 
 -- | Driver initialisation plus a multi-gibibyte allocation measured at under a
 -- second on the development host; a minute is loose enough for a loaded cohort
@@ -2890,6 +2964,143 @@ runNvidiaVramCleanAllocationAssertion = do
             <> "gate, so the GPU worker was not proven healthy after the breach"
         )
 
+-- | Phase 6 Sprint 6.51 — availability is a live pre-launch observation, not
+-- an alias for the device's total capacity. Record the free quantity, hold a
+-- real CUDA allocation in a different process group, and then ask for an arena
+-- which was available before that claimant arrived. The production check must
+-- refuse it with both observed quantities and attribution to the claimant this
+-- machine did not start.
+runCompetingNvidiaTenantAssertion :: IO ()
+runCompetingNvidiaTenantAssertion =
+  unless (System.Info.os == "darwin") $ do
+    nvidiaSmiPresent <- doesFileExist "/usr/bin/nvidia-smi"
+    if not nvidiaSmiPresent
+      then
+        putStrLn
+          "skipping the live competing NVIDIA tenant assertion: /usr/bin/nvidia-smi is absent on this host"
+      else do
+        freeBefore <- CappedEngineInternal.observeNvidiaDeviceFreeMibForTest
+        case freeBefore of
+          Left reason ->
+            fail
+              ( "Sprint 6.51: the CUDA host could not establish its initial free-device reading: "
+                  <> Text.unpack reason
+              )
+          Right admittedArenaMib -> do
+            started <- startCudaAllocationFixture cudaCompetingTenantAllocationMib 120
+            case started of
+              Just (tenantHandle, _, "allocated") -> do
+                (availability, freeDuring) <-
+                  ( (,)
+                      <$> CappedEngineInternal.observeDeviceArenaAvailability admittedArenaMib
+                      <*> CappedEngineInternal.observeNvidiaDeviceFreeMibForTest
+                  )
+                    `finally` ( do
+                                  terminateProcess tenantHandle
+                                  tenantExit <- timeout (4 * 1000000) (waitForProcess tenantHandle)
+                                  assert
+                                    (isJust tenantExit)
+                                    "Sprint 6.51: the competing CUDA tenant was not reaped within four seconds"
+                              )
+                case (availability, freeDuring) of
+                  (Left refusal, Right observedFreeMib) ->
+                    assert
+                      ( observedFreeMib < admittedArenaMib
+                          && show observedFreeMib `isInfixOf` Text.unpack refusal
+                          && show admittedArenaMib `isInfixOf` Text.unpack refusal
+                          && "claimant this machine did not start" `isInfixOf` Text.unpack refusal
+                      )
+                      ( "Sprint 6.51: the competing CUDA tenant changed free VRAM but did not produce "
+                          <> "the exact named pre-launch refusal; initial free "
+                          <> show admittedArenaMib
+                          <> " MiB, current free "
+                          <> show observedFreeMib
+                          <> " MiB, refusal "
+                          <> Text.unpack refusal
+                      )
+                  (Right (), observed) ->
+                    fail
+                      ( "Sprint 6.51: an arena equal to the pre-tenant free quantity was accepted "
+                          <> "while the competing CUDA allocation was held; observed "
+                          <> show observed
+                      )
+                  (Left refusal, Left reason) ->
+                    fail
+                      ( "Sprint 6.51: the refusal was produced but the confirming free-device "
+                          <> "observation failed: "
+                          <> Text.unpack refusal
+                          <> "; "
+                          <> Text.unpack reason
+                      )
+              Just (tenantHandle, _, gate) -> do
+                _ <- waitForProcess tenantHandle
+                putStrLn
+                  ( "skipping the live competing NVIDIA tenant assertion: the CUDA allocation "
+                      <> "fixture reported "
+                      <> gate
+                  )
+              Nothing ->
+                putStrLn
+                  "skipping the live competing NVIDIA tenant assertion: the CUDA allocation fixture produced no bounded gate line"
+
+-- Large enough to move the free-device reading decisively while leaving ample
+-- room for the test image and the selected cohort's card.
+cudaCompetingTenantAllocationMib :: Int
+cudaCompetingTenantAllocationMib = 2048
+
+-- | Phase 6 Sprint 6.51 — calibrate the Linux GPU host column independently
+-- from the permanently detection-only device column. The first process proves
+-- a CUDA-initialized allocation can complete beneath a generous installed
+-- ceiling. The second initializes the same device runtime, then receives a
+-- clean non-zero host allocation refusal beyond its installed ceiling.
+runLinuxGpuHostCeilingCalibrationAssertion :: IO ()
+runLinuxGpuHostCeilingCalibrationAssertion =
+  unless (System.Info.os == "darwin") $ do
+    nvidiaSmiPresent <- doesFileExist "/usr/bin/nvidia-smi"
+    if not nvidiaSmiPresent
+      then
+        putStrLn
+          "skipping the live Linux GPU host-ceiling calibration: /usr/bin/nvidia-smi is absent on this host"
+      else do
+        generous <- startCudaHostCeilingCalibrationFixture 4096 256 1
+        case generous of
+          Just (handle, "allocated") -> do
+            exitCode <- waitForProcess handle
+            assert
+              (exitCode == ExitSuccess)
+              "Sprint 6.51: the CUDA-initialized host allocation did not complete beneath the generous installed ceiling"
+          Just (handle, gate) -> do
+            exitCode <- waitForProcess handle
+            fail
+              ( "Sprint 6.51: the generous CUDA host-ceiling calibration did not allocate: "
+                  <> gate
+                  <> "; exit "
+                  <> show exitCode
+              )
+          Nothing ->
+            fail "Sprint 6.51: the generous CUDA host-ceiling calibration produced no bounded gate line"
+
+        refusal <- startCudaHostCeilingCalibrationFixture 1024 2048 1
+        case refusal of
+          Just (handle, "host-refused") -> do
+            exitCode <- waitForProcess handle
+            assert
+              (exitCode == ExitFailure 42)
+              ( "Sprint 6.51: the CUDA-initialized over-budget host allocation did not retain "
+                  <> "its clean refusal exit; observed "
+                  <> show exitCode
+              )
+          Just (handle, gate) -> do
+            terminateProcess handle
+            _ <- waitForProcess handle
+            fail
+              ( "Sprint 6.51: the CUDA-initialized over-budget host allocation was not refused; "
+                  <> "observed gate "
+                  <> gate
+              )
+          Nothing ->
+            fail "Sprint 6.51: the refusing CUDA host-ceiling calibration produced no bounded gate line"
+
 -- | 3072 MiB over a 1024 MiB ceiling, against a 496 MiB context floor.
 cudaBreachAllocationMib :: Int
 cudaBreachAllocationMib = 3072
@@ -2926,6 +3137,8 @@ main = do
   runAppleWatchdogBreachAssertions
   runNvidiaWatchdogAssertions
   runNvidiaVramBreachAssertions
+  runCompetingNvidiaTenantAssertion
+  runLinuxGpuHostCeilingCalibrationAssertion
   assert (length (catalogForMode AppleSilicon) == 16) "apple-silicon runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu runnable catalog count matches the revised matrix"
@@ -22584,11 +22797,12 @@ runInstalledCeilingAssertions = do
     "Sprint 4.41: a detection-only lane installs no launch prefix at all"
   assert
     ( Ceiling.installedCeilingStrength linuxGpuHostCeiling
-        == Ceiling.CeilingDetectionOnly
-        && null (Ceiling.installedCeilingArgumentPrefix linuxGpuHostCeiling)
+        == Ceiling.CeilingInstalledDataSegment
+        && Ceiling.installedCeilingArgumentPrefix linuxGpuHostCeiling
+          == ["/usr/bin/prlimit", "--data=4294967296:4294967296", "--"]
     )
-    ( "Sprint 4.41: the uncalibrated Linux GPU host lane declares detection "
-        <> "only and installs no prefix"
+    ( "Sprint 6.51: the calibrated Linux GPU host lane declares prevention "
+        <> "and installs the same closed data-segment prefix as Linux CPU"
     )
   assert
     ( isLeftResult
@@ -22608,8 +22822,8 @@ runInstalledCeilingAssertions = do
     ( "Sprint 4.41: each production runtime accepts exactly the strength its "
         <> "current calibrated contract requires"
     )
-  -- The device column reads detection for a different reason than a host column
-  -- does, and the two are kept distinct.
+  -- The device column remains detection-only after the host column is
+  -- calibrated; no absent device mechanism is promoted by the host result.
   assert
     (Ceiling.installedCeilingStrength deviceCeiling == Ceiling.CeilingDetectionOnly)
     ( "Sprint 6.51: no kernel mechanism bounds device memory on any lane, so "

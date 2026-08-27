@@ -37,6 +37,7 @@ module Infernix.Runtime.CappedEngine.Internal
     accountedAllocationMarginMibForTest,
     executableWatchdogCeilingsForTest,
     observeDeviceArenaAvailability,
+    observeNvidiaDeviceFreeMibForTest,
     observeNvidiaDeviceVramMib,
     probeNvidiaVramSampler,
     parseResidentBytesForTest,
@@ -480,6 +481,14 @@ observeDeviceArenaAvailability requiredMib = do
                   <> " MiB arena this model was admitted for; a claimant this "
                   <> "machine did not start holds the difference"
               )
+
+-- | Package-test seam retaining the exact free-device reading consumed by
+-- 'observeDeviceArenaAvailability'. Cohort validation uses it to prove that a
+-- real out-of-group allocation changed availability before checking that the
+-- production refusal reports the same quantity. The observer remains the
+-- fixed, closed @nvidia-smi@ specification; callers gain no command surface.
+observeNvidiaDeviceFreeMibForTest :: IO (Either Text Int)
+observeNvidiaDeviceFreeMibForTest = FixedObserver.observeNvidiaDeviceFreeMib
 
 -- | Phase 4 Sprint 4.40 — the watchdog specification is indexed by the same
 -- 'Resource' kind the grant is.

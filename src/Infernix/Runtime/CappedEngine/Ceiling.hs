@@ -72,10 +72,11 @@ data CeilingRequirement
 -- refusal under the installed mechanism.
 --
 -- Constructors stay private. Calibration is a cohort property of the pinned
--- lane implementation, not a caller-supplied runtime option: @linux-cpu@ has
--- the real llama.cpp observation, while @linux-gpu@ remains pending until its
--- own selected accelerator cohort runs. Apple and device resources never reach
--- this declaration because they have no installable mechanism.
+-- lane implementation, not a caller-supplied runtime option: both Linux host
+-- lanes have their real cohort observation. Apple and device resources never
+-- reach this declaration because they have no installable mechanism. The
+-- pending arm remains the fail-closed representation for any future Linux host
+-- lane until its own observation exists.
 data HostCeilingCalibration
   = HostCeilingCalibrationPending
   | HostCeilingCalibrationObserved
@@ -197,16 +198,19 @@ resolveEngineCeiling runtimeModeValue resource derivedMib projection =
 -- Linux CPU prevention is backed by a real pinned llama.cpp run that
 -- initialized the backend and model under the data-segment ceiling and then
 -- refused an over-budget compute-buffer allocation with an ordinary non-zero
--- exit. Linux GPU remains detection-only until the corresponding CUDA cohort
--- produces its own observation. Device memory and Apple unified memory have no
--- installable mechanism and therefore cannot be promoted by calibration.
+-- exit. Linux GPU's host column is backed by the paired CUDA cohort: a real
+-- framework engine initialized its device runtime and completed under the
+-- installed data-segment ceiling, while the adversarial allocation path kept
+-- an ordinary non-zero refusal attributable. Device memory and Apple unified
+-- memory have no installable mechanism and therefore cannot be promoted by
+-- calibration.
 ceilingStrengthForLane :: RuntimeMode -> Resource -> CeilingStrength
 ceilingStrengthForLane runtimeModeValue resource =
   case (runtimeModeValue, resource) of
     (AppleSilicon, _) -> CeilingDetectionOnly
     (_, NvidiaVram) -> CeilingDetectionOnly
     (LinuxCpu, PodRam) -> strengthFromCalibration HostCeilingCalibrationObserved
-    (LinuxGpu, PodRam) -> strengthFromCalibration HostCeilingCalibrationPending
+    (LinuxGpu, PodRam) -> strengthFromCalibration HostCeilingCalibrationObserved
     _ -> CeilingDetectionOnly
   where
     strengthFromCalibration calibration =
@@ -227,9 +231,8 @@ requireCeilingStrength requirement provided =
 -- | Production readiness check for every physical resource the runtime mode
 -- can execute against.
 --
--- The Linux CPU contract requires its calibrated host mechanism. The Apple
--- contract permits its honest detection-only host mechanism. Linux GPU stays
--- detection-permitted until Phase 6's CUDA calibration promotes that lane; its
+-- Both Linux contracts require their calibrated host mechanism. The Apple
+-- contract permits its honest detection-only host mechanism. The Linux GPU
 -- device resource is permanently detection-only because no kernel mechanism
 -- bounds device memory on any supported lane.
 validateRuntimeCeilingReadiness :: RuntimeMode -> Either Text ()
@@ -250,6 +253,7 @@ validateRuntimeCeilingReadiness runtimeModeValue =
     requiredStrength mode resource =
       case (mode, resource) of
         (LinuxCpu, PodRam) -> CeilingPreventionRequired
+        (LinuxGpu, PodRam) -> CeilingPreventionRequired
         _ -> CeilingDetectionPermitted
 
 -- | @\/usr\/bin\/prlimit --data=\<soft>:\<hard> --@.

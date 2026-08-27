@@ -46,6 +46,7 @@ const browserMatrixResultTimeoutMs = Math.max(
   clientModelBootstrapDeadlineMs,
 );
 const browserMatrixTestTimeoutMs = 5400000;
+const browserMatrixDraftEchoTimeoutMs = 60000;
 const websocketReconnectTimeoutMs = 120000;
 const accountCleanupRedirectTimeoutMs = 420000;
 const accountDeletionTestTimeoutMs = 480000;
@@ -1450,11 +1451,13 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
     const submitSentStart = wsFrames.sent.length;
     const submitReceivedStart = wsFrames.received.length;
     const promptText = `smoke ${modelId} ${matrixToken}-${index}`;
-    await page.locator("textarea[name='prompt']").fill(promptText);
-    await waitForSentFrameAfter(
+    await fillDraftAndWaitForUpdate(
+      page,
       wsFrames,
       submitSentStart,
-      (frame) => frame.tag === "ClientUpdateDraft" && frame.clientUpdateDraftText === promptText,
+      contextId,
+      promptText,
+      browserMatrixDraftEchoTimeoutMs,
     );
 
     // Wait for the broker echo before submitting so the SPA's
@@ -1470,6 +1473,7 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
         frame.tag === "ServerDraftMapPatch" &&
         JSON.stringify(frame).includes(contextId) &&
         JSON.stringify(frame).includes(promptText),
+      browserMatrixDraftEchoTimeoutMs,
     );
     await expect(page.locator("textarea[name='prompt']")).toHaveValue(promptText, { timeout: 30000 });
 
