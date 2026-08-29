@@ -17,7 +17,8 @@ Phases 0 and 1 are `Done`; Sprint 0.27 closes the plan-level delivery language o
 at-least-once transport with an effectively-once observable outcome, and Sprint 1.40 closes its
 build-memory and capability cleanup rows against the live implementation. Phase 4 Sprint 4.45 has
 complete code-side closure and remains `Active` on its selected cohort gate in
-[Wave 4.45](cohort-validation-waves.md). The other phases retain the status earned by their own
+[Wave 4.45](cohort-validation-waves.md). Its current `linux-cpu` full suite passes; the selected
+`apple-silicon` full suite remains pending. The other phases retain the status earned by their own
 scope under Section C.
 
 The Bounded Engine Launch host and device halves remain separate contracts on separate accelerators.
@@ -85,8 +86,9 @@ contract.
 ## Current Repo Assessment
 
 Phases 0 and 1 are `Done`; Phase 4 Sprint 4.45 is `Active`; the other phases retain `Done` for their
-own scope. Phase 4's earlier Bounded Engine Launch host half passes
-on the selected Apple accelerator plus `linux-cpu`. Phase 6 Sprint 6.51 closes the device half and
+own scope. Phase 4's earlier Bounded Engine Launch host half remains closed for its recorded scope;
+Sprint 4.45's current `linux-cpu` full suite passes and its selected Apple accelerator suite remains
+open in Wave 4.45. Phase 6 Sprint 6.51 closes the device half and
 the Linux GPU host calibration on the selected CUDA accelerator plus same-host `linux-cpu`; device
 memory remains honestly detection-only because no supported kernel mechanism bounds it.
 
@@ -274,7 +276,7 @@ construction, `nvkind`, or NVIDIA scheduling.
 | 1 | Done | Sprint 1.40 removes its obsolete build-memory surfaces, makes clean Poetry bootstrap and Darwin framework sealing exact, and passes the governed Apple build, aggregate lint, complete unit gates, and standalone repository lints. |
 | 2 | Done | Every sprint is closed. Sprint 2.17 validates the single-binary registry bootstrap on the selected `linux-gpu` accelerator plus `linux-cpu`, including a populated second reconcile and stateless registry-pod reschedule. |
 | 3 | Done | Every sprint is closed. Sprint 3.17 validates anonymous single-binary registry publication, the routed catalog, populated backing, and stateless pod rescheduling on the selected `linux-gpu` accelerator plus `linux-cpu`; Sprint 3.16 enforces the one-worker topology, and Sprints 3.14 and 3.15 own the readiness and bounded-publication evidence boundaries. |
-| 4 | Active | Sprint 4.45 audits and removes the remaining runtime ledger surfaces: serialized execution authority encapsulation, per-invocation Linux grant enforcement, shared-pool headroom accounting, and fail-closed explicit member identity. Earlier Bounded Engine Launch receipts remain valid for their closed scope. |
+| 4 | Active | Sprint 4.45's runtime capability and machine-identity implementation is code-side complete and its current `linux-cpu` full suite passes; the selected `apple-silicon` full suite remains open in Wave 4.45. |
 | 5 | Done | Every sprint is closed and no code-side work is open. |
 | 6 | Done | Every sprint is closed. Sprint 6.51 validates the device arena/backstop quantity, calibrated Linux GPU host prevention, detection-only NVIDIA device semantics, live competing-tenant refusal, and current `linux-gpu` plus same-host `linux-cpu` full suites. |
 | 7 | Done | Every sprint is closed and no code-side work is open. |

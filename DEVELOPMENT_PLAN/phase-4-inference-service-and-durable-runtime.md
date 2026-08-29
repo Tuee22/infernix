@@ -1,9 +1,9 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — Sprint 4.45's code-side closure is complete. Its selected `apple-silicon` plus
-`linux-cpu` full-suite remains open in
-[Wave 4.45](cohort-validation-waves.md): the present host's existing Colima pledge leaves no
-constructible inference partition, and validation does not resize or reprovision that VM.
+**Status**: Active — Sprint 4.45's code-side closure and current `linux-cpu` full suite pass. Its
+selected `apple-silicon` full suite remains open in
+[Wave 4.45](cohort-validation-waves.md): no available validation host supplies a constructible
+native Apple lane, and validation neither emulates Apple nor resizes or reprovisions Colima.
 **Current implementation state**: Sprints 4.37 through 4.42 landed in numerical order, each building
 on the one before: a breach names the resource it breached, the requirement becomes resource-indexed,
 the requirement is derived from the artifact's own bytes, three sampling loops become one, a kernel
@@ -33,26 +33,11 @@ phase for that prerequisite.
 
 ## Phase Status
 
-Sprint 4.45 is Active. All earlier sprints remain Done for their recorded scope.
-
-The selected `apple-silicon` full suite passes against the materialized `llama-cpp-cli`,
-`whisper-cpp-cli`, `coreml-native`, `ctranslate2-native`, `mlx-native`, `onnx-runtime-native`, and
-`jvm-native` roots. All three derivable LLM rows return real output; artifact families outside the
-landed safetensors and GGUF readers fail closed as typed `ModelRequirementUnderivable` outcomes.
-The full unit, integration, retained-state recovery, and 16-test routed browser surfaces pass, and
-the paired `linux-cpu` full-suite evidence is current against the same Phase 4 implementation.
-
-> **Closure receipt (2026-08-17).** The four open surfaces were worked in numerical order and each
-> validated before the next: Sprint 4.31's claimable-pool/toolchain-occupant model, Sprint 4.32's Apple
-> observer and adversarial breach proof, Sprint 4.34's Apple cohort, and Sprint 4.35's Apple
-> runner/front-end half. Their phase-specific acceptance criteria were reconciled against evidence
-> produced for this phase rather than inherited: the earlier receipts predate three of the
-> corrections below and are not read as discharging them. Two defects the cohort itself surfaced are
-> part of the closure — a native runner could reach its engine with an unhydrated model cache because
-> its cache miss was invisible to the retry classifier, and the integration suite's routed probes were
-> single-shot behind a retry helper that classified on a string it never receives. The broker-side
-> member claim is a fleet-wide broker property rather than a machine-local one, so it is not a
-> Phase 4 residual.
+Sprint 4.45 is Active. All earlier sprints remain Done for their recorded scope. Its current
+`linux-cpu` full suite passes the aggregate lints, 7 positive / 96 negative capability fixtures,
+unit and integration suites, 84/84 PureScript tests, 16/16 routed browser tests, real per-model
+execution or typed fail-closed admission, retained-state replay, and clean harness teardown. The
+selected `apple-silicon` full suite remains the only Phase 4 residual.
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python adapter boundary, the
 Pulsar-driven request and result contract, the explicit engine-runner dispatch, the mounted
@@ -3440,6 +3425,11 @@ None.
 
 **Status**: Active — code-side closure passes; the selected cohort gate remains open in
 [Wave 4.45](cohort-validation-waves.md).
+**Code-side closure**: Complete — governed Apple build, aggregate lint and unit gates, 7 positive /
+96 negative compile-time capability fixtures, 84/84 PureScript tests, standalone lints, and docs
+check pass.
+**Cohort gate**: The current `linux-cpu` full suite passes; the selected `apple-silicon` full suite
+remains pending in [Wave 4.45](cohort-validation-waves.md).
 **Implementation**: `src/Infernix/ExecutionPlan.hs`, `src/Infernix/Runtime/`,
 `src/Infernix/Service.hs`, `src/Infernix/Types.hs`, `test/unit/Spec.hs`,
 `test/integration/Spec.hs`, `test/compile-fail/`,
@@ -3485,10 +3475,9 @@ the capability or identity boundary structurally.
 
 ### Remaining Work
 
-- **Cohort gate:** run the selected `apple-silicon` plus `linux-cpu` full-suite recorded in
-  [Wave 4.45](cohort-validation-waves.md). Code-side closure passes: governed Apple build,
-  aggregate lint, unit aggregate with 7 positive / 96 negative compile-time capability fixtures,
-  84/84 PureScript tests, standalone file/docs/chart/proto/plan lints, and `docs check`.
+- **Cohort gate:** run the selected `apple-silicon` full suite recorded in
+  [Wave 4.45](cohort-validation-waves.md) on a host with a constructible native Apple lane. The
+  paired current-source `linux-cpu` full suite passes.
 
 ## Documentation Requirements
 
