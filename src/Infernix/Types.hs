@@ -77,6 +77,7 @@ module Infernix.Types
     hostPartitionToolchainAccountMib,
     mkHostClaimablePool,
     hostClaimablePoolMib,
+    hostClaimablePoolCoTenantHeadroomMib,
     hostClaimablePoolToolchainAccountMib,
     toolchainSharePercent,
     mkConcurrentHostPoolClaim,
@@ -86,7 +87,6 @@ module Infernix.Types
     resourceText,
     inferenceMemoryBudgetSource,
     cappedEngineResidentCeilingSource,
-    minHostHeadroomMib,
     modelMemoryLimitExceededErrorCode,
     modelRequirementUnderivableErrorCode,
     cappedEngineRefusedAtCeilingSource,
@@ -865,6 +865,24 @@ mkHostClaimablePool physicalMib reservedMib
 hostClaimablePoolMib :: HostClaimablePool -> Int
 hostClaimablePoolMib (HostClaimablePool poolMib) = poolMib
 
+-- | The co-tenant headroom this pool funds, in MiB.
+--
+-- The quantity is a projection of the checked pool rather than a free argument
+-- to the partition constructor. A pool too small to retain the OS,
+-- control-plane, routed browser, and watchdog margin is not a constructible
+-- inference partition.
+hostClaimablePoolCoTenantHeadroomMib :: HostClaimablePool -> Either String Int
+hostClaimablePoolCoTenantHeadroomMib pool
+  | hostClaimablePoolMib pool <= coTenantHeadroomMib =
+      Left
+        ( "host memory partition leaves no inference capacity: the claimable pool of "
+            <> show (hostClaimablePoolMib pool)
+            <> " MiB does not exceed its derived co-tenant headroom of "
+            <> show coTenantHeadroomMib
+            <> " MiB"
+        )
+  | otherwise = Right coTenantHeadroomMib
+
 -- | The toolchain account this pool funds, in MiB.
 hostClaimablePoolToolchainAccountMib :: HostClaimablePool -> Int
 hostClaimablePoolToolchainAccountMib (HostClaimablePool poolMib) =
@@ -922,20 +940,20 @@ mkConcurrentHostPoolClaim partition
         + toInteger (hostPartitionInferenceCapacityMib partition)
         + toInteger accountMib
 
--- | The minimum host headroom (MiB) a 'HostMemoryPartition' must hold back for
+-- | The host headroom (MiB) the shared claimable-pool policy holds back for
 -- the host's inference co-tenants: the OS (~2 GiB), the host-native
 -- control-plane binary (~256 MiB), the routed-E2E Chromium + Node surface
 -- (~3 GiB), and the worst-case inter-poll watchdog overshoot (~768 MiB). The
 -- superseded fixed @appleHostReserveMib = 3072@ did not cover the routed
 -- end-to-end browser and allowed a host OOM.
-minHostHeadroomMib :: Int
-minHostHeadroomMib = 6144
+coTenantHeadroomMib :: Int
+coTenantHeadroomMib = 6144
 
--- | The only 'HostMemoryPartition' mint. @physical = vmReserve + headroom +
--- inferenceCapacity@; a non-positive inference capacity means the VM pledge plus
--- headroom exhaust or oversubscribe physical RAM (rejected), and a headroom below
--- 'minHostHeadroomMib' cannot cover the co-tenants (rejected). The resulting
--- @inferenceCapacity@ is the admission budget the on-host engine draws from.
+-- | The only 'HostMemoryPartition' mint. It first mints the shared claimable
+-- pool from @physical - vmReserve@, then derives both the co-tenant headroom and
+-- toolchain account from that value. Callers cannot author a residual headroom
+-- independently of the pool. The remaining positive capacity is the admission
+-- budget the on-host engine draws from.
 --
 -- Phase 4 Sprint 4.34 tightened @> physical@ to @>= physical@. Exactly-equal
 -- reservations produced a constructible zero-capacity partition, and a
@@ -943,17 +961,10 @@ minHostHeadroomMib = 6144
 -- passes every check, and can answer nothing, because every model's positive
 -- footprint exceeds it. Refusing to construct it is the same argument the
 -- headroom floor already makes one line above.
-mkHostMemoryPartition :: Int -> Int -> Int -> Either String HostMemoryPartition
-mkHostMemoryPartition physicalMib vmReserveMib headroomMib = do
-  checkPositivePhysical
-  checkNonNegativeSplit
-  checkHeadroomFloor
-  checkRemainingCapacity
-  -- The single claimable-pool quantity both occupants are derived from. The
-  -- inference capacity is this pool less the held-back headroom, and the
-  -- toolchain account is this pool's declared share, so neither is computed
-  -- from a figure that is blind to the other.
+mkHostMemoryPartition :: Int -> Int -> Either String HostMemoryPartition
+mkHostMemoryPartition physicalMib vmReserveMib = do
   pool <- mkHostClaimablePool physicalMib vmReserveMib
+  headroomMib <- hostClaimablePoolCoTenantHeadroomMib pool
   pure
     HostMemoryPartition
       { hostPartitionPhysicalMib = physicalMib,
@@ -963,42 +974,6 @@ mkHostMemoryPartition physicalMib vmReserveMib headroomMib = do
         hostPartitionClaimablePoolMib = hostClaimablePoolMib pool,
         hostPartitionToolchainAccountMib = hostClaimablePoolToolchainAccountMib pool
       }
-  where
-    checkPositivePhysical
-      | physicalMib > 0 = Right ()
-      | otherwise =
-          Left
-            ( "host memory partition requires positive physical RAM, got "
-                <> show physicalMib
-                <> " MiB"
-            )
-    checkNonNegativeSplit
-      | vmReserveMib >= 0 && headroomMib >= 0 = Right ()
-      | otherwise =
-          Left "host memory partition vmReserve and headroom must be non-negative"
-    checkHeadroomFloor
-      | headroomMib >= minHostHeadroomMib = Right ()
-      | otherwise =
-          Left
-            ( "host memory partition headroom "
-                <> show headroomMib
-                <> " MiB cannot cover the OS + control-plane + routed-E2E browser co-tenants (minimum "
-                <> show minHostHeadroomMib
-                <> " MiB)"
-            )
-    checkRemainingCapacity
-      | reservedMib < toInteger physicalMib = Right ()
-      | otherwise =
-          Left
-            ( "host memory partition leaves no inference capacity: vmReserve "
-                <> show vmReserveMib
-                <> " MiB + headroom "
-                <> show headroomMib
-                <> " MiB meet or exceed physical "
-                <> show physicalMib
-                <> " MiB"
-            )
-    reservedMib = toInteger vmReserveMib + toInteger headroomMib
 
 instance ToJSON HostMemoryPartition where
   toJSON partition =
@@ -1014,8 +989,14 @@ instance FromJSON HostMemoryPartition where
     physicalMib <- value .: "physicalMib"
     vmReserveMib <- value .: "vmReserveMib"
     headroomMib <- value .: "headroomMib"
-    case mkHostMemoryPartition physicalMib vmReserveMib headroomMib of
-      Right partition -> pure partition
+    inferenceCapacityMib <- value .: "inferenceCapacityMib"
+    case mkHostMemoryPartition physicalMib vmReserveMib of
+      Right partition
+        | headroomMib /= hostPartitionHeadroomMib partition ->
+            fail "host memory partition headroom disagrees with the claimable-pool policy"
+        | inferenceCapacityMib /= hostPartitionInferenceCapacityMib partition ->
+            fail "host memory partition inference capacity disagrees with its derived split"
+        | otherwise -> pure partition
       Left partitionError -> fail partitionError
 
 -- | Phase 8 Sprint 8.9 — which already-enforced substrate limit a
@@ -2073,7 +2054,7 @@ instance FromJSON DemoConfig where
       <*> pure inferenceMemoryBudgetValue
 
 -- | Synthesize a valid 'HostMemoryPartition' whose inference capacity is a given
--- MiB value, holding back exactly 'minHostHeadroomMib' of headroom and no VM
+-- MiB value, holding back exactly the claimable-pool policy's co-tenant headroom and no VM
 -- reserve. Used by the legacy-config and discovery-failure fallback paths where
 -- the real physical / VM-pledge split is unknown; the result is always
 -- constructible when the requested capacity is positive and it plus the
@@ -2095,9 +2076,9 @@ hostPartitionForCapacity capacityMib
             <> show capacityMib
             <> " MiB plus required headroom exceeds the supported integer range"
         )
-  | otherwise = mkHostMemoryPartition (fromInteger physicalMib) 0 minHostHeadroomMib
+  | otherwise = mkHostMemoryPartition (fromInteger physicalMib) 0
   where
-    physicalMib = toInteger capacityMib + toInteger minHostHeadroomMib
+    physicalMib = toInteger capacityMib + toInteger coTenantHeadroomMib
 
 -- | Supported always-on MinIO bucket name holding platform model weights.
 -- The coordinator's bootstrap Failover subscription is the only writer; engines

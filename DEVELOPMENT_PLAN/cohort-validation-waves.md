@@ -20,7 +20,9 @@
 
 ## Wave Table
 
-No validation wave is open.
+| Wave | Phase / sprint | Stage 1: code-side closure | Stage 2: selected cohort gate |
+|------|----------------|----------------------------|-------------------------------|
+| 4.45 | Phase 4 Sprint 4.45 | Complete: governed Apple rebuild, aggregate lint, unit aggregate, 7 positive / 96 negative capability fixtures, 84/84 PureScript tests, standalone lints, and docs check pass | Pending on a host that can fund the selected `apple-silicon` plus `linux-cpu` full-suite. The present 16384 MiB Apple host's existing 12288 MiB Colima pledge leaves a 4096 MiB claimable pool, below the derived 6144 MiB co-tenant headroom; `infernix test init` refuses before cluster mutation. The profile is not resized or reprovisioned by validation work |
 
 ## Cadence Rule
 
@@ -59,7 +61,7 @@ available cohort during the active wave and record only the phase's chosen accel
 | 1 | No open disposition |
 | 2 | No open disposition |
 | 3 | No open disposition |
-| 4 | No open disposition |
+| 4 | Wave 4.45 open: code-side closure complete; selected `apple-silicon` plus `linux-cpu` full-suite pending on a host whose existing native Docker lane leaves a constructible host partition |
 | 5 | No open disposition |
 | 6 | No open disposition |
 | 7 | No open disposition |

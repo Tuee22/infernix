@@ -690,6 +690,16 @@ executable fail-cannot-construct-engine-topic-capability
     main-is: CannotConstructEngineTopicCapability.hs
     hs-source-dirs: fail
 
+executable fail-cannot-construct-engine-execution-plan
+    import: fixture
+    main-is: CannotConstructEngineExecutionPlan.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-consume-engine-execution-plan
+    import: fixture
+    main-is: CannotConsumeEngineExecutionPlan.hs
+    hs-source-dirs: fail
+
 executable fail-cannot-construct-toolchain-spawn-authority
     import: fixture
     main-is: CannotConstructToolchainSpawnAuthority.hs

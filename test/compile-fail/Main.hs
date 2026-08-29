@@ -335,7 +335,15 @@ failingFixtures =
     removedExportFixture
       "fail-cannot-construct-engine-topic-capability"
       "CannotConstructEngineTopicCapability.hs"
-      "EngineTopicCapability"
+      "EngineTopicCapability",
+    constructorFixture
+      "fail-cannot-construct-engine-execution-plan"
+      "CannotConstructEngineExecutionPlan.hs"
+      "EngineExecutionPlan",
+    removedExportFixture
+      "fail-cannot-consume-engine-execution-plan"
+      "CannotConsumeEngineExecutionPlan.hs"
+      "withEngineExecutionPlan"
   ]
 
 constructorFixture :: String -> FilePath -> String -> FailingFixture

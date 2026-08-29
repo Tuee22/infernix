@@ -206,8 +206,9 @@ import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Runtime (executeExecutableInferenceWithKVCache)
 import Infernix.Runtime.CappedEngine
-  ( EngineExecutionAuthority,
-    withSerializedEngineExecution,
+  ( EngineExecutionPlan,
+    engineExecutionRuntimePlan,
+    withEngineExecutionPlan,
   )
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
@@ -1416,15 +1417,13 @@ data DaemonTopicCapability
       CompiledDaemon
       Text.Text
       ConsumerSubscriptionType
-  | -- | The engine capability carries the single-flight authority alongside the
-    -- refined plan it authorizes. Encapsulating it here rather than threading a
-    -- bare token through public signatures is what closes Sprint 4.32's
-    -- deliverable: the constructor is private, so a caller cannot pair this plan
-    -- with a different token, and no execution path can reach
-    -- 'publishedResultFromRequest' without one.
+  | -- | The engine capability carries the opaque refined execution plan. Its
+    -- single-flight authority is enclosed in that value rather than threaded as
+    -- a separable token, so a caller cannot pair the plan with a different lock
+    -- and no execution path can reach 'publishedResultFromRequest' without the
+    -- authority minted during live refinement.
     EngineTopicCapability
-      RuntimePlan
-      EngineExecutionAuthority
+      EngineExecutionPlan
       CompiledDaemon
       Text.Text
       ConsumerSubscriptionType
@@ -1451,10 +1450,9 @@ mkCoordinatorTopicCapability compiledPlan compiledDaemon requestTopicValue =
 
 engineTopicCapabilities ::
   Text.Text ->
-  RuntimePlan ->
-  EngineExecutionAuthority ->
+  EngineExecutionPlan ->
   Either String [DaemonTopicCapability]
-engineTopicCapabilities memberIdValue runtimePlan authority =
+engineTopicCapabilities memberIdValue executionPlan =
   case lookupCompiledEngineDaemon memberIdValue compiledPlan of
     Nothing ->
       Left
@@ -1464,26 +1462,26 @@ engineTopicCapabilities memberIdValue runtimePlan authority =
     Just compiledDaemon ->
       Right
         ( map
-            (mkEngineTopicCapability runtimePlan authority compiledDaemon)
+            (mkEngineTopicCapability executionPlan compiledDaemon)
             (compiledDaemonRequestTopics compiledDaemon)
         )
   where
+    runtimePlan = engineExecutionRuntimePlan executionPlan
     compiledPlan = runtimePlanCompiledPlan runtimePlan
 
 mkEngineTopicCapability ::
-  RuntimePlan ->
-  EngineExecutionAuthority ->
+  EngineExecutionPlan ->
   CompiledDaemon ->
   Text.Text ->
   DaemonTopicCapability
-mkEngineTopicCapability runtimePlan authority compiledDaemon requestTopicValue =
+mkEngineTopicCapability executionPlan compiledDaemon requestTopicValue =
   EngineTopicCapability
-    runtimePlan
-    authority
+    executionPlan
     compiledDaemon
     requestTopicValue
     (authorizedSubscriptionType runtimeMode compiledDaemon requestTopicValue)
   where
+    runtimePlan = engineExecutionRuntimePlan executionPlan
     runtimeMode =
       compiledPlanRuntimeMode (runtimePlanCompiledPlan runtimePlan)
 
@@ -1491,7 +1489,7 @@ daemonTopicCapabilityTopic :: DaemonTopicCapability -> Text.Text
 daemonTopicCapabilityTopic capability =
   case capability of
     CoordinatorTopicCapability _ _ requestTopicValue _ -> requestTopicValue
-    EngineTopicCapability _ _ _ requestTopicValue _ -> requestTopicValue
+    EngineTopicCapability _ _ requestTopicValue _ -> requestTopicValue
 
 daemonTopicCapabilityRuntimeMode :: DaemonTopicCapability -> RuntimeMode
 daemonTopicCapabilityRuntimeMode capability =
@@ -1501,8 +1499,8 @@ daemonTopicCapabilityCompiledPlan :: DaemonTopicCapability -> CompiledRuntimePla
 daemonTopicCapabilityCompiledPlan capability =
   case capability of
     CoordinatorTopicCapability compiledPlan _ _ _ -> compiledPlan
-    EngineTopicCapability runtimePlan _ _ _ _ ->
-      runtimePlanCompiledPlan runtimePlan
+    EngineTopicCapability executionPlan _ _ _ ->
+      runtimePlanCompiledPlan (engineExecutionRuntimePlan executionPlan)
 
 drainTopic :: Paths -> DaemonTopicCapability -> IO ()
 drainTopic paths capability =
@@ -1579,8 +1577,9 @@ drainInferenceTopic paths capability maybeEngineKVCache =
     CoordinatorTopicCapability {} ->
       ioError
         (userError "coordinator topic capability cannot execute inference")
-    EngineTopicCapability runtimePlan authority compiledDaemon requestTopicValue _ -> do
+    EngineTopicCapability executionPlan compiledDaemon requestTopicValue _ -> do
       let runtimeMode = daemonTopicCapabilityRuntimeMode capability
+          runtimePlan = engineExecutionRuntimePlan executionPlan
           resultTopicValue = compiledDaemonResultTopic compiledDaemon
           requestDirectory = topicDirectoryPath paths requestTopicValue
       requestDirectoryPresent <- doesDirectoryExist requestDirectory
@@ -1617,7 +1616,7 @@ drainInferenceTopic paths capability maybeEngineKVCache =
                             protoRequest
                         )
                     Right () ->
-                      publishedResultFromRequest Nothing paths runtimeMode runtimePlan authority maybeEngineKVCache protoRequest
+                      publishedResultFromRequest Nothing paths runtimeMode executionPlan maybeEngineKVCache protoRequest
             createDirectoryIfMissing True (topicDirectoryPath paths resultTopicValue)
             writeInferenceResultFile
               (topicDirectoryPath paths resultTopicValue </> Text.unpack (requestId publishedResult) <.> "pb")
@@ -2965,7 +2964,7 @@ serviceConsumerSubscriptionType :: DaemonTopicCapability -> ConsumerSubscription
 serviceConsumerSubscriptionType capability =
   case capability of
     CoordinatorTopicCapability _ _ _ subscriptionType -> subscriptionType
-    EngineTopicCapability _ _ _ _ subscriptionType -> subscriptionType
+    EngineTopicCapability _ _ _ subscriptionType -> subscriptionType
 
 authorizedSubscriptionType ::
   RuntimeMode ->
@@ -3078,12 +3077,13 @@ consumeTopicSession transport paths capability maybeEngineKVCache = do
                 batchOptions
                 (view ProtoInferenceFields.requestId decodedRequest)
                 (encodeMessage decodedRequest)
-        EngineTopicCapability runtimePlan authority compiledDaemon _ _ -> do
+        EngineTopicCapability executionPlan compiledDaemon _ _ -> do
           -- The serialization that used to live here is now inside
           -- 'publishedResultFromRequest', so the spool path cannot reach engine
           -- execution unguarded.
           do
-            let modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
+            let runtimePlan = engineExecutionRuntimePlan executionPlan
+                modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
                 requestIdValue = view ProtoInferenceFields.requestId decodedRequest
             let maybeRejection =
                   if Text.null modelIdValue
@@ -3102,7 +3102,7 @@ consumeTopicSession transport paths capability maybeEngineKVCache = do
                             decodedRequest
                         )
                     Right () ->
-                      publishedResultFromRequest (Just transport) paths runtimeMode runtimePlan authority maybeEngineKVCache decodedRequest
+                      publishedResultFromRequest (Just transport) paths runtimeMode executionPlan maybeEngineKVCache decodedRequest
             -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
             -- engine-side inference so the host daemon log surfaces the
             -- request id, resolved model id, and final status. Diagnoses
@@ -3189,7 +3189,7 @@ daemonTopicCapabilityResultTopic capability =
   case capability of
     CoordinatorTopicCapability compiledPlan _ _ _ ->
       compiledPlanResultTopic compiledPlan
-    EngineTopicCapability _ _ compiledDaemon _ _ ->
+    EngineTopicCapability _ compiledDaemon _ _ ->
       compiledDaemonResultTopic compiledDaemon
 
 daemonTopicCapabilityAuthorizesModel ::
@@ -3209,35 +3209,48 @@ executableRequestRouteAuthorization capability modelIdValue =
   case capability of
     CoordinatorTopicCapability {} ->
       Left "coordinator topic capability cannot authorize engine execution"
-    EngineTopicCapability runtimePlan _ compiledDaemon requestTopicValue _ ->
-      case compiledDaemonMemberId compiledDaemon of
+    EngineTopicCapability executionPlan compiledDaemon requestTopicValue _ ->
+      authorizeEngineRequestRoute
+        (engineExecutionRuntimePlan executionPlan)
+        compiledDaemon
+        requestTopicValue
+        modelIdValue
+
+authorizeEngineRequestRoute ::
+  RuntimePlan ->
+  CompiledDaemon ->
+  Text.Text ->
+  Text.Text ->
+  Either String ()
+authorizeEngineRequestRoute runtimePlan compiledDaemon requestTopicValue modelIdValue =
+  case compiledDaemonMemberId compiledDaemon of
+    Nothing ->
+      Left "engine topic capability has no compiled daemon member"
+    Just memberIdValue ->
+      case lookupExecutableModel modelIdValue runtimePlan of
         Nothing ->
-          Left "engine topic capability has no compiled daemon member"
-        Just memberIdValue ->
-          case lookupExecutableModel modelIdValue runtimePlan of
-            Nothing ->
+          Left
+            ( "engine topic capability has no executable model "
+                <> Text.unpack modelIdValue
+            )
+        Just executableModel
+          | any
+              (routeMatches memberIdValue requestTopicValue)
+              (NonEmpty.toList (executableModelRoutes executableModel)) ->
+              Right ()
+          | otherwise ->
               Left
-                ( "engine topic capability has no executable model "
+                ( "engine topic capability rejects model "
                     <> Text.unpack modelIdValue
+                    <> " on member "
+                    <> Text.unpack memberIdValue
+                    <> " and topic "
+                    <> Text.unpack requestTopicValue
                 )
-            Just executableModel
-              | any
-                  (routeMatches memberIdValue requestTopicValue)
-                  (NonEmpty.toList (executableModelRoutes executableModel)) ->
-                  Right ()
-              | otherwise ->
-                  Left
-                    ( "engine topic capability rejects model "
-                        <> Text.unpack modelIdValue
-                        <> " on member "
-                        <> Text.unpack memberIdValue
-                        <> " and topic "
-                        <> Text.unpack requestTopicValue
-                    )
   where
-    routeMatches memberIdValue requestTopicValue route =
-      engineRouteMemberId route == memberIdValue
-        && engineRouteTopic route == requestTopicValue
+    routeMatches expectedMemberId expectedTopic route =
+      engineRouteMemberId route == expectedMemberId
+        && engineRouteTopic route == expectedTopic
 
 serviceConsumerAckTimeoutMillis :: Int
 serviceConsumerAckTimeoutMillis = 900000
@@ -5455,22 +5468,22 @@ memoryAdmissionRejectionResult runtimeMode model errorValue protoRequest =
         }
 
 -- | The single choke point every engine execution passes through, on both the
--- websocket and the filesystem-spool path. Taking the authority here is what
--- makes serialization a property of the boundary rather than of one branch of
--- one caller: the spool path previously reached this function with no lock in
--- scope at all while the websocket path held one, and that asymmetry was
--- invisible from either call site.
+-- websocket and the filesystem-spool path. Taking the opaque execution plan
+-- here is what makes serialization a property of the boundary rather than of
+-- one branch of one caller: the spool path previously reached this function
+-- with no lock in scope at all while the websocket path held one, and that
+-- asymmetry was invisible from either call site.
 publishedResultFromRequest ::
   Maybe PulsarTransport ->
   Paths ->
   RuntimeMode ->
-  RuntimePlan ->
-  EngineExecutionAuthority ->
+  EngineExecutionPlan ->
   Maybe KVCache.EngineKVCache ->
   ProtoInference.InferenceRequest ->
   IO InferenceResult
-publishedResultFromRequest maybeTransport paths runtimeMode runtimePlan authority maybeEngineKVCache protoRequest =
-  withSerializedEngineExecution authority $ do
+publishedResultFromRequest maybeTransport paths runtimeMode executionPlan maybeEngineKVCache protoRequest =
+  withEngineExecutionPlan executionPlan $ do
+    let runtimePlan = engineExecutionRuntimePlan executionPlan
     domainResult <-
       executeInferenceWithModelBootstrapRetry
         maybeTransport

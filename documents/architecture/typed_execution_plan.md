@@ -210,9 +210,10 @@ succeed against a ceiling no inference will ever run under — the second outcom
 it manufactures evidence about a resource the process does not use.
 
 The property refinement exists to establish is that a launch cannot happen without a matching live
-enforcer, and it is discharged where launches happen: refinement mints the single-flight
-`EngineExecutionAuthority`, and `publishedResultFromRequest` — the one choke point both the
-websocket and filesystem-spool paths pass through — requires it. Neither non-engine role launches an
+enforcer, and it is discharged where launches happen: refinement returns one opaque
+`EngineExecutionPlan` enclosing the refined plan and its single-flight lock, and
+`publishedResultFromRequest` — the one choke point both the websocket and filesystem-spool paths
+pass through — requires it. Neither non-engine role launches an
 inference subprocess: the coordinator's loops are `CompiledRuntimePlan`-typed and its
 `drainInferenceTopic` hard-errors on a coordinator capability, and the webapp only publishes to
 Pulsar. So the requirement ("startup compiles and refines the generated plan before

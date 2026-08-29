@@ -6,7 +6,7 @@
 module Infernix.Runtime.CappedEngine
   ( EngineOutputStream (..),
     EngineOutcome (..),
-    EngineExecutionAuthority,
+    EngineExecutionPlan,
     NativeArtifactCache,
     NativeArtifactInvocation,
     NativeArtifactLaunchOutcome (..),
@@ -17,7 +17,8 @@ module Infernix.Runtime.CappedEngine
     executableWatchdogCeilingsForTest,
     nativeArtifactCache,
     nativeArtifactInvocation,
-    newEngineExecutionAuthority,
+    engineExecutionRuntimePlan,
+    newEngineExecutionPlan,
     runExecutableNativeArtifact,
     runExecutablePythonWorker,
     observeNvidiaDeviceVramMib,
@@ -25,12 +26,12 @@ module Infernix.Runtime.CappedEngine
     verifyNvidiaVramSampler,
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
-    withSerializedEngineExecution,
+    withEngineExecutionPlan,
   )
 where
 
 import Infernix.Runtime.CappedEngine.Internal
-  ( EngineExecutionAuthority,
+  ( EngineExecutionPlan,
     EngineOutcome (..),
     EngineOutputStream (..),
     NativeArtifactCache,
@@ -39,11 +40,12 @@ import Infernix.Runtime.CappedEngine.Internal
     PythonWorkerLaunchOutcome (..),
     accountedAllocationMarginMibForTest,
     classifyCeilingRefusalForTest,
+    engineExecutionRuntimePlan,
     executableEngineCeiling,
     executableWatchdogCeilingsForTest,
     nativeArtifactCache,
     nativeArtifactInvocation,
-    newEngineExecutionAuthority,
+    newEngineExecutionPlan,
     observeNvidiaDeviceVramMib,
     probeNvidiaVramSampler,
     runExecutableNativeArtifact,
@@ -51,5 +53,5 @@ import Infernix.Runtime.CappedEngine.Internal
     verifyNvidiaVramSampler,
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
-    withSerializedEngineExecution,
+    withEngineExecutionPlan,
   )

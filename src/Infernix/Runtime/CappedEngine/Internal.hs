@@ -11,9 +11,10 @@
 module Infernix.Runtime.CappedEngine.Internal
   ( EngineOutputStream (..),
     EngineOutcome (..),
-    EngineExecutionAuthority,
-    newEngineExecutionAuthority,
-    withSerializedEngineExecution,
+    EngineExecutionPlan,
+    newEngineExecutionPlan,
+    engineExecutionRuntimePlan,
+    withEngineExecutionPlan,
     NativeArtifactCache,
     NativeArtifactInvocation,
     NativeArtifactLaunchOutcome (..),
@@ -86,7 +87,7 @@ import Infernix.DescriptorSpace (requireBoundedDescriptorSpace)
 import Infernix.DescriptorSpace qualified as DescriptorSpace
 import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
 import Infernix.Engines.Artifact qualified as Artifact
-import Infernix.ExecutionPlan (executableModelGpuVramArenaMib)
+import Infernix.ExecutionPlan (RuntimePlan, executableModelGpuVramArenaMib)
 import Infernix.ExecutionPlan.Internal
   ( EnforcedGrant (EnforcedGrant),
     Enforcer
@@ -423,30 +424,37 @@ data EnforcementTermination
   | OutputLimitExceeded EngineOutputStream
   | OutputCaptureFailed EngineOutputStream Text
 
--- | The single-flight authority for engine execution.
+-- | A live refined plan together with its single-flight execution authority.
 --
 -- The constructor is hidden and the value is minted once, by
--- 'Infernix.Runtime.Enforcer.refineCompiledRuntimePlan', alongside the
--- 'RuntimePlan' it serializes. A caller therefore cannot mint a second token and
--- obtain concurrent execution of the same refined plan under independent locks,
--- which a bare @MVar ()@ threaded through a public signature could not prevent.
+-- 'Infernix.Runtime.Enforcer.refineCompiledRuntimePlan'. The refined plan never
+-- leaves that boundary beside a separable token, so a caller cannot mint or
+-- substitute a second lock and obtain concurrent execution of the same plan
+-- under independent authorities.
 --
--- It is deliberately one authority for the whole plan rather than one per
+-- It is deliberately one lock for the whole plan rather than one per
 -- executable. Serialization here is what bounds *total* resident memory to a
 -- single admitted grant at a time; per-executable tokens would let two admitted
 -- models run concurrently and exceed the host or pod budget the admission
 -- decision was made against.
-newtype EngineExecutionAuthority = EngineExecutionAuthority (MVar ())
+data EngineExecutionPlan = EngineExecutionPlan RuntimePlan (MVar ())
 
--- | Mint the one authority for one refined plan. Exposed only so the refinement
--- boundary can pair it with the 'RuntimePlan'; every other module receives it.
-newEngineExecutionAuthority :: IO EngineExecutionAuthority
-newEngineExecutionAuthority = EngineExecutionAuthority <$> newMVar ()
+-- | Package-internal mint used only by the live refinement boundary (and the
+-- property module that exercises the capability graph without host probes).
+newEngineExecutionPlan :: RuntimePlan -> IO EngineExecutionPlan
+newEngineExecutionPlan runtimePlan =
+  EngineExecutionPlan runtimePlan <$> newMVar ()
 
--- | Run one engine execution under the authority. Exceptions propagate with the
--- token released, so a failed execution cannot wedge the daemon.
-withSerializedEngineExecution :: EngineExecutionAuthority -> IO a -> IO a
-withSerializedEngineExecution (EngineExecutionAuthority token) action =
+-- | Read the immutable refined plan. The execution lock remains enclosed in the
+-- same value and cannot be recovered or replaced.
+engineExecutionRuntimePlan :: EngineExecutionPlan -> RuntimePlan
+engineExecutionRuntimePlan (EngineExecutionPlan runtimePlan _) = runtimePlan
+
+-- | Run one engine execution under its plan's enclosed authority. Exceptions
+-- propagate with the token released, so a failed execution cannot wedge the
+-- daemon.
+withEngineExecutionPlan :: EngineExecutionPlan -> IO a -> IO a
+withEngineExecutionPlan (EngineExecutionPlan _ token) action =
   withMVar token (const action)
 
 -- | Phase 6 Sprint 6.51 — whether the admitted device arena can actually be

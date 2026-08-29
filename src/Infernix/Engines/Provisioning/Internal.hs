@@ -27,6 +27,7 @@ module Infernix.Engines.Provisioning.Internal
     pinnedPoetryBootstrapRequirements,
     pinnedPythonRequirements,
     fixedVenvPythonRelativePath,
+    poetryBootstrapRequirementsRelativePath,
     installedSmokeExecutableRelativePath,
     installedSmokeArguments,
     nativeArtifactIdentity,
@@ -588,6 +589,10 @@ sourceFileParameter index =
 fixedVenvPythonRelativePath :: FilePath
 fixedVenvPythonRelativePath =
   "venv" </> "bin" </> "infernix-python"
+
+poetryBootstrapRequirementsRelativePath :: FilePath
+poetryBootstrapRequirementsRelativePath =
+  ".infernix-poetry-bootstrap-requirements.txt"
 
 nativeArtifactIdentity ::
   AppleAdapterId ->

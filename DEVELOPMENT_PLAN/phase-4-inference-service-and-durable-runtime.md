@@ -1,9 +1,9 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done — every sprint is implemented and validated. Sprints 4.37 through 4.42 close the
-host half of Bounded Engine Launch on the selected `apple-silicon` accelerator plus its paired
-`linux-cpu` lane: the Apple full suite passes against all seven materialized native-engine roots,
-the paired Linux CPU full-suite evidence remains current, and no Phase 4 cohort residual remains.
+**Status**: Active — Sprint 4.45's code-side closure is complete. Its selected `apple-silicon` plus
+`linux-cpu` full-suite remains open in
+[Wave 4.45](cohort-validation-waves.md): the present host's existing Colima pledge leaves no
+constructible inference partition, and validation does not resize or reprovision that VM.
 **Current implementation state**: Sprints 4.37 through 4.42 landed in numerical order, each building
 on the one before: a breach names the resource it breached, the requirement becomes resource-indexed,
 the requirement is derived from the artifact's own bytes, three sampling loops become one, a kernel
@@ -32,6 +32,8 @@ phase for that prerequisite.
 > make the runtime model honest and durable.
 
 ## Phase Status
+
+Sprint 4.45 is Active. All earlier sprints remain Done for their recorded scope.
 
 The selected `apple-silicon` full suite passes against the materialized `llama-cpp-cli`,
 `whisper-cpp-cli`, `coreml-native`, `ctranslate2-native`, `mlx-native`, `onnx-runtime-native`, and
@@ -1703,12 +1705,12 @@ unavailable compiled placements.
 - coordinator subscriptions derive only from `CompiledPlacement` / `CompiledDaemon`; engine
   subscriptions derive only from `RuntimePlan` / `ExecutableModel`
 - the single-flight execution authority is encapsulated with the executable capability so callers
-  cannot reuse one executable concurrently under independent locks. `EngineExecutionAuthority` is an
-  opaque newtype in the capped-engine kernel, minted only by `refineCompiledRuntimePlan` and
-  returned paired with the `RuntimePlan` it serializes, so there is no second mint site.
-  `EngineTopicCapability` carries it beside the refined plan behind a private constructor, and
+  cannot reuse one executable concurrently under independent locks. `EngineExecutionPlan` is one
+  opaque capped-engine value enclosing the refined `RuntimePlan` and its lock, minted only by
+  `refineCompiledRuntimePlan`, so there is neither a second mint site nor a separable token to
+  substitute. `EngineTopicCapability` carries that value behind a private constructor, and
   `publishedResultFromRequest` — the single choke point the websocket and filesystem-spool paths
-  share — requires it and wraps execution in `withSerializedEngineExecution`. The retired shape was
+  share — requires it and opens its serialized region. The retired shape was
   a bare `MVar ()` created in `Runtime/Daemon.hs` and passed through a public signature, so any
   caller could mint a second token and run one `RuntimePlan` concurrently, and the
   filesystem-spool drain reached the same execution call with no lock in scope at all. Serialization
@@ -3431,6 +3433,62 @@ could otherwise be read as covering it.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 4.45: Runtime Capability and Machine-Identity Ledger Closure [Active]
+
+**Status**: Active — code-side closure passes; the selected cohort gate remains open in
+[Wave 4.45](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/ExecutionPlan.hs`, `src/Infernix/Runtime/`,
+`src/Infernix/Service.hs`, `src/Infernix/Types.hs`, `test/unit/Spec.hs`,
+`test/integration/Spec.hs`, `test/compile-fail/`,
+`DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`,
+`documents/architecture/daemon_topology.md`, and
+`documents/architecture/typed_execution_plan.md` only where the implementation audit changes the
+supported contract
+
+### Objective
+
+Resolve every pending-removal row owned by Phase 4 against the live implementation. Delete stale
+ledger rows when their successor is already present; where a live bypass remains, remove it and pin
+the capability or identity boundary structurally.
+
+### Deliverables
+
+- decoded model, pool, member, and budget data cannot launch work without the opaque executable
+  capability and its serialized execution authority
+- a Linux model grant is enforced at the invocation boundary rather than inferred from a wider
+  pod-wide capacity
+- host headroom and the toolchain account are derived from one checked claimable pool rather than
+  from independent residual constants
+- an engine daemon cannot adopt a catalog member by ordering default; it must establish an explicit
+  machine member identity and retain the broker-side claim before consuming work
+- every discharged Phase 4 row is deleted from the pending-removal ledger
+
+### Validation
+
+- `./bootstrap/apple-silicon.sh build`
+- `./.build/infernix test lint`
+- `./.build/infernix test unit`
+- `./.build/infernix test integration`
+- `./.build/infernix lint files`
+- `./.build/infernix lint docs`
+- `./.build/infernix lint chart`
+- `./.build/infernix lint proto`
+- `./.build/infernix lint plan`
+- `./.build/infernix docs check`
+- compile-fail fixtures prove raw grants and execution authority cannot be constructed or consumed
+  outside their owning regions; unit properties prove ambiguous member identity is refused before
+  a broker consumer starts
+
+### Remaining Work
+
+- **Cohort gate:** run the selected `apple-silicon` plus `linux-cpu` full-suite recorded in
+  [Wave 4.45](cohort-validation-waves.md). Code-side closure passes: governed Apple build,
+  aggregate lint, unit aggregate with 7 positive / 96 negative compile-time capability fixtures,
+  84/84 PureScript tests, standalone file/docs/chart/proto/plan lints, and `docs check`.
 
 ## Documentation Requirements
 

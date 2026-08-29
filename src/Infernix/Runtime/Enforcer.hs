@@ -1,5 +1,6 @@
 module Infernix.Runtime.Enforcer
-  ( refineCompiledRuntimePlan,
+  ( EngineExecutionPlan,
+    refineCompiledRuntimePlan,
     selectStagedCheckpointKeyForTest,
   )
 where
@@ -15,7 +16,6 @@ import Infernix.DemoConfig (observeAppleHostMemoryPartition)
 import Infernix.ExecutionPlan
   ( CompiledRuntimePlan,
     RefinementErrors,
-    RuntimePlan,
     compiledPlanPlacementEnforcementShape,
     compiledPlanRuntimeMode,
     refineRuntimePlan,
@@ -45,8 +45,8 @@ import Infernix.Models.Requirement
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Upload qualified as ObjectUpload
 import Infernix.Runtime.CappedEngine
-  ( EngineExecutionAuthority,
-    newEngineExecutionAuthority,
+  ( EngineExecutionPlan,
+    newEngineExecutionPlan,
     observeNvidiaDeviceVramMib,
     probeNvidiaVramSampler,
     verifyPhysicalFootprintSampler,
@@ -82,7 +82,7 @@ import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 refineCompiledRuntimePlan ::
   Paths ->
   CompiledRuntimePlan ->
-  IO (Either RefinementErrors (RuntimePlan, EngineExecutionAuthority))
+  IO (Either RefinementErrors EngineExecutionPlan)
 refineCompiledRuntimePlan paths compiledPlan = do
   -- Phase 4 Sprint 4.41: readiness consumes the lane's declared strength
   -- before probing or minting execution authority. A production contract that
@@ -170,9 +170,8 @@ refineCompiledRuntimePlan paths compiledPlan = do
     (RuntimeObservation observations requirementObservations)
     compiledPlan of
     Left errors -> pure (Left errors)
-    Right runtimePlan -> do
-      authority <- newEngineExecutionAuthority
-      pure (Right (runtimePlan, authority))
+    Right runtimePlan ->
+      Right <$> newEngineExecutionPlan runtimePlan
 
 -- | Derive one memory requirement per placed model from the artifact this
 -- machine has staged for it.

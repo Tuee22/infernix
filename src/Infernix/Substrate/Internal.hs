@@ -310,9 +310,9 @@ data DhallInferenceMemoryBudget
 
 instance Dhall.FromDhall DhallInferenceMemoryBudget
 
--- | Phase 8 Sprint 8.10: the headroom term left the wire. Every partition this
--- binary has ever generated held back exactly 'minHostHeadroomMib', so the field
--- was a second copy of a constant the binary owns.
+-- | Phase 8 Sprint 8.10: the headroom term left the wire. The binary derives it
+-- from the checked claimable pool, so a wire field would be a second authored
+-- copy of policy the partition owns.
 data DhallHostMemoryBudget = DhallHostMemoryBudget
   { dhallBudgetPhysicalMib :: Natural,
     dhallBudgetVmReserveMib :: Natural
@@ -610,7 +610,7 @@ inferenceMemoryBudgetFromDhall runtimeModeValue rawBudget =
         naturalToInt "inferenceMemoryBudget.physicalMib" (dhallBudgetPhysicalMib hostBudget)
       vmReserveMib <-
         naturalToInt "inferenceMemoryBudget.vmReserveMib" (dhallBudgetVmReserveMib hostBudget)
-      HostEnforcedBudget <$> mkHostMemoryPartition physicalMib vmReserveMib minHostHeadroomMib
+      HostEnforcedBudget <$> mkHostMemoryPartition physicalMib vmReserveMib
     SubstrateEnforced substrateBudget ->
       SubstrateEnforcedBudget
         <$> podMemoryLimitFromDhall
@@ -1003,7 +1003,8 @@ dhallBool value
 --
 -- Every call site renders a value whose non-negativity was already established
 -- by a checked constructor or a compiler check: 'mkHostMemoryPartition' rejects
--- a non-positive physical size and negative reserve/headroom,
+-- a non-positive physical size, a negative reserve, or a pool too small for its
+-- derived co-tenant headroom,
 -- 'mkModelMemoryFootprint' requires a positive footprint, @InvalidPoolMaxInflight@
 -- rejects a non-positive inflight bound, and 'podMemoryLimitFromDhall' plus
 -- config validation require a positive limit. A negative value would render as

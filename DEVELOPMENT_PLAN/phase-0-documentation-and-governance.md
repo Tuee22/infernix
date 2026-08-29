@@ -1,13 +1,9 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done. This phase owns the governed `documents/` suite, the standards that keep the
-plan and those documents aligned, and the enforcement that makes both mechanical. Sprint 0.24 landed
-`infernix lint plan`, which implements the Section C, D, I, J, and Q scans the standards had
-declared only in prose, drove the corpus to zero against them, and wired the scans into `runLint`.
-Sprints 0.19 and 0.21 re-closed on the corrected host-memory ledger they own; Sprint 0.26 keeps the
-governed-doc registry and index exact when a target document is retired. Every sprint in this phase
-is closed on the machine-independent gate set. The phase is machine-independent throughout and carries
-no accelerator cohort.
+**Status**: Done. Sprint 0.27 aligns every plan-level model-staging and pool-delivery claim with the
+supported at-least-once transport and effectively-once observable outcome, and removes the two
+discharged Phase 0 cleanup-ledger rows. The phase is machine-independent throughout and carries no
+accelerator cohort.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -25,7 +21,7 @@ reopens are machine-independent: they carry no accelerator cohort and block no a
 
 ## Current Repo Assessment
 
-Every sprint in this phase is closed on its machine-independent gates. The governed `documents/`
+Every sprint is closed on the machine-independent plan/docs gates. The governed `documents/`
 suite, the documentation standards, the docs validator, and the
 plan-standards validator are in place. `infernix lint docs` and `infernix docs check` are the
 governed validation entrypoints for documentation change; `infernix lint plan` is the mechanical
@@ -844,7 +840,7 @@ Establish the host-memory capacity ledger as a governed doctrine, and make the s
 language honest.
 
 Infernix partitions physical host RAM and names exactly one claimant: a single serialized
-inference. `minHostHeadroomMib` enumerates who the residual `headroom` covers — the OS, the
+inference. The claimable pool's co-tenant-headroom projection enumerates who `headroom` covers — the OS, the
 control-plane binary, the routed end-to-end browser, worst-case watchdog overshoot — and the
 Haskell toolchain is not among them. A ledger with one row cannot overflow on a claimant it does
 not model, which is why the process that exhausted the host was never in breach of anything.
@@ -1278,6 +1274,38 @@ suite after a target document is retired.
 - `infernix lint plan` and `infernix docs check` exit zero
 - `infernix test lint` exits zero with the Haskell style, Cabal format, Python, file, chart, proto,
   docs, and plan gates running through the closed CLI surface
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 0.27: At-Least-Once Delivery Language and Ledger Closure [Done]
+
+**Status**: Done
+**Implementation**: `DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: none. The governed architecture already states the target delivery contract.
+
+### Objective
+
+Make every plan-level model-staging and pool-delivery claim match the supported at-least-once
+transport with an effectively-once observable outcome, and remove Phase 0 ledger rows whose named
+surfaces no longer exist.
+
+### Deliverables
+
+- model-bootstrap and result-path validation prose attributes duplicate collapse to producer dedup
+  and the terminal sentinel instead of claiming exactly-once transport
+- the host-memory doctrine retains the exclusive-host-claim account and contains no claim that the
+  toolchain and inference partitions are serialized by one validation bracket
+- the corresponding Phase 0 rows leave the pending-removal ledger
+
+### Validation
+
+- `./.build/infernix lint plan`
+- `./.build/infernix lint docs`
+- `./.build/infernix docs check`
 
 ### Remaining Work
 

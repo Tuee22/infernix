@@ -28,7 +28,6 @@ import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.ExecutionPlan
   ( CompiledDaemon,
     CompiledRuntimePlan,
-    RuntimePlan,
     compiledDaemonLocation,
     compiledDaemonMemberId,
     compiledDaemonRequestTopics,
@@ -44,8 +43,8 @@ import Infernix.ExecutionPlan
     runtimePlanModels,
   )
 import Infernix.MachineContract (SystemContractDigest, digestSystemContractFile)
-import Infernix.Runtime.CappedEngine (EngineExecutionAuthority)
-import Infernix.Runtime.Enforcer (refineCompiledRuntimePlan)
+import Infernix.Runtime.CappedEngine (engineExecutionRuntimePlan)
+import Infernix.Runtime.Enforcer (EngineExecutionPlan, refineCompiledRuntimePlan)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
   ( ContractDigestAuthority,
@@ -81,7 +80,7 @@ import Infernix.Types hiding (generatedDemoConfigPath)
 -- process-local engine KV cache is threaded into request handling.
 data DaemonExecutionPlan
   = RoutingDaemonPlan CompiledRuntimePlan
-  | ExecutingDaemonPlan Text.Text RuntimePlan EngineExecutionAuthority
+  | ExecutingDaemonPlan Text.Text EngineExecutionPlan
 
 runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> Maybe FilePath -> DaemonRole -> Maybe Text.Text -> IO ()
 runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath daemonRole maybeEngineName = do
@@ -132,14 +131,14 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
           Left errors ->
             ioError
               (userError ("generated substrate runtime plan could not be refined against live enforcement: " <> show errors))
-          Right (runtimePlan, executionAuthority) -> do
+          Right executionPlan -> do
             memberIdValue <-
               case compiledDaemonMemberId compiledDaemon of
                 Nothing ->
                   ioError
                     (userError "compiled engine daemon has no member identity")
                 Just memberId -> pure memberId
-            pure (ExecutingDaemonPlan memberIdValue runtimePlan executionAuthority)
+            pure (ExecutingDaemonPlan memberIdValue executionPlan)
       Coordinator -> pure (RoutingDaemonPlan compiledPlan)
       Webapp ->
         ioError
@@ -183,14 +182,16 @@ daemonExecutableModelCount daemonPlan =
   case daemonPlan of
     RoutingDaemonPlan compiledPlan ->
       length (compiledPlanAvailableModels compiledPlan)
-    ExecutingDaemonPlan _ runtimePlan _ ->
-      length (runtimePlanModels runtimePlan)
+    ExecutingDaemonPlan _ executionPlan ->
+      let runtimePlan = engineExecutionRuntimePlan executionPlan
+       in length (runtimePlanModels runtimePlan)
 
 daemonCompiledPlan :: DaemonExecutionPlan -> CompiledRuntimePlan
 daemonCompiledPlan daemonPlan =
   case daemonPlan of
     RoutingDaemonPlan compiledPlan -> compiledPlan
-    ExecutingDaemonPlan _ runtimePlan _ -> runtimePlanCompiledPlan runtimePlan
+    ExecutingDaemonPlan _ executionPlan ->
+      runtimePlanCompiledPlan (engineExecutionRuntimePlan executionPlan)
 
 daemonTopicCapabilities ::
   DaemonExecutionPlan ->
@@ -199,8 +200,8 @@ daemonTopicCapabilities daemonPlan =
   case daemonPlan of
     RoutingDaemonPlan compiledPlan ->
       Right (coordinatorTopicCapabilities compiledPlan)
-    ExecutingDaemonPlan memberIdValue runtimePlan executionAuthority ->
-      engineTopicCapabilities memberIdValue runtimePlan executionAuthority
+    ExecutingDaemonPlan memberIdValue executionPlan ->
+      engineTopicCapabilities memberIdValue executionPlan
 
 runFilesystemTopicSpool ::
   Paths ->
@@ -311,12 +312,13 @@ withDaemonEngineMemberClaim ::
 withDaemonEngineMemberClaim transport daemonPlan action =
   case daemonPlan of
     RoutingDaemonPlan _ -> action Nothing
-    ExecutingDaemonPlan memberIdValue runtimePlan _ ->
-      withEngineMemberClaim
-        transport
-        (compiledPlanRuntimeMode (runtimePlanCompiledPlan runtimePlan))
-        memberIdValue
-        (action . Just)
+    ExecutingDaemonPlan memberIdValue executionPlan ->
+      let runtimePlan = engineExecutionRuntimePlan executionPlan
+       in withEngineMemberClaim
+            transport
+            (compiledPlanRuntimeMode (runtimePlanCompiledPlan runtimePlan))
+            memberIdValue
+            (action . Just)
 
 startCoordinatorLoops ::
   PulsarTransport ->

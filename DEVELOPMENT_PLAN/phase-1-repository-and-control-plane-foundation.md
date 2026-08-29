@@ -1,6 +1,9 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done — all 39 sprints are implemented and validated. The exact Apple full suite
+**Status**: Done — Sprint 1.40 reconciles the Phase 1 build-memory and capability cleanup ledger,
+removes the obsolete surfaces that remained, and closes on the governed Apple build plus the
+machine-independent aggregate lint and unit gates. The prior 39 sprints retain their validation
+receipts. The exact Apple full suite
 rebuilt source fingerprint `bf22a3ad…` as runtime image
 `sha256:189d25e6b24e7699c87dff3e0c194e1bcd3b96a42b158e2b895dd3ca2a7e2400` and exited 0. The paired
 Linux launcher was then rebuilt from the current worktree as
@@ -22,13 +25,13 @@ surfaces are listed in [legacy-tracking-for-deletion.md](legacy-tracking-for-del
 
 ## Phase Status
 
-Sprints 1.1 through 1.39 are Done.
+Sprints 1.1 through 1.40 are Done.
 The closed foundation work establishes the current repository scaffold, the one-binary role
 topology, the typed runtime-config contract, the baked Linux launcher image, the governed
 root-document posture, host-manifest materialization, and the native-only Apple Docker boundary.
 
-Phase 1 closed at [Sprint
-1.39](#sprint-139-the-harness-completes-its-config-transaction-twice-done). Sprint 1.38 is GREEN
+Sprint 1.40 closed on 2026-08-28 after the governed Apple build, aggregate lint, complete Haskell and
+web unit gates, and every standalone repository lint passed. Sprint 1.38 is GREEN
 through the governed Apple build, the whole aggregate lint, the full unit suite, standalone `lint
 files|docs|chart|proto|plan`, `docs check`, repo-wide diff check, and the complete seven-artifact
 Apple materializer. The Darwin build-memory measurement, both specialized Darwin validators, the
@@ -38,7 +41,7 @@ environment (Sprint 1.27), then the JavaCPP cross-jar the loader-closure produce
 resolve (Sprint 1.28) — is closed. The routed `linux-cpu` image build completes end to end,
 emitting all five linux-native engine artifacts. The closing Apple cohort completed every
 executable catalog row or its exact typed capacity refusal, and the closing Linux cohort completed
-its supported rows or exact 4 GiB pod-memory refusal. Nothing remains open in this phase.
+its supported rows or exact 4 GiB pod-memory refusal.
 
 **No repo-owned native source.** Repository-owned native implementation is banned in every
 container, including native source embedded in Haskell string literals and compiled with Clang.
@@ -1371,9 +1374,9 @@ measurement surface required to validate the otherwise unenforced aggregate.
   seed fits the measured 50% share after subtracting every active Colima pledge.
 - **`Infernix.BuildMemory`** exporting `BuildMemoryBudget`, `BuildConcurrency`, and `BuildMemoryPlan`
   abstractly with `deriveBuildMemoryPlan` as the only mint, following the hidden-constructor,
-  lower-only, fail-closed shape of `Infernix.DescriptorSpace`. `establishBoundedBuildMemory` writes
-  the hard limit as well as the soft one — a bound a child can raise back is not a bound — and
-  `requireBoundedBuildMemory` is the fail-closed observation at the point of use.
+  fail-closed shape of `Infernix.DescriptorSpace`. `withBoundedToolchainChild` temporarily lowers
+  the soft limit for the owned child lifecycle on an enforcing lane, restores the operator image,
+  and calls `requireBoundedBuildMemory` as the fail-closed observation at the point of use.
 - **Physical-memory facts in the host manifest, measured rather than declared.** `Infernix.HostMemory`
   reads `MemTotal` from `/proc/meminfo` and intersects it with the cgroup v2 maximum on Linux, and
   reads `sysctl -n hw.memsize` on Darwin and subtracts the aggregate pledge of every Colima profile
@@ -1554,10 +1557,10 @@ threw before the child was started, so `infernix test lint`, `test unit`, `test 
   over-claim one line below the type forbidding it. `resolveBuildMemoryMechanism` returns the new
   `ResolvedBuildMemoryMechanism` sum, which is where the runtime fact is refined and where every
   consumer is forced to handle both arms.
-- **The mints return `Either` rather than a rank-2 region.** Identical refinement, `-Werror` already
-  forces both arms, and no CPS rewrite of the fixture's call sites. A `with`-shaped region in this
-  repository means the capability dies at region exit, but `establishBoundedBuildMemory` installs a
-  permanent, one-way, image-wide limit — the region shape would mis-signal.
+- **The observation returns `Either` inside a rank-2 authority region.** `-Werror` forces both
+  enforcement arms, while the region keeps the temporary soft ceiling and its spawn authority from
+  escaping the child lifecycle. There is no callerless permanent hard-limit installer in the
+  production module.
 - **An unenforced bound observes something.** `observeHeapCapOnlyBound` re-reads the runtime heap cap
   committed to `cabal.project.local` and refuses when it is absent, unparseable, or disagrees with
   the derived plan. Without it the Darwin arm would mint evidence from the caller's own argument,
@@ -2460,6 +2463,8 @@ floor plan and states its cases against the limit the lane actually installs, ra
 unbounded address space that the governed entrypoint guarantees it will not have. The `linux-cpu`
 `unit` gate now passes end to end — all six Haskell suites plus 83/83 web tests. The remaining cohort
 legs passed.
+**Superseded by**: Sprint 1.40 removes the validation-only permanent installer and exercises the
+compiler and clean over-allocation cases inside the production toolchain-child region.
 **Implementation**: `test/unit/Spec.hs`
 **Docs to update**: none — [../documents/architecture/bounded_host_memory.md](../documents/architecture/bounded_host_memory.md) already states the inheritance this corrects to
 
@@ -2708,6 +2713,59 @@ yet eliminated:
 ### Remaining Work
 
 - None.
+
+---
+
+## Sprint 1.40: Build-Memory and Capability Ledger Closure [Done]
+
+**Status**: Done — implemented and validated on 2026-08-28. The governed Apple build passed; the
+aggregate lint passed after rebuilding every declared source-distribution test component; the unit
+aggregate passed 7 positive and 94 negative compile-time capability fixtures, all Haskell suites,
+and 84/84 PureScript tests. The production-bound regression resolved GHC from the typed host
+manifest, compiled a real program beneath `withBoundedToolchainChild`, and refused to skip when no
+configured compiler exists. Standalone file, docs, chart, proto, and plan lints plus `docs check`
+also passed.
+**Implementation**: `src/Infernix/BuildMemory.hs`, `src/Infernix/Cluster/Subprocess.hs`, `src/Infernix/Engines/Provisioning.hs`, `src/Infernix/Runtime/`, `bootstrap/apple-silicon.sh`, `docker/Dockerfile`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: `documents/architecture/bounded_host_memory.md` only if the implementation audit changes its supported contract
+
+### Objective
+
+Resolve every pending-removal row owned by Phase 1 against the current implementation, remove any
+obsolete surface that still exists, and leave the ledger naming only work owned by later phases.
+
+### Deliverables
+
+- raw model/grant launch APIs remain absent and execution starts only from the opaque executable
+  capability
+- the live toolchain spawn observes its authority-derived build-memory bound at the point of use;
+  callerless predecessor helpers and bare-capacity budget derivations are absent
+- build-only `GHCRTS` reaches only a specifically relinked image that is intentionally proved to
+  consume it; ordinary dependency builds do not inherit it
+- sampled Darwin evidence fails when the observed peak reaches its admitted account; a rendered
+  ratio is diagnostic output rather than the success predicate
+- the clean Apple Poetry bootstrap writes its exact hash-locked requirements under the held
+  provisioning writer and passes that fixed path to pip; it never relies on pip accepting `-` as
+  a requirements-file path, and exceptional cleanup removes the bounded staging file
+- Darwin Poetry sealing derives one stable `Python.framework/Versions/<version>` home from a
+  bounded descriptor read of the venv's `pyvenv.cfg`, so `PYTHONHOME` contains the standard
+  library as well as the separately hashed site-packages closure
+- every discharged Phase 1 row is deleted from the pending-removal ledger
+
+### Validation
+
+- `./bootstrap/apple-silicon.sh build`
+- `./.build/infernix test lint`
+- `./.build/infernix test unit`
+- `./.build/infernix lint files`
+- `./.build/infernix lint docs`
+- `./.build/infernix lint chart`
+- `./.build/infernix lint proto`
+- `./.build/infernix lint plan`
+- `./.build/infernix docs check`
+
+### Remaining Work
+
+None.
 
 ## Documentation Requirements
 

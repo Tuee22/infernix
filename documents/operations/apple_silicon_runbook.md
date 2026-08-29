@@ -210,7 +210,7 @@ memory](../architecture/bounded_host_memory.md). This disk cache (LRU in
 `python/adapters/model_cache.py`) remains a separate bounded host-daemon resource and is purgeable;
 disk-cache purging is independent of the RAM budget, which is resolved from a checked
 `HostMemoryPartition` splitting host physical RAM into the colima VM pledge, the
-`minHostHeadroomMib` headroom, and the remaining `inferenceCapacity`.
+claimable pool's derived co-tenant headroom, and the remaining `inferenceCapacity`.
 - the Apple host bootstrap uses
 Homebrew-managed `kind`, `kubectl`, `helm`, Node.js, and related operator tools rather than a
 broader manual prerequisite list.
@@ -339,7 +339,7 @@ Host-daemon inference RAM is a separate concern and must not be conflated with t
 envelope. The on-host `infernix service` daemon serializes inference under a single execution lock
 and admits each model against the Apple `InferenceMemoryBudget` — a `HostEnforcedBudget` over a
 checked `HostMemoryPartition` (host physical RAM split into the Colima VM pledge, the
-`minHostHeadroomMib` headroom, and the remaining `inferenceCapacity`; see the "Inference Memory Budget
+claimable pool's derived co-tenant headroom, and the remaining `inferenceCapacity`; see the "Inference Memory Budget
 and Host-Memory Admission" section). A full per-model `infernix test integration` run over the generated
 catalog either completes or fails cleanly per model: a model whose derived requirement exceeds the
 resolved capacity publishes typed `ModelMemoryLimitExceeded` carrying `requiredMib`, `availableMib`,
@@ -362,17 +362,16 @@ instead. Both formulas are owned by
 `infernix init` and `cluster up` compute what the host offers from live host measurements: the
 `resolveAppleHostMemoryPartitionBudget` resolver (`src/Infernix/DemoConfig.hs`) builds a
 `HostEnforcedBudget` over a checked `HostMemoryPartition` minted by
-`mkHostMemoryPartition physicalMib vmReserveMib headroomMib`. Physical RAM (`sysctl -n hw.memsize`) is
-split into `vmReserve` (the Colima VM's pledged memory, `colima list --json`), a `hostHeadroom` fixed
-at `minHostHeadroomMib` = 6144 MiB (covering the OS, the control-plane binary, the routed end-to-end
+`mkHostMemoryPartition physicalMib vmReserveMib`. The constructor first mints one checked
+claimable pool from physical RAM (`sysctl -n hw.memsize`) less `vmReserve` (the Colima VM's pledged
+memory, `colima list --json`), then projects both a 6144 MiB `hostHeadroom` (covering the OS, the control-plane binary, the routed end-to-end
 Playwright browser, and worst-case inter-poll watchdog overshoot), and the remaining
 `inferenceCapacity` = physical − vmReserve − headroom. The smart constructor **rejects**
-oversubscription (capacity < 0) and a headroom below `minHostHeadroomMib`, so an over-pledged host or
-a browser-starving headroom is not constructible. A fixed reserve that omits the routed browser does
+an empty pool or one that cannot retain both the derived headroom and positive inference capacity,
+so an over-pledged host or a browser-starving partition is not constructible. A fixed reserve that omits the routed browser does
 not satisfy this contract. `headroom` covers the four co-tenants named above and **not** the Haskell
-toolchain. The toolchain is not a headroom tenant and is not an additional slice of this partition:
-it draws its account from the same non-virtual-machine pool this partition already divides, so the
-two are alternative occupants admitted one at a time by the exclusive host claim under
+toolchain. The same pool also projects the toolchain account. The complete inference partition and
+the toolchain account are alternative occupants admitted one at a time by the exclusive host claim under
 [bounded host memory](../architecture/bounded_host_memory.md). On a 64 GiB host with a 48 GiB Colima
 pledge, `inferenceCapacity` = 65536 − 49152 − 6144 = 10240 MiB — which with the 6144 MiB headroom
 accounts for the whole 16384 MiB pool, leaving no residue a concurrent toolchain account could be

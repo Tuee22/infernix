@@ -691,8 +691,9 @@ and a **uniform one-engine-per-node policy on every substrate**. Retire the fuse
 Deployments; retire `./.data/object-store/`, the `s3://infernix-runtime/` URI scheme, the
 80-char inline-payload threshold, the `/objects/:objectRef` route, and the chart-reserved
 `infernix-runtime` + `infernix-results` placeholder buckets. Model weights are pulled from
-the new `infernix-models` MinIO bucket on first use via a coordinator-owned exactly-once
-bootstrap workflow; engine pods stage weights into a bounded `emptyDir` cache. See
+the new `infernix-models` MinIO bucket through a coordinator-owned at-least-once bootstrap
+workflow whose producer dedup and terminal sentinel collapse duplicates at the effect; engine pods
+stage weights into a bounded `emptyDir` cache. See
 [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
 and [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md)
 for the authoritative target shape.
@@ -715,7 +716,7 @@ for the authoritative target shape.
 - **Introduce the `infernix/system` Pulsar namespace** carrying the
   `model.bootstrap.request` topic; request message key `modelId` plus
   attempt-scoped producer dedup keyed by `modelId@requestedAt`
-- **Lazy model-weight population to MinIO with exactly-once semantics.** Engine sees an
+- **Lazy model-weight population to MinIO with an effectively-once observable outcome.** Engine sees an
   uncached model → publishes a bootstrap request; the coordinator's third Failover
   subscription (alongside dispatcher and result-bridge) downloads from the upstream URL
   carried in the active substrate `.dhall`, PUTs each file under
@@ -811,8 +812,8 @@ for the authoritative target shape.
   starts with empty `/model-cache`; the next request repopulates from `infernix-models`
   (not from upstream); inference completes
 - Chaos: kill the active coordinator pod mid-bootstrap; surviving coordinator replica
-  resumes; the `.ready` sentinel appears exactly once via producer dedup; no duplicate
-  upstream download
+  resumes; duplicate `.ready` sentinel publications collapse at the effect through producer dedup;
+  no duplicate upstream download
 - Chaos: kill an engine pod mid-inference; Pulsar redelivers the unacked batch; a surviving
   engine on another node rebuilds the KV cache from the conversation log via `prefixHash`;
   producer dedup on `inference.result.<mode>` prevents a duplicate result
@@ -1216,7 +1217,7 @@ and the multi-user throughput / fan-in batching / fan-out test.
     `.ready` sentinel; surviving coordinator replica resumes (the Failover subscription,
     attempt-scoped request dedup, and MinIO `.ready` guard prevent duplicate effective
     population); the `.ready`
-    sentinel appears exactly once; waiting engines observe ready and proceed
+    duplicate sentinel publications collapse at the effect; waiting engines observe ready and proceed
   - **Concurrent bootstrap requests**: N engine pods request the same uncached model
     simultaneously; producer dedup + Pulsar Failover guarantees exactly one upstream
     download; all N engines observe the `.ready` sentinel and proceed
@@ -1225,7 +1226,7 @@ and the multi-user throughput / fan-in batching / fan-out test.
     `Pending` with the anti-affinity rejection; the older Apple duplicate-daemon
     `engine.lock held by PID ...` diagnostic is historical and superseded by host-id pool
     membership plus pinned `Exclusive` routes
-  each case asserts exactly-once outcome and full state preservation
+  each case asserts an effectively-once observable outcome and full state preservation
 - model-cache eviction test: trigger model loads until `/model-cache` size pressure
   exists; assert the adapter helper evicts LRU entries; assert the engine pod is not
   restarted by kubelet for ephemeral-storage exhaustion

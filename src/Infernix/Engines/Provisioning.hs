@@ -108,6 +108,7 @@ module Infernix.Engines.Provisioning
     executableMutationDuringHashRejectedForTest,
     relocationCandidateByteBoundForTest,
     validateRelocationCandidateByteSequenceForTest,
+    darwinPoetryFrameworkHomeFromPyvenvForTest,
     ProvisioningClosureBound (..),
     provisioningClosureBoundForTest,
     MachOClosureDimensions (..),
@@ -1637,9 +1638,7 @@ resolvePoetryPackageClosure interpreterPath = do
   result <-
     try @IOException $ do
       sitePackagesRoot <- resolvePoetrySitePackagesRoot interpreterPath
-      pythonExecutable <- Directory.canonicalizePath interpreterPath
-      let pythonHomeRoot =
-            takeDirectory (takeDirectory pythonExecutable)
+      pythonHomeRoot <- resolvePoetryPythonHome interpreterPath
       pthRoots <- readPoetryPthRoots sitePackagesRoot
       pythonHome <-
         resolvePackageClosureIdentity
@@ -1680,6 +1679,114 @@ resolvePoetryPackageClosure interpreterPath = do
         (ioError (userError "complete Poetry runtime closure exceeds its fixed bound"))
       pure closures
   pure (either (Left . displayException) Right result)
+
+resolvePoetryPythonHome :: FilePath -> IO FilePath
+resolvePoetryPythonHome interpreterPath
+  | SystemInfo.os /= "darwin" =
+      takeDirectory . takeDirectory
+        <$> Directory.canonicalizePath interpreterPath
+  | otherwise =
+      mask $ \restore -> do
+        let venvRoot = takeDirectory (takeDirectory interpreterPath)
+        listedStatus <- Posix.getSymbolicLinkStatus venvRoot
+        descriptor <-
+          openFd
+            venvRoot
+            ReadOnly
+            defaultFileFlags
+              { nofollow = True,
+                directory = True,
+                cloexec = True
+              }
+        finallyPreservingPrimary
+          ( restore $ do
+              openedStatus <- Posix.getFdStatus descriptor
+              unless
+                ( Posix.isDirectory openedStatus
+                    && stableExecutableStatus listedStatus openedStatus
+                )
+                (ioError (userError "Poetry venv changed before Python-home resolution"))
+              configDescriptor <-
+                openFdAt
+                  (Just descriptor)
+                  "pyvenv.cfg"
+                  ReadOnly
+                  defaultFileFlags
+                    { nofollow = True,
+                      nonBlock = True,
+                      cloexec = True
+                    }
+              frameworkHome <-
+                finallyPreservingPrimary
+                  ( do
+                      configStatus <- Posix.getFdStatus configDescriptor
+                      unless
+                        ( Posix.isRegularFile configStatus
+                            && fromIntegral (Posix.fileSize configStatus)
+                              <= maximumRelocationConfigBytes
+                        )
+                        (ioError (userError "Poetry pyvenv.cfg is not a bounded regular file"))
+                      contents <-
+                        readExactProvisioningDescriptorBytes
+                          configDescriptor
+                          (fromIntegral (Posix.fileSize configStatus))
+                      text <-
+                        either
+                          (ioError . userError . ("Poetry pyvenv.cfg is not UTF-8: " <>) . show)
+                          pure
+                          (TextEncoding.decodeUtf8' contents)
+                      home <-
+                        either
+                          (ioError . userError)
+                          pure
+                          (darwinPoetryFrameworkHomeFromPyvenvForTest text)
+                      finalConfigStatus <- Posix.getFdStatus configDescriptor
+                      reopenedConfigStatus <- reopenFileEntryStatus descriptor "pyvenv.cfg"
+                      unless
+                        ( stableExecutableStatus configStatus finalConfigStatus
+                            && stableExecutableStatus finalConfigStatus reopenedConfigStatus
+                        )
+                        (ioError (userError "Poetry pyvenv.cfg changed during Python-home resolution"))
+                      pure home
+                  )
+                  (closeFd configDescriptor)
+              canonicalHome <- Directory.canonicalizePath frameworkHome
+              homeStatus <- Posix.getSymbolicLinkStatus canonicalHome
+              finalStatus <- Posix.getFdStatus descriptor
+              finalPathStatus <- Posix.getSymbolicLinkStatus venvRoot
+              unless
+                ( normalise canonicalHome == normalise frameworkHome
+                    && Posix.isDirectory homeStatus
+                    && stableExecutableStatus openedStatus finalStatus
+                    && stableExecutableStatus finalStatus finalPathStatus
+                )
+                (ioError (userError "Poetry Python framework home is not a stable real directory"))
+              pure canonicalHome
+          )
+          (closeFd descriptor)
+
+darwinPoetryFrameworkHomeFromPyvenvForTest ::
+  Text ->
+  Either String FilePath
+darwinPoetryFrameworkHomeFromPyvenvForTest contents = do
+  let homeValues =
+        [ Text.unpack value
+        | line <- Text.lines contents,
+          Just value <- [Text.stripPrefix "home = " line]
+        ]
+  home <- requireSinglePyvenvValue "home" homeValues
+  let frameworkHome = takeDirectory home
+      frameworkComponents = splitDirectories (normalise frameworkHome)
+  unlessEither
+    ( validNormalizedAbsolutePath home
+        && takeFileName home == "bin"
+        && case reverse frameworkComponents of
+          version : "Versions" : "Python.framework" : _ ->
+            validFixedPathComponent version
+          _ -> False
+    )
+    "Poetry pyvenv.cfg home is not a fixed Darwin Python.framework version"
+  pure frameworkHome
 
 data MachOInspection = MachOInspection
   { machODependencies :: ![FilePath],
@@ -12982,15 +13089,43 @@ installPinnedPoetryBootstrap
             homeRoot
             poetryHome
         )
-    runProvisioningCommandWithExecutableInWriter
-      homeRoot
-      components
-      grant
-      deadline
-      identity
-      []
-      []
-      (Internal.InstallPoetryBootstrap poetryHome)
+    let requirementsPath =
+          poetryHome </> Internal.poetryBootstrapRequirementsRelativePath
+        install =
+          runProvisioningCommandWithExecutableInWriter
+            homeRoot
+            components
+            grant
+            deadline
+            identity
+            []
+            []
+            (Internal.InstallPoetryBootstrap poetryHome)
+    ProvisioningSession $
+      finallyPreservingPrimary
+        ( do
+            writeAuthorizedRegularFile
+              "Poetry bootstrap requirements"
+              homeRoot
+              requirementsPath
+              ( TextEncoding.encodeUtf8
+                  (Text.pack (unlines Internal.pinnedPoetryBootstrapRequirements))
+              )
+            validateWriterRootIdentity
+              "Poetry bootstrap requirements"
+              homeRoot
+            case install of
+              ProvisioningSession action -> action
+        )
+        ( do
+            removeAuthorizedLeafThroughKernel
+              "Poetry bootstrap requirements cleanup"
+              homeRoot
+              requirementsPath
+            validateWriterRootIdentity
+              "Poetry bootstrap requirements cleanup"
+              homeRoot
+        )
 
 upgradePinnedPip ::
   EngineWriter w s q ->

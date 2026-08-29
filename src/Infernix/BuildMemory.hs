@@ -26,14 +26,13 @@
 -- the shape that refuses the obvious wrong fix: a 48 GiB per-process heap cap
 -- under @jobs: \$ncpus@ on a 32-core host permits 1536 GiB.
 --
--- __The bound is lower-only and fails closed.__ 'establishBoundedBuildMemory'
--- follows 'Infernix.DescriptorSpace' exactly: it never raises a tighter
--- host-imposed limit, it writes both the soft /and/ the hard limit (lowering
--- only the soft one would leave a bound any child could raise back), and it
--- refuses by name when the limit cannot be observed as bounded afterwards.
--- 'requireBoundedBuildMemory' is the observation at the point of use, so a
--- process image that never established the bound is a loud, attributable
--- failure instead of an unbounded compile.
+-- __The bound is observed at the point of use.__
+-- 'requireBoundedBuildMemory' reads the mechanism immediately before a
+-- toolchain child starts. 'withBoundedToolchainChild' temporarily lowers the
+-- soft address-space limit on a lane that supports it and restores the
+-- long-lived operator image afterward; on Darwin it verifies the committed
+-- jobs, heap cap, and reservation instead of claiming a kernel mechanism the
+-- platform does not provide.
 --
 -- __The reservation comes first.__ Lowering @RLIMIT_AS@ below a reservation the
 -- runtime has already taken succeeds and then kills the process on its next
@@ -88,7 +87,6 @@ module Infernix.BuildMemory
     buildMemoryBoundCeilingMib,
     enforcedAddressCeilingMib,
     renderBuildMemoryBound,
-    establishBoundedBuildMemory,
     requireBoundedBuildMemory,
 
     -- * Toolchain spawn boundary
@@ -179,7 +177,7 @@ import System.Info (os)
 import System.Posix.Resource
   ( Resource (ResourceTotalMemory),
     ResourceLimit (ResourceLimit, ResourceLimitInfinity, ResourceLimitUnknown),
-    ResourceLimits (ResourceLimits, hardLimit, softLimit),
+    ResourceLimits (hardLimit, softLimit),
     getResourceLimit,
     setResourceLimit,
   )
@@ -515,94 +513,6 @@ deriveBuildMemoryPlan budget concurrency
       availableCompilerMib `div` jobs
     processAddressMibInteger =
       toInteger perProcessHeapMib * toInteger heapToAddressSpaceMultiplier
-
--- | Lower this process image's address-space limit to the plan's per-process
--- ceiling if it is not already at or below it.
---
--- Both the soft and the hard limit are written: lowering only the soft limit
--- would leave a bound any child could raise back, and lowering the hard limit
--- is unprivileged and one-way. The bound is inherited across @fork@ and
--- @exec@, so @cabal@, compiler images, and their worker-associated helpers each
--- carry the identical limit without doing anything themselves.
---
--- Fails closed: if the limit cannot be observed as bounded after the write, the
--- process image refuses to continue rather than proceeding to an unbounded
--- compile.
--- On a lane with no address-space enforcement there is nothing to install, so
--- this observes the mechanism that lane /does/ have — the committed runtime heap
--- cap — rather than minting evidence from the caller's own argument. A bound
--- that witnessed nothing would be worse than no bound at all: it would carry the
--- module's authority with none of its content.
--- Phase 6 Sprint 6.46: this is the validation-only installer, and saying so is
--- the correction. It lowers the hard limit as well as the soft one, which is
--- one-way and unprivileged, so it is safe only in a process image whose whole
--- purpose is the build it is about to run. No such production image exists here:
--- the authority is held by the long-lived operator CLI, which also starts
--- @kubectl@, @helm@, and a routed end-to-end browser, and bounding those would
--- be a defect. The production boundary is 'withBoundedToolchainChild', which
--- lowers the soft limit for the lifetime of one child and then observes the
--- bound through 'requireBoundedBuildMemory'. Presenting this function as a
--- supported production path would claim a guarantee no supported path can reach;
--- its real caller is the enforced-lane fixture, which constructs a genuine
--- inherited bound to assert inheritance and lower-only preservation against.
-establishBoundedBuildMemory ::
-  FilePath ->
-  BuildMemoryPlan ->
-  IO
-    ( Either
-        (BuildMemoryBound 'AddressSpaceUnavailable)
-        (BuildMemoryBound 'AddressSpaceEnforced)
-    )
-establishBoundedBuildMemory repoRootPath plan = do
-  resolved <- resolveBuildMemoryMechanism
-  case resolved of
-    Left reason ->
-      ioError
-        ( userError
-            ( "no host memory mechanism resolves on this lane, so a build "
-                <> "memory bound cannot be established: "
-                <> reason
-            )
-        )
-    Right (UnenforcedLane mechanism) ->
-      Left <$> observeHeapCapOnlyBound repoRootPath plan mechanism
-    Right (EnforcedLane mechanism) ->
-      Right <$> establishEnforcedAddressSpaceBound plan mechanism
-
-establishEnforcedAddressSpaceBound ::
-  BuildMemoryPlan ->
-  BuildMemoryMechanism 'AddressSpaceEnforced ->
-  IO (BuildMemoryBound 'AddressSpaceEnforced)
-establishEnforcedAddressSpaceBound plan mechanism = do
-  limits <- getResourceLimit ResourceTotalMemory
-  case boundedAddressLimit ceilingMib (softLimit limits) of
-    Just alreadyBounded ->
-      pure (EnforcedAddressSpaceBound alreadyBounded mechanism)
-    Nothing -> do
-      target <- targetAddressLimit ceilingMib limits
-      setResourceLimit
-        ResourceTotalMemory
-        ResourceLimits {softLimit = target, hardLimit = target}
-      confirmed <- getResourceLimit ResourceTotalMemory
-      case boundedAddressLimit ceilingMib (softLimit confirmed) of
-        Just bounded -> pure (EnforcedAddressSpaceBound bounded mechanism)
-        Nothing ->
-          ioError
-            ( userError
-                ( "the address-space soft limit is still "
-                    <> renderResourceLimit (softLimit confirmed)
-                    <> " after lowering it to the derived per-process ceiling of "
-                    <> show ceilingMib
-                    <> " MiB ("
-                    <> show (planBudgetMib plan)
-                    <> " MiB budget / "
-                    <> show (planJobs plan)
-                    <> " jobs); a toolchain process started from this image "
-                    <> "would compile unbounded"
-                )
-            )
-  where
-    ceilingMib = planProcessAddressMib plan
 
 -- | Observe the bound immediately before a toolchain spawn.
 --
@@ -1223,9 +1133,6 @@ withToolchainSpawnAuthority repoRootPath plan action
 -- limit back within the inherited hard limit. No toolchain does, and the
 -- repository-owned boundary is the closed vocabulary, this authority, and the
 -- lint that rejects a raw toolchain spawn beside the package-owned caller.
--- 'establishBoundedBuildMemory' remains the stronger form for a process image
--- dedicated to a build, where lowering the hard limit costs nothing.
---
 -- The ceiling is held only on a lane that implements one. Darwin aliases
 -- @RLIMIT_AS@ to the advisory @RLIMIT_RSS@ and rejects a finite soft limit
 -- against the infinite hard limit it reports, so @setrlimit@ returns @EINVAL@

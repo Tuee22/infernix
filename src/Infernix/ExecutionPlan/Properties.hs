@@ -256,17 +256,17 @@ assertUnderivableRequirementRefusal =
 assertDaemonTopicCapabilityProperties :: IO ()
 assertDaemonTopicCapabilityProperties = do
   runtimePlan <- requireCapabilityRuntimePlan
-  capabilityAuthority <- CappedEngine.newEngineExecutionAuthority
+  executionPlan <- CappedEngine.newEngineExecutionPlan runtimePlan
   firstCapabilities <-
     either
       fail
       pure
-      (Pulsar.engineTopicCapabilities sampleMemberId runtimePlan capabilityAuthority)
+      (Pulsar.engineTopicCapabilities sampleMemberId executionPlan)
   secondCapabilities <-
     either
       fail
       pure
-      (Pulsar.engineTopicCapabilities secondMemberId runtimePlan capabilityAuthority)
+      (Pulsar.engineTopicCapabilities secondMemberId executionPlan)
   firstCapability <-
     requireCapability sampleTopic firstCapabilities
   secondCapability <-
@@ -283,7 +283,7 @@ assertDaemonTopicCapabilityProperties = do
   assert
     (not (Pulsar.daemonTopicCapabilityAuthorizesModel secondCapability sampleModelId))
     "the second engine topic capability rejects the first member/topic route"
-  case Pulsar.engineTopicCapabilities "unauthorized-member" runtimePlan capabilityAuthority of
+  case Pulsar.engineTopicCapabilities "unauthorized-member" executionPlan of
     Left _ -> pure ()
     Right _ ->
       fail "an engine topic capability was minted for an unknown daemon member"
@@ -383,12 +383,12 @@ runExecutableLaunchBoundaryProperties paths = do
     (not artifactsPresent)
     "request-model mismatch guards run before cache, setup, result, or process artifacts are created"
   runtimePlan <- requireCapabilityRuntimePlan
-  capabilityAuthority <- CappedEngine.newEngineExecutionAuthority
+  executionPlan <- CappedEngine.newEngineExecutionPlan runtimePlan
   engineCapabilities <-
     either
       fail
       pure
-      (Pulsar.engineTopicCapabilities sampleMemberId runtimePlan capabilityAuthority)
+      (Pulsar.engineTopicCapabilities sampleMemberId executionPlan)
   engineCapability <-
     requireCapability sampleTopic engineCapabilities
   let poisonRoot = buildRoot paths </> "engine-poison-message-properties"
@@ -463,12 +463,12 @@ assertEngineMemoryAdmissionRejection paths = do
               <> show (NonEmpty.toList errors)
           )
       Right refined -> pure refined
-  admissionAuthority <- CappedEngine.newEngineExecutionAuthority
+  executionPlan <- CappedEngine.newEngineExecutionPlan runtimePlan
   capabilities <-
     either
       fail
       pure
-      (Pulsar.engineTopicCapabilities secondMemberId runtimePlan admissionAuthority)
+      (Pulsar.engineTopicCapabilities secondMemberId executionPlan)
   capability <- requireCapability secondTopic capabilities
   let admissionRoot = buildRoot paths </> "engine-admission-properties"
       admissionPaths = isolatedPropertyPaths paths admissionRoot

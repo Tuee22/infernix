@@ -12,11 +12,12 @@
 ## TL;DR
 
 - **The capacity ledger has one claimable pool and two alternative occupants.**
-  [bounded_inference_memory.md](bounded_inference_memory.md) partitions physical RAM into
-  `vmReserve + headroom + inferenceCapacity` for a serialized inference. The Haskell toolchain draws
-  its account from that same pool, so the two are alternatives rather than addends: an exclusive
-  host claim admits one of them at a time, and a plan that sums both against one pool is a ledger
-  error rather than a funded account.
+  [bounded_inference_memory.md](bounded_inference_memory.md) mints the pool from physical RAM less
+  `vmReserve`, then derives co-tenant headroom and positive inference capacity from it. The Haskell
+  toolchain account is another projection of that same pool, so the complete inference partition
+  and the toolchain are alternatives rather than addends: an exclusive host claim admits one of
+  them at a time, and a plan that sums both against one pool is a ledger error rather than a funded
+  account.
 - **Measurement anchors the toolchain account.** A host-side `cabal build` from this checkout
   reached 109.46 GiB resident on a 124.94 GiB host while running at `oom_score_adj` 0 and therefore
   demonstrated why compiler concurrency, heap, helper slots, and victim rank must travel together.

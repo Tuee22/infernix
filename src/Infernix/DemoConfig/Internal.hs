@@ -475,9 +475,9 @@ resolveInferenceMemoryBudget paths runtimeMode =
 
 -- | Phase 4 Sprint 4.31 — resolve the @apple-silicon@ host-enforced budget as a
 -- checked 'HostMemoryPartition'. Physical host RAM is partitioned into the colima
--- VM pledge (@vmReserve@), a fixed 'minHostHeadroomMib' held back for the OS +
--- control-plane binary + routed-E2E browser, and the remaining inference
--- capacity. The @minHostHeadroomMib@ floor supersedes the fixed
+-- VM pledge (@vmReserve@), the shared claimable pool's co-tenant headroom for
+-- the OS + control-plane binary + routed-E2E browser, and the remaining
+-- inference capacity. The pool policy's 6144 MiB term supersedes the fixed
 -- @appleHostReserveMib = 3072@ that did not cover the routed browser and allowed
 -- a host OOM. If the colima pledge plus headroom oversubscribe physical RAM the
 -- partition fails construction and inference capacity fail-closes to zero
@@ -496,7 +496,7 @@ resolveAppleHostMemoryPartitionBudget paths = do
   partition <-
     case resolved :: Either SomeException (Int, Int) of
       Right (physicalMib, colimaMib) ->
-        case mkHostMemoryPartition physicalMib colimaMib minHostHeadroomMib of
+        case mkHostMemoryPartition physicalMib colimaMib of
           Right resolvedPartition -> pure resolvedPartition
           -- Phase 4 Sprint 4.34: discovery worked and the answer is that this
           -- host cannot fund any inference. The retired behaviour substituted a
@@ -539,7 +539,7 @@ observeAppleHostMemoryPartition paths = do
         either
           (const Nothing)
           Just
-          (mkHostMemoryPartition physicalMib colimaMib minHostHeadroomMib)
+          (mkHostMemoryPartition physicalMib colimaMib)
 
 requireFallbackPartition :: Int -> IO HostMemoryPartition
 requireFallbackPartition capacityMib =

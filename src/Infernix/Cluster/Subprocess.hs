@@ -4562,9 +4562,10 @@ renderProvisioningCommand environment command =
               "--index-url",
               "https://pypi.org/simple",
               "-r",
-              "-"
+              poetryHome
+                </> Provisioning.poetryBootstrapRequirementsRelativePath
             ]
-            (unlines Provisioning.pinnedPoetryBootstrapRequirements)
+            ""
             "install exact hash-locked Poetry bootstrap"
             poetryHome
         )

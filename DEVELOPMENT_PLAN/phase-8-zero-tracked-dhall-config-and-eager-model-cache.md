@@ -521,7 +521,7 @@ match against the hosting pod's `memory.max`. Refining in a coordinator pod woul
 fail against a legitimately different limit or, worse, succeed against a ceiling no inference will
 run under — manufacturing evidence about a resource the process does not use. The property
 refinement exists to establish is discharged where launches happen: it mints the single-flight
-`EngineExecutionAuthority` that `publishedResultFromRequest` requires, and neither non-engine role
+`EngineExecutionPlan` that `publishedResultFromRequest` requires, and neither non-engine role
 launches an inference subprocess. Deliverable 4 is therefore scoped to the role that launches
 inference, and reads as satisfied. Recorded in
 [../documents/architecture/typed_execution_plan.md](../documents/architecture/typed_execution_plan.md).

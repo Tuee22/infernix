@@ -3034,8 +3034,7 @@ process that later starts `kubectl`, `helm`, and a routed end-to-end browser. Lo
 limit is one-way, so it would bound all of those too, and a Chromium under a build ceiling is a
 defect. What that costs is stated in the code rather than hidden: a child could raise its own soft
 limit back within the inherited hard limit. No toolchain does, and
-`establishBoundedBuildMemory` remains the stronger both-limits form for a process image dedicated to
-a build.
+the closed invocation vocabulary plus the point-of-use observation keep the supported path bounded.
 
 **The plan is derived from a live measurement rather than from the manifest's recorded facts.** The
 two can disagree: the manifest records what the machine looked like when `infernix init` last ran,
@@ -3083,16 +3082,11 @@ All four are landed.
   produced the value it protects. The observed arm is cross-checked against the mechanism the region
   resolved, so a cgroup maximum appearing or vanishing between the two calls is a refusal naming both
   answers rather than a silent preference for one.
-  `establishBoundedBuildMemory` — the stronger both-limits installer — is **not** given a production
-  caller, and the claim is narrowed instead of the code being deleted. Lowering the hard limit is
-  one-way and unprivileged, so it is safe only in a process image whose whole purpose is the build it is
-  about to run, and no supported production path is such an image: the authority is held by the
-  long-lived operator CLI, which also starts `kubectl`, `helm`, and a routed browser. It is therefore
-  recorded in code and doctrine as the validation-only installer whose real caller is the enforced-lane
-  fixture, which needs a genuine inherited bound to assert inheritance and lower-only preservation
-  against. Deleting it and hand-rolling a weaker installer inside that fixture would have removed a
-  working post-write-verified installer to satisfy the letter of the finding while reducing what the
-  suite proves.
+  No permanent both-limits installer remains in the production module. Lowering the hard limit is
+  one-way and would incorrectly bind the long-lived operator CLI that later starts `kubectl`, `helm`,
+  and the routed browser. The compiler-chain and clean over-allocation checks therefore run inside
+  the same temporary `withBoundedToolchainChild` region as production instead of preserving a
+  validation-only authority surface.
 - **Admission at the boundary.** `withToolchainSpawnAuthority` consumes
   `observeToolchainHostAdmission` when the authority is minted — an observation of available host memory
   plus a census of foreign toolchain claimants, either failing being a refusal that reports what it
@@ -3570,7 +3564,7 @@ pod scheduled onto it, an operator's own process, anything outside this reposito
 groups — reduces what is free without changing what is total. Admission is against capacity by
 doctrine, so a competing tenant changes nothing about what was admitted; what it changes is whether
 the admitted arena can actually be taken. That difference is observed rather than assumed away: the
-free reading is taken inside the region `EngineExecutionAuthority` serializes, immediately before
+free reading is taken inside the region enclosed by `EngineExecutionPlan`, immediately before
 the engine is started, and a shortfall is a named refusal carrying the free bytes observed and the
 arena required, rather than a device allocation failure surfacing later as an engine crash with two
 empty captured streams.

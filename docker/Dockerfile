@@ -164,9 +164,9 @@ COPY python/pyproject.toml /workspace/python/pyproject.toml
 
 # Clean-image seed envelope: each Cabal invocation is one 4096 MiB compiler
 # plus the live driver and one worker auxiliary at 1024 MiB each (6144 MiB
-# total). GHCRTS is scoped to each command so it cannot leak into image runtime;
-# the compiler heap/address flags and final jobs value override project/config
-# files at the child boundary.
+# total). Driver and compiler caps are carried on each invocation; the compiler
+# heap/address flags and final jobs value override project/config files at the
+# child boundary.
 #
 # The two steps that build third-party packages deliberately do NOT export
 # GHCRTS. A `build-type: Custom` dependency compiles its own `Setup` program,
@@ -181,7 +181,7 @@ COPY python/pyproject.toml /workspace/python/pyproject.toml
 # linked `-rtsopts=ignore -with-rtsopts=-M1024M`: that is the one binary this
 # image later runs *with* GHCRTS set, so it must be built to admit it.
 RUN mkdir -p /workspace/.build /workspace/tools/generated_proto \
-    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS update \
+    && cabal +RTS -M1024M -RTS update \
     && cabal +RTS -M1024M -RTS \
          build all --only-dependencies \
          --jobs=1 \
@@ -427,7 +427,7 @@ RUN printf '%s\n' \
 # this base venv, so removing `hf_xet` forces the un-throttled HTTP fallback. This
 # is a dependency-level removal, not an env var, per the configuration doctrine.
 # The two retained Cabal steps repeat the same closed 6144 MiB seed envelope;
-# they are sequential and the build-only GHCRTS value is not an ENV layer.
+# they are sequential and carry their driver/compiler caps on the invocation.
 RUN mkdir -p /workspace/tools/generated_proto \
     && poetry install --directory python \
     && cp -aL /usr/lib/python3.12/. /workspace/python/.venv/lib/python3.12/ \
@@ -437,11 +437,11 @@ RUN mkdir -p /workspace/tools/generated_proto \
          --python_out /workspace/tools/generated_proto \
          /workspace/proto/infernix/manifest/runtime_manifest.proto \
          /workspace/proto/infernix/runtime/inference.proto \
-    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS \
+    && cabal +RTS -M1024M -RTS \
          build all \
          --jobs=1 \
          '--ghc-options=+RTS -M4096M -xr12288M -RTS' \
-    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS \
+    && cabal +RTS -M1024M -RTS \
          install \
          --installdir=/workspace/.build \
          --install-method=copy \

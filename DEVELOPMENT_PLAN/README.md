@@ -13,16 +13,19 @@ govern this plan.
 
 ## Current execution gate
 
-Phases 0 through 9 are `Done`; no execution gate is open. Phase 6 Sprint 6.51 closes the final
-selected CUDA cohort with Linux GPU host-ceiling calibration, live device-backstop and
-competing-tenant observations, and current `linux-gpu` plus same-host `linux-cpu` full suites.
+Phases 0 and 1 are `Done`; Sprint 0.27 closes the plan-level delivery language on the supported
+at-least-once transport with an effectively-once observable outcome, and Sprint 1.40 closes its
+build-memory and capability cleanup rows against the live implementation. Phase 4 Sprint 4.45 has
+complete code-side closure and remains `Active` on its selected cohort gate in
+[Wave 4.45](cohort-validation-waves.md). The other phases retain the status earned by their own
+scope under Section C.
 
 The Bounded Engine Launch host and device halves remain separate contracts on separate accelerators.
 Phase 4 owns the artifact-derived, resource-indexed host requirement, unified charged-field sampling,
 installed host ceiling, and execution-shape propagation. Phase 6 owns device admission, arena sizing,
 and the sampled device backstop; no lane claims a kernel device-memory bound.
 
-There are no open items or blockers.
+The current gate is Phase 4 Sprint 4.45's selected cohort validation wave.
 
 Under Section C, an earlier phase reopening does not revert a later one: each phase's `Done` is scoped
 to its own deliverables and validation gate.
@@ -81,7 +84,8 @@ contract.
 
 ## Current Repo Assessment
 
-Phases 0 through 9 are `Done` with no open sprint. Phase 4's Bounded Engine Launch host half passes
+Phases 0 and 1 are `Done`; Phase 4 Sprint 4.45 is `Active`; the other phases retain `Done` for their
+own scope. Phase 4's earlier Bounded Engine Launch host half passes
 on the selected Apple accelerator plus `linux-cpu`. Phase 6 Sprint 6.51 closes the device half and
 the Linux GPU host calibration on the selected CUDA accelerator plus same-host `linux-cpu`; device
 memory remains honestly detection-only because no supported kernel mechanism bounds it.
@@ -266,11 +270,11 @@ construction, `nvkind`, or NVIDIA scheduling.
 
 | Phase | Current status | Current gate and retained implementation state |
 |-------|----------------|----------------------------------------|
-| 0 | Done | Every sprint is closed on the machine-independent gate set. Sprint 0.25 made a phase's status describe only its own scope, so an earlier phase gaining sprints no longer reverts a later one, and added the forward-ownership scan that enforces the converse: fifteen places where a phase placed an obligation with a later one, now zero. Sprints 0.19 and 0.21 re-closed on the corrected host-memory ledger: one claimable pool with two alternative occupants, admission against observed availability plus a foreign-claimant census, the account scoped to the governed Cabal invocation, and an Apple lane that engages no operating-system mechanism at all. `infernix lint plan` implements the Section C, D, I, J, and Q scans mechanically, the corpus reports them at zero, and the scans run inside `infernix test lint`, so the standards are enforced rather than remembered. Machine-independent — this phase carries no accelerator cohort and blocks no accelerator phase. |
-| 1 | Done | Every sprint is closed on the Apple accelerator plus its paired `linux-cpu` cohort. |
+| 0 | Done | Sprint 0.27 aligns all plan-level delivery claims with at-least-once transport and an effectively-once observable outcome; the machine-independent plan/docs gates pass. |
+| 1 | Done | Sprint 1.40 removes its obsolete build-memory surfaces, makes clean Poetry bootstrap and Darwin framework sealing exact, and passes the governed Apple build, aggregate lint, complete unit gates, and standalone repository lints. |
 | 2 | Done | Every sprint is closed. Sprint 2.17 validates the single-binary registry bootstrap on the selected `linux-gpu` accelerator plus `linux-cpu`, including a populated second reconcile and stateless registry-pod reschedule. |
 | 3 | Done | Every sprint is closed. Sprint 3.17 validates anonymous single-binary registry publication, the routed catalog, populated backing, and stateless pod rescheduling on the selected `linux-gpu` accelerator plus `linux-cpu`; Sprint 3.16 enforces the one-worker topology, and Sprints 3.14 and 3.15 own the readiness and bounded-publication evidence boundaries. |
-| 4 | Done | Every sprint is closed. Sprints 4.37 through 4.42 validate the Bounded Engine Launch host half on the selected `apple-silicon` accelerator plus `linux-cpu`: Apple declares detection-only, calibrated Linux CPU declares prevention, derivable LLM rows return real output, underivable artifact families fail closed with typed reasons, and the full unit, integration, recovery, and routed browser surfaces pass. |
+| 4 | Active | Sprint 4.45 audits and removes the remaining runtime ledger surfaces: serialized execution authority encapsulation, per-invocation Linux grant enforcement, shared-pool headroom accounting, and fail-closed explicit member identity. Earlier Bounded Engine Launch receipts remain valid for their closed scope. |
 | 5 | Done | Every sprint is closed and no code-side work is open. |
 | 6 | Done | Every sprint is closed. Sprint 6.51 validates the device arena/backstop quantity, calibrated Linux GPU host prevention, detection-only NVIDIA device semantics, live competing-tenant refusal, and current `linux-gpu` plus same-host `linux-cpu` full suites. |
 | 7 | Done | Every sprint is closed and no code-side work is open. |

@@ -71,8 +71,6 @@ import Infernix.BuildMemory
     darwinBuildMemorySampleIntervalMicros,
     deriveBuildMemoryPlan,
     emptyDarwinBuildMemorySamples,
-    enforcedAddressCeilingMib,
-    establishBoundedBuildMemory,
     heapToAddressSpaceMultiplier,
     maximumBuildJobs,
     minimumProcessAddressMib,
@@ -387,8 +385,8 @@ import System.Posix.IO qualified as PosixIO
 import System.Posix.IO.ByteString qualified as PosixByteString
 import System.Posix.Process (ProcessStatus (..), createProcessGroupFor, exitImmediately, forkProcess, getProcessGroupID, getProcessID, getProcessStatus, joinProcessGroup)
 import System.Posix.Resource
-  ( Resource (ResourceOpenFiles, ResourceTotalMemory),
-    ResourceLimit (ResourceLimit, ResourceLimitInfinity, ResourceLimitUnknown),
+  ( Resource (ResourceOpenFiles),
+    ResourceLimit (ResourceLimit),
     ResourceLimits (softLimit),
     getResourceLimit,
     setResourceLimit,
@@ -623,19 +621,9 @@ runAppleSmallMemoryFixture = do
 
 -- | Phase 1 Sprint 1.21 — the bounded host build-memory kernel.
 --
--- Every case that installs a ceiling runs in a spawned child, never in this
--- process image, and the reason is the property the module documents: a
--- process cannot lower its own address-space limit below a reservation its
--- runtime has already taken. This suite's own image reserves the default
--- 1024.65 GiB, so lowering @RLIMIT_AS@ here would succeed and then kill the
--- suite on its next allocation. The children are therefore re-execs of this
--- same binary with an explicit @+RTS -xr@ reservation, which is exactly the
--- shape the built @infernix@ executable bakes through @-with-rtsopts@.
---
--- The installed bound is also one-way within a process: 'establishBoundedBuildMemory'
--- lowers the hard limit as well as the soft one, so it cannot be restored.
--- That is deliberate — a bound a child can raise back is not a bound — and it
--- is the second reason these cases are not run in-process.
+-- The behavioural child enters the same temporary, authority-derived soft
+-- ceiling region the production CLI uses. The long-lived parent restores its
+-- original limit when that region exits.
 buildMemoryFixturePlan :: Int -> Int -> IO BuildMemoryPlan
 buildMemoryFixturePlan budgetMib jobs =
   case mkBuildMemoryBudget budgetMib of
@@ -646,16 +634,6 @@ buildMemoryFixturePlan budgetMib jobs =
         Right concurrency ->
           either fail pure (deriveBuildMemoryPlan budget concurrency)
 
--- | The refusal has to name the spawning surface, so an unbounded process
--- image is attributable from one line of output rather than from a compile
--- that quietly grows to a third of the machine.
-buildMemoryRefusalNamesSurface :: Either IOException value -> Bool
-buildMemoryRefusalNamesSurface outcome =
-  case outcome of
-    Left failure ->
-      "unit build-memory negative case" `isInfixOf` displayException failure
-    Right _ -> False
-
 -- | A clean refusal is a positive exit status. GHC reports a signal death as a
 -- /negative/ 'ExitFailure', so this also rejects the process being killed
 -- rather than failing.
@@ -665,25 +643,12 @@ isCleanFailureExit exitCode =
     ExitFailure status -> status > 0
     ExitSuccess -> False
 
-softAddressLimitMib :: IO (Maybe Integer)
-softAddressLimitMib = do
-  limits <- getResourceLimit ResourceTotalMemory
-  pure $
-    case softLimit limits of
-      ResourceLimit value -> Just (value `div` (1024 * 1024))
-      ResourceLimitInfinity -> Nothing
-      ResourceLimitUnknown -> Nothing
-
 dispatchBuildMemoryFixture :: IO ()
 dispatchBuildMemoryFixture = do
   arguments <- getArgs
   case arguments of
     ["__infernix_unit_build_memory_bound_fixture", scratchDirectory] ->
       runBuildMemoryBoundFixture scratchDirectory
-    ["__infernix_unit_build_memory_report_fixture"] -> do
-      observed <- softAddressLimitMib
-      putStrLn (maybe "unbounded" show observed)
-      exitSuccess
     ["__infernix_unit_build_memory_overallocation_fixture"] -> do
       -- Twice the ceiling the parent installed. Under the inherited limit the
       -- runtime's reservation is clamped below the ceiling, so this request is
@@ -1022,7 +987,13 @@ runBuildMemoryBoundFixture scratchDirectory = do
   writeFile projectPath correctProject
   productionBoundReached <-
     withToolchainSpawnAuthority scratchDirectory plan $ \authority ->
-      withBoundedToolchainChild authority (pure True)
+      withBoundedToolchainChild authority $ do
+        runBoundedCompilerChainAssertions scratchDirectory
+        activeMechanism <- resolveBuildMemoryMechanism
+        case activeMechanism of
+          Right (EnforcedLane _) -> runEnforcedToolchainOverallocationAssertions
+          _ -> pure ()
+        pure True
   assert
     productionBoundReached
     "the production authority-to-child path admits the exact generated jobs/heap/address triple"
@@ -1588,8 +1559,7 @@ runBuildMemoryBoundFixture scratchDirectory = do
       fail ("the fixture lane resolves no build-memory mechanism: " <> reason)
     Right (UnenforcedLane _) ->
       runHeapCapOnlyBoundFixture scratchDirectory plan widerPlan
-    Right (EnforcedLane _) ->
-      runEnforcedAddressSpaceBoundFixture scratchDirectory plan widerPlan
+    Right (EnforcedLane _) -> exitSuccess
 
 runDarwinHeapCapOverallocationAssertions :: IO ()
 runDarwinHeapCapOverallocationAssertions =
@@ -1622,18 +1592,6 @@ runDarwinHeapCapOverallocationAssertions =
         assert
           (isCleanFailureExit overExit)
           "allocating twice a 64 MiB Darwin RTS heap cap exits ordinary nonzero without host pressure"
-
--- | Whether an enforced-lane mint returned the plan's derived ceiling. An
--- unenforced result is a failure here: on this lane the ceiling is installed,
--- so anything else means the mint took the wrong arm.
-enforcedCeilingMatchesPlan ::
-  BuildMemoryPlan ->
-  Either (BuildMemoryBound 'AddressSpaceUnavailable) (BuildMemoryBound 'AddressSpaceEnforced) ->
-  Bool
-enforcedCeilingMatchesPlan plan outcome =
-  case outcome of
-    Right bound -> enforcedAddressCeilingMib bound == planProcessAddressMib plan
-    Left _ -> False
 
 -- | Whether an unenforced-lane mint returned the plan's derived ceiling. The
 -- number is derived rather than guaranteed here, which is why it is read with
@@ -1685,107 +1643,9 @@ runHeapCapOnlyBoundFixture scratchDirectory plan widerPlan = do
   runBoundedCompilerChainAssertions scratchDirectory
   exitSuccess
 
-runEnforcedAddressSpaceBoundFixture ::
-  FilePath -> BuildMemoryPlan -> BuildMemoryPlan -> IO ()
-runEnforcedAddressSpaceBoundFixture scratchDirectory _callerPlan widerPlan = do
-  -- Phase 1 Sprint 1.37: this fixture does not run in a pristine process image.
-  --
-  -- On the enforced lane the governed toolchain invocation installs its ceiling
-  -- and every descendant inherits it: @infernix test unit@ spawns Cabal inside
-  -- 'withBoundedToolchainChild', so the container lane's committed @-xr14187M@
-  -- reaches this child through two execs, and a soft limit of 14187 MiB is what
-  -- it measurably observes. Stating the negative case against an /unbounded/
-  -- address space therefore asserted a state the lane guarantees it will not be
-  -- in; it could only hold under a bare @cabal test@, which this repository does
-  -- not use for validation. Inheriting the bound is the intended behaviour
-  -- rather than the defect — the caller's own assertion names inheritance as one
-  -- of the things this child proves.
-  --
-  -- So the fixture derives its own floor plan: the tightest ceiling a plan can
-  -- carry, the per-process heap floor times the address-space multiplier. Any
-  -- lane able to host this toolchain installs a limit above that, so the
-  -- refusal, the install, the observation, and the lower-only preservation are
-  -- each exercised against a real inherited bound instead of against its
-  -- absence.
-  plan <-
-    buildMemoryFixturePlan
-      (minimumProcessHeapMib + 2 * toolchainControlHeapMib)
-      1
-  observedLimitMib <- softAddressLimitMib
-  assert
-    (maybe True (> toInteger (planProcessAddressMib plan)) observedLimitMib)
-    ( "the inherited address-space limit leaves room for the floor plan: "
-        <> "observed a soft limit of "
-        <> maybe "unbounded" (\mib -> show mib <> " MiB") observedLimitMib
-        <> " against the floor ceiling of "
-        <> show (planProcessAddressMib plan)
-        <> " MiB, so the refusal case is not representable on this lane"
-    )
-  refused <-
-    try @IOException
-      ( requireBoundedBuildMemory
-          scratchDirectory
-          "unit build-memory negative case"
-          plan
-      )
-  assert
-    (buildMemoryRefusalNamesSurface refused)
-    ( "requireBoundedBuildMemory refuses an address space wider than the "
-        <> "derived ceiling and names the spawning surface; the fixture "
-        <> "observed a soft address limit of "
-        <> maybe "unbounded" (\mib -> show mib <> " MiB") observedLimitMib
-        <> " against a derived per-process ceiling of "
-        <> show (planProcessAddressMib plan)
-        <> " MiB"
-    )
-
-  established <- establishBoundedBuildMemory scratchDirectory plan
-  assert
-    (enforcedCeilingMatchesPlan plan established)
-    "establishBoundedBuildMemory installs the derived per-process address-space ceiling"
-
-  observed <-
-    requireBoundedBuildMemory
-      scratchDirectory
-      "unit build-memory positive case"
-      plan
-  assert
-    (enforcedCeilingMatchesPlan plan observed)
-    "requireBoundedBuildMemory observes the installed ceiling"
-
-  -- A wider derived plan must not widen an installed ceiling: the bound is
-  -- lower-only, exactly as the descriptor-space kernel is.
-  preserved <- establishBoundedBuildMemory scratchDirectory widerPlan
-  assert
-    (planProcessAddressMib widerPlan > planProcessAddressMib plan)
-    "the wider fixture plan really is wider, so the preservation case is not vacuous"
-  assert
-    (enforcedCeilingMatchesPlan plan preserved)
-    "establishBoundedBuildMemory never raises a tighter address-space limit"
-
+runEnforcedToolchainOverallocationAssertions :: IO ()
+runEnforcedToolchainOverallocationAssertions = do
   executable <- getExecutablePath
-
-  -- Inherited across fork/exec without the child doing anything itself. The
-  -- child carries the default 1024.65 GiB reservation request, so its runtime
-  -- has to clamp to the inherited limit to start at all; that it reports the
-  -- limit at all is the clamping half of the proof.
-  (reportExit, reportedLimit, _) <-
-    readCreateProcessWithExitCode
-      (proc executable ["__infernix_unit_build_memory_report_fixture"])
-      ""
-  assert
-    (reportExit == ExitSuccess)
-    "a child started under the installed ceiling runs rather than failing to reserve"
-  assert
-    (filter (not . isSpace) reportedLimit == show (planProcessAddressMib plan))
-    "the per-process ceiling is inherited across fork and exec unchanged"
-
-  runBoundedCompilerChainAssertions scratchDirectory
-
-  -- Adversarial over-allocation under the ceiling: a clean non-zero exit, no
-  -- global out-of-memory condition. The explicit reservation request is larger
-  -- than the ceiling on purpose, so the runtime has to clamp it; the 24 GiB
-  -- request is then refused rather than committed.
   (overExit, _, _) <-
     readCreateProcessWithExitCode
       ( proc
@@ -1799,9 +1659,7 @@ runEnforcedAddressSpaceBoundFixture scratchDirectory _callerPlan widerPlan = do
       ""
   assert
     (isCleanFailureExit overExit)
-    "an over-allocation under the installed ceiling exits non-zero and cleanly"
-
-  exitSuccess
+    "an over-allocation under the production toolchain ceiling exits non-zero and cleanly"
 
 -- | The real compiler, under whatever bound this lane installed. This is the
 -- chain the doctrine claims and it is checked rather than asserted: a compile
@@ -1812,8 +1670,9 @@ runBoundedCompilerChainAssertions scratchDirectory = do
   compilerPath <- firstExistingHostToolCandidate HostTools.HostGhc
   case compilerPath of
     Nothing ->
-      putStrLn
-        "build-memory: no ghc on this image; the compiler-chain case is skipped loudly"
+      assert
+        False
+        "the governed unit lane must expose its configured GHC so the production toolchain bound is exercised by a real compiler"
     Just ghcPath -> do
       let sourcePath = scratchDirectory </> "BoundedBuildMemoryProbe.hs"
           outputPath = scratchDirectory </> "BoundedBuildMemoryProbe"
@@ -1830,7 +1689,16 @@ runBoundedCompilerChainAssertions scratchDirectory = do
         )
 
 firstExistingHostToolCandidate :: HostTools.HostTool -> IO (Maybe FilePath)
-firstExistingHostToolCandidate tool = go (HostTools.hostToolFallbackCandidates tool)
+firstExistingHostToolCandidate tool = do
+  paths <- discoverPaths
+  let configuredCandidates =
+        case pathsHostConfig paths of
+          Nothing -> []
+          Just hostConfig ->
+            case Text.unpack (HostTools.hostToolPath hostConfig tool) of
+              "" -> []
+              configuredPath -> [configuredPath]
+  go (configuredCandidates <> HostTools.hostToolFallbackCandidates tool)
   where
     go [] = pure Nothing
     go (candidate : remaining) = do
@@ -3636,6 +3504,7 @@ main = do
         && "cabal +RTS -M1024M -RTS \\\n         install proto-lens-protoc-0.9.0.1" `isInfixOf` linuxDockerfileContents
         && "-rtsopts=ignore -with-rtsopts=-M1024M" `isInfixOf` linuxDockerfileContents
         && "GHCRTS=-M1024M /opt/infernix/proto-tools/protoc" `isInfixOf` linuxDockerfileContents
+        && not ("GHCRTS=-M1024M cabal" `isInfixOf` linuxDockerfileContents)
         -- Sprint 1.24: the plugin is linked to admit GHCRTS because the protoc
         -- run above is the one place this image executes it with GHCRTS set.
         -- The steps that *build* third-party packages must not export it: a
@@ -4391,30 +4260,31 @@ main = do
             (models decodedAppleConfig)
         )
         "every apple catalog model declares a positive execution context length"
-      -- Phase 4 Sprint 4.31 — the checked partition rejects oversubscription and
-      -- an undersized headroom; the required footprint rejects a non-positive value.
+      -- Phase 4 Sprint 4.31 / Sprint 4.45 — the checked partition derives its
+      -- co-tenant headroom from the shared pool and rejects a pool too small to
+      -- retain it; the required footprint rejects a non-positive value.
       assert
-        (isRight (mkHostMemoryPartition 65536 49152 minHostHeadroomMib))
-        "mkHostMemoryPartition accepts a fitting physical/vmReserve/headroom split"
+        (isRight (mkHostMemoryPartition 65536 49152))
+        "mkHostMemoryPartition accepts a fitting physical/vmReserve split"
       assert
-        (isLeft (mkHostMemoryPartition 8192 8192 minHostHeadroomMib))
-        "mkHostMemoryPartition rejects a vmReserve + headroom split that oversubscribes physical RAM"
+        (isLeft (mkHostMemoryPartition 8192 8192))
+        "mkHostMemoryPartition rejects a VM reserve that exhausts physical RAM"
       assert
-        (isLeft (mkHostMemoryPartition 65536 0 (minHostHeadroomMib - 1)))
-        "mkHostMemoryPartition rejects a headroom below the co-tenant floor"
+        (isLeft (mkHostMemoryPartition 65536 (65536 - 6144)))
+        "mkHostMemoryPartition rejects a pool that cannot retain co-tenant headroom and positive inference capacity"
       -- Phase 4 Sprint 4.34: the exact case accepted before the sprint. The
       -- reservations meet physical exactly, so the split is arithmetically valid
       -- and its inference capacity is zero. A zero-capacity partition compiled a
       -- plan, started a daemon, and left every model unavailable, because every
       -- declared footprint is positive.
       assert
-        (isLeft (mkHostMemoryPartition (49152 + minHostHeadroomMib) 49152 minHostHeadroomMib))
+        (isLeft (mkHostMemoryPartition (49152 + 6144) 49152))
         "mkHostMemoryPartition rejects a split whose reservations exactly exhaust physical RAM"
       assert
         ( either
             (isInfixOf "leaves no inference capacity")
             (const False)
-            (mkHostMemoryPartition (49152 + minHostHeadroomMib) 49152 minHostHeadroomMib)
+            (mkHostMemoryPartition (49152 + 6144) 49152)
         )
         "the zero-capacity refusal names what it refused rather than reporting oversubscription"
       assert
@@ -4424,8 +4294,22 @@ main = do
         (isLeft (hostPartitionForCapacity (-1)))
         "hostPartitionForCapacity refuses a negative capacity rather than clamping it to zero"
       assert
-        (either (const False) ((== 65536 - 49152 - minHostHeadroomMib) . hostPartitionInferenceCapacityMib) (mkHostMemoryPartition 65536 49152 minHostHeadroomMib))
+        (either (const False) ((== 65536 - 49152 - 6144) . hostPartitionInferenceCapacityMib) (mkHostMemoryPartition 65536 49152))
         "mkHostMemoryPartition derives inference capacity as physical - vmReserve - headroom"
+      assert
+        ( either
+            (const False)
+            (hostPartitionWireRejectsAuthored "headroomMib" 1)
+            (mkHostMemoryPartition 65536 49152)
+        )
+        "HostMemoryPartition decoding rejects an independently authored headroom"
+      assert
+        ( either
+            (const False)
+            (hostPartitionWireRejectsAuthored "inferenceCapacityMib" 1)
+            (mkHostMemoryPartition 65536 49152)
+        )
+        "HostMemoryPartition decoding rejects an independently authored inference capacity"
       -- Phase 4 Sprint 4.31 — one claimable pool, two occupants. The pool is
       -- minted once and both occupants are derived from it, so neither is
       -- computed from a figure that is blind to the other, and the resolved
@@ -4445,6 +4329,13 @@ main = do
       assert
         ( either
             (const False)
+            (either (const False) (== 6144) . hostClaimablePoolCoTenantHeadroomMib)
+            (mkHostClaimablePool 65536 49152)
+        )
+        "the co-tenant headroom is derived from the checked claimable pool"
+      assert
+        ( either
+            (const False)
             ((== 8192) . hostClaimablePoolToolchainAccountMib)
             (mkHostClaimablePool 65536 49152)
         )
@@ -4457,14 +4348,14 @@ main = do
                   && hostPartitionToolchainAccountMib partition == 8192
                   && hostPartitionInferenceCapacityMib partition == 10240
             )
-            (mkHostMemoryPartition 65536 49152 minHostHeadroomMib)
+            (mkHostMemoryPartition 65536 49152)
         )
         "the partition carries the pool and the toolchain occupant beside an unchanged 10240 MiB capacity"
       assert
         ( either
             (const False)
             (isLeft . mkConcurrentHostPoolClaim)
-            (mkHostMemoryPartition 65536 49152 minHostHeadroomMib)
+            (mkHostMemoryPartition 65536 49152)
         )
         "a concurrent claim over both occupants of one fully-assigned pool is not constructible"
       assert
@@ -4475,7 +4366,7 @@ main = do
                 (const False)
                 . mkConcurrentHostPoolClaim
             )
-            (mkHostMemoryPartition 65536 49152 minHostHeadroomMib)
+            (mkHostMemoryPartition 65536 49152)
         )
         "the concurrent-claim refusal names the overcommitment rather than reporting a bare failure"
       assert
@@ -15961,6 +15852,18 @@ assertJsonRoundtrip label value =
         (decoded == value)
         (label <> ": encode/decode roundtrip diverged. Original=" <> show value <> " Decoded=" <> show decoded)
 
+hostPartitionWireRejectsAuthored :: Key.Key -> Int -> HostMemoryPartition -> Bool
+hostPartitionWireRejectsAuthored fieldName authoredValue partition =
+  case Aeson.toJSON partition of
+    Aeson.Object fields ->
+      case Aeson.fromJSON
+        ( Aeson.Object
+            (KeyMap.insert fieldName (Aeson.toJSON authoredValue) fields)
+        ) of
+        Aeson.Error _ -> True
+        Aeson.Success (_ :: HostMemoryPartition) -> False
+    _ -> False
+
 assertJsonEncodingContains :: (Aeson.ToJSON a) => String -> a -> Text.Text -> IO ()
 assertJsonEncodingContains label value needle = do
   let encoded = TextEncoding.decodeUtf8 (Lazy.toStrict (Aeson.encode value))
@@ -16219,32 +16122,30 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
   runProperty
     "fitting host-memory partitions preserve their exact inference capacity"
     ( forAll (choose (0, 65536)) $ \vmReserveMib ->
-        forAll (choose (minHostHeadroomMib, minHostHeadroomMib + 8192)) $ \headroomMib ->
-          forAll (choose (1, 65536)) $ \capacityMib ->
-            let physicalMib = vmReserveMib + headroomMib + capacityMib
-             in either
-                  (const False)
-                  ((== capacityMib) . hostPartitionInferenceCapacityMib)
-                  (mkHostMemoryPartition physicalMib vmReserveMib headroomMib)
+        forAll (choose (1, 65536)) $ \capacityMib ->
+          let physicalMib = vmReserveMib + 6144 + capacityMib
+           in either
+                (const False)
+                ((== capacityMib) . hostPartitionInferenceCapacityMib)
+                (mkHostMemoryPartition physicalMib vmReserveMib)
     )
   runProperty
     "oversubscribed host-memory partitions are rejected"
     ( forAll (choose (1, 65536)) $ \vmReserveMib ->
-        forAll (choose (minHostHeadroomMib, minHostHeadroomMib + 8192)) $ \headroomMib ->
-          forAll (choose (1, vmReserveMib)) $ \oversubscriptionMib ->
-            let physicalMib = vmReserveMib + headroomMib - oversubscriptionMib
-             in isLeft (mkHostMemoryPartition physicalMib vmReserveMib headroomMib)
+        forAll (choose (1, 6144)) $ \shortfallMib ->
+          let physicalMib = vmReserveMib + 6144 - shortfallMib
+           in isLeft (mkHostMemoryPartition physicalMib vmReserveMib)
     )
   runProperty
-    "host-memory partitions below the co-tenant headroom floor are rejected"
-    ( forAll (choose (0, minHostHeadroomMib - 1)) $ \headroomMib ->
-        isLeft (mkHostMemoryPartition 131072 0 headroomMib)
+    "host-memory pools that do not exceed derived co-tenant headroom are rejected"
+    ( forAll (choose (1, 6144)) $ \poolMib ->
+        isLeft (mkHostMemoryPartition (131072 + poolMib) 131072)
     )
   assert
-    (isLeft (mkHostMemoryPartition 1 maxBound minHostHeadroomMib))
+    (isLeft (mkHostMemoryPartition 1 maxBound))
     "host-memory partition arithmetic rejects an overflow-boundary VM reserve"
   assert
-    (isLeft (mkHostMemoryPartition maxBound maxBound minHostHeadroomMib))
+    (isLeft (mkHostMemoryPartition maxBound maxBound))
     "host-memory partition arithmetic rejects near-boundary oversubscription without Int wraparound"
   assert
     (isLeft (hostPartitionForCapacity maxBound))
@@ -20309,6 +20210,8 @@ assertHostConfig repoRootPath testRoot = do
   assert
     ( Provisioning.pinnedPipRequirementSpec
         == ArtifactRecipe.pinnedPipRequirement
+        && ProvisioningInternal.poetryBootstrapRequirementsRelativePath
+          == ".infernix-poetry-bootstrap-requirements.txt"
         && length poetryBootstrapRequirements == 45
         && all validPoetryBootstrapRequirement poetryBootstrapRequirements
         && length
@@ -20344,6 +20247,21 @@ assertHostConfig repoRootPath testRoot = do
           == ArtifactRecipe.audiverisDmgUrl
     )
     "Sprint 1.20: provisioner commands and artifact fingerprints share one exact recipe catalog"
+  assert
+    ( Provisioning.darwinPoetryFrameworkHomeFromPyvenvForTest
+        "home = /opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin\nversion = 3.12.13\n"
+        == Right
+          "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12"
+        && isLeft
+          ( Provisioning.darwinPoetryFrameworkHomeFromPyvenvForTest
+              "home = /usr/local/bin\n"
+          )
+        && isLeft
+          ( Provisioning.darwinPoetryFrameworkHomeFromPyvenvForTest
+              "home = /opt/a/Python.framework/Versions/3.12/bin\nhome = /opt/b/Python.framework/Versions/3.12/bin\n"
+          )
+    )
+    "Darwin Poetry closure resolution derives one fixed framework-version home from pyvenv.cfg"
   -- Phase 1 Sprint 1.14 — the allowlisted Apple headless artifact
   -- plan uses runtime adapter ids and typed manifests, not a Tart VM.
   assert
