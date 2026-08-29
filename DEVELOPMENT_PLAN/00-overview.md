@@ -46,12 +46,15 @@ surface the repository no longer has.
 
 ## Current Repo Assessment
 
-Phases 0 through 9 are `Done`; no execution gate is open. Phase 4's selected Apple accelerator plus
-`linux-cpu` validate the Bounded Engine Launch
-host half: Apple declares detection-only, calibrated `linux-cpu` declares prevention, and a
-prevention-required production readiness contract consumes the declaration and refuses weaker
-strength. Phase 6 closes the device-side correction and Linux GPU host calibration on the selected
-CUDA accelerator plus same-host `linux-cpu`; a phase's status
+Phases 0 through 3 and 5 through 9 are `Done`; Phase 4 Sprint 4.45 is `Active` on its selected
+Apple-accelerator gate in [Wave 4.45](cohort-validation-waves.md). Its code-side closure and current
+`linux-cpu` full suite pass. The native Apple lane is constructible, but the governed suite correctly
+refuses to start beside a foreign live toolchain claimant, so the selected `apple-silicon` full suite
+remains pending until the shared host-memory account is available. Phase 4's completed implementation
+owns the Bounded Engine Launch host half: Apple declares detection-only, calibrated `linux-cpu`
+declares prevention, and a prevention-required production readiness contract consumes the declaration
+and refuses weaker strength. Phase 6 closes the device-side correction and Linux GPU host calibration
+on the selected CUDA accelerator plus same-host `linux-cpu`; a phase's status
 describes only the scope it owns, so an earlier phase gaining work does not revert a later one, and
 every phase remains completable using only equal-or-lower-numbered phases.
 
@@ -59,7 +62,8 @@ Phase 6 Sprint 6.51 forms the device half: Linux GPU pod RAM is calibrated preve
 device memory remains admission, arena sizing, and detection because no supported kernel mechanism
 bounds it.
 
-[cohort-validation-waves.md](cohort-validation-waves.md) holds no open wave, while
+[cohort-validation-waves.md](cohort-validation-waves.md) holds Phase 4's open selected-accelerator
+gate, while
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) inventories only surfaces that
 still require removal. [README.md](README.md) holds the plan's single phase-status table.
 

@@ -2,8 +2,9 @@
 
 **Status**: Active — Sprint 4.45's code-side closure and current `linux-cpu` full suite pass. Its
 selected `apple-silicon` full suite remains open in
-[Wave 4.45](cohort-validation-waves.md): no available validation host supplies a constructible
-native Apple lane, and validation neither emulates Apple nor resizes or reprovisions Colima.
+[Wave 4.45](cohort-validation-waves.md): the native Apple lane is constructible, but the governed
+suite correctly refuses to start beside a foreign live toolchain claimant. Validation leaves that
+claimant running and retries only after the shared host-memory account is available.
 **Current implementation state**: Sprints 4.37 through 4.42 landed in numerical order, each building
 on the one before: a breach names the resource it breached, the requirement becomes resource-indexed,
 the requirement is derived from the artifact's own bytes, three sampling loops become one, a kernel
@@ -3429,7 +3430,8 @@ None.
 96 negative compile-time capability fixtures, 84/84 PureScript tests, standalone lints, and docs
 check pass.
 **Cohort gate**: The current `linux-cpu` full suite passes; the selected `apple-silicon` full suite
-remains pending in [Wave 4.45](cohort-validation-waves.md).
+remains pending in [Wave 4.45](cohort-validation-waves.md) until the shared host-memory account is
+free of foreign toolchain claimants.
 **Implementation**: `src/Infernix/ExecutionPlan.hs`, `src/Infernix/Runtime/`,
 `src/Infernix/Service.hs`, `src/Infernix/Types.hs`, `test/unit/Spec.hs`,
 `test/integration/Spec.hs`, `test/compile-fail/`,
@@ -3476,8 +3478,9 @@ the capability or identity boundary structurally.
 ### Remaining Work
 
 - **Cohort gate:** run the selected `apple-silicon` full suite recorded in
-  [Wave 4.45](cohort-validation-waves.md) on a host with a constructible native Apple lane. The
-  paired current-source `linux-cpu` full suite passes.
+  [Wave 4.45](cohort-validation-waves.md) after the foreign governed-toolchain claimant releases
+  the shared host-memory account. The native Apple lane is constructible and the paired
+  current-source `linux-cpu` full suite passes.
 
 ## Documentation Requirements
 
