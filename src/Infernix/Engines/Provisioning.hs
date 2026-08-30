@@ -185,7 +185,6 @@ module Infernix.Engines.Provisioning
     installPoetryProject,
     installPoetryProjectWithGroups,
     createPoetryProjectVenv,
-    resolvedPoetrySealsAVirtualEnvironment,
     generatePythonProtoBindings,
     probePythonVersion,
     probePoetryBootstrapPython,
@@ -6858,7 +6857,10 @@ reconcileRetainedArtifactGenerationLeases
       else do
         currentManifestResult <-
           try @IOException
-            (Artifact.validateEngineArtifactRootAt installRoot installRoot)
+            ( ArtifactInternal.validateRetainedEngineArtifactRootAt
+                installRoot
+                installRoot
+            )
         case currentManifestResult of
           -- A pre-generation predecessor cannot supply an exact current
           -- lease. Its replacement commit performs the complete bounded
@@ -6916,7 +6918,9 @@ retainedSiblingArtifactGenerationLeases enginesRoot installRoot = do
             then pure Nothing
             else do
               manifest <-
-                Artifact.validateEngineArtifactRootAt siblingRoot siblingRoot
+                ArtifactInternal.validateRetainedEngineArtifactRootAt
+                  siblingRoot
+                  siblingRoot
               siblingIdentity <-
                 maybe
                   ( ioError
@@ -12692,29 +12696,6 @@ createPoetryProjectVenv
       ( Internal.CreatePoetryProjectVenv
           (authorizedWriterCanonicalRoot projectRoot)
       )
-
--- | Whether the sealed Python home this Poetry runs under is itself a virtual
--- environment.
---
--- This is the exact condition that decides whether Poetry adopts the sealed
--- prefix as the project's environment instead of creating one for the project.
--- The @linux-cpu@ image makes Poetry's own environment self-contained so that it
--- can be sealed, which leaves a @pyvenv.cfg@ in that prefix; the Apple lane
--- seals a real framework installation, which carries none.
-resolvedPoetrySealsAVirtualEnvironment ::
-  ResolvedPoetry s ->
-  ProvisioningSession s Bool
-resolvedPoetrySealsAVirtualEnvironment
-  (ResolvedPoetry (_identity, closureIdentities, _runtimeLibraries)) =
-    ProvisioningSession $
-      case [ Internal.provisioningPackageClosureRoot closure
-           | closure <- closureIdentities,
-             Internal.provisioningPackageClosureRole closure
-               == Internal.ProvisioningPythonHomeClosure
-           ] of
-        [pythonHome] ->
-          Directory.doesFileExist (pythonHome </> "pyvenv.cfg")
-        _ -> pure False
 
 installPoetryProjectWithGroups ::
   ProjectWriter p s q ->

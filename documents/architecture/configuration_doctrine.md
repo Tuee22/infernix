@@ -44,7 +44,7 @@
   before that helper may detach. This isolation prevents concurrent parent commands from sharing
   protocol handles. All helper links use a total, maximum-bounded JSON protocol with
   eight-hex-digit length-prefixed frames over standard streams and base64 input/output. A hidden
-  rank-2, linear session requires durable version-3 activity publication before the retained pin can
+  rank-2, linear session requires durable version-5 activity publication before the retained pin can
   acknowledge the one-shot start authority and the supervisor may fork the target. The target
   begins behind an inner gate and cannot execute until its supervisor-owned PID is observed in the
   exact pin group. It is owned as an unreaped child, not persisted as an exact birth identity. The
@@ -52,9 +52,9 @@
   exact self-exec pin under compatibility `targetGroupLeader*` keys. Recovery decodes versions 1
   and 2 but retires any record only after every recorded anchor, supervisor, and pin-led target
   group is proven absent. Before the version-3 payload write, a bounded, fsynced incoming-intent
-  basename carries the same exact owner/anchor/supervisor/pin identities. Common-boot names use the
-  version-3 encoding and fixed-width distinct-boot names use version 4, so recovery of an empty or
-  truncated prewrite does not rely on PID-only inference.
+  basename carries the same exact owner/anchor/supervisor/pin identities. Legacy encodings remain
+  decodable, while protected current common-boot and fixed-width distinct-boot names use version 6,
+  so recovery of an empty or truncated prewrite does not rely on PID-only inference.
 - The `dhall` Haskell library is the only Dhall reader. There is no `dhall-to-json` bridge.
 - Every external command the project ever invokes is named in the host manifest by absolute path;
   no `proc "<bare-name>"` / `findExecutable` discovery in Haskell, no bare-name invocations in shell.

@@ -145,7 +145,11 @@ device but carries no device grant is not a constructible term.
   group as typed enforcement loss. The watchdog never waits on the engine's process handle, so the
   engine action remains its sole reaper, and a bare `SIGKILL` exit is not classified as a memory breach
   without evidence. A breach names the resource it breached and the footprint it observed, because a
-  refusal that cannot say which resource it is about cannot be acted on.
+  refusal that cannot say which resource it is about cannot be acted on. Each fixed-tool invocation is
+  total: the NVIDIA query retains a five-second deadline, while Darwin's full-host `top` plus per-member
+  `footprint` sample has a fifteen-second deadline. The wider Darwin bound is deliberate detection-only
+  latency: the selected Apple cohort observed a healthy full-host snapshot exceed five seconds while a
+  real model loaded, and treating scheduler pressure as enforcement loss killed a valid execution.
 - **A lane declares the strength it has.** The enforcement mechanism is part of the type, so a lane
   that can install a kernel ceiling and a lane that can only sample are different values, and a
   contract that requires prevention refuses readiness on a lane that offers only detection. A lane

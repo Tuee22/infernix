@@ -22,6 +22,7 @@ import System.Directory (doesFileExist)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.Info (os)
+-- infernix-lint: non-engine-process-site
 import System.Process (proc, readCreateProcessWithExitCode)
 import System.Timeout (timeout)
 
@@ -221,6 +222,7 @@ ensureHomebrewManagedTool brewExecutable requirement = do
       withPrerequisiteDeadline
         homebrewInstallDeadlineMicros
         ("brew install " <> formulaName)
+        -- infernix-lint: non-engine-process-site
         (readCreateProcessWithExitCode (proc brewExecutable ["install", formulaName]) "")
     case exitCode of
       ExitSuccess -> do
@@ -266,6 +268,7 @@ readDockerContext dockerExecutable = do
     withPrerequisiteDeadline
       hostProbeDeadlineMicros
       "docker context show"
+      -- infernix-lint: non-engine-process-site
       (readCreateProcessWithExitCode (proc dockerExecutable ["context", "show"]) "")
   case exitCode of
     ExitSuccess -> pure (trimWhitespace stdoutOutput)
@@ -285,6 +288,7 @@ readDockerDaemonArchitecture dockerExecutable contextName = do
     withPrerequisiteDeadline
       hostProbeDeadlineMicros
       "docker info"
+      -- infernix-lint: non-engine-process-site
       ( readCreateProcessWithExitCode
           (proc dockerExecutable ["info", "--format", "{{json .}}"])
           ""

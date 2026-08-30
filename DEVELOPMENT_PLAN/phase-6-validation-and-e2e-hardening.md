@@ -1,10 +1,9 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Done — every sprint is implemented and validated. Sprint 6.51's device backstop,
-pre-launch availability check, and worker request consume the same engine-sizing arena quantity.
-The CUDA-host gate calibrates Linux GPU host prevention with a CUDA-initialized process, retains
-honest detection-only device semantics, observes a real competing-tenant refusal, and passes the
-current `linux-gpu` plus same-host `linux-cpu` full suites against one frozen source state.
+**Status**: Active — Sprint 6.53 closes the residual validation and recovery gaps discovered by the
+current-source audit. Its implementation and machine-independent code-side closure are complete;
+the paired current-source native-arm64 `linux-cpu` full suite passes, while the selected
+`linux-gpu` full-suite sign-off remains open in Wave 6.53.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -112,8 +111,8 @@ current `linux-gpu` plus same-host `linux-cpu` full suites against one frozen so
 > daemon session. That evidence predates and does not close the current Sprint 6.44 dual RAM/VRAM
 > enforcement construction.
 
-Phase 6 is `Done`: every sprint is implemented and validated, including Sprint 6.51's selected
-`linux-gpu` accelerator plus same-host `linux-cpu` cohort. The host and device columns retain their
+Phase 6 is `Active`: Sprints 6.1 through 6.52 retain their completed scope, while Sprint 6.53 owns
+the current residual closure and Wave 6.53 validation. The host and device columns retain their
 distinct calibrated strengths: Linux GPU pod RAM declares prevention, while NVIDIA device memory
 declares admission, arena sizing, and detection because no supported kernel mechanism bounds it.
 
@@ -2381,15 +2380,9 @@ None.
 
 ## Remaining Work
 
-**Sprint 6.44's `linux-gpu` behavioral cohort, and nothing else.** Every other sprint in this phase is
-`Done`. Sprints 6.37, 6.43, 6.45, 6.46, 6.47, 6.48, and 6.49 closed together on one frozen source
-identity validated on `apple-silicon` plus `linux-cpu`, recorded in
-[cohort-validation-waves.md](cohort-validation-waves.md); the earlier per-sprint waves (V for
-6.39-6.41, T for 6.38, P for 6.35, R and S for 6.36-6.37's original scopes, W for 6.42, X for 6.43's
-narrower original scope) remain valid for the scopes they exercised.
-
-Sprint 6.44 is closed by its supported-lane validation: `./bootstrap/linux-gpu.sh test` passed on a
-CUDA-capable Linux host, so no accelerator substitution was needed.
+Sprint 6.53 is the only open sprint. Its implementation and governed Apple rebuild are complete.
+The focused machine-independent gates and paired current-source native-arm64 `linux-cpu` full suite
+pass; the selected `linux-gpu` full suite remains in Wave 6.53.
 
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Done]
 
@@ -2630,8 +2623,8 @@ cohort is unaffected because it enters through the launcher entrypoint.
   `gpu-vram`, naming the resource an operator would actually have to enlarge. Only the 28 GiB video
   row exceeds the RAM limit as well, and because the pod grant is admitted first it reports
   `pod-ram`; that is a real limit genuinely exceeded, not a sign that VRAM admission is unwired.
-  Ordering the dual admission VRAM-first for `requiresGpu` models would make even that row name the
-  device, and remains a small follow-on.
+  Dual admission is VRAM-first for `requiresGpu` models, so even that row names the device resource
+  that prevents execution.
 - import-boundary and lint scans report zero non-kernel raw process access, and the residual is a
   settled scope decision rather than a backlog. `infernix-haskell-style` passes with the tightened
   token set, and the exemption set is down from twelve rows to **seven**: four kernels plus three
@@ -3678,30 +3671,79 @@ is foreign is not proof that it is ours.
 
 ### Scope Boundaries
 
-1. **The recovery command is not reachable from the state it recovers.** Fixing the reconciliation
-   made the slot reclaimable in principle, but the operator-facing route to it is circular:
-   `infernix cluster reclaim-slot` resolves paths through `discoverClusterCommandPaths`, which
-   requires the host manifest, while `infernix init` refuses to write runtime config while any
-   reservation exists. A host whose launcher was killed therefore cannot reach either command.
-
-   This residual is recorded rather than fixed, because the obvious fix is not obviously right. The
-   refusal `init` raises is **deliberate**: `authorizeRuntimeConfigWriteAccess` requires
-   `ownerAlive`, and the unit suite pins that a dead owner authorizes nothing — "a delegation
-   outliving a crashed harness authorizes nothing". Relaxing it would contradict a tested decision.
-   Making `reclaim-slot` manifest-tolerant instead is the other candidate, and it carries its own
-   question: its reconciliation consults live Kind state through `presentClusterRuntimeModes`, so a
-   manifest-free variant has to decide what a reclaim means when the cluster cannot be inspected at
-   all — degrade to record-only, or require the existing `--force-owner-pid` escape hatch. That is a
-   contract decision, not a mechanical one.
-
-   Until it is settled, a host in this state is recovered by removing the stale reservation record
-   directly, which is safe exactly when the conditions this sprint's fix already tests for hold: the
-   recorded owner namespace is provably foreign, so nothing the record protects is reachable from
-   this filesystem.
+1. **The recovery command is reachable from the state it recovers.** `cluster reclaim-slot` is
+   exempt from configured startup and derives only repo-local paths through `Config.discoverPaths`,
+   so a stale reservation cannot make its own recovery command circular. The ordinary `init`
+   refusal remains unchanged: a delegation outliving a crashed harness authorizes no runtime-config
+   write. Reclamation instead consumes owner-death or exact operator-transcribed identity,
+   bounded-command quiescence, and config-transaction evidence through the dedicated command.
 
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 6.53: Residual Safety and Recovery Closure [Active]
+
+**Status**: Active
+**Code-side closure**: complete — the governed Apple build, `infernix test unit`, `infernix test
+lint`, direct files/docs/chart/proto/plan lints, `infernix docs check`, and `git diff --check` pass.
+**Cohort gate**: Wave 6.53 — the paired current-source native-arm64 `linux-cpu` full suite passes;
+the selected `linux-gpu` full suite remains pending against that frozen current-source state.
+**Blocked by**: nothing.
+**Implementation**: `src/Infernix/Cluster/Subprocess.hs`,
+`src/Infernix/Cluster/Subprocess/Activity.hs`, `src/Infernix/Cluster/LifecycleLock.hs`,
+`src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `src/Infernix/ExecutionPlan.hs`,
+`src/Infernix/Lint/HaskellStyle.hs`, `test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/managed_state_transitions.md`,
+`documents/development/testing_strategy.md`
+
+### Objective
+
+Close every residual owned by Phase 6 without weakening the evidence boundaries those residuals
+protect: process-site lint classification, crash-safe harness config recovery, deterministic
+dual-resource refusal, config-independent slot reclamation, and cross-container descendant
+quiescence.
+
+### Deliverables
+
+- Raw engine-spawn primitives are classified per site. The exact
+  `infernix-lint: non-engine-process-site` marker is accepted only immediately above a primitive and
+  only in the closed bounded-command, fixed-observer, CLI, and pre-manifest host-probe modules; the
+  capped-engine launch kernel remains the sole whole-file engine exemption.
+- An orphaned `.harness-backup` with no reservation identity fails closed and preserves both files.
+  Only a reservation-backed transaction can mint recovery authority.
+- Device-using Linux GPU placement admits the `NvidiaVram` grant before `PodRam`, so a model that
+  exceeds both limits reports the device resource that makes execution impossible.
+- `cluster reclaim-slot` is configuration-independent and derives repo-local recovery paths without
+  requiring a runtime config or host manifest, eliminating the circular recovery route.
+- Every bounded-command anchor, supervisor, and retained target-group pin holds the fixed
+  `bounded-command-activity.held` kernel lock in shared mode. Quiescence and reservation retirement
+  occur inside a rank-2 region holding the same lock exclusively. Current version-5 activity leases
+  and protected version-6 incoming intents declare that evidence; foreign legacy records fail closed
+  and remain preserved. The Darwin distinct-token v6 prefix is decoded before its overlapping
+  namespaced prefix, and any bounded live-inventory observation completes before the exclusive
+  quiescence callback begins.
+- Stale Phase 6 cleanup rows leave `legacy-tracking-for-deletion.md`; only genuinely outstanding
+  work remains in the ledger.
+
+### Validation
+
+- the governed Apple build compiles the complete executable closure under `-Wall -Werror`
+- `infernix test unit` exercises the activity lifetime lock, legacy foreign refusal, protected
+  foreign retirement, orphaned-backup refusal, VRAM-first admission, config-independent reclaim,
+  and per-site engine-spawn lint fixtures
+- `infernix test lint`, direct files/docs/chart/proto/plan lints, `infernix docs check`, and
+  `git diff --check` validate the repository-wide policy and documentation surface
+- the native-arm64 `linux-cpu` outer-container full suite passes from a current-source rebuild,
+  including integration recovery and routed Playwright `16/16`
+- the selected current-source `linux-gpu` plus `linux-cpu` full suites close Wave 6.53
+
+### Remaining Work
+
+- run the selected `linux-gpu` full suite on a native CUDA Linux host and close Wave 6.53 against
+  the already-passing paired `linux-cpu` receipt without changing the frozen source state
 
 ---
 

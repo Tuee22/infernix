@@ -83,6 +83,7 @@ import Infernix.Engines.Artifact.Internal
     installEngineArtifactRootWithObserverForTest,
     installEngineArtifactRootWithPendingActionForTest,
     reconcileEngineArtifactRoot,
+    validateRetainedEngineArtifactRootAt,
   )
 import Infernix.Engines.Artifact.Snapshot
   ( collectBoundedDirectoryEntries,
@@ -682,6 +683,35 @@ recipeFingerprintInvalidationTest =
     assertIOException
       "a recipe revision bump invalidates an otherwise unchanged artifact"
       (validateEngineArtifactRootAt installRoot installRoot)
+    _ <-
+      validateRetainedEngineArtifactRootAt installRoot installRoot
+    reconcileArtifactRoot installRoot
+    retainedPayload <- readFile (installRoot </> "payload.txt")
+    assertEqual
+      "reconciliation retains a complete superseded recipe as rollback state"
+      "recipe"
+      retainedPayload
+    let tempRoot = engineArtifactTempRoot installRoot
+    replacementManifest <-
+      writeExactArtifactRoot installRoot tempRoot "replacement"
+    assertIOException
+      "failed replacement restores the complete superseded recipe"
+      ( installArtifactRootWithInstalledValidation
+          installRoot
+          tempRoot
+          (manifestDigest replacementManifest)
+          (const (ioError (userError "synthetic replacement validation failure")))
+      )
+    rolledBackPayload <- readFile (installRoot </> "payload.txt")
+    assertEqual
+      "replacement rollback restores the superseded payload"
+      "recipe"
+      rolledBackPayload
+    installArtifactRoot installRoot tempRoot
+    assertExactPayload
+      "a current candidate replaces the complete superseded recipe"
+      installRoot
+      "replacement"
 
 artifactTamperTest :: IO ()
 artifactTamperTest =

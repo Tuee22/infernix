@@ -123,10 +123,12 @@ import System.Process
       ),
     ProcessHandle,
     StdStream (CreatePipe, Inherit),
+    -- infernix-lint: non-engine-process-site
     createProcess,
     getPid,
     proc,
     terminateProcess,
+    -- infernix-lint: non-engine-process-site
     waitForProcess,
   )
 import System.Timeout (timeout)
@@ -765,13 +767,14 @@ forkDrain byteLimit handleValue resultVariable =
 
 spawnFixedObserver :: FixedObserverSpec -> IO SpawnedObserver
 spawnFixedObserver spec = do
-  -- The observer samples on a 50 ms cadence against a 5 s total deadline, so
-  -- it is the kernel an unbounded descriptor space starves first: the
+  -- The observer samples on a 50 ms cadence against a bounded total deadline,
+  -- so it is the kernel an unbounded descriptor space starves first: the
   -- pre-'exec' walk 'close_fds' performs is linear in the soft RLIMIT_NOFILE,
   -- which is 1073741816 in a containerd pod. Fail closed and name the kernel
   -- rather than time out with two empty captured streams.
   _ <- requireBoundedDescriptorSpace (observerLabel spec)
   created <-
+    -- infernix-lint: non-engine-process-site
     createProcess
       (proc (observerExecutable spec) (observerArguments spec))
         { cwd = Just observerWorkingDirectory,
@@ -987,6 +990,7 @@ terminateAndReapOwnedObserverGroup cleanupDeadline ownedGroup = do
       ( runBeforeDeadline
           cleanupDeadline
           "Apple observer reap exceeded its cleanup deadline"
+          -- infernix-lint: non-engine-process-site
           (waitForProcess (ownedObserverProcess ownedGroup))
       )
   absenceResult <-
@@ -1044,6 +1048,7 @@ waitForProcessWithinCleanupDeadline processHandle = do
   runBeforeDeadline
     cleanupDeadline
     "Apple observer reap exceeded its cleanup deadline"
+    -- infernix-lint: non-engine-process-site
     (waitForProcess processHandle)
 
 closeSpawnedObserverHandles :: SpawnedObserver -> IO ()
@@ -1979,6 +1984,7 @@ runDescendantOwner :: IO ()
 runDescendantOwner = do
   executable <- getExecutablePath
   (maybeInput, _, _, processHandle) <-
+    -- infernix-lint: non-engine-process-site
     createProcess
       (proc executable [observerFixtureModeArgument, renderFixture FixtureDescendant])
         { cwd = Just observerWorkingDirectory,
@@ -1994,6 +2000,7 @@ runDescendantOwner = do
       hPutStr inputHandle observerFixtureGate
       hFlush inputHandle
       hClose inputHandle
+      -- infernix-lint: non-engine-process-site
       exitCode <- waitForProcess processHandle
       exitWith exitCode
     Nothing -> do
@@ -2054,8 +2061,19 @@ fixtureNonzeroExitCode = 23
 fixtureBlockingIntervalMicros :: Int
 fixtureBlockingIntervalMicros = 60000000
 
+-- The full-host Darwin @top@ snapshot has a wider bound than the fixed NVIDIA
+-- query. The selected Apple cohort measured a healthy @top@ invocation exceed
+-- the former five-second total budget while the first real model was loading;
+-- killing that model converted scheduler pressure into enforcement loss. The
+-- Apple lane is detection-only already, so the honest contract is a still-total
+-- fifteen-second sample bound. Linux keeps the five-second NVIDIA bound whose
+-- healthy query is measured in tens of milliseconds.
 observerSampleTimeoutMicros :: Int
+#if defined(darwin_HOST_OS)
+observerSampleTimeoutMicros = 15000000
+#else
 observerSampleTimeoutMicros = 5000000
+#endif
 
 observerCleanupTimeoutMicros :: Int
 observerCleanupTimeoutMicros = 2000000

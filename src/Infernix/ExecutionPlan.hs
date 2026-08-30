@@ -403,22 +403,31 @@ admitPlacementResources runtimeModeValue budget model requirement =
     -- that is present by construction. The retired form consulted a @Bool@ and
     -- admitted whatever single scalar had been authored beside it, so a
     -- device-using placement carrying no device requirement was constructible.
-    (Just (GpuEnforcementShape podLimit vramLimit), HostAndDeviceRequirement hostRequirement deviceRequirement) ->
-      CompiledGpuResources
-        (LinuxProcessGroupRssWatchdogPlan podLimit)
-        <$> admitGrant
-          PodRamWitness
-          (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
-          model
-          (podRequirementOf hostRequirement)
-          (podMemoryLimitMib podLimit)
-        <*> pure (NvidiaVramAccountingPlan vramLimit)
-        <*> admitGrant
+    (Just (GpuEnforcementShape podLimit vramLimit), HostAndDeviceRequirement hostRequirement deviceRequirement) -> do
+      -- A device-using placement is useful only if its device arena fits. Admit
+      -- that scarcer resource first so a requirement exceeding both limits
+      -- names the device capacity an operator must enlarge.
+      deviceGrant <-
+        admitGrant
           NvidiaVramWitness
           (Types.podMemoryLimitSourceText (podMemoryLimitSource vramLimit))
           model
           deviceRequirement
           (podMemoryLimitMib vramLimit)
+      podGrant <-
+        admitGrant
+          PodRamWitness
+          (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
+          model
+          (podRequirementOf hostRequirement)
+          (podMemoryLimitMib podLimit)
+      pure
+        ( CompiledGpuResources
+            (LinuxProcessGroupRssWatchdogPlan podLimit)
+            podGrant
+            (NvidiaVramAccountingPlan vramLimit)
+            deviceGrant
+        )
     -- 'placementEnforcementShape' selects the device shape only for a model
     -- whose requirement carries a device term, and 'requiresGpu' is that arm.
     -- The pair is therefore unreachable, and it fails closed rather than

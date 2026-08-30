@@ -22,7 +22,7 @@
 
 | Wave | Phase / sprint | Stage 1: code-side closure | Stage 2: selected cohort gate |
 |------|----------------|----------------------------|-------------------------------|
-| 4.45 | Phase 4 Sprint 4.45 | Complete: governed Apple rebuild, aggregate lint, unit aggregate, 7 positive / 96 negative capability fixtures, 84/84 PureScript tests, standalone lints, and docs check pass | Partially complete: the current-source `linux-cpu` full suite passes aggregate lint, 7 positive / 96 negative capability fixtures, unit, integration, 84/84 PureScript, 16/16 routed Playwright, retained-state replay, and clean teardown. The native Apple lane is constructible, but the governed suite correctly refuses to start beside a foreign live toolchain claimant; the selected `apple-silicon` full suite remains pending until that claimant releases the shared host-memory account |
+| 6.53 | Phase 6 / Sprint 6.53 | Complete: governed Apple build, unit/web suites, consolidated lint, and direct repository gates pass | Paired current-source native-arm64 `linux-cpu` full suite passes; selected `linux-gpu` full suite remains pending on a native CUDA Linux host against the frozen state |
 
 ## Cadence Rule
 
@@ -61,9 +61,9 @@ available cohort during the active wave and record only the phase's chosen accel
 | 1 | No open disposition |
 | 2 | No open disposition |
 | 3 | No open disposition |
-| 4 | Wave 4.45 open: code-side closure and current `linux-cpu` full suite complete; the native Apple lane is constructible, and the selected `apple-silicon` full suite remains pending until the shared host-memory account is free of foreign toolchain claimants |
+| 4 | No open disposition |
 | 5 | No open disposition |
-| 6 | No open disposition |
+| 6 | Wave 6.53: Stage 1 and paired native-arm64 `linux-cpu` are complete; selected `linux-gpu` sign-off remains open |
 | 7 | No open disposition |
 | 8 | No open disposition |
 | 9 | No open disposition |

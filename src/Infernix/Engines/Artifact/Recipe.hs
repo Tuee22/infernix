@@ -192,8 +192,10 @@ appleRecipePins identity =
   where
     pythonRecipePins recipe =
       Just
-        ( ("pip=" <> Text.pack pinnedPipRequirement)
-            : map (("requirement=" <>) . Text.pack) (pinnedPythonRequirements recipe)
+        ( [ "python-runner-revision=apple-python-direct-target-v2",
+            "pip=" <> Text.pack pinnedPipRequirement
+          ]
+            <> map (("requirement=" <>) . Text.pack) (pinnedPythonRequirements recipe)
         )
 
 linuxRecipePins :: NativeArtifactIdentity -> Maybe [Text]

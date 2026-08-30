@@ -34,6 +34,7 @@ module Infernix.Engines.Artifact.Internal
     validateNativeArtifactTargetEvidence,
     portableImageTargetEvidenceForTest,
     validateEngineArtifactRootAt,
+    validateRetainedEngineArtifactRootAt,
     manifestFingerprint,
     ArtifactResolution (..),
     NativeArtifactIdentity,
@@ -1552,7 +1553,31 @@ validateEngineArtifactRootAt ::
   FilePath ->
   FilePath ->
   IO EngineArtifactManifest
-validateEngineArtifactRootAt expectedInstallRoot actualRoot = do
+validateEngineArtifactRootAt =
+  validateEngineArtifactRootAtWithRecipeContract RequireCurrentRecipe
+
+-- | Validate a complete root that participates only in replacement recovery.
+-- Runtime capability minting deliberately uses 'validateEngineArtifactRootAt'
+-- instead, so a prior recipe can supply rollback identity but never execution
+-- authority under the current catalog.
+validateRetainedEngineArtifactRootAt ::
+  FilePath ->
+  FilePath ->
+  IO EngineArtifactManifest
+validateRetainedEngineArtifactRootAt =
+  validateEngineArtifactRootAtWithRecipeContract PermitSupersededRecipe
+
+data RecipeContractMode
+  = RequireCurrentRecipe
+  | PermitSupersededRecipe
+  deriving (Eq)
+
+validateEngineArtifactRootAtWithRecipeContract ::
+  RecipeContractMode ->
+  FilePath ->
+  FilePath ->
+  IO EngineArtifactManifest
+validateEngineArtifactRootAtWithRecipeContract recipeContract expectedInstallRoot actualRoot = do
   absoluteActualRoot <- makeAbsolute actualRoot
   withStableDirectoryDescriptor
     "engine artifact root"
@@ -1584,7 +1609,7 @@ validateEngineArtifactRootAt expectedInstallRoot actualRoot = do
           absoluteActualRoot
           rootDescriptor
           manifest
-        validateExactManifestContract manifest
+        validateExactManifestContract recipeContract manifest
         observedDigest <-
           digestEngineArtifactPayloadDescriptor
             (const (pure ()))
@@ -1770,9 +1795,10 @@ validateManifestContract
             ioError
               (userError "Apple engine artifact has no closed runtime closure")
 
-validateExactManifestContract :: EngineArtifactManifest -> IO ()
-validateExactManifestContract manifest = do
-  validateCurrentRecipeFingerprint manifest
+validateExactManifestContract :: RecipeContractMode -> EngineArtifactManifest -> IO ()
+validateExactManifestContract recipeContract manifest = do
+  when (recipeContract == RequireCurrentRecipe) $
+    validateCurrentRecipeFingerprint manifest
   digestHex <-
     maybe
       ( ioError
@@ -2478,6 +2504,9 @@ reconcileEngineArtifactRoot authority mutator installRoot = mask $ \_ -> do
     ExactPayloadRoot -> do
       removeOwnedRootIfPresent mutator previousRoot
       removeOwnedRootIfPresent mutator tempRoot
+    SupersededExactPayloadRoot -> do
+      removeOwnedRootIfPresent mutator previousRoot
+      removeOwnedRootIfPresent mutator tempRoot
     LegacyDeclarativeRoot ->
       case previousState of
         MissingRoot -> removeOwnedRootIfPresent mutator tempRoot
@@ -2497,6 +2526,13 @@ reconcileEngineArtifactRoot authority mutator installRoot = mask $ \_ -> do
             tempRoot
             previousRoot
             ExactPriorArtifact
+        SupersededExactPayloadRoot ->
+          restorePreviousArtifactRoot
+            mutator
+            installRoot
+            tempRoot
+            previousRoot
+            SupersededExactPriorArtifact
         LegacyDeclarativeRoot ->
           restorePreviousArtifactRoot
             mutator
@@ -2513,6 +2549,11 @@ reconcileEngineArtifactRoot authority mutator installRoot = mask $ \_ -> do
               pure ()
             MissingRoot -> pure ()
             InvalidRoot _ -> removeOwnedRootIfPresent mutator tempRoot
+            SupersededExactPayloadRoot ->
+              ioError
+                ( userError
+                    "internal error: exact candidate inspection returned a superseded root"
+                )
             LegacyDeclarativeRoot ->
               ioError
                 ( userError
@@ -2537,6 +2578,14 @@ reconcileEngineArtifactRoot authority mutator installRoot = mask $ \_ -> do
             tempRoot
             previousRoot
             ExactPriorArtifact
+        SupersededExactPayloadRoot -> do
+          removeOwnedRootIfPresent mutator installRoot
+          restorePreviousArtifactRoot
+            mutator
+            installRoot
+            tempRoot
+            previousRoot
+            SupersededExactPriorArtifact
         LegacyDeclarativeRoot -> do
           removeOwnedRootIfPresent mutator installRoot
           restorePreviousArtifactRoot
@@ -2556,12 +2605,14 @@ reconcileEngineArtifactRoot authority mutator installRoot = mask $ \_ -> do
 data ArtifactRootState
   = MissingRoot
   | ExactPayloadRoot
+  | SupersededExactPayloadRoot
   | LegacyDeclarativeRoot
   | InvalidRoot !String
 
 data PriorArtifactRoot
   = NoPriorArtifact
   | ExactPriorArtifact
+  | SupersededExactPriorArtifact
   | LegacyMigrationPriorArtifact
   deriving (Eq)
 
@@ -2583,19 +2634,31 @@ inspectArtifactRoot expectedInstallRoot candidateRoot = do
           case exactValidation of
             Right _ -> pure ExactPayloadRoot
             Left exactFailure -> do
-              legacyValidation <-
+              supersededValidation <-
                 try @IOException
-                  (validateLegacyArtifactRootAt expectedInstallRoot candidateRoot)
-              pure $
-                case legacyValidation of
-                  Right () -> LegacyDeclarativeRoot
-                  Left legacyFailure ->
-                    InvalidRoot
-                      ( "exact validation failed: "
-                          <> show exactFailure
-                          <> "; legacy validation failed: "
-                          <> show legacyFailure
-                      )
+                  ( validateEngineArtifactRootAtWithRecipeContract
+                      PermitSupersededRecipe
+                      expectedInstallRoot
+                      candidateRoot
+                  )
+              case supersededValidation of
+                Right _ -> pure SupersededExactPayloadRoot
+                Left supersededFailure -> do
+                  legacyValidation <-
+                    try @IOException
+                      (validateLegacyArtifactRootAt expectedInstallRoot candidateRoot)
+                  pure $
+                    case legacyValidation of
+                      Right () -> LegacyDeclarativeRoot
+                      Left legacyFailure ->
+                        InvalidRoot
+                          ( "exact validation failed: "
+                              <> show exactFailure
+                              <> "; superseded exact validation failed: "
+                              <> show supersededFailure
+                              <> "; legacy validation failed: "
+                              <> show legacyFailure
+                          )
 
 inspectExactArtifactRoot ::
   FilePath ->
@@ -3178,6 +3241,14 @@ beginEngineArtifactActivationWithObserver
             Just
               <$> restore
                 (validateEngineArtifactRootAt installRoot installRoot)
+          SupersededExactPayloadRoot ->
+            Just
+              <$> restore
+                ( validateEngineArtifactRootAtWithRecipeContract
+                    PermitSupersededRecipe
+                    installRoot
+                    installRoot
+                )
           _ -> pure Nothing
       let idempotentExactRerun =
             priorManifest == Just candidateManifest
@@ -3200,6 +3271,7 @@ beginEngineArtifactActivationWithObserver
             case finalState of
               MissingRoot -> pure NoPriorArtifact
               ExactPayloadRoot -> pure ExactPriorArtifact
+              SupersededExactPayloadRoot -> pure SupersededExactPriorArtifact
               LegacyDeclarativeRoot -> pure LegacyMigrationPriorArtifact
               InvalidRoot failure ->
                 ioError
@@ -3401,6 +3473,28 @@ rollbackActivation mutator installRoot tempRoot previousRoot priorArtifact = do
               )
       _ <- validateEngineArtifactRootAt installRoot installRoot
       pure ()
+    SupersededExactPriorArtifact -> do
+      if previousExists
+        then do
+          when (currentFinal && tempExists) $
+            ioError
+              ( userError
+                  "engine artifact rollback found both a final root and candidate"
+              )
+          when currentFinal (renameArtifactRoot mutator installRoot tempRoot)
+          renameArtifactRoot mutator previousRoot installRoot
+        else
+          unless (currentFinal && tempExists) $
+            ioError
+              ( userError
+                  "engine artifact rollback cannot prove that the superseded prior root remained final"
+              )
+      _ <-
+        validateEngineArtifactRootAtWithRecipeContract
+          PermitSupersededRecipe
+          installRoot
+          installRoot
+      pure ()
     LegacyMigrationPriorArtifact -> do
       if previousExists
         then do
@@ -3453,6 +3547,13 @@ restorePreviousArtifactRoot
     case priorArtifact of
       ExactPriorArtifact -> do
         _ <- validateEngineArtifactRootAt installRoot installRoot
+        pure ()
+      SupersededExactPriorArtifact -> do
+        _ <-
+          validateEngineArtifactRootAtWithRecipeContract
+            PermitSupersededRecipe
+            installRoot
+            installRoot
         pure ()
       LegacyMigrationPriorArtifact ->
         validateLegacyArtifactRootAt installRoot installRoot

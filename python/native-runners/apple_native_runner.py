@@ -20,6 +20,7 @@ class RunnerArgs:
     selected_engine: str
     family: str
     install_root: pathlib.Path
+    generation_bound: int
     input_text: str
     input_object_ref: str
     input_file: str
@@ -39,6 +40,7 @@ def main() -> int:
         _verify_expected_source_isolation(args)
         if args.smoke_only:
             return _run_smoke(args)
+        _require_execution_shape(args)
         _require_model_cache_ready(args)
         output = _run_inference(args)
     except RunnerFailure as exc:
@@ -54,6 +56,11 @@ class RunnerFailure(Exception):
         self.exit_code = exit_code
 
 
+def _require_execution_shape(args: RunnerArgs) -> None:
+    if args.generation_bound <= 0:
+        raise RunnerFailure("native execution requires a positive generation bound", 64)
+
+
 def _parse_args() -> RunnerArgs:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--adapter-id", required=True)
@@ -62,6 +69,7 @@ def _parse_args() -> RunnerArgs:
     parser.add_argument("--engine", default="")
     parser.add_argument("--family", default="native")
     parser.add_argument("--install-root", default="")
+    parser.add_argument("--generation-bound", type=int, default=0)
     parser.add_argument("--input-text", default="")
     parser.add_argument("--input-object-ref", default="")
     parser.add_argument("--input-file", default="")
@@ -98,6 +106,7 @@ def _parse_args() -> RunnerArgs:
         selected_engine=parsed.engine,
         family=parsed.family,
         install_root=install_root,
+        generation_bound=parsed.generation_bound,
         input_text=parsed.input_text,
         input_object_ref=parsed.input_object_ref,
         input_file=parsed.input_file,
@@ -466,7 +475,13 @@ def _run_mlx_lm(args: RunnerArgs) -> str:
     model_dir = _model_dir(args)
     prompt = args.input_text or "Hello from Infernix"
     model, tokenizer = load(str(model_dir))
-    output = generate(model, tokenizer, prompt=prompt, max_tokens=64, verbose=False)
+    output = generate(
+        model,
+        tokenizer,
+        prompt=prompt,
+        max_tokens=args.generation_bound,
+        verbose=False,
+    )
     rendered = str(output).strip()
     if not rendered:
         raise RunnerFailure("MLX generated empty output", 70)

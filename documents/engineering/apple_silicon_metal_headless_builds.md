@@ -101,7 +101,7 @@ Every materialized engine artifact should have a typed manifest with at least th
 | `pythonVersion` | Required only for Python artifacts. |
 | `runtimeVersion` | Metal, Core ML, CUDA, JVM, or other relevant runtime version. |
 | `resolvedProvenance` | Exact resolved package, interpreter, release-source, checksum, and authoritative-smoke records. |
-| `recipeFingerprint` | Versioned fingerprint of the closed materialization recipe. |
+| `recipeFingerprint` | Versioned fingerprint of the closed materialization recipe, including a runner revision that invalidates installed artifacts whenever the repo-owned native runner's invocation contract changes. |
 | `digest` | Content digest of the immutable payload. |
 | `minioObjectKey` | Optional content-addressed MinIO key for reusable payloads. |
 | `localInstallRoot` | Local materialization root such as `./.data/engines/<adapterId>/`. |
@@ -118,6 +118,13 @@ digest. Audiveris is accepted only after the pinned
 release image is observed. A mount is treated as live only when its kernel device id differs from
 the parent candidate filesystem; the bounded detach operation runs in the primary-preserving
 release path.
+
+A complete artifact carrying a prior recipe is not executable under the current catalog, but
+it remains valid rollback state during replacement. Reconciliation verifies its manifest, direct
+target, provenance, and complete payload digest while allowing only the recipe-currentness check to
+differ; activation then hydrates and smoke-validates the current candidate before the sibling rename.
+If candidate validation or activation fails, the complete prior-recipe root is restored. Corrupt or
+structurally incompatible roots remain invalid and cannot be used as rollback state.
 
 ## Storage Boundary
 

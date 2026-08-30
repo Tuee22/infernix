@@ -1,14 +1,24 @@
 module Infernix.Cluster.LifecycleLock
-  ( kernelFileLockIsHeld,
+  ( boundedCommandActivityLifetimeLockPath,
+    kernelFileLockIsHeld,
     withLifecycleFileLock,
     withKernelFileLock,
+    withKernelSharedFileLock,
   )
 where
 
 import Data.Maybe (isNothing)
 import Infernix.Error (bracketPreservingPrimary)
 import System.FileLock qualified as FileLock
-import System.FilePath (normalise)
+import System.FilePath (normalise, (</>))
+
+-- | Fixed cross-namespace rendezvous for bounded-command helper lifetimes.
+-- Every anchor, supervisor, and retained target-group pin holds this lock in
+-- shared mode. Recovery holds it in exclusive mode, so the exclusive token is
+-- kernel evidence that no cooperating helper can still own a descendant.
+boundedCommandActivityLifetimeLockPath :: FilePath -> FilePath
+boundedCommandActivityLifetimeLockPath activeRuntimeRoot =
+  activeRuntimeRoot </> "locks" </> "bounded-command-activity.held"
 
 -- | Observe whether a kernel lock is currently held. A successful probe is
 -- released inside the same exception-safe bracket; the persistent sidecar is
@@ -30,11 +40,24 @@ withLifecycleFileLock = withKernelFileLock "cluster lifecycle"
 -- transitions that need a persistent pathname but no residue-based ownership
 -- protocol.
 withKernelFileLock :: String -> FilePath -> IO a -> IO a
-withKernelFileLock lockName lockPath action =
+withKernelFileLock = withKernelFileLockMode FileLock.Exclusive
+
+-- | Run an action while holding a non-blocking shared kernel lock. The token
+-- remains package-internal; callers receive only the enclosed region.
+withKernelSharedFileLock :: String -> FilePath -> IO a -> IO a
+withKernelSharedFileLock = withKernelFileLockMode FileLock.Shared
+
+withKernelFileLockMode ::
+  FileLock.SharedExclusive ->
+  String ->
+  FilePath ->
+  IO a ->
+  IO a
+withKernelFileLockMode lockMode lockName lockPath action =
   bracketPreservingPrimary acquire FileLock.unlockFile (const action)
   where
     acquire = do
-      lockResult <- FileLock.tryLockFile lockPath FileLock.Exclusive
+      lockResult <- FileLock.tryLockFile lockPath lockMode
       case lockResult of
         Just lockToken -> pure lockToken
         Nothing ->

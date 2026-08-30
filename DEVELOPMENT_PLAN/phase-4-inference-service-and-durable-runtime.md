@@ -1,10 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — Sprint 4.45's code-side closure and current `linux-cpu` full suite pass. Its
-selected `apple-silicon` full suite remains open in
-[Wave 4.45](cohort-validation-waves.md): the native Apple lane is constructible, but the governed
-suite correctly refuses to start beside a foreign live toolchain claimant. Validation leaves that
-claimant running and retries only after the shared host-memory account is available.
+**Status**: Done
 **Current implementation state**: Sprints 4.37 through 4.42 landed in numerical order, each building
 on the one before: a breach names the resource it breached, the requirement becomes resource-indexed,
 the requirement is derived from the artifact's own bytes, three sampling loops become one, a kernel
@@ -34,11 +30,8 @@ phase for that prerequisite.
 
 ## Phase Status
 
-Sprint 4.45 is Active. All earlier sprints remain Done for their recorded scope. Its current
-`linux-cpu` full suite passes the aggregate lints, 7 positive / 96 negative capability fixtures,
-unit and integration suites, 84/84 PureScript tests, 16/16 routed browser tests, real per-model
-execution or typed fail-closed admission, retained-state replay, and clean harness teardown. The
-selected `apple-silicon` full suite remains the only Phase 4 residual.
+Every sprint is Done, the selected `apple-silicon` plus paired `linux-cpu` cohort passes against the
+current source, and no Phase 4 work remains open.
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python adapter boundary, the
 Pulsar-driven request and result contract, the explicit engine-runner dispatch, the mounted
@@ -3422,19 +3415,15 @@ None.
 
 ---
 
-## Sprint 4.45: Runtime Capability and Machine-Identity Ledger Closure [Active]
+## Sprint 4.45: Runtime Capability and Machine-Identity Ledger Closure [Done]
 
-**Status**: Active — code-side closure passes; the selected cohort gate remains open in
-[Wave 4.45](cohort-validation-waves.md).
-**Code-side closure**: Complete — governed Apple build, aggregate lint and unit gates, 7 positive /
-96 negative compile-time capability fixtures, 84/84 PureScript tests, standalone lints, and docs
-check pass.
-**Cohort gate**: The current `linux-cpu` full suite passes; the selected `apple-silicon` full suite
-remains pending in [Wave 4.45](cohort-validation-waves.md) until the shared host-memory account is
-free of foreign toolchain claimants.
+**Status**: Done
 **Implementation**: `src/Infernix/ExecutionPlan.hs`, `src/Infernix/Runtime/`,
-`src/Infernix/Service.hs`, `src/Infernix/Types.hs`, `test/unit/Spec.hs`,
-`test/integration/Spec.hs`, `test/compile-fail/`,
+`src/Infernix/Engines/Artifact/`, `src/Infernix/Engines/Provisioning.hs`,
+`src/Infernix/Models.hs`, `src/Infernix/Python.hs`, `src/Infernix/Service.hs`,
+`src/Infernix/Types.hs`, `python/adapters/`, `python/native-runners/apple_native_runner.py`,
+`chart/values.yaml`, `test/unit/Spec.hs`, `test/integration/Spec.hs`,
+`test/artifact-transaction/Spec.hs`, `test/compile-fail/`,
 `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`,
 `documents/architecture/daemon_topology.md`, and
@@ -3474,13 +3463,12 @@ the capability or identity boundary structurally.
 - compile-fail fixtures prove raw grants and execution authority cannot be constructed or consumed
   outside their owning regions; unit properties prove ambiguous member identity is refused before
   a broker consumer starts
+- the selected current-source `apple-silicon` and paired native-arm64 `linux-cpu` full suites pass,
+  including 16/16 routed browser tests on each lane and clean lifecycle teardown
 
 ### Remaining Work
 
-- **Cohort gate:** run the selected `apple-silicon` full suite recorded in
-  [Wave 4.45](cohort-validation-waves.md) after the foreign governed-toolchain claimant releases
-  the shared host-memory account. The native Apple lane is constructible and the paired
-  current-source `linux-cpu` full suite passes.
+None.
 
 ## Documentation Requirements
 

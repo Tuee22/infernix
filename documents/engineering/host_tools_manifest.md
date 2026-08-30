@@ -380,11 +380,12 @@ frames, with input and output bytes base64-encoded inside the frame.
 
 The parent live-verifies the final owner, anchor, supervisor, and self-exec pin PID, group, and
 birth identities. An opaque rank-2 session with linear phase transitions permits target creation
-only after durable version-3 activity publication and a retained-pin acknowledgement. That record
+only after durable version-5 activity publication and a retained-pin acknowledgement. That record
+also declares shared kernel lifetime protection for the helper tree and
 keeps `command*` for the anchor and `watchdog*` for the supervisor as persisted-format compatibility
 keys and stores the exact pin under compatibility `targetGroupLeader*` keys. A bounded, fsynced
-incoming-intent filename carries the same identities before the payload write; common-boot names
-use the version-3 encoding and fixed-width distinct-boot names use version 4. The supervisor then
+incoming-intent filename carries the same identities before the payload write; legacy common-boot
+and distinct-boot names use versions 3–5, while protected current names use version 6. The supervisor then
 owns the sole public `System.Posix` fork/exec boundary: the arbitrary target begins in the
 supervisor group behind an inner gate, moves into the recorded pin group, and cannot execute until
 its supervisor-owned PID is observed in that group. The target is an unreaped child, not a

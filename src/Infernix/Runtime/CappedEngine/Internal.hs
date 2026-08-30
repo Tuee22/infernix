@@ -1462,6 +1462,8 @@ renderPythonNativeArtifactArguments installRoot invocation =
     Text.unpack (nativeInvocationFamily invocation),
     "--install-root",
     installRoot,
+    "--generation-bound",
+    show (executionGenerationBound (nativeInvocationExecutionShape invocation)),
     "--require-native-payload"
   ]
     <> renderNativeArtifactInput (nativeInvocationInput invocation)

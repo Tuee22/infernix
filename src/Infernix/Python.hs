@@ -996,49 +996,39 @@ poetryProjectVenvDeadline =
     "Poetry project environment creation deadline"
     (5 * 60 * 1000 * 1000)
 
--- | Give the project its own environment before Poetry picks one for it.
+-- | Give the project its own stable environment before Poetry picks one for it.
 --
--- Poetry resolves the environment to install into from the running interpreter
--- when the project has none, and a sealed bounded run points @PYTHONHOME@ at the
--- sealed copy of Poetry's own environment. Where that environment is itself a
--- virtual environment, Poetry adopts the sealed copy, and a first install lands
--- the engine's whole framework payload inside a generation that is about to be
--- retired: the interpreter the readiness marker requires is never created, and
--- the retirement walk exceeds the bound its creation fit. Measured on the
--- @linux-cpu@ launcher image for @python\/engines\/transformers@: a generation
--- admitted at 10318 entries and 228330624 bytes reached 34080 entries and
--- 1041364991 bytes.
+-- Every Poetry install runs from an exact per-command snapshot. If the project
+-- has no environment, Poetry or virtualenv can therefore record that snapshot
+-- as the base interpreter even when the sealed Python home is a real Darwin
+-- framework rather than a virtual environment. The snapshot is retired when
+-- the command finishes, leaving the project interpreter as a dangling link.
 --
--- The step is taken only under that exact condition. A lane whose sealed Python
--- home is a real installation — the Apple framework Python — is one where Poetry
--- already creates the project's environment itself, and where the configured
--- interpreter is not an operating-system platform binary, so creating the
--- environment through the bounded kernel would run a sealed copy and record its
--- ephemeral prefix in the environment it wrote.
+-- The closed creation command deliberately uses the configured host Python
+-- without sealing its home and requests copied project executables. The venv's
+-- base home is therefore the stable manifest-owned framework even though its
+-- informational creation-command metadata records the bounded executable
+-- snapshot. An existing exact project interpreter still short-circuits the
+-- operation; this does not clear a ready environment on an idempotent rerun.
 ensurePreparedProjectEnvironment ::
   Provisioning.ProjectWriter p s q ->
   Provisioning.ProvisioningGrant s ->
   Provisioning.ResolvedPoetry s ->
   FilePath ->
   Provisioning.ProvisioningSession s Provisioning.ProvisioningOutcome
-ensurePreparedProjectEnvironment writer grant poetry projectDirectory = do
-  sealedHomeIsVirtual <-
-    Provisioning.resolvedPoetrySealsAVirtualEnvironment poetry
-  if not sealedHomeIsVirtual
-    then pure skipped
-    else do
-      interpreterReady <-
-        Provisioning.provisioningProjectExecutableReady
-          writer
-          (projectDirectory </> ".venv" </> "bin" </> "python")
-      case interpreterReady of
-        Left failure -> pure (Provisioning.ProvisioningRejected failure)
-        Right True -> pure skipped
-        Right False ->
-          Provisioning.createPoetryProjectVenv
-            writer
-            grant
-            poetryProjectVenvDeadline
+ensurePreparedProjectEnvironment writer grant _poetry projectDirectory = do
+  interpreterReady <-
+    Provisioning.provisioningProjectExecutableReady
+      writer
+      (projectDirectory </> ".venv" </> "bin" </> "python")
+  case interpreterReady of
+    Left failure -> pure (Provisioning.ProvisioningRejected failure)
+    Right True -> pure skipped
+    Right False ->
+      Provisioning.createPoetryProjectVenv
+        writer
+        grant
+        poetryProjectVenvDeadline
   where
     skipped = Provisioning.ProvisioningSucceeded ""
 

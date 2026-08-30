@@ -921,7 +921,15 @@ runToolchainAdmissionObservationFixture = do
 -- at all, and asserting one there is what took every gate command down.
 runBuildMemoryBoundFixture :: FilePath -> IO ()
 runBuildMemoryBoundFixture scratchDirectory = do
-  plan <- buildMemoryFixturePlan (minimumProcessHeapMib * 2) 1
+  -- Exercise the smallest complete production account: one compiler at the
+  -- calibrated heap floor, one worker-associated control/helper slot, and the
+  -- live Cabal driver. Wider arithmetic is covered by the pure cases below;
+  -- making the behavioral child claim more memory than its scenario needs
+  -- would turn unrelated host residency into a validation prerequisite.
+  plan <-
+    buildMemoryFixturePlan
+      (minimumProcessHeapMib + 2 * toolchainControlHeapMib)
+      1
   widerPlan <- buildMemoryFixturePlan (minimumProcessHeapMib * 4) 1
   let sameHeapBudgetMib =
         2 * planRtsHeapMib plan + 3 * toolchainControlHeapMib
@@ -1470,7 +1478,10 @@ runBuildMemoryBoundFixture scratchDirectory = do
         (postObservationBuildArguments == buildArguments)
         "Darwin validation arguments cannot change after the final committed-file observation"
       assert
-        ( "at or above its 8192 MiB claimant account"
+        ( ( "at or above its "
+              <> show (planToolchainAccountMib plan)
+              <> " MiB claimant account"
+          )
             `isInfixOf` refusalReason overAccountPeakRefusal
         )
         "Darwin evidence whose sampled peak reaches the account is not constructible"
@@ -1478,13 +1489,13 @@ runBuildMemoryBoundFixture scratchDirectory = do
         ( "sampleMetric: sampled peak aggregate physical footprint" `isInfixOf` report
             && "sampleCount: 3" `isInfixOf` report
             && "sampledPeakAggregatePhysicalFootprintBytes: 2147483648" `isInfixOf` report
-            && "planAccountToSampledPeakMultiple: 4.00x" `isInfixOf` report
+            && "planAccountToSampledPeakMultiple: 3.00x" `isInfixOf` report
             && "activeColimaPledgeMib: 49152" `isInfixOf` report
-            && "planCompilerJobsTimesHeapMib: 6144" `isInfixOf` report
+            && "planCompilerJobsTimesHeapMib: 4096" `isInfixOf` report
             && "planControlHeapMib: 1024" `isInfixOf` report
             && "planControlClaimCount: 2" `isInfixOf` report
             && "planControlAccountMib: 2048" `isInfixOf` report
-            && "planAccountMib: 8192" `isInfixOf` report
+            && "planAccountMib: 6144" `isInfixOf` report
             && "installedRuntimeCliInheritedGhcrts: ignored (proved with adversarial invalid GHCRTS)" `isInfixOf` report
             && "excludedHostReserveClaimants: operator CLI parent and fixed observer tools" `isInfixOf` report
             && "invocation.1.exitStatus: 0" `isInfixOf` report
@@ -3105,10 +3116,11 @@ main = do
   assert
     ( not (commandRequiresConfiguredStartup (InitCommand (Just AppleSilicon) (Just True) Nothing True False))
         && not (commandRequiresConfiguredStartup (TestInitCommand (Just AppleSilicon) (Just True) Nothing))
+        && not (commandRequiresConfiguredStartup (ClusterReclaimSlotCommand Nothing))
         && not (commandRequiresConfiguredStartup ShowRootHelp)
         && commandRequiresConfiguredStartup TestUnitCommand
     )
-    "init, test init, and help remain reachable across a stale host-manifest schema while operational commands require configured startup"
+    "init, test init, cluster-slot recovery, and help remain reachable without configured startup while ordinary operational commands require it"
   assert
     ( parseCommand ["internal", "validate-darwin-audiveris-cancellation"]
         == Right InternalValidateDarwinAudiverisCancellationCommand
@@ -3591,11 +3603,11 @@ main = do
         `isInfixOf` pythonProducerSource
     )
     "Phase 1 Sprint 1.23: the producer durably invalidates readiness before Poetry can mutate an environment"
-  -- Sprint 1.27: both producers give the project its own environment before the
-  -- bounded install, and the creation is guarded on the exact interpreter so an
-  -- existing environment is never cleared. Poetry adopts the running
-  -- interpreter's prefix when the project owns nothing, and under a sealed run
-  -- that prefix is the generation about to be retired.
+  -- The shared and per-engine producers give the project its own environment
+  -- before the bounded install, and creation is guarded on the exact interpreter
+  -- so an existing environment is never cleared. This is required on Darwin as
+  -- well as Linux: Poetry runs from a sealed generation on both lanes, and an
+  -- environment it creates itself can retain that ephemeral base interpreter.
   assert
     ( length
         ( filter
@@ -3605,16 +3617,18 @@ main = do
             (tails (filter (not . isSpace) pythonProducerSource))
         )
         == 2
-        && "sealedHomeIsVirtual <- Provisioning.resolvedPoetrySealsAVirtualEnvironment poetry"
-          `isInfixOf` unwords (words pythonProducerSource)
-        && "if not sealedHomeIsVirtual then pure skipped"
+        && not
+          ( "resolvedPoetrySealsAVirtualEnvironment"
+              `isInfixOf` pythonProducerSource
+          )
+        && "interpreterReady <- Provisioning.provisioningProjectExecutableReady"
           `isInfixOf` unwords (words pythonProducerSource)
         && "Right True -> pure skipped"
           `isInfixOf` unwords (words pythonProducerSource)
         && "Provisioning.createPoetryProjectVenv"
           `isInfixOf` pythonProducerSource
     )
-    "Phase 1 Sprint 1.27: both Python producers create the in-project environment, only where Poetry would adopt the sealed prefix and only when the exact interpreter is absent, before the bounded Poetry install"
+    "both Python producers create the in-project environment from the stable configured interpreter whenever the exact project interpreter is absent"
   chartValuesContents <- readFile "chart/values.yaml"
   let expectedBasePulsarAutorecoveryBlock =
         unlines
@@ -3624,6 +3638,7 @@ main = do
             "      enabled: false",
             "    configData:",
             "      BOOKIE_MEM: \"-Xms64m -Xmx256m -XX:MaxDirectMemorySize=128m\"",
+            "      PULSAR_GC: \"-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem\"",
             "    resources:",
             "      requests:",
             "        memory: 192Mi",
@@ -3656,6 +3671,17 @@ main = do
   assert
     (expectedBasePulsarAutorecoveryBlock `isInfixOf` chartValuesContents)
     "base Pulsar autorecovery values avoid the 192Mi OOMKilled recovery rollout"
+  let boundedPulsarGcLine =
+        "      PULSAR_GC: \"-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem\""
+  assert
+    (length (filter (== boundedPulsarGcLine) (lines chartValuesContents)) == 5)
+    "every base Pulsar JVM role uses the bounded SerialGC profile instead of the upstream pre-touch profile"
+  assert
+    ( "      PULSAR_MEM: \"-Xms128m -Xmx256m -XX:MaxDirectMemorySize=128m\""
+        `isInfixOf` chartValuesContents
+        && "        memory: 2Gi" `isInfixOf` chartValuesContents
+    )
+    "the base Pulsar broker pairs its bounded heap/direct-memory profile with the startup-safe pod envelope"
   assert
     (expectedBaseRegistryResourcesBlock `isInfixOf` chartValuesContents)
     "the registry carries an explicit memory envelope for large-image publication"
@@ -4260,6 +4286,15 @@ main = do
             (models decodedAppleConfig)
         )
         "every apple catalog model declares a positive execution context length"
+      assert
+        ( all
+            ( all ((== 64) . executionGenerationBound . modelExecutionShape)
+                . filter ((== "llm") . family)
+                . catalogForMode
+            )
+            allRuntimeModes
+        )
+        "Sprint 4.45: every generated LLM catalog row carries the bounded 64-token execution shape"
       -- Phase 4 Sprint 4.31 / Sprint 4.45 — the checked partition derives its
       -- co-tenant headroom from the shared pool and rejects a pool too small to
       -- retain it; the required footprint rejects a non-positive value.
@@ -4421,9 +4456,10 @@ main = do
             [HostRam, PodRam, NvidiaVram]
         )
         "every resource round-trips through its JSON codec"
-      -- Phase 6 Sprint 6.42 — the engine-spawn capability-gating lint fires on a
-      -- raw engine spawn in a guarded production file, exempts the capped-engine
-      -- kernel (the sole legitimate engine-spawn surface), and passes a clean line.
+      -- Phase 6 Sprint 6.53 — the engine-spawn capability-gating lint fires on a
+      -- raw engine spawn in a guarded production file, exempts only the
+      -- capped-engine kernel, and recognizes reviewed non-engine sites only in
+      -- the closed file set.
       assert
         (not (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/Daemon.hs" [(1, "  (_, _, _, ph) <- createProcess spec")])))
         "unboundedEngineSpawnViolations fires on an injected raw createProcess in a guarded file"
@@ -4431,8 +4467,37 @@ main = do
         (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/CappedEngine/Internal.hs" [(1, "  (_, _, _, ph) <- createProcess spec")]))
         "unboundedEngineSpawnViolations exempts the capped-engine kernel module"
       assert
-        (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/CappedEngine/FixedObserver.hs" [(1, "  created <- createProcess fixedObserverSpec")]))
-        "unboundedEngineSpawnViolations narrowly exempts the fixed public-tool observer kernel"
+        ( not
+            ( null
+                ( unboundedEngineSpawnViolations
+                    "src/Infernix/Runtime/CappedEngine/FixedObserver.hs"
+                    [(1, "  created <- createProcess fixedObserverSpec")]
+                )
+            )
+        )
+        "unboundedEngineSpawnViolations does not exempt the fixed public-tool observer module wholesale"
+      assert
+        ( null
+            ( unboundedEngineSpawnViolations
+                "src/Infernix/Runtime/CappedEngine/FixedObserver.hs"
+                [ (1, "  -- infernix-lint: non-engine-process-site"),
+                  (2, "  created <- createProcess fixedObserverSpec")
+                ]
+            )
+        )
+        "unboundedEngineSpawnViolations accepts a reviewed non-engine site in the closed file set"
+      assert
+        ( not
+            ( null
+                ( unboundedEngineSpawnViolations
+                    "src/Infernix/Runtime/Daemon.hs"
+                    [ (1, "  -- infernix-lint: non-engine-process-site"),
+                      (2, "  created <- createProcess disguisedEngineSpec")
+                    ]
+                )
+            )
+        )
+        "unboundedEngineSpawnViolations rejects the annotation outside the closed non-engine file set"
       assert
         ( not
             ( any
@@ -5241,6 +5306,12 @@ main = do
       transformersAdapter <-
         readFile (repoRoot paths </> "python" </> "adapters" </> "transformers_python.py")
       vllmAdapter <- readFile (repoRoot paths </> "python" </> "adapters" </> "vllm_python.py")
+      appleNativeRunner <-
+        readFile (repoRoot paths </> "python" </> "native-runners" </> "apple_native_runner.py")
+      nativeCappedEngineKernelSource <-
+        readFile (repoRoot paths </> "src" </> "Infernix" </> "Runtime" </> "CappedEngine" </> "Internal.hs")
+      artifactRecipeSource <-
+        readFile (repoRoot paths </> "src" </> "Infernix" </> "Engines" </> "Artifact" </> "Recipe.hs")
       let applePytorchDependencyBlock =
             unlines
               [ "[tool.poetry.group.apple-silicon.dependencies]",
@@ -5305,6 +5376,15 @@ main = do
         ( "Sprint 6.51: the vLLM adapter derives its device arena from the "
             <> "admitted quantity rather than from a fraction literal"
         )
+      assert
+        ( "\"--generation-bound\"" `isInfixOf` nativeCappedEngineKernelSource
+            && "executionGenerationBound (nativeInvocationExecutionShape invocation)" `isInfixOf` nativeCappedEngineKernelSource
+            && "parser.add_argument(\"--generation-bound\", type=int, default=0)" `isInfixOf` appleNativeRunner
+            && "max_tokens=args.generation_bound" `isInfixOf` appleNativeRunner
+            && not ("max_tokens=64" `isInfixOf` appleNativeRunner)
+            && "python-runner-revision=apple-python-direct-target-v2" `isInfixOf` artifactRecipeSource
+        )
+        "Sprint 4.45: the versioned Apple native runner consumes the carried generation bound rather than a private literal"
       persistInferenceResult paths textPayloadResult
       reloadedResult <- loadInferenceResult paths "req-unit-text"
       assert
@@ -8395,7 +8475,8 @@ main = do
       isolatedPeerTargetIdentity
   removeTestPathIfPresent isolatedPeerReleaseFifo
   isolatedActivitiesQuiescent <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescent
+      100
       subprocessPaths
       isolatedOwnerProcessGroup
   let isolatedPeerSucceeded =
@@ -8417,9 +8498,7 @@ main = do
               && isolatedPeerSucceeded
               && isolatedPeerPinAbsent
               && isolatedPeerTargetAbsent
-              && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-                isolatedActivitiesQuiescent
-                == isolatedOwnerProcessGroup
+              && isolatedActivitiesQuiescent
           _ -> False
   assert
     isolatedCancellationCleanedUp
@@ -8972,7 +9051,8 @@ main = do
       subprocessPaths
       acquisitionOwnerProcessGroup
   acquisitionQuiescence <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       acquisitionOwnerProcessGroup
   assert
@@ -8981,8 +9061,7 @@ main = do
         && not acquisitionTargetExecuted
         && acquisitionAnchorAbsent
         && isNothing acquisitionActivity
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-          acquisitionQuiescence
+        && acquisitionQuiescence
           == acquisitionOwnerProcessGroup
     )
     ( "the total deadline interrupts acquisition after anchor spawn, reaps the anchor, keeps the target gated, and publishes no lease; observed "
@@ -9034,7 +9113,8 @@ main = do
       subprocessPaths
       anchorPrePublicationOwnerGroup
   anchorPrePublicationQuiescence <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       anchorPrePublicationOwnerGroup
   assert
@@ -9042,8 +9122,7 @@ main = do
         && hiddenSupervisorAbsent
         && hiddenSupervisorGroupAbsent
         && isNothing anchorPrePublicationActivity
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-          anchorPrePublicationQuiescence
+        && anchorPrePublicationQuiescence
           == anchorPrePublicationOwnerGroup
     )
     ( "anchor death before the first supervisor custody event kills the exact stopped helper group and publishes no activity; observed "
@@ -9132,7 +9211,8 @@ main = do
   targetSetupFailureOwnerProcessGroup <-
     fromIntegral <$> getProcessGroupID
   targetSetupFailureQuiescent <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       targetSetupFailureOwnerProcessGroup
   let targetSetupFailureWasContained =
@@ -9146,8 +9226,7 @@ main = do
               `isInfixOf` message
               && "forced pre-gate target setup failure"
                 `isInfixOf` message
-              && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-                targetSetupFailureQuiescent
+              && targetSetupFailureQuiescent
                 == targetSetupFailureOwnerProcessGroup
           _ -> False
   assert
@@ -9274,7 +9353,8 @@ main = do
       80
       (recordedProcessGroup (currentPinIdentity cancelledActivity))
   cancelledActivitiesQuiescent <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       cancelledOwnerProcessGroup
   let cancellationWasObserved =
@@ -9289,8 +9369,7 @@ main = do
         && cancelledSupervisorAbsent
         && cancelledPinAbsent
         && cancelledGroupAbsent
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-          cancelledActivitiesQuiescent
+        && cancelledActivitiesQuiescent
           == cancelledOwnerProcessGroup
     )
     ( "asynchronous cancellation completes bounded cleanup with no target or activity residue; observed "
@@ -9673,10 +9752,11 @@ main = do
         case Aeson.decode activityContents of
           Just (Aeson.Object activityObject) ->
             KeyMap.lookup (Key.fromString "version") activityObject
-              == Just (Aeson.Number 4)
+              == Just (Aeson.Number 5)
               && all
                 ((`KeyMap.member` activityObject) . Key.fromString)
                 [ "processNamespaceIdentity",
+                  "activityLifetimeProtection",
                   "watchdogProcessId",
                   "watchdogProcessGroup",
                   "watchdogBirthIdentity",
@@ -9718,7 +9798,7 @@ main = do
         && killedParentTargetGroupAbsent
         && killedParentActivitiesQuiescent
     )
-    ( "the version-4 activity lease records the execution namespace and exact helper identities and drives owner-death cleanup; observed "
+    ( "the version-5 activity lease records shared kernel lifetime protection, the execution namespace, and exact helper identities and drives owner-death cleanup; observed "
         <> show
           ( killedParentAnchorAbsent,
             killedParentSupervisorAbsent,
@@ -9764,7 +9844,8 @@ main = do
   signalProcessGroup sigKILL recoverableOwnerPid
   _ <- getProcessStatus True False recoverableOwnerPid
   recoverableQuiescence <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       (fromIntegral recoverableOwnerPid)
   recoverableAnchorAbsent <-
@@ -9799,8 +9880,7 @@ main = do
         && recoverableTargetLeaderAbsent
         && recoverableTargetGroupAbsent
         && isNothing recoverableActivityAfterRecovery
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-          recoverableQuiescence
+        && recoverableQuiescence
           == fromIntegral recoverableOwnerPid
     )
     ( "dead-owner recovery uses the persisted exact identities to continue, terminate all three groups, and retire the lease; observed "
@@ -9985,7 +10065,7 @@ main = do
   let publicationBoundaryActivityPath =
         subprocessActivityRoot </> "publication-boundary.lease.json"
       publicationBoundaryIncomingName =
-        ".incoming-activity-v5.pid:[1].publication-boundary"
+        ".incoming-activity-v6.pid:[1].publication-boundary"
   _ <-
     SubprocessActivity.publishActivityPublication
       ( SubprocessActivity.planActivityPublication
@@ -10004,7 +10084,7 @@ main = do
   removeFile publicationBoundaryActivityPath
   assert
     (publicationBoundaryFinalExists && not publicationBoundaryIncomingExists)
-    "the durable publication interpreter accepts the current namespaced v5 incoming activity prefix"
+    "the durable publication interpreter accepts the current protected namespaced v6 incoming activity prefix"
   let legacyActivityDocument =
         Aeson.object
           [ "version" Aeson..= (1 :: Int),
@@ -10025,7 +10105,8 @@ main = do
   Lazy.writeFile legacyActivityPath legacyActivityContents
   setFileMode legacyActivityPath 0o600
   _ <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       ownerProcessGroup
   legacyActivityRetained <- doesFileExist legacyActivityPath
@@ -10055,13 +10136,14 @@ main = do
   Lazy.writeFile versionTwoActivityPath versionTwoActivityContents
   setFileMode versionTwoActivityPath 0o600
   _ <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       ownerProcessGroup
   versionTwoActivityRetained <- doesFileExist versionTwoActivityPath
   assert
     (not versionTwoActivityRetained)
-    "recovery preserves version-2 decoder compatibility while version 4 is current"
+    "recovery preserves version-2 decoder compatibility while version 5 is current"
   currentProcessNamespace <- observeCurrentProcessNamespaceIdentity
   foreignProcessNamespace <-
     maybe
@@ -10075,26 +10157,27 @@ main = do
       namespaceCommandProcessId = 2147483643 :: Integer
       namespaceSupervisorProcessId = 2147483642 :: Integer
       namespaceTargetProcessId = 2147483641 :: Integer
+      foreignNamespaceActivityFields =
+        [ "processNamespaceIdentity"
+            Aeson..= renderProcessNamespaceIdentity foreignProcessNamespace,
+          "ownerProcessId" Aeson..= namespaceOwnerProcessId,
+          "ownerProcessGroup" Aeson..= ownerProcessGroup,
+          "ownerBirthIdentity" Aeson..= ("foreign-owner:1" :: String),
+          "commandProcessId" Aeson..= namespaceCommandProcessId,
+          "commandProcessGroup" Aeson..= namespaceCommandProcessId,
+          "commandBirthIdentity" Aeson..= ("foreign-command:1" :: String),
+          "watchdogProcessId" Aeson..= namespaceSupervisorProcessId,
+          "watchdogProcessGroup" Aeson..= namespaceSupervisorProcessId,
+          "watchdogBirthIdentity"
+            Aeson..= ("foreign-supervisor:1" :: String),
+          "targetGroupLeaderProcessId" Aeson..= namespaceTargetProcessId,
+          "targetGroup" Aeson..= namespaceTargetProcessId,
+          "targetGroupLeaderBirthIdentity"
+            Aeson..= ("foreign-target:1" :: String)
+        ]
       foreignNamespaceActivityDocument =
         Aeson.object
-          [ "version" Aeson..= (4 :: Int),
-            "processNamespaceIdentity"
-              Aeson..= renderProcessNamespaceIdentity foreignProcessNamespace,
-            "ownerProcessId" Aeson..= namespaceOwnerProcessId,
-            "ownerProcessGroup" Aeson..= ownerProcessGroup,
-            "ownerBirthIdentity" Aeson..= ("foreign-owner:1" :: String),
-            "commandProcessId" Aeson..= namespaceCommandProcessId,
-            "commandProcessGroup" Aeson..= namespaceCommandProcessId,
-            "commandBirthIdentity" Aeson..= ("foreign-command:1" :: String),
-            "watchdogProcessId" Aeson..= namespaceSupervisorProcessId,
-            "watchdogProcessGroup" Aeson..= namespaceSupervisorProcessId,
-            "watchdogBirthIdentity"
-              Aeson..= ("foreign-supervisor:1" :: String),
-            "targetGroupLeaderProcessId" Aeson..= namespaceTargetProcessId,
-            "targetGroup" Aeson..= namespaceTargetProcessId,
-            "targetGroupLeaderBirthIdentity"
-              Aeson..= ("foreign-target:1" :: String)
-          ]
+          (["version" Aeson..= (4 :: Int)] <> foreignNamespaceActivityFields)
       foreignNamespaceActivityContents =
         Aeson.encode foreignNamespaceActivityDocument
       foreignNamespaceActivityPath =
@@ -10108,16 +10191,49 @@ main = do
     foreignNamespaceActivityPath
     foreignNamespaceActivityContents
   setFileMode foreignNamespaceActivityPath 0o600
-  _ <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
-      subprocessPaths
-      ownerProcessGroup
+  foreignNamespaceRecovery <-
+    try @IOException
+      ( Subprocess.proveBoundedCommandActivitiesQuiescentForTest
+          subprocessPaths
+          ownerProcessGroup
+      )
   foreignNamespaceActivityRetained <-
     doesFileExist foreignNamespaceActivityPath
   removeFile foreignNamespaceActivityPath
   assert
-    foreignNamespaceActivityRetained
-    "bounded-command recovery leaves a foreign PID namespace lease untouched without probing colliding PIDs"
+    (isLeft foreignNamespaceRecovery && foreignNamespaceActivityRetained)
+    "bounded-command recovery refuses and preserves a foreign PID namespace lease that predates shared kernel lifetime evidence"
+  let protectedForeignActivityDocument =
+        Aeson.object
+          ( [ "version" Aeson..= (5 :: Int),
+              "activityLifetimeProtection"
+                Aeson..= ("shared-kernel-lock" :: String)
+            ]
+              <> foreignNamespaceActivityFields
+          )
+      protectedForeignActivityContents =
+        Aeson.encode protectedForeignActivityDocument
+      protectedForeignActivityPath =
+        subprocessActivityRoot
+          </> ( "activity-"
+                  <> ByteString8.unpack
+                    ( Base16.encode
+                        (SHA256.hashlazy protectedForeignActivityContents)
+                    )
+                  <> ".lease.json"
+              )
+  Lazy.writeFile protectedForeignActivityPath protectedForeignActivityContents
+  setFileMode protectedForeignActivityPath 0o600
+  _ <-
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
+      subprocessPaths
+      ownerProcessGroup
+  protectedForeignActivityRetained <-
+    doesFileExist protectedForeignActivityPath
+  assert
+    (not protectedForeignActivityRetained)
+    "exclusive shared-kernel lifetime evidence retires a protected foreign PID namespace activity without probing its PIDs"
   when (System.Info.os == "darwin") $ do
     let linuxLegacyBootIdentity =
           "87b8d539-195c-42b9-87f9-1fa4600cef1f" :: String
@@ -10152,14 +10268,16 @@ main = do
                 )
     Lazy.writeFile legacyLinuxActivityPath legacyLinuxActivityContents
     setFileMode legacyLinuxActivityPath 0o600
-    _ <-
-      Subprocess.proveBoundedCommandActivitiesQuiescent
-        subprocessPaths
-        ownerProcessGroup
+    legacyLinuxRecovery <-
+      try @IOException
+        ( Subprocess.proveBoundedCommandActivitiesQuiescentForTest
+            subprocessPaths
+            ownerProcessGroup
+        )
     legacyLinuxActivityRetained <- doesFileExist legacyLinuxActivityPath
     removeFile legacyLinuxActivityPath
     assert
-      legacyLinuxActivityRetained
+      (isLeft legacyLinuxRecovery && legacyLinuxActivityRetained)
       "Darwin recovery quarantines a legacy Linux-kernel activity lease instead of interpreting its PIDs in the host namespace"
   let oversizedFinalActivityPath =
         subprocessActivityRoot </> "oversized.lease.json"
@@ -10169,7 +10287,7 @@ main = do
   setFileMode oversizedFinalActivityPath 0o600
   oversizedFinalRecovery <-
     try @IOException
-      ( Subprocess.proveBoundedCommandActivitiesQuiescent
+      ( Subprocess.proveBoundedCommandActivitiesQuiescentForTest
           subprocessPaths
           ownerProcessGroup
       )
@@ -10191,7 +10309,7 @@ main = do
         setFileMode incomingPath 0o600
         recovery <-
           try @IOException
-            ( Subprocess.proveBoundedCommandActivitiesQuiescent
+            ( Subprocess.proveBoundedCommandActivitiesQuiescentForTest
                 subprocessPaths
                 ownerProcessGroup
             )
@@ -10242,7 +10360,8 @@ main = do
     (BS.replicate (1024 * 1024) 0x61)
   setFileMode oversizedIncomingActivityPath 0o600
   _ <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       ownerProcessGroup
   oversizedIncomingRetained <-
@@ -10332,7 +10451,7 @@ main = do
   setFileMode forgedActivityPath 0o600
   forgedRecoveryResult <-
     try @IOException
-      ( Subprocess.proveBoundedCommandActivitiesQuiescent
+      ( Subprocess.proveBoundedCommandActivitiesQuiescentForTest
           subprocessPaths
           (fromIntegral deadOwnerProcessId)
       )
@@ -10416,7 +10535,8 @@ main = do
   prePreparedTargetExecuted <-
     doesFileExist prePreparedExecutedPath
   prePreparedQuiescence <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       (fromIntegral prePreparedOwnerPid)
   assert
@@ -10425,8 +10545,7 @@ main = do
         && prePreparedSupervisorAbsent
         && prePreparedPinAbsent
         && not prePreparedTargetExecuted
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-          prePreparedQuiescence
+        && prePreparedQuiescence
           == fromIntegral prePreparedOwnerPid
     )
     ( "owner death while a pre-Prepared supervisor is stopped leaves no exact helper identity, target, or activity lease; observed "
@@ -10494,7 +10613,8 @@ main = do
       custodyPinBirth
   custodyTargetExecuted <- doesFileExist custodyExecutedPath
   custodyQuiescence <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       (fromIntegral custodyOwnerPid)
   custodyActivity <-
@@ -10508,8 +10628,7 @@ main = do
         && custodyPinAbsent
         && not custodyTargetExecuted
         && isNothing custodyActivity
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-          custodyQuiescence
+        && custodyQuiescence
           == fromIntegral custodyOwnerPid
     )
     ( "owner death during provisional supervisor/pin custody leaves no helper, target, or activity record; observed "
@@ -10578,7 +10697,8 @@ main = do
       preLeasePinBirth
   preLeaseCommandExecuted <- doesFileExist preLeaseExecutedPath
   preLeaseQuiescence <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       (fromIntegral preLeaseOwnerPid)
   preLeaseActivityEntries <- listDirectory subprocessActivityRoot
@@ -10596,7 +10716,7 @@ main = do
         && preLeasePinAbsent
         && not preLeaseCommandExecuted
         && null preLeaseActivityResidue
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup preLeaseQuiescence
+        && preLeaseQuiescence
           == fromIntegral preLeaseOwnerPid
     )
     ( "owner-group death before activity publication removes the exact anchor, stopped supervisor, and retained pin before any target or activity can escape; observed "
@@ -10654,7 +10774,8 @@ main = do
   signalProcessGroup sigKILL prewriteOwnerPid
   _ <- getProcessStatus True False prewriteOwnerPid
   prewriteQuiescence <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       (fromIntegral prewriteOwnerPid)
   prewriteIncomingExists <- doesFileExist prewriteIncomingPath
@@ -10679,8 +10800,7 @@ main = do
         && not prewriteIncomingExists
         && isNothing prewriteActivityAfterRecovery
         && null prewriteActivityResidue
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-          prewriteQuiescence
+        && prewriteQuiescence
           == fromIntegral prewriteOwnerPid
     )
     ( "an owner crash after the incoming identity intent is durable but before its payload write leaves no target, helper group, or activity residue; observed "
@@ -10885,7 +11005,7 @@ main = do
   incomingTemporaryContents <- Lazy.readFile incomingTemporaryPath
   incomingActivity <-
     maybe
-      (fail "incoming-activity temporary document did not contain exact version-4 identities")
+      (fail "incoming-activity temporary document did not contain exact version-5 identities")
       pure
       ( decodeCurrentCommandActivity
           (fromIntegral incomingOwnerPid)
@@ -10895,7 +11015,8 @@ main = do
   signalProcessGroup sigKILL incomingOwnerPid
   _ <- getProcessStatus True False incomingOwnerPid
   incomingQuiescence <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       (fromIntegral incomingOwnerPid)
   incomingAnchorAbsent <-
@@ -10934,8 +11055,7 @@ main = do
         && incomingPinAbsent
         && isNothing incomingActivityAfterRecovery
         && null incomingActivityResidue
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-          incomingQuiescence
+        && incomingQuiescence
           == fromIntegral incomingOwnerPid
     )
     ( "a post-fsync/pre-rename owner crash reconciles the exact incoming activity, removes every helper, keeps the target gated, and retires only after group absence; observed "
@@ -10964,13 +11084,13 @@ main = do
     waitForPidExit 40 exitedParentChildPid
   exitedParentOwnerProcessGroup <- fromIntegral <$> getProcessGroupID
   exitedParentQuiescence <-
-    Subprocess.proveBoundedCommandActivitiesQuiescent
+    waitForBoundedCommandActivitiesQuiescentProof
+      100
       subprocessPaths
       exitedParentOwnerProcessGroup
   assert
     ( exitedParentOutcome == Subprocess.CommandSucceeded ""
-        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
-          exitedParentQuiescence
+        && exitedParentQuiescence
           == exitedParentOwnerProcessGroup
     )
     ( "normal direct-child completion returns only after its exact recorded groups are absent and its activity is retired; descendant PID absence is diagnostic only: "
@@ -13640,8 +13760,9 @@ main = do
         && isRight (authorizeRuntimeConfigWriteAccess 100 True (Just 100) (Just 101))
     )
     "Sprint 1.21: a delegated toolchain child group carries harness authority only while the owner is verified alive, and only for that exact group"
-  -- Sprint 6.43: a leftover .harness-backup (from a prior killed run) is
-  -- reconciled on entry — the operator config is restored and the backup consumed.
+  -- Sprint 6.53: an identity-free .harness-backup cannot authorize recovery.
+  -- The current config and ambiguous backup are both preserved for explicit
+  -- operator resolution.
   let legacyRecoveryPaths =
         clusterStatePaths
           { repoRoot = clusterStateRoot
@@ -13650,15 +13771,16 @@ main = do
       reconcileBackupConfig = reconcileRuntimeConfig <> ".harness-backup"
   writeFile reconcileBackupConfig "OPERATOR ORIGINAL CONFIG"
   writeFile reconcileRuntimeConfig "HARNESS LEFTOVER CONFIG"
-  reconcileInterruptedHarnessStateAt legacyRecoveryPaths
+  legacyRecoveryResult <-
+    try @IOException (reconcileInterruptedHarnessStateAt legacyRecoveryPaths)
   restoredContents <- readFile reconcileRuntimeConfig
   backupStillPresent <- doesFileExist reconcileBackupConfig
   assert
-    (restoredContents == "OPERATOR ORIGINAL CONFIG")
-    "locked legacy recovery restores the operator config from a leftover .harness-backup"
-  assert
-    (not backupStillPresent)
-    "locked legacy recovery consumes the leftover .harness-backup on restore"
+    ( isLeft legacyRecoveryResult
+        && restoredContents == "HARNESS LEFTOVER CONFIG"
+        && backupStillPresent
+    )
+    "identity-free harness recovery fails closed and preserves both ambiguous config files"
   -- Sprint 5.12: the client model-bootstrap deadline is single-sourced from the
   -- server ceiling and can never be shorter than it (a negative margin clamps).
   assert
@@ -14938,7 +15060,7 @@ decodeCurrentCommandActivity ownerProcessGroup document = do
     activityBirthIdentityField
       "targetGroupLeaderBirthIdentity"
       activityObject
-  if version `elem` [3, 4] && recordedOwner == ownerProcessGroup
+  if version `elem` [3, 4, 5] && recordedOwner == ownerProcessGroup
     then
       Just
         CurrentCommandActivity
@@ -14989,7 +15111,7 @@ waitForBoundedCommandActivitiesQuiescent ::
 waitForBoundedCommandActivitiesQuiescent attemptsRemaining paths ownerProcessGroup = do
   result <-
     try @IOException
-      ( Subprocess.proveBoundedCommandActivitiesQuiescent
+      ( Subprocess.proveBoundedCommandActivitiesQuiescentForTest
           paths
           ownerProcessGroup
       )
@@ -15000,6 +15122,29 @@ waitForBoundedCommandActivitiesQuiescent attemptsRemaining paths ownerProcessGro
       | otherwise -> do
           threadDelay 50000
           waitForBoundedCommandActivitiesQuiescent
+            (attemptsRemaining - 1)
+            paths
+            ownerProcessGroup
+
+waitForBoundedCommandActivitiesQuiescentProof ::
+  Int ->
+  Paths ->
+  Integer ->
+  IO Integer
+waitForBoundedCommandActivitiesQuiescentProof attemptsRemaining paths ownerProcessGroup = do
+  result <-
+    try @IOException
+      ( Subprocess.proveBoundedCommandActivitiesQuiescentForTest
+          paths
+          ownerProcessGroup
+      )
+  case result of
+    Right evidence -> pure evidence
+    Left failure
+      | attemptsRemaining <= 0 -> throwIO failure
+      | otherwise -> do
+          threadDelay 50000
+          waitForBoundedCommandActivitiesQuiescentProof
             (attemptsRemaining - 1)
             paths
             ownerProcessGroup
@@ -16935,9 +17080,8 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
                   assert
                     ( not (requiresGpu descriptor)
                         || inferenceErrorResource reason == NvidiaVram
-                        || inferenceErrorResource reason == PodRam
                     )
-                    "Linux GPU capacity rejection names one of the two enforced resources"
+                    "Linux GPU dual-capacity rejection admits device memory first and names NVIDIA VRAM"
               )
               ( ExecutionPlan.predictedAdmissionRejection
                   linuxGpuPlan

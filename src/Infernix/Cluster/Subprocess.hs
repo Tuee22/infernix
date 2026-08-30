@@ -3,6 +3,7 @@
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Phase 1 Sprint 1.16 — the bounded-command kernel of the
 -- managed-state-transition doctrine
@@ -102,7 +103,8 @@ module Infernix.Cluster.Subprocess
     dispatchInternalSubprocessMode,
     BoundedCommandActivitiesQuiescent,
     boundedCommandActivitiesOwnerProcessGroup,
-    proveBoundedCommandActivitiesQuiescent,
+    withBoundedCommandActivitiesQuiescent,
+    proveBoundedCommandActivitiesQuiescentForTest,
     AbandonedActivitiesRecovered,
     recoverAbandonedBoundedCommandActivities,
     -- Sprint 1.20 process-group lifecycle regression surfaces. An exact leader
@@ -195,6 +197,11 @@ import Infernix.Cluster.Command
     clusterCommandOperation,
   )
 import Infernix.Cluster.Command qualified as Command
+import Infernix.Cluster.LifecycleLock
+  ( boundedCommandActivityLifetimeLockPath,
+    withKernelFileLock,
+    withKernelSharedFileLock,
+  )
 import Infernix.Cluster.Subprocess.Activity qualified as Activity
 import Infernix.Cluster.Subprocess.Protocol qualified as Protocol
 import Infernix.Config (Paths (..))
@@ -352,10 +359,12 @@ import System.Process
   ( CreateProcess (..),
     ProcessHandle,
     StdStream (CreatePipe),
+    -- infernix-lint: non-engine-process-site
     createProcess,
     getPid,
     getProcessExitCode,
     proc,
+    -- infernix-lint: non-engine-process-site
     waitForProcess,
   )
 import System.Timeout (timeout)
@@ -6323,8 +6332,14 @@ data CommandActivityProcessNamespace
   | ExplicitCommandActivityProcessNamespace !(Maybe ProcessNamespaceIdentity)
   deriving (Eq, Show)
 
+data CommandActivityLifetimeProtection
+  = LegacyCommandActivityLifetimeProtection
+  | SharedKernelActivityLifetimeProtection
+  deriving (Eq, Show)
+
 data CommandActivityLeaseDocument = CommandActivityLeaseDocument
   { activityProcessNamespace :: !CommandActivityProcessNamespace,
+    activityLifetimeProtection :: !CommandActivityLifetimeProtection,
     activityOwnerProcessGroup :: !Integer,
     activityCommandIdentity :: !ActivityProcessIdentity,
     activityIdentities :: !CommandActivityIdentities
@@ -6373,6 +6388,7 @@ instance Aeson.ToJSON CommandActivityLeaseDocument where
         Aeson.object
           ( activityJsonFields (activityDocumentVersion activity) activity
               <> activityNamespaceJsonFields activity
+              <> activityLifetimeProtectionJsonFields activity
               <> ownerIdentityJsonFields ownerIdentity
               <> supervisorIdentityJsonFields supervisorIdentity
               <> [ "targetGroupLeaderProcessId"
@@ -6396,23 +6412,26 @@ instance Aeson.FromJSON CommandActivityLeaseDocument where
           "commandProcessId"
           "commandProcessGroup"
           "commandBirthIdentity"
-      (processNamespace, identities) <-
+      (processNamespace, lifetimeProtection, identities) <-
         case version :: Int of
           1 ->
             pure
               ( LegacyCommandActivityProcessNamespace,
+                LegacyCommandActivityLifetimeProtection,
                 CommandActivityCommandOnly
               )
           2 -> do
             decodedSupervisor <- parseSupervisorIdentity value
             pure
               ( LegacyCommandActivityProcessNamespace,
+                LegacyCommandActivityLifetimeProtection,
                 CommandActivityWithSupervisor decodedSupervisor
               )
           3 -> do
             decodedIdentities <- parseDurableActivityIdentities value
             pure
               ( LegacyCommandActivityProcessNamespace,
+                LegacyCommandActivityLifetimeProtection,
                 decodedIdentities
               )
           4 -> do
@@ -6422,12 +6441,28 @@ instance Aeson.FromJSON CommandActivityLeaseDocument where
             decodedIdentities <- parseDurableActivityIdentities value
             pure
               ( ExplicitCommandActivityProcessNamespace decodedNamespace,
+                LegacyCommandActivityLifetimeProtection,
+                decodedIdentities
+              )
+          5 -> do
+            decodedNamespace <-
+              parseActivityProcessNamespace
+                =<< value Aeson..: "processNamespaceIdentity"
+            protection <- value Aeson..: "activityLifetimeProtection"
+            unless
+              (protection == ("shared-kernel-lock" :: String))
+              (fail "invalid bounded-command activity lifetime protection")
+            decodedIdentities <- parseDurableActivityIdentities value
+            pure
+              ( ExplicitCommandActivityProcessNamespace decodedNamespace,
+                SharedKernelActivityLifetimeProtection,
                 decodedIdentities
               )
           _ -> fail "unsupported bounded-command activity lease version"
       let activity =
             CommandActivityLeaseDocument
               { activityProcessNamespace = processNamespace,
+                activityLifetimeProtection = lifetimeProtection,
                 activityOwnerProcessGroup = ownerProcessGroup,
                 activityCommandIdentity = commandIdentity,
                 activityIdentities = identities
@@ -6457,9 +6492,12 @@ instance Aeson.FromJSON CommandActivityLeaseDocument where
 
 activityDocumentVersion :: CommandActivityLeaseDocument -> Int
 activityDocumentVersion activity =
-  case activityProcessNamespace activity of
-    LegacyCommandActivityProcessNamespace -> 3
-    ExplicitCommandActivityProcessNamespace _ -> 4
+  case activityLifetimeProtection activity of
+    SharedKernelActivityLifetimeProtection -> 5
+    LegacyCommandActivityLifetimeProtection ->
+      case activityProcessNamespace activity of
+        LegacyCommandActivityProcessNamespace -> 3
+        ExplicitCommandActivityProcessNamespace _ -> 4
 
 activityNamespaceJsonFields :: CommandActivityLeaseDocument -> [Pair]
 activityNamespaceJsonFields activity =
@@ -6469,6 +6507,15 @@ activityNamespaceJsonFields activity =
       [ "processNamespaceIdentity"
           Aeson..= renderActivityProcessNamespace processNamespace
       ]
+
+activityLifetimeProtectionJsonFields ::
+  CommandActivityLeaseDocument ->
+  [Pair]
+activityLifetimeProtectionJsonFields activity =
+  case activityLifetimeProtection activity of
+    LegacyCommandActivityLifetimeProtection -> []
+    SharedKernelActivityLifetimeProtection ->
+      ["activityLifetimeProtection" Aeson..= ("shared-kernel-lock" :: String)]
 
 renderActivityProcessNamespace :: Maybe ProcessNamespaceIdentity -> String
 renderActivityProcessNamespace =
@@ -6630,12 +6677,12 @@ data PublishedCommandActivity = PublishedCommandActivity
 -- | Evidence that every published bounded-command activity for one owner
 -- process group has reached an absent command process group. The constructor is
 -- hidden; cluster recovery must obtain this through
--- 'proveBoundedCommandActivitiesQuiescent'.
-newtype BoundedCommandActivitiesQuiescent
+-- 'withBoundedCommandActivitiesQuiescent'.
+newtype BoundedCommandActivitiesQuiescent s
   = BoundedCommandActivitiesQuiescent Integer
 
 boundedCommandActivitiesOwnerProcessGroup ::
-  BoundedCommandActivitiesQuiescent ->
+  BoundedCommandActivitiesQuiescent s ->
   Integer
 boundedCommandActivitiesOwnerProcessGroup
   (BoundedCommandActivitiesQuiescent ownerProcessGroup) =
@@ -6759,6 +6806,24 @@ commandActivityRoot :: FilePath -> FilePath
 commandActivityRoot activeRuntimeRoot =
   activeRuntimeRoot </> "bounded-command-activity"
 
+requireBoundedCommandActivityLifetimeLockPath :: FilePath -> IO ()
+requireBoundedCommandActivityLifetimeLockPath lockPath =
+  unless
+    ( isAbsolute lockPath
+        && '\NUL' `notElem` lockPath
+        && takeFileName lockPath == "bounded-command-activity.held"
+        && takeFileName (takeDirectory lockPath) == "locks"
+    )
+    (ioError (userError "bounded-command activity lifetime lock path is invalid"))
+
+withBoundedCommandHelperLifetime :: FilePath -> IO a -> IO a
+withBoundedCommandHelperLifetime lockPath action = do
+  requireBoundedCommandActivityLifetimeLockPath lockPath
+  withKernelSharedFileLock
+    "bounded-command activity lifetime"
+    lockPath
+    action
+
 requireCurrentCommandActivityProcessNamespace ::
   IO (Maybe ProcessNamespaceIdentity)
 requireCurrentCommandActivityProcessNamespace = do
@@ -6784,6 +6849,12 @@ incomingActivityDistinctRecoveryPrefix = ".incoming-activity-v4.i"
 
 incomingActivityNamespacedRecoveryPrefix :: String
 incomingActivityNamespacedRecoveryPrefix = ".incoming-activity-v5."
+
+incomingActivityProtectedNamespacedRecoveryPrefix :: String
+incomingActivityProtectedNamespacedRecoveryPrefix = ".incoming-activity-v6."
+
+incomingActivityProtectedDistinctRecoveryPrefix :: String
+incomingActivityProtectedDistinctRecoveryPrefix = ".incoming-activity-v6.i"
 
 incomingCommandActivityFileName ::
   CommandActivityLeaseDocument ->
@@ -6834,6 +6905,7 @@ incomingCommandActivityFileName activity = do
             not (null commonBoot),
             '.' `notElem` commonBoot ->
               renderNamespacedCommonBootIntent
+                namespacedRecoveryPrefix
                 processNamespace
                 commonBoot
                 ownerIdentity
@@ -6845,6 +6917,7 @@ incomingCommandActivityFileName activity = do
             "a Linux bounded-command incoming intent requires one kernel boot identity"
     ExplicitCommandActivityProcessNamespace Nothing ->
       renderDistinctBootIntent
+        distinctRecoveryPrefix
         ownerIdentity
         anchorIdentity
         supervisorIdentity
@@ -6863,6 +6936,7 @@ incomingCommandActivityFileName activity = do
                 pinIdentity
         _ ->
           renderDistinctBootIntent
+            distinctRecoveryPrefix
             ownerIdentity
             anchorIdentity
             supervisorIdentity
@@ -6906,7 +6980,22 @@ incomingCommandActivityFileName activity = do
               then Right encoded
               else Left "bounded-command incoming intent filename exceeds its size limit"
 
+    namespacedRecoveryPrefix =
+      case activityLifetimeProtection activity of
+        LegacyCommandActivityLifetimeProtection ->
+          incomingActivityNamespacedRecoveryPrefix
+        SharedKernelActivityLifetimeProtection ->
+          incomingActivityProtectedNamespacedRecoveryPrefix
+
+    distinctRecoveryPrefix =
+      case activityLifetimeProtection activity of
+        LegacyCommandActivityLifetimeProtection ->
+          incomingActivityDistinctRecoveryPrefix
+        SharedKernelActivityLifetimeProtection ->
+          incomingActivityProtectedDistinctRecoveryPrefix
+
     renderNamespacedCommonBootIntent
+      recoveryPrefix
       processNamespace
       commonBoot
       ownerIdentity
@@ -6914,7 +7003,7 @@ incomingCommandActivityFileName activity = do
       supervisorIdentity
       pinIdentity =
         let encoded =
-              incomingActivityNamespacedRecoveryPrefix
+              recoveryPrefix
                 <> renderProcessNamespaceIdentity processNamespace
                 <> "."
                 <> List.intercalate
@@ -6949,6 +7038,7 @@ incomingCommandActivityFileName activity = do
                   "bounded-command namespaced incoming intent filename exceeds its size limit"
 
     renderDistinctBootIntent
+      recoveryPrefix
       ownerIdentity
       anchorIdentity
       supervisorIdentity
@@ -6958,7 +7048,7 @@ incomingCommandActivityFileName activity = do
         supervisorFields <- renderHelperFields supervisorIdentity
         pinFields <- renderHelperFields pinIdentity
         let encoded =
-              incomingActivityDistinctRecoveryPrefix
+              recoveryPrefix
                 <> ownerFields
                 <> anchorFields
                 <> supervisorFields
@@ -7015,18 +7105,36 @@ commandActivityFromIncomingFileName ::
   FilePath ->
   Either String CommandActivityLeaseDocument
 commandActivityFromIncomingFileName entry =
-  case List.stripPrefix incomingActivityNamespacedRecoveryPrefix entry of
-    Just encoded -> parseNamespacedCommonBootIntent encoded
+  case List.stripPrefix incomingActivityProtectedDistinctRecoveryPrefix entry of
+    Just encoded ->
+      parseDistinctBootIntent
+        SharedKernelActivityLifetimeProtection
+        encoded
     Nothing ->
-      case List.stripPrefix incomingActivityRecoveryPrefix entry of
-        Just encoded -> parseCommonBootIntent encoded
+      case List.stripPrefix incomingActivityProtectedNamespacedRecoveryPrefix entry of
+        Just encoded ->
+          parseNamespacedCommonBootIntent
+            SharedKernelActivityLifetimeProtection
+            encoded
         Nothing ->
-          case List.stripPrefix incomingActivityDistinctRecoveryPrefix entry of
-            Just encoded -> parseDistinctBootIntent encoded
+          case List.stripPrefix incomingActivityNamespacedRecoveryPrefix entry of
+            Just encoded ->
+              parseNamespacedCommonBootIntent
+                LegacyCommandActivityLifetimeProtection
+                encoded
             Nothing ->
-              Left "bounded-command incoming intent has an unsupported filename"
+              case List.stripPrefix incomingActivityRecoveryPrefix entry of
+                Just encoded -> parseCommonBootIntent encoded
+                Nothing ->
+                  case List.stripPrefix incomingActivityDistinctRecoveryPrefix entry of
+                    Just encoded ->
+                      parseDistinctBootIntent
+                        LegacyCommandActivityLifetimeProtection
+                        encoded
+                    Nothing ->
+                      Left "bounded-command incoming intent has an unsupported filename"
   where
-    parseNamespacedCommonBootIntent encoded =
+    parseNamespacedCommonBootIntent lifetimeProtection encoded =
       case splitOnDot encoded of
         processNamespaceText : commonBootFields -> do
           processNamespace <-
@@ -7035,16 +7143,18 @@ commandActivityFromIncomingFileName entry =
               Right
               (parseProcessNamespaceIdentity processNamespaceText)
           parseCommonBootIntentWithNamespace
+            lifetimeProtection
             (ExplicitCommandActivityProcessNamespace (Just processNamespace))
             commonBootFields
         _ -> Left "bounded-command incoming intent is missing its process namespace"
 
     parseCommonBootIntent encoded = do
       parseCommonBootIntentWithNamespace
+        LegacyCommandActivityLifetimeProtection
         LegacyCommandActivityProcessNamespace
         (splitOnDot encoded)
 
-    parseCommonBootIntentWithNamespace processNamespace fields = do
+    parseCommonBootIntentWithNamespace lifetimeProtection processNamespace fields = do
       ( bootIdentity,
         ownerProcessId,
         ownerProcessGroup,
@@ -7082,6 +7192,7 @@ commandActivityFromIncomingFileName entry =
           _ -> Left "bounded-command incoming intent filename is malformed"
       buildIncomingActivity
         processNamespace
+        lifetimeProtection
         bootIdentity
         ownerProcessId
         ownerProcessGroup
@@ -7096,7 +7207,7 @@ commandActivityFromIncomingFileName entry =
         pinProcessId
         pinStartTime
 
-    parseDistinctBootIntent encoded = do
+    parseDistinctBootIntent lifetimeProtection encoded = do
       (ownerBoot, ownerFields) <- takeFixedField 32 "owner token" encoded
       (ownerPid, ownerGroupFields) <- takeFixedField 8 "owner pid" ownerFields
       (ownerGroup, ownerStartFields) <-
@@ -7137,6 +7248,7 @@ commandActivityFromIncomingFileName entry =
       pinStartTime <- parsePositiveHex "pin start" pinStart
       buildIncomingActivity
         (ExplicitCommandActivityProcessNamespace Nothing)
+        lifetimeProtection
         ownerBoot
         ownerProcessId
         ownerProcessGroup
@@ -7153,6 +7265,7 @@ commandActivityFromIncomingFileName entry =
 
     buildIncomingActivity
       processNamespace
+      lifetimeProtection
       ownerBoot
       ownerProcessId
       ownerProcessGroup
@@ -7203,6 +7316,7 @@ commandActivityFromIncomingFileName entry =
             activity =
               CommandActivityLeaseDocument
                 { activityProcessNamespace = processNamespace,
+                  activityLifetimeProtection = lifetimeProtection,
                   activityOwnerProcessGroup = ownerProcessGroup,
                   activityCommandIdentity = anchorIdentity,
                   activityIdentities =
@@ -7639,13 +7753,44 @@ readCommandActivityDocument activityPath = mask $ \restore -> do
         pure
         (Aeson.eitherDecodeStrict' contents)
 
+-- | Hold the fixed activity-lifetime lock exclusively while proving and
+-- consuming quiescence evidence for one owner process group. Every current
+-- anchor, supervisor, and retained target-group pin holds the same lock in
+-- shared mode. The rank-2 region prevents the evidence from escaping the lock
+-- that makes foreign-namespace retirement sound.
+withBoundedCommandActivitiesQuiescent ::
+  Paths ->
+  Integer ->
+  (forall s. BoundedCommandActivitiesQuiescent s -> IO a) ->
+  IO a
+withBoundedCommandActivitiesQuiescent paths ownerProcessGroup action =
+  withKernelFileLock
+    "bounded-command activity quiescence"
+    (boundedCommandActivityLifetimeLockPath (runtimeRoot paths))
+    (proveBoundedCommandActivitiesQuiescent paths ownerProcessGroup >>= action)
+
+-- | Test-only observation of the owner-group field after the complete
+-- exclusive lifetime-lock region has closed. Production recovery consumes the
+-- indexed evidence inside 'withBoundedCommandActivitiesQuiescent'.
+proveBoundedCommandActivitiesQuiescentForTest ::
+  Paths ->
+  Integer ->
+  IO Integer
+proveBoundedCommandActivitiesQuiescentForTest paths ownerProcessGroup =
+  withBoundedCommandActivitiesQuiescent
+    paths
+    ownerProcessGroup
+    (pure . boundedCommandActivitiesOwnerProcessGroup)
+
 -- | Prove that no command process group published by the specified owner
 -- process group remains live. A malformed lease, a live group, or a reused
--- live PID fails closed. Only an @ESRCH@ group probe permits lease removal.
+-- live PID fails closed. Same-namespace recovery requires the exact group
+-- proof; foreign current-format activity is retired only inside the exclusive
+-- lifetime-lock region above.
 proveBoundedCommandActivitiesQuiescent ::
   Paths ->
   Integer ->
-  IO BoundedCommandActivitiesQuiescent
+  IO (BoundedCommandActivitiesQuiescent s)
 proveBoundedCommandActivitiesQuiescent paths ownerProcessGroup
   | not (validActivityProcessId ownerProcessGroup) =
       ioError
@@ -7695,22 +7840,24 @@ proveBoundedCommandActivitiesQuiescent paths ownerProcessGroup
               pure
               (commandActivityFromIncomingFileName entry)
           when
-            ( activityOwnerProcessGroup activity == ownerProcessGroup
-                && commandActivityMatchesCurrentProcessNamespace
-                  currentProcessNamespace
-                  activity
+            (activityOwnerProcessGroup activity == ownerProcessGroup)
+            ( if commandActivityMatchesCurrentProcessNamespace
+                currentProcessNamespace
+                activity
+                then reconcileIncomingActivity incomingPath activity
+                else retireForeignProtectedActivity incomingPath activity
             )
-            (reconcileIncomingActivity incomingPath activity)
       | ".lease.json" `List.isSuffixOf` entry = do
           let activityPath = activityRoot </> entry
           activity <- readCommandActivityLease activityPath
           when
-            ( activityOwnerProcessGroup activity == ownerProcessGroup
-                && commandActivityMatchesCurrentProcessNamespace
-                  currentProcessNamespace
-                  activity
+            (activityOwnerProcessGroup activity == ownerProcessGroup)
+            ( if commandActivityMatchesCurrentProcessNamespace
+                currentProcessNamespace
+                activity
+                then proveActivityQuiescent activityPath activity
+                else retireForeignProtectedActivity activityPath activity
             )
-            (proveActivityQuiescent activityPath activity)
       | otherwise =
           ioError
             ( userError
@@ -7725,6 +7872,19 @@ proveBoundedCommandActivitiesQuiescent paths ownerProcessGroup
       -- payload can be retired without PID-only inference.
       requireActivityOwnerDead activity
       proveActivityQuiescent incomingPath activity
+
+    retireForeignProtectedActivity activityPath activity =
+      case activityLifetimeProtection activity of
+        SharedKernelActivityLifetimeProtection -> do
+          removeFile activityPath
+          synchroniseDirectory (takeDirectory activityPath)
+        LegacyCommandActivityLifetimeProtection ->
+          ioError
+            ( userError
+                ( "refusing foreign-namespace bounded-command activity recovery because the lease predates shared kernel lifetime evidence: "
+                    <> activityPath
+                )
+            )
 
 -- | Recover every bounded-command activity whose exact owner has died, while
 -- preserving records owned by unrelated exact-live commands. The activity
@@ -10210,6 +10370,7 @@ data ProtocolReport
 
 spawnSelfExecHelper ::
   [(String, String)] ->
+  FilePath ->
   String ->
   IO SpawnedHelper
 spawnSelfExecHelper =
@@ -10218,19 +10379,28 @@ spawnSelfExecHelper =
 spawnSelfExecHelperWithGroup ::
   HelperProcessGroup ->
   [(String, String)] ->
+  FilePath ->
   String ->
   IO SpawnedHelper
-spawnSelfExecHelperWithGroup helperGroup explicitEnvironment mode =
-  mask_ (spawnSelfExecHelperMasked helperGroup explicitEnvironment mode)
+spawnSelfExecHelperWithGroup helperGroup explicitEnvironment activityLifetimeLockPath mode =
+  mask_
+    ( spawnSelfExecHelperMasked
+        helperGroup
+        explicitEnvironment
+        activityLifetimeLockPath
+        mode
+    )
 
 spawnSelfExecHelperMasked ::
   HelperProcessGroup ->
   [(String, String)] ->
+  FilePath ->
   String ->
   IO SpawnedHelper
-spawnSelfExecHelperMasked helperGroup explicitEnvironment mode = do
+spawnSelfExecHelperMasked helperGroup explicitEnvironment activityLifetimeLockPath mode = do
   unless (validExplicitEnvironment explicitEnvironment) $
     ioError (userError "bounded-command helper environment is invalid")
+  requireBoundedCommandActivityLifetimeLockPath activityLifetimeLockPath
   -- A bounded command performs three self-exec spawns (anchor, supervisor,
   -- target), each of which closes every descriptor up to the soft
   -- RLIMIT_NOFILE before 'exec'. Unbounded, that is a quarter-hour per command
@@ -10238,8 +10408,9 @@ spawnSelfExecHelperMasked helperGroup explicitEnvironment mode = do
   _ <- requireBoundedDescriptorSpace "bounded-command self-exec helper"
   executable <- getExecutablePath
   created <-
+    -- infernix-lint: non-engine-process-site
     createProcess
-      (proc executable [mode])
+      (proc executable [mode, activityLifetimeLockPath])
         { std_in = CreatePipe,
           std_out = CreatePipe,
           std_err = CreatePipe,
@@ -10417,6 +10588,7 @@ waitForTrackedHelperBounded tracked = do
 
 waitForProcessBounded :: ProcessHandle -> IO ExitCode
 waitForProcessBounded processHandle = do
+  -- infernix-lint: non-engine-process-site
   result <- timeout 1000000 (waitForProcess processHandle)
   maybe
     (ioError (userError "bounded-command helper reap exceeded its cleanup deadline"))
@@ -11021,9 +11193,14 @@ acquireSupervisedSession ::
   BoundedCommand command ->
   IO SupervisedSession
 acquireSupervisedSession command = mask $ \restore -> do
+  let activityLifetimeLockPath =
+        boundedCommandActivityLifetimeLockPath
+          (subprocessEnvRuntimeRoot (boundedEnvironment command))
+  createDirectoryIfMissing True (takeDirectory activityLifetimeLockPath)
   anchor <-
     spawnSelfExecHelper
       (renderSubprocessEnv (boundedEnvironment command))
+      activityLifetimeLockPath
       internalAnchorMode
   let trackedAnchor = spawnedHelperTracked anchor
       stopAnchor =
@@ -11541,6 +11718,8 @@ runSupervisorProtocolSession command session deadline = do
                 { activityProcessNamespace =
                     ExplicitCommandActivityProcessNamespace
                       ownerProcessNamespace,
+                  activityLifetimeProtection =
+                    SharedKernelActivityLifetimeProtection,
                   activityOwnerProcessGroup = ownerProcessGroup,
                   activityCommandIdentity =
                     trackedHelperIdentity (supervisedAnchor session),
@@ -12927,19 +13106,19 @@ dispatchInternalSubprocessMode = do
   arguments <- getArgs
   case arguments of
     [mode]
-      | mode == internalAnchorMode ->
-          runInternalAnchor
-      | mode == internalSupervisorMode ->
-          runInternalSupervisor
-      | mode == internalPinMode ->
-          runInternalPin
       | mode == internalProvisioningMutationMode ->
           runInternalProvisioningMutation
       | mode == internalSynchronousDescendantMode ->
           runInternalSynchronousDescendant
-    [mode, identityPath]
+    [mode, internalOperand]
+      | mode == internalAnchorMode ->
+          runInternalAnchor internalOperand
+      | mode == internalSupervisorMode ->
+          runInternalSupervisor internalOperand
+      | mode == internalPinMode ->
+          runInternalPin internalOperand
       | mode == internalSynchronousTreeTargetMode ->
-          runInternalSynchronousTreeTarget identityPath
+          runInternalSynchronousTreeTarget internalOperand
     _ -> pure ()
 
 runInternalSynchronousDescendant :: IO ()
@@ -12969,6 +13148,7 @@ runInternalSynchronousTreeTarget identityPath = mask $ \restore -> do
   -- 'SubprocessEnv' guarantees, and reconstructing it would require reading
   -- the ambient environment, which the no-env doctrine forbids.
   (maybeInput, maybeOutput, maybeError, processHandle) <-
+    -- infernix-lint: non-engine-process-site
     createProcess
       (proc executable [internalSynchronousDescendantMode])
         { close_fds = True,
@@ -13788,13 +13968,19 @@ mutationPathExists path = do
       | isDoesNotExistError failure -> pure False
       | otherwise -> ioError failure
 
-runInternalAnchor :: IO ()
-runInternalAnchor = do
+runInternalAnchor :: FilePath -> IO ()
+runInternalAnchor activityLifetimeLockPath =
+  withBoundedCommandHelperLifetime
+    activityLifetimeLockPath
+    (runInternalAnchorProtected activityLifetimeLockPath)
+
+runInternalAnchorProtected :: FilePath -> IO ()
+runInternalAnchorProtected activityLifetimeLockPath = do
   mapM_ prepareProtocolHandle [stdin, stdout, stderr]
   result <-
     try @SomeException $ do
       publishCurrentHelperIdentity "command anchor"
-      superviseFromAnchor
+      superviseFromAnchor activityLifetimeLockPath
   case result of
     Right exitCode -> exitImmediately exitCode
     Left failure -> do
@@ -13807,12 +13993,14 @@ runInternalAnchor = do
         )
       exitImmediately (ExitFailure 125)
 
-superviseFromAnchor :: IO ExitCode
-superviseFromAnchor = do
+superviseFromAnchor :: FilePath -> IO ExitCode
+superviseFromAnchor activityLifetimeLockPath = do
   plan <- Protocol.readAnchorConfiguration stdin
   validateAnchorSelfIdentity (supervisorPlanAnchorIdentity plan)
   completion <-
-    withExactExecutableSnapshot plan supervisePreparedFromAnchor
+    withExactExecutableSnapshot
+      plan
+      (supervisePreparedFromAnchor activityLifetimeLockPath)
   case completion of
     AnchorCompletedWithoutTerminal exitCode -> pure exitCode
     AnchorCompletedWithTerminal
@@ -13832,12 +14020,16 @@ superviseFromAnchor = do
           )
         pure ExitSuccess
 
-supervisePreparedFromAnchor :: SupervisorPlan -> IO AnchorCompletion
-supervisePreparedFromAnchor plan = mask $ \restore -> do
+supervisePreparedFromAnchor ::
+  FilePath ->
+  SupervisorPlan ->
+  IO AnchorCompletion
+supervisePreparedFromAnchor activityLifetimeLockPath plan = mask $ \restore -> do
   supervisor <-
     spawnSelfExecHelperWithGroup
       InheritHelperProcessGroup
       (supervisorPlanHelperEnvironment plan)
+      activityLifetimeLockPath
       internalSupervisorMode
   supervisorErrorResult <- newEmptyMVar
   void
@@ -18460,13 +18652,19 @@ readHandleToEnd maximumBytes handle =
                 (contents : chunks)
                 False
 
-runInternalSupervisor :: IO ()
-runInternalSupervisor = do
+runInternalSupervisor :: FilePath -> IO ()
+runInternalSupervisor activityLifetimeLockPath =
+  withBoundedCommandHelperLifetime
+    activityLifetimeLockPath
+    (runInternalSupervisorProtected activityLifetimeLockPath)
+
+runInternalSupervisorProtected :: FilePath -> IO ()
+runInternalSupervisorProtected activityLifetimeLockPath = do
   mapM_ prepareProtocolHandle [stdin, stdout, stderr]
   result <-
     try @SomeException $ do
       publishCurrentHelperIdentity "target supervisor"
-      superviseTarget
+      superviseTarget activityLifetimeLockPath
   case result of
     Right exitCode -> exitImmediately exitCode
     Left failure -> do
@@ -18484,8 +18682,14 @@ runInternalSupervisor = do
         )
       exitImmediately (ExitFailure 125)
 
-runInternalPin :: IO ()
-runInternalPin = do
+runInternalPin :: FilePath -> IO ()
+runInternalPin activityLifetimeLockPath =
+  withBoundedCommandHelperLifetime
+    activityLifetimeLockPath
+    runInternalPinProtected
+
+runInternalPinProtected :: IO ()
+runInternalPinProtected = do
   mapM_ prepareProtocolHandle [stdin, stdout, stderr]
   result <-
     try @SomeException $ do
@@ -19498,8 +19702,8 @@ verifyWritableSourceIsolationProbe expectation = do
     )
     (ignoreIOException (closeFd descriptor))
 
-superviseTarget :: IO ExitCode
-superviseTarget = mask $ \restore -> do
+superviseTarget :: FilePath -> IO ExitCode
+superviseTarget activityLifetimeLockPath = mask $ \restore -> do
   initialRequest <-
     restore (readJsonFrameHandle "supervisor request" stdin)
   plan <-
@@ -19519,6 +19723,7 @@ superviseTarget = mask $ \restore -> do
     spawnSelfExecHelperWithGroup
       InheritHelperProcessGroup
       (supervisorPlanHelperEnvironment plan)
+      activityLifetimeLockPath
       internalPinMode
   pinGroupIdentity <- newMVar Nothing
   mutationWorkingDirectoryState <- newMVar Nothing

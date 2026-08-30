@@ -154,9 +154,9 @@ evidence:
   exact PID, process group, and process birth identity before publishing activity. The opaque
   `SessionProgram` admits only the linear, rank-2 sequence `AnchorReady -> SupervisorReady ->
   LeaseDurable -> TargetRunning`; its constructors are hidden, and the session token cannot escape,
-  be reused, or skip durable publication. A version-4 activity lease is fsynced and renamed under a
+  be reused, or skip durable publication. A version-5 activity lease is fsynced and renamed under a
   directory fsync before the one-shot start authority can be spent. It persists the execution PID
-  namespace plus the anchor under
+  namespace and the `shared-kernel-lock` lifetime-protection marker plus the anchor under
   legacy `command*` keys, the supervisor under legacy `watchdog*` keys, and the exact pin under
   compatibility `targetGroupLeader*` keys; those keys name the retained group leader, not the
   arbitrary target. Recovery continues to decode version-1 command-only and version-2 dual-group
@@ -165,10 +165,11 @@ evidence:
   structurally invalid document before acting on it. Before any payload byte is written, the kernel
   fsyncs a bounded incoming-intent
   basename that encodes the exact owner/anchor/supervisor/pin identities. The common-boot encoding
-  used by legacy Linux records uses `.incoming-activity-v3.*`; current Linux publication adds the
-  parsed nsfs token under `.incoming-activity-v5.*`. Darwin's fixed-width distinct-registry-token
-  encoding remains `.incoming-activity-v4.i*`, whose shape itself identifies the non-namespaced
-  host lane. Recovery parses and validates that filename, refuses malformed, colliding, or
+  used by legacy Linux records uses `.incoming-activity-v3.*`; legacy namespaced Linux publication
+  uses `.incoming-activity-v5.*`, while current protected Linux publication uses
+  `.incoming-activity-v6.*`. Darwin's legacy fixed-width distinct-registry-token encoding is
+  `.incoming-activity-v4.i*`, and current protected publication uses `.incoming-activity-v6.i*`.
+  Recovery parses and validates that filename, refuses malformed, colliding, or
   oversized entries, and can clean an empty or truncated prewrite without PID-only inference.
 - Only after the durable transition and retained-pin acknowledgement may the supervisor use the
   kernel's sole public `System.Posix` fork/exec boundary. The target child begins inside the
@@ -203,10 +204,21 @@ evidence:
   reaps every owned child, proves the anchor, supervisor, and pin-led target groups absent, and
   only then removes its activity lease after success, failure, exception, or timeout. Dead-owner
   recovery accepts legacy version-1 command-only, version-2 dual-group, and version-3 three-group
-  leases plus current namespace-indexed version 4 and
-  cannot restore config or release the reservation until every recorded group is proven absent;
-  malformed or same-namespace-unverifiable leases fail closed. A version-4 lease from a different
-  PID namespace is left untouched without probing its namespace-local PIDs or groups. On Darwin, a
+  leases plus namespace-indexed version 4 and current protected version 5. Every current anchor,
+  supervisor, and retained target-group pin holds
+  `.data/runtime/locks/bounded-command-activity.held` in shared mode for its complete helper
+  lifetime. Quiescence evidence is indexed by a rank-2 region that holds that lock exclusively
+  through config reconciliation and reservation retirement, so evidence cannot escape and no
+  protected helper can remain live or begin concurrently. Same-namespace records still require
+  exact group-absence proof. A protected foreign-namespace record is retired under the exclusive
+  lock without probing namespace-local PIDs or groups; a foreign version-4 or older record lacks
+  that kernel evidence, so recovery refuses and preserves it. Malformed or
+  same-namespace-unverifiable leases fail closed. On Darwin, a
+  protected distinct-token version-6 incoming name is decoded before the overlapping protected
+  namespaced prefix. Live-inventory observations that require a bounded helper complete under the
+  lifecycle and reservation-owner locks before the exclusive activity-quiescence region begins;
+  its rank-2 callback performs only reconciliation and retirement and cannot recursively start a
+  shared-lock helper. On Darwin, a
   legacy three-group lease whose four birth identities carry the one UUID-shaped Linux kernel boot
   token is likewise quarantined rather than interpreted against host PIDs; legacy Darwin registry
   tokens remain recoverable. The compatibility field names do not describe the current helper
@@ -317,9 +329,9 @@ the transition to success.
 The test-harness `./infernix.dhall` swap is crash-safe in the same spirit: a leftover
 `.harness-backup` from a killed version-3 run is reconciled on entry only after the dead
 reservation's bounded-command activity leases prove every recorded process group absent, so a crash cannot
-leave the operator's runtime config clobbered by the test config. A scoped pre-v2 compatibility path
-restores a backup for which no reservation identity was ever recorded; it runs under the lifecycle
-lock and cannot claim activity-quiescence evidence. No other identity-free shape is accepted.
+leave the operator's runtime config clobbered by the test config. A backup for which no reservation
+identity was recorded cannot supply recovery authority: entry fails closed and preserves both files
+for explicit operator resolution.
 
 **A reservation identity is namespace-relative, and a foreign namespace is not a dead one.** The
 reservation's owner pid and process group are allocated by a PID namespace, and its `boot-identity`
@@ -357,22 +369,22 @@ explicit absence and `RecordedNamespaceIsForeign` is unreachable on that lane *b
 rather than by a runtime guard — which is what keeps the Apple host from retiring a record whose
 owner is alive inside a running container on the shared mount.
 A wedged record already on disk carries no namespace at all, so no discriminator can retire it. That
-is why `infernix cluster reclaim-slot [--force-owner-pid PID]` exists and why the refusal now names
+is why `infernix cluster reclaim-slot [--force-owner-pid PID]` exists and why the refusal names
 it and prints every fact it observed. The command is exempt from the pre-dispatch interrupted-state
-reconcile — running that gate first would make it unreachable in the only state it is for. It
+reconcile and from configured startup — running either gate first would make it unreachable in the
+state it recovers. It derives only repo-local recovery paths and does not require a runtime config or
+host manifest. It
 refuses a verified-alive owner, retires a proven-dead one through the same kernel the seizure path
 uses, and otherwise requires the operator to transcribe the pid out of the record. The transcription
 is an operator-asserted premise, not an override: it supplies only the record's identity, and the
 bounded-command quiescence proof and config-transaction reconciliation still run and still fail
 closed.
-One reservation residual remains named rather than papered over. A sibling container whose reservation owner
-died but whose bounded-command descendants are still alive presents a free lock and a foreign
-namespace, so its reservation is retired where today it refuses; that is strictly narrower than the
-permanent wedge it replaces, but it is a real widening. The formerly named bounded-command
-activity-ledger residual is closed: current leases and Linux incoming intents carry their PID
-namespace, foreign leases are ignored without PID/group probes, and legacy Linux UUID-shaped
-leases are quarantined on Darwin. Foreign activity is not deleted or declared dead; only a process
-inside the recorded namespace may turn its exact birth/group evidence into cleanup authority.
+The reservation-owner lock and the bounded-command activity lock prove different facts and are both
+required. A dead owner frees `harness-cluster-slot.held`; its surviving anchor, supervisor, or pin
+continues to hold `bounded-command-activity.held`, so reservation retirement refuses until the helper
+tree has actually terminated. Only after both exclusive regions are held may protected foreign
+activity be retired without PID/group probes. Legacy foreign activity is preserved because it never
+held the second lock, and legacy Linux UUID-shaped leases remain quarantined on Darwin.
 
 Readiness **observation** is itself three-valued, because a probe that reads a remote system does not
 always get to observe it. A transport fault — a reset idle NodePort keep-alive, a HEAD timeout, a

@@ -32,9 +32,9 @@ bounded-command kernel replacement uses public Haskell process APIs: the parent 
 anchor with closed descriptor inheritance, an explicit environment, a new process group, and
 standard-stream framing. The required replacement starts the supervisor inside the anchor group
 and a self-exec pin inside the supervisor group, forwarding both provisional birth identities to
-parent custody before either helper detaches. A version-3 activity lease persists exact
-owner/anchor/supervisor/pin birth identities, while a bounded fsynced version-3 common-boot or
-version-4 distinct-boot incoming-intent filename preserves them across a crash before payload
+parent custody before either helper detaches. A version-5 activity lease persists exact
+owner/anchor/supervisor/pin birth identities plus shared kernel lifetime protection, while a bounded
+fsynced protected version-6 incoming-intent filename preserves them across a crash before payload
 write. The arbitrary target remains a supervisor-owned unreaped child rather than a persisted
 birth identity. A hidden rank-2 linear session orders `AnchorReady -> SupervisorReady ->
 LeaseDurable -> TargetRunning`. The obsolete repository-owned subprocess C file and Cabal

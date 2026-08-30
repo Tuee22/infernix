@@ -418,14 +418,15 @@ standard streams; input and output bytes are base64 inside those bounded frames.
 
 Hidden `SessionProgram` constructors and a rank-2, linearly consumed session allow only
 `AnchorReady` -> `SupervisorReady` -> `LeaseDurable` -> `TargetRunning`. The parent durably
-publishes a version-3 activity lease with exact final anchor, supervisor, and pin identities before
+publishes a version-5 activity lease with exact final anchor, supervisor, and pin identities plus
+shared kernel lifetime protection before
 spending the one-shot start authority. It records the anchor under legacy `command*`, the supervisor
 under legacy `watchdog*`, and the exact self-exec pin under compatibility
 `targetGroupLeader*` keys; version-1 and version-2 records remain decode-only recovery inputs.
 Before writing that payload, a bounded, fsynced incoming-intent filename records the same exact
-owner/anchor/supervisor/pin identities. Its common-boot encoding is version 3 and its fixed-width
-distinct-boot encoding is version 4, so recovery can classify an empty/truncated prewrite without
-PID-only inference. After the pin acknowledges its retained state, the supervisor owns the sole
+owner/anchor/supervisor/pin identities. Legacy encodings remain decodable; protected current
+common-boot and fixed-width distinct-boot encodings use version 6, so recovery can classify an
+empty/truncated prewrite without PID-only inference. After the pin acknowledges its retained state, the supervisor owns the sole
 public `System.Posix` private-pipe and fork boundary. The target begins in the supervisor group
 behind an inner gate, moves into the recorded pin group, and cannot execute until its
 supervisor-owned PID is observed in that group. The arbitrary target is retained and reaped by its

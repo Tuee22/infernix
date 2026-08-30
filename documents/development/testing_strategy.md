@@ -45,10 +45,19 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
   image-baked empty-models config), generates `./infernix.dhall` from the test config's substrate +
   demo-ui selection, runs the suites, and restores the backup (or removes the generated file when
   there was none). The swap is crash-safe by construction: the backup lives at
-  `./infernix.dhall.harness-backup` and `withTestHarnessConfig` reconciles a leftover backup on
-  **entry** (a SIGKILL bypasses the `finally` restore), so a killed run cannot leave the operator's
-  runtime config clobbered by the test config. Reservation and teardown are owner-atomic over the
-  all-Haskell lock and supervision boundary; canonical home
+  `./infernix.dhall.harness-backup` and `withTestHarnessConfig` reconciles a reservation-backed
+  leftover backup on **entry** (a SIGKILL bypasses the `finally` restore), so a killed run cannot
+  leave the operator's runtime config clobbered by the test config. An identity-free orphaned backup
+  is preserved and refused rather than restored. Reservation and teardown are owner-atomic over the
+  all-Haskell lock and supervision boundary. Every bounded-command anchor, supervisor, and retained
+  target-group pin holds a second fixed kernel lock in shared mode; interrupted-state recovery holds
+  it exclusively through quiescence evidence consumption and reservation retirement. Current
+  version-5 leases and protected version-6 incoming intents declare this lifetime evidence, while a
+  foreign legacy record is preserved and refused. Darwin's protected distinct-token prefix is
+  decoded before the overlapping namespaced prefix, and live inventory is observed before the
+  exclusive activity region so its callback never recursively starts a shared-lock helper.
+  `cluster reclaim-slot` is config-independent, so
+  the reservation it recovers cannot make the command itself unreachable. Canonical home:
   [Configuration Doctrine](../architecture/configuration_doctrine.md). The Linux launcher image bakes
   both `./infernix.dhall` and `./infernix.test.dhall`
   at build time so the containerized `docker compose run --rm infernix infernix test all` finds them.

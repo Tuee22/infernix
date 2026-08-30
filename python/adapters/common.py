@@ -905,6 +905,7 @@ def _run_apple_native_runner_contract_check(runner_path: Path) -> None:
                 selected_engine="contract-engine",
                 family="contract-family",
                 install_root=root / "candidate",
+                generation_bound=64,
                 input_text="",
                 input_object_ref="",
                 input_file="",

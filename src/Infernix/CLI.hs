@@ -163,11 +163,14 @@ import System.Process
   ( CreateProcess (close_fds, create_group, cwd, env, std_err, std_in, std_out),
     ProcessHandle,
     StdStream (CreatePipe, Inherit),
+    -- infernix-lint: non-engine-process-site
     createProcess,
     getPid,
     proc,
+    -- infernix-lint: non-engine-process-site
     readCreateProcessWithExitCode,
     terminateProcess,
+    -- infernix-lint: non-engine-process-site
     waitForProcess,
   )
 import System.Timeout (timeout)
@@ -208,11 +211,12 @@ commandRequiresConfiguredStartup command =
     ShowTopicHelp _ -> False
     InitCommand {} -> False
     TestInitCommand {} -> False
+    ClusterReclaimSlotCommand _ -> False
     _ -> True
 
--- The recovery command must remain reachable in the exact unverifiable state
--- that makes ordinary pre-dispatch reconciliation refuse. It still loads the
--- host manifest and runs its own lifecycle-locked recovery kernel.
+-- The recovery command owns the exact lifecycle-locked recovery kernel and is
+-- config-independent, so it remains reachable when an interrupted reservation
+-- prevents init from creating the host manifest.
 commandOwnsInterruptedHarnessRecovery :: Command -> Bool
 commandOwnsInterruptedHarnessRecovery command =
   case command of
@@ -840,6 +844,7 @@ withRuntimeServiceDaemon paths action = do
   bracketPreservingPrimary
     ( do
         (_, _, _, processHandle) <-
+          -- infernix-lint: non-engine-process-site
           createProcess
             (proc infernixExecutable ["service"])
               { cwd = Just (repoRoot paths)
@@ -849,6 +854,7 @@ withRuntimeServiceDaemon paths action = do
     ( \processHandle ->
         runCleanupsPreservingFailures
           [ terminateProcess processHandle,
+            -- infernix-lint: non-engine-process-site
             void (waitForProcess processHandle)
           ]
     )
@@ -1316,6 +1322,7 @@ spawnDarwinBuildMemoryProcessSpec spec = do
     requireBoundedDescriptorSpace
       (darwinBuildMemorySpecLabel spec <> " process-group spawn")
   created <-
+    -- infernix-lint: non-engine-process-site
     createProcess
       (proc (darwinBuildMemorySpecExecutable spec) (darwinBuildMemorySpecArguments spec))
         { cwd = Just (darwinBuildMemorySpecWorkingDirectory spec),
@@ -1890,6 +1897,7 @@ spawnOwnedToolchainProcess paths authority invocation resolvedCommand = do
   _ <- requireBoundedDescriptorSpace (label <> " process-group spawn")
   BuildMemory.requireToolchainInvocationProjectState authority invocation
   (_, _, _, processHandle) <-
+    -- infernix-lint: non-engine-process-site
     createProcess
       ( proc
           resolvedCommand
@@ -2027,11 +2035,13 @@ runCommandWithCwdAndEnvRemovingWithPaths paths _maybeRuntimeMode removedEnvironm
           extraEnvironment
           (removeEnvironmentVariables removedEnvironmentNames (cliSubprocessBaseEnvFor paths))
   (_, _, _, processHandle) <-
+    -- infernix-lint: non-engine-process-site
     createProcess
       (proc resolvedCommand args)
         { env = Just augmentedEnvironment,
           cwd = Just workingDirectory
         }
+  -- infernix-lint: non-engine-process-site
   exitCode <- waitForProcess processHandle
   case exitCode of
     ExitSuccess -> pure ()
@@ -2110,6 +2120,7 @@ captureCliHostTool paths tool args = do
   captureOutcome <-
     timeout
       cliHostToolCaptureDeadlineMicros
+      -- infernix-lint: non-engine-process-site
       ( readCreateProcessWithExitCode
           (proc command args)
             { env = Just (cliSubprocessBaseEnvFor paths)

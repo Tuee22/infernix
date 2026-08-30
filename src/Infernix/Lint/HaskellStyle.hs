@@ -1185,8 +1185,8 @@ unboundedEngineSpawnViolations sourceFile numberedLines
   | sourceFile `elem` unboundedEngineSpawnExemptedFiles = []
   | otherwise =
       [ sourceFile <> ":" <> show lineNumber <> ": forbidden raw engine subprocess spawn `" <> needle <> "`; route inference execution through an ExecutableModel-gated Infernix.Runtime.CappedEngine launch so an engine without a matching grant and live enforcer, or unbounded by its admitted ceiling, is unrepresentable (see documents/architecture/bounded_inference_memory.md)"
-      | (lineNumber, lineValue) <- numberedLines,
-        not (isCommentLine lineValue),
+      | (lineNumber, lineValue) <- sanitizeNativeBoundarySource numberedLines,
+        not (permittedNonEngineProcessSite sourceFile lineNumber numberedLines),
         needle <- forbiddenEngineSpawnTokens,
         containsToken needle lineValue
       ]
@@ -1208,37 +1208,32 @@ fixedObserverKernelFile :: FilePath
 fixedObserverKernelFile =
   "src/Infernix/Runtime/CappedEngine/FixedObserver.hs"
 
--- | The engine-spawn gate's exemption set is /exactly/ the bounded-command
--- gate's, and Sprint 6.44's follow-on states that as a decision rather than
--- leaving it looking like an oversight.
---
--- Sprint 6.44 recorded an intent to make this set "strictly smaller" than
--- 'unboundedExecExemptedFiles'. That is not achievable with this rule's
--- detection strategy, and the honest record matters more than the aspiration.
--- Both gates match the same raw @System.Process@ tokens on the same source
--- lines; nothing in a token tells the two rules apart. So for any file that
--- legitimately retains a /non-engine/ raw spawn — an operator passthrough, a
--- long-lived host daemon, a pre-manifest host probe — removing it from the
--- engine set would make the engine rule fire on a line that is not an engine
--- spawn at all. The only way to pass would be to delete a legitimate spawn or
--- to weaken a rule, and the doctrine forbids both. The two sets therefore
--- coincide by construction, and this definition says so directly instead of
--- implying a narrowing through a redundant cons: 'cappedEngineKernelFile' is
--- already a member of 'unboundedExecExemptedFiles', so consing it produced a
--- duplicate, not a wider set.
---
--- Separating the gates needs a strictly stronger detector, not a smaller list.
--- Two designs would work: a per-site annotation that marks a spawn as
--- engine-launching (so the engine rule keys on intent rather than on the
--- primitive), or an AST pass that resolves what each spawn actually executes
--- (the @check-code@ pass already demonstrates that shape for the realness
--- contract). Either would let the engine gate cover files the exec gate must
--- still exempt. Until one exists, the coupling is load-bearing in one useful
--- direction: a migration that removes a raw spawn from the exec list removes it
--- from both, and a brand-new raw engine spawn — which must carry a
--- 'MemoryGrant' — still has nowhere to hide but the capped-engine kernel.
+-- | Only the capped-engine kernel is exempt from the engine-spawn gate.
+-- Legitimate non-engine process sites in files that the general process rule
+-- exempts carry a reviewed annotation immediately above the exact primitive.
+-- The annotation is recognized only in the closed file set below, so it cannot
+-- turn into a repository-wide opt-out.
 unboundedEngineSpawnExemptedFiles :: [FilePath]
-unboundedEngineSpawnExemptedFiles = unboundedExecExemptedFiles
+unboundedEngineSpawnExemptedFiles = [cappedEngineKernelFile]
+
+nonEngineProcessSiteAnnotation :: String
+nonEngineProcessSiteAnnotation = "infernix-lint: non-engine-process-site"
+
+permittedNonEngineProcessSiteFiles :: [FilePath]
+permittedNonEngineProcessSiteFiles =
+  [ "src/Infernix/Cluster/Subprocess.hs",
+    fixedObserverKernelFile,
+    "src/Infernix/CLI.hs",
+    "src/Infernix/HostPrereqs.hs"
+  ]
+
+permittedNonEngineProcessSite :: FilePath -> Int -> [(Int, String)] -> Bool
+permittedNonEngineProcessSite sourceFile lineNumber numberedLines =
+  sourceFile `elem` permittedNonEngineProcessSiteFiles
+    && maybe
+      False
+      (nonEngineProcessSiteAnnotation `isInfixOf`)
+      (lookup (lineNumber - 1) numberedLines)
 
 -- | Sprint 6.44 follow-on (bounded descriptor space) — a spawn kernel that sets
 -- @close_fds@ must observe the descriptor bound before it spawns.

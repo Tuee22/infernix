@@ -785,13 +785,14 @@ before that publication. Parent-liveness EOF makes the anchor terminate and reap
 supervisor parent-liveness EOF triggers an identity-safe target-group kill while its pin is still
 unreaped. Parent cleanup has the same exact identity authority while its anchor is unreaped.
 Dead-owner recovery decodes legacy version-1 command-only leases, version-2 anchor/supervisor
-leases, and current version-3 three-group leases and must prove every recorded group absent before
+leases, legacy version-3/version-4 three-group leases, and current protected version-5 leases and
+must prove every same-namespace recorded group absent before
 restoring config or releasing the reservation. The persisted JSON keys remain `command*` for the
 anchor and `watchdog*` for the supervisor solely for format compatibility; version 3 adds
 `targetGroupLeaderProcessId`, `targetGroup`, and `targetGroupLeaderBirthIdentity` for the pin.
 Before any payload byte is written, a bounded fsynced incoming-intent basename persists the same
-exact owner/anchor/supervisor/pin identities. Common-boot names use the version-3 encoding;
-fixed-width distinct-boot names use version 4. Recovery rejects malformed, colliding, and
+exact owner/anchor/supervisor/pin identities. Legacy encodings remain decodable; protected current
+common-boot and fixed-width distinct-boot names use version 6. Recovery rejects malformed, colliding, and
 oversized names and can retire an empty or truncated prewrite without PID-only inference. Command
 cleanup therefore cannot outlive a killed reservation owner and escape the fence. The
 operator-kubectl compatibility value is additionally read-only by construction: its validator
@@ -913,11 +914,12 @@ in the supervisor group before owning the gated target. Neither helper detaches 
 has reobserved and acknowledged its provisional PID, process group, and birth identity. Total
 length-bounded framed messages carry the protocol over standard streams. Hidden phase-indexed
 constructors, a rank-2 session region, and linear transitions make target start before a durable
-version-3 lease containing exact anchor, supervisor, and target-group pin birth identities,
+version-5 lease containing exact anchor, supervisor, and target-group pin birth identities plus
+shared kernel lifetime protection,
 start-authority reuse, and session escape fail to typecheck. Target fork is post-durability and
 post-retained-pin acknowledgement; a private inner gate remains closed until the supervisor-owned
-target PID and containing pin group are observed. A bounded version-4 distinct-boot
-incoming-intent filename, paired with the bounded version-3 common-boot encoding, preserves those
+target PID and containing pin group are observed. A bounded protected version-6
+incoming-intent filename preserves those
 helper identities even before a payload write. Phase 2's own ordered closure and cohort proof are
 complete. The finite claim-directory chmod missing-path repair loop and the Kind/nvkind host-port
 reselection loops remain higher-level workflows because they repair state or change generated
@@ -1000,8 +1002,8 @@ so no cluster lifecycle path can invoke a raw or unbounded process.
   terminal-first command group, descendant, anchor, pin, or supervisor alive; a stopped,
   separately grouped pre-publication supervisor is continued, terminated, and reaped by its anchor,
   with its gated target group also removed before any activity record can survive; recovery covers
-  legacy version-1/version-2 and current version-3 activity leases plus bounded version-3
-  common-boot/version-4 distinct-boot incoming-intent prewrites
+  legacy version-1 through version-4 and current protected version-5 activity leases plus bounded
+  protected version-6 incoming-intent prewrites
 - parent death before durable activity publication leaves no target/helper/activity record; parent
   death after publication remains recoverable from the exact recorded birth identities
 - target setup/exec failure is `CommandFailedKernel`, genuine target exits 126/127 remain

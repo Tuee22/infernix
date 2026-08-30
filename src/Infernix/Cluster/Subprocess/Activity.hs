@@ -112,8 +112,9 @@ planActivityPublicationTestHook =
 
 -- | Plan one publication. The final path must be a direct child of the
 -- activity root. The incoming name must be a direct basename beginning with
--- @.incoming-activity-v3.@, @.incoming-activity-v4.i@, or
--- @.incoming-activity-v5.@; the interpreter
+-- @.incoming-activity-v3.@, @.incoming-activity-v4.i@,
+-- @.incoming-activity-v5.@, @.incoming-activity-v6.i@, or
+-- @.incoming-activity-v6.@; the interpreter
 -- rechecks both path constraints.
 planActivityPublication ::
   FilePath ->
@@ -205,6 +206,8 @@ validIncomingName incomingName =
     && ( ".incoming-activity-v3." `isPrefixOf` incomingName
            || ".incoming-activity-v4.i" `isPrefixOf` incomingName
            || ".incoming-activity-v5." `isPrefixOf` incomingName
+           || ".incoming-activity-v6.i" `isPrefixOf` incomingName
+           || ".incoming-activity-v6." `isPrefixOf` incomingName
        )
 
 validDirectChild :: FilePath -> FilePath -> Bool

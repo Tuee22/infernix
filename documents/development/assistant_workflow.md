@@ -114,7 +114,7 @@ this canonical list.
   operator cluster instead of destroying it); the `ClusterLifecycle` machine carries a first-class
   `ClusterMutating` position, so a killed `infernix test all` leaves a detectable, reconcilable dirty
   cluster rather than a false `steady-state`, and the test-harness `./infernix.dhall` swap reconciles a
-  leftover `.harness-backup` on entry. Canonical:
+  reservation-backed leftover `.harness-backup` on entry. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
 - memory-safety by construction rests on the generated typed execution plan: compilation
   mints a resource-indexed `MemoryGrant`, package-owned live observations pair it with the matching

@@ -46,11 +46,12 @@ surface the repository no longer has.
 
 ## Current Repo Assessment
 
-Phases 0 through 3 and 5 through 9 are `Done`; Phase 4 Sprint 4.45 is `Active` on its selected
-Apple-accelerator gate in [Wave 4.45](cohort-validation-waves.md). Its code-side closure and current
-`linux-cpu` full suite pass. The native Apple lane is constructible, but the governed suite correctly
-refuses to start beside a foreign live toolchain claimant, so the selected `apple-silicon` full suite
-remains pending until the shared host-memory account is available. Phase 4's completed implementation
+Phases 0 through 5 and 7 through 9 are `Done` for their recorded scope. Phase 6 is `Active` for
+Sprint 6.53's selected cohort rerun: the paired current-source native-arm64 `linux-cpu` full suite
+passes, while the selected `linux-gpu` full suite remains open on a native CUDA Linux host. Phase 4
+Sprint 4.45 closes its stable Apple project-environment, bounded-observer, Pulsar broker-envelope,
+typed generation-shape, and artifact recipe-identity work against the selected current-source
+`apple-silicon` plus paired native-arm64 `linux-cpu` full suites. Phase 4's completed implementation
 owns the Bounded Engine Launch host half: Apple declares detection-only, calibrated `linux-cpu`
 declares prevention, and a prevention-required production readiness contract consumes the declaration
 and refuses weaker strength. Phase 6 closes the device-side correction and Linux GPU host calibration
@@ -60,10 +61,13 @@ every phase remains completable using only equal-or-lower-numbered phases.
 
 Phase 6 Sprint 6.51 forms the device half: Linux GPU pod RAM is calibrated prevention, while NVIDIA
 device memory remains admission, arena sizing, and detection because no supported kernel mechanism
-bounds it.
+bounds it. Sprint 6.53 closes the residual process-site lint, recovery authority, deterministic
+dual-resource refusal, config-independent reclaim, and cross-container activity-lifetime contract;
+its machine-independent gates and paired native-arm64 `linux-cpu` full suite are complete, and its
+selected `linux-gpu` cohort validation is tracked in Wave 6.53.
 
-[cohort-validation-waves.md](cohort-validation-waves.md) holds Phase 4's open selected-accelerator
-gate, while
+[cohort-validation-waves.md](cohort-validation-waves.md) holds only selected-accelerator gates that
+remain open, while
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) inventories only surfaces that
 still require removal. [README.md](README.md) holds the plan's single phase-status table.
 

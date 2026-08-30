@@ -704,7 +704,7 @@ contextLengthForRow row =
 generationBoundForRow :: MatrixRow -> Int
 generationBoundForRow row =
   case rowFamily row of
-    "llm" -> 256
+    "llm" -> 64
     _ -> 100
 
 -- | The declared geometry for a row whose engine keeps a key/value cache.

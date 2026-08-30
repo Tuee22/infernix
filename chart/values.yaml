@@ -542,6 +542,9 @@ pulsar:
         cpu: 0.05
       limits:
         memory: 256Mi
+    configData:
+      PULSAR_MEM: "-Xms32m -Xmx96m"
+      PULSAR_GC: "-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem"
     volumes:
       data:
         storageClassName: infernix-manual
@@ -566,6 +569,12 @@ pulsar:
       limits:
         memory: 512Mi
     configData:
+      PULSAR_MEM: "-Xms64m -Xmx192m -XX:MaxDirectMemorySize=128m"
+      PULSAR_GC: "-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem"
+      dbStorage_writeCacheMaxSizeMb: "16"
+      dbStorage_readAheadCacheMaxSizeMb: "16"
+      dbStorage_rocksDB_writeBufferSizeMB: "8"
+      dbStorage_rocksDB_blockCacheSize: "8388608"
       # Local host-path PVs share the developer's backing filesystem. Favor
       # absolute remaining space over the upstream default 95% utilization cap
       # so repeat cluster down/up cycles still recover on very full developer
@@ -598,8 +607,15 @@ pulsar:
         memory: 256Mi
         cpu: 0.1
       limits:
-        memory: 512Mi
+        # Pulsar 4.0.9 exceeds 1 GiB while restoring the retained single-broker
+        # namespace/topic inventory even with its 256 MiB heap and 256 MiB direct
+        # memory caps. Keep a bounded pod envelope, but size it for JVM/native
+        # startup residue so the proxy cannot report ready while every broker
+        # restart is being cgroup-OOM-killed behind it.
+        memory: 2Gi
     configData:
+      PULSAR_MEM: "-Xms128m -Xmx256m -XX:MaxDirectMemorySize=128m"
+      PULSAR_GC: "-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem"
       # Required before namespace/topic-level producer dedup policies take effect.
       brokerDeduplicationEnabled: "true"
       # Phase 3 Sprint 3.16: one bookie means an ensemble of one. These three
@@ -611,6 +627,9 @@ pulsar:
   proxy:
     replicaCount: 1
     configData:
+      PULSAR_MEM: "-Xms64m -Xmx128m -XX:MaxDirectMemorySize=64m"
+      PULSAR_GC: "-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem"
+      httpNumThreads: "8"
       webSocketServiceEnabled: "true"
       # Engine consumers retain their delivery until real inference and result
       # publication complete. Pulsar 4.0.9's proxy WebSocket servlet is bounded
@@ -638,6 +657,7 @@ pulsar:
       enabled: false
     configData:
       BOOKIE_MEM: "-Xms64m -Xmx256m -XX:MaxDirectMemorySize=128m"
+      PULSAR_GC: "-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem"
     resources:
       requests:
         memory: 192Mi

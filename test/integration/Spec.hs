@@ -1423,7 +1423,7 @@ submitDurablePrompt :: Paths -> RuntimeMode -> DurablePromptContext -> Text.Text
 submitDurablePrompt paths runtimeMode context label = do
   startedAt <- realToFrac <$> getPOSIXTime
   let promptTextValue =
-        "durable chaos prompt "
+        "Reply with exactly OK and no other text. Validation token: "
           <> label
           <> " "
           <> durablePromptToken context
@@ -1477,23 +1477,42 @@ conversationPromptMessageIds promptTextValue messages =
   ]
 
 waitForConversationResultPayloadForPrompt :: Paths -> RuntimeMode -> Text.Text -> Contracts.MessageId -> IO Contracts.ConversationInferenceResultPayload
-waitForConversationResultPayloadForPrompt paths runtimeMode conversationTopic promptMessageId = go (180 :: Int)
+waitForConversationResultPayloadForPrompt paths runtimeMode conversationTopic promptMessageId = do
+  startedAt <- realToFrac <$> getPOSIXTime
+  waitForConversationResultPayloadForPromptBefore
+    paths
+    runtimeMode
+    conversationTopic
+    promptMessageId
+    (startedAt + durablePromptResultTimeoutSeconds runtimeMode)
+
+durablePromptResultTimeoutSeconds :: RuntimeMode -> Double
+durablePromptResultTimeoutSeconds runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> 180
+    LinuxCpu -> 300
+    LinuxGpu -> 120
+
+waitForConversationResultPayloadForPromptBefore :: Paths -> RuntimeMode -> Text.Text -> Contracts.MessageId -> Double -> IO Contracts.ConversationInferenceResultPayload
+waitForConversationResultPayloadForPromptBefore paths runtimeMode conversationTopic promptMessageId deadline = go
   where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
+    go = do
+      now <- realToFrac <$> getPOSIXTime
+      if now >= deadline
+        then
           fail
             ( "timed out waiting for durable-context inference result for "
                 <> Text.unpack (Contracts.unMessageId promptMessageId)
                 <> " on "
                 <> Text.unpack conversationTopic
             )
-      | otherwise = do
+        else do
           messages <- readRawTopicPayloads paths runtimeMode Nothing conversationTopic 256
           case conversationResultPayloadsForPrompt promptMessageId messages of
             resultPayload : _ -> pure resultPayload
             [] -> do
               threadDelay 1000000
-              go (remainingAttempts - 1)
+              go
 
 conversationResultPayloadsForPrompt :: Contracts.MessageId -> [RawTopicMessage] -> [Contracts.ConversationInferenceResultPayload]
 conversationResultPayloadsForPrompt promptMessageId messages =
@@ -1592,6 +1611,7 @@ validateMultiUserDurablePromptThroughputWith matrix paths runtimeMode representa
   let userCount = throughputUserCount matrix
       contextsPerUser = throughputContextsPerUser matrix
       promptsPerContext = throughputPromptsPerContext matrix
+      totalPrompts = userCount * contextsPerUser * promptsPerContext
       contextLabels =
         [ "throughput-u" <> Text.pack (show userIndex) <> "-c" <> Text.pack (show contextIndex)
         | userIndex <- [1 .. userCount],
@@ -1610,14 +1630,19 @@ validateMultiUserDurablePromptThroughputWith matrix paths runtimeMode representa
             runtimeMode
             context
             ("throughput-p" <> Text.pack (show promptIndex))
+  let queueStartedAt = minimum (map durablePromptRefStartedAt promptRefs)
+      completionBudgetSeconds =
+        fromIntegral totalPrompts * durablePromptResultTimeoutSeconds runtimeMode
+      completionDeadline = queueStartedAt + completionBudgetSeconds
   latencies <-
     forM promptRefs $ \promptRef -> do
       resultPayload <-
-        waitForConversationResultPayloadForPrompt
+        waitForConversationResultPayloadForPromptBefore
           paths
           runtimeMode
           (durablePromptConversationTopic (durablePromptRefContext promptRef))
           (durablePromptRefMessageId promptRef)
+          completionDeadline
       assertCompletedResultPayload resultFamily resultPayload "throughput prompt writes a completed result"
       finishedAt <- realToFrac <$> getPOSIXTime
       pure (finishedAt - durablePromptRefStartedAt promptRef)
@@ -1625,7 +1650,13 @@ validateMultiUserDurablePromptThroughputWith matrix paths runtimeMode representa
     assertContextPromptAndResultCounts paths runtimeMode context promptsPerContext
   let sortedLatencies = sort latencies
       p95Latency = percentile95 sortedLatencies
-      totalPrompts = length promptRefs
+  assert
+    (p95Latency <= completionBudgetSeconds)
+    ( "throughput p95 latency exceeds the substrate queue ceiling: observed="
+        <> show p95Latency
+        <> " ceiling="
+        <> show completionBudgetSeconds
+    )
   putStrLn
     ( "throughput-metrics users="
         <> show userCount
@@ -1638,6 +1669,13 @@ validateMultiUserDurablePromptThroughputWith matrix paths runtimeMode representa
         <> " p95Seconds="
         <> show p95Latency
     )
+
+-- One machine owns exactly one engine process, so the compact throughput
+-- matrix has one bounded serial queue even though its per-context dispatchers
+-- race independently. Multiplying the substrate's ordinary per-prompt bound by
+-- the number of submitted prompts gives one deadline for the whole queue and
+-- avoids assigning a short per-result timeout to whichever context happens to
+-- be observed before its request reaches the engine.
 
 assertContextPromptAndResultCounts :: Paths -> RuntimeMode -> DurablePromptContext -> Int -> IO ()
 assertContextPromptAndResultCounts paths runtimeMode context expectedPrompts = do

@@ -2617,9 +2617,9 @@ Three alternatives were considered and rejected, recorded so they are not retrie
 - **`getFileStatus`/`getSymbolicLinkStatus` on the magic link** — this repository's dominant idiom,
   and wrong here: it returns the *procfs* link's own inode, a PID-namespaced number, not the nsfs
   namespace identity. `readSymbolicLink` and the kernel's own `pid:[<inode>]` token are used instead
-- **stamping the namespace onto bounded-command activity leases** — initially deferred because it
-  is a second on-disk format; the Apple closure attempt then reproduced the exact downstream wedge,
-  so current version-4 leases and Linux crash-intent filenames now carry the execution namespace
+- **stamping the namespace and kernel lifetime protection onto bounded-command activity leases** —
+  current version-5 leases carry both the execution namespace and the shared-lock marker, and
+  protected Linux and Darwin crash-intent filenames use version 6
 
 The already-wedged `version=2` record quoted above carries no namespace at all, so **no
 discriminator can retire it**. `reclaim-slot` is the only recovery path for records already on disk;

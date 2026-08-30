@@ -17,6 +17,9 @@ build/infernix-demo-*.dhall
 infernix.dhall
 infernix-host.dhall
 infernix.test.dhall
+# The reservation-backed test-harness recovery copy is operator runtime state
+# and must neither enter an image nor perturb source-image identity.
+infernix.dhall.harness-backup
 
 # Haskell build artifacts
 dist-newstyle

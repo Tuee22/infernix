@@ -278,11 +278,10 @@ withClusterLifecycleLock paths action = do
 -- capabilities themselves.
 requireBoundedCommandActivitiesQuiescent :: Paths -> Integer -> IO ()
 requireBoundedCommandActivitiesQuiescent paths ownerProcessGroup =
-  void
-    ( Subprocess.proveBoundedCommandActivitiesQuiescent
-        paths
-        ownerProcessGroup
-    )
+  Subprocess.withBoundedCommandActivitiesQuiescent
+    paths
+    ownerProcessGroup
+    (const (pure ()))
 
 nodeMountedKindRoot :: FilePath
 nodeMountedKindRoot = "/var/infernix-data"
@@ -2636,15 +2635,7 @@ reconcileInterruptedHarnessStateAt paths = do
   Config.ensureRepoLayout paths
   maybeReservation <- readHarnessReservation paths
   case maybeReservation of
-    Nothing -> do
-      legacyBackupPresent <-
-        doesFileExist (Config.runtimeConfigPath paths <> ".harness-backup")
-      when legacyBackupPresent $
-        withClusterLifecycleLock paths $ \_ -> do
-          lockedReservation <- readHarnessReservation paths
-          case lockedReservation of
-            Nothing -> reconcileLegacyHarnessBackup paths
-            Just _ -> pure ()
+    Nothing -> refuseUnreservedHarnessBackup paths
     Just reservation -> do
       ownerInspection <- inspectHarnessReservationOwner paths reservation
       case inspectedOwnerStatus ownerInspection of
@@ -2655,7 +2646,7 @@ reconcileInterruptedHarnessStateAt paths = do
           withClusterLifecycleLock paths $ \_ -> do
             currentReservation <- readHarnessReservation paths
             case currentReservation of
-              Nothing -> reconcileLegacyHarnessBackup paths
+              Nothing -> refuseUnreservedHarnessBackup paths
               Just lockedReservation -> do
                 lockedOwnerInspection <-
                   inspectHarnessReservationOwner paths lockedReservation
@@ -2671,24 +2662,31 @@ reconcileInterruptedHarnessStateAt paths = do
                       "harness cluster-slot recovery"
                       (harnessLifetimeLockPath paths)
                       ( do
-                          activitiesQuiescent <-
-                            Subprocess.proveBoundedCommandActivitiesQuiescent
-                              paths
-                              (harnessReservationProcessGroup lockedReservation)
-                          restoredReservation <-
-                            recoverHarnessConfigTransaction
-                              activitiesQuiescent
-                              paths
-                              lockedReservation
+                          -- Live-inventory discovery is itself a bounded
+                          -- command. Observe it while the lifecycle and dead
+                          -- owner's lifetime locks are held, before entering
+                          -- the exclusive activity-quiescence region whose
+                          -- callback cannot recursively start a shared-lock
+                          -- helper.
                           presentRuntimeModes <- presentClusterRuntimeModes paths
                           recordedState <- loadClusterState paths
-                          if deadReservationCanBeRemoved restoredReservation presentRuntimeModes recordedState
-                            then
-                              removeHarnessReservation
-                                activitiesQuiescent
-                                paths
-                                lockedReservation
-                            else writeHarnessReservation paths restoredReservation
+                          Subprocess.withBoundedCommandActivitiesQuiescent
+                            paths
+                            (harnessReservationProcessGroup lockedReservation)
+                            ( \activitiesQuiescent -> do
+                                restoredReservation <-
+                                  recoverHarnessConfigTransaction
+                                    activitiesQuiescent
+                                    paths
+                                    lockedReservation
+                                if deadReservationCanBeRemoved restoredReservation presentRuntimeModes recordedState
+                                  then
+                                    removeHarnessReservation
+                                      activitiesQuiescent
+                                      paths
+                                      lockedReservation
+                                  else writeHarnessReservation paths restoredReservation
+                            )
                       )
 
 deadReservationCanBeRemoved ::
@@ -2710,19 +2708,21 @@ operatorOwnsOnlyPresentRuntime presentRuntimeModes maybeState =
         && clusterRuntimeMode state == presentRuntimeMode
     _ -> False
 
-reconcileLegacyHarnessBackup :: Paths -> IO ()
-reconcileLegacyHarnessBackup paths = do
-  let runtimeConfig = Config.runtimeConfigPath paths
-      backupConfig = runtimeConfig <> ".harness-backup"
+refuseUnreservedHarnessBackup :: Paths -> IO ()
+refuseUnreservedHarnessBackup paths = do
+  let backupConfig = Config.runtimeConfigPath paths <> ".harness-backup"
   backupPresent <- doesFileExist backupConfig
-  when backupPresent $ do
-    runtimePresent <- doesFileExist runtimeConfig
-    when runtimePresent (removeFile runtimeConfig)
-    renameFile backupConfig runtimeConfig
-    restampMachineContractPin paths
+  when backupPresent $
+    ioError
+      ( userError
+          ( "refusing identity-free harness config recovery: "
+              <> backupConfig
+              <> " exists without a harness reservation; preserve both files and resolve the orphaned backup explicitly"
+          )
+      )
 
 recoverHarnessConfigTransaction ::
-  Subprocess.BoundedCommandActivitiesQuiescent ->
+  Subprocess.BoundedCommandActivitiesQuiescent s ->
   Paths ->
   HarnessReservation ->
   IO HarnessReservation
@@ -2837,33 +2837,33 @@ ensureHarnessReservationAvailable paths = do
           withKernelFileLock
             "harness cluster-slot recovery"
             (harnessLifetimeLockPath paths)
-            ( do
-                activitiesQuiescent <-
-                  Subprocess.proveBoundedCommandActivitiesQuiescent
-                    paths
-                    (harnessReservationProcessGroup reservation)
-                recoveredReservation <-
-                  recoverHarnessConfigTransaction
-                    activitiesQuiescent
-                    paths
-                    reservation
-                unless
-                  ( harnessReservationConfigTransaction recoveredReservation
-                      `elem` [HarnessConfigUntouched, HarnessConfigRestored]
-                  )
-                  ( ioError
-                      ( userError
-                          "test harness cluster-slot seizure refused: the interrupted config transaction could not be reconciled"
+            ( Subprocess.withBoundedCommandActivitiesQuiescent
+                paths
+                (harnessReservationProcessGroup reservation)
+                ( \activitiesQuiescent -> do
+                    recoveredReservation <-
+                      recoverHarnessConfigTransaction
+                        activitiesQuiescent
+                        paths
+                        reservation
+                    unless
+                      ( harnessReservationConfigTransaction recoveredReservation
+                          `elem` [HarnessConfigUntouched, HarnessConfigRestored]
                       )
-                  )
-                removeHarnessReservation
-                  activitiesQuiescent
-                  paths
-                  reservation
+                      ( ioError
+                          ( userError
+                              "test harness cluster-slot seizure refused: the interrupted config transaction could not be reconciled"
+                          )
+                      )
+                    removeHarnessReservation
+                      activitiesQuiescent
+                      paths
+                      reservation
+                )
             )
 
 requireBoundedCommandQuiescenceEvidence ::
-  Subprocess.BoundedCommandActivitiesQuiescent ->
+  Subprocess.BoundedCommandActivitiesQuiescent s ->
   HarnessReservation ->
   IO ()
 requireBoundedCommandQuiescenceEvidence activitiesQuiescent reservation =
@@ -2878,7 +2878,7 @@ requireBoundedCommandQuiescenceEvidence activitiesQuiescent reservation =
     )
 
 removeHarnessReservation ::
-  Subprocess.BoundedCommandActivitiesQuiescent ->
+  Subprocess.BoundedCommandActivitiesQuiescent s ->
   Paths ->
   HarnessReservation ->
   IO ()
@@ -3108,14 +3108,15 @@ releaseHarnessClusterSlotAt paths maybeRuntimeMode = do
       SHarnessOwned
       reservationAccess
       maybeRuntimeMode
-    activitiesQuiescent <-
-      Subprocess.proveBoundedCommandActivitiesQuiescent
-        paths
-        (harnessReservationProcessGroup reservation)
-    removeHarnessReservation
-      activitiesQuiescent
+    Subprocess.withBoundedCommandActivitiesQuiescent
       paths
-      reservation
+      (harnessReservationProcessGroup reservation)
+      ( \activitiesQuiescent ->
+          removeHarnessReservation
+            activitiesQuiescent
+            paths
+            reservation
+      )
 
 -- | Recover an interrupted harness reservation without running the ordinary
 -- pre-dispatch reconciliation that would make this command unreachable for an
@@ -3124,7 +3125,7 @@ releaseHarnessClusterSlotAt paths maybeRuntimeMode = do
 -- command quiescence proof, or config-transaction recovery.
 reclaimHarnessClusterSlot :: Maybe Integer -> IO ()
 reclaimHarnessClusterSlot maybeForcedOwnerPid = do
-  paths <- discoverClusterCommandPaths
+  paths <- Config.discoverPaths
   reclaimHarnessClusterSlotAt paths maybeForcedOwnerPid
 
 reclaimHarnessClusterSlotAt :: Paths -> Maybe Integer -> IO ()
@@ -3168,27 +3169,27 @@ retireHarnessReservation paths reservation =
   withKernelFileLock
     "harness cluster-slot recovery"
     (harnessLifetimeLockPath paths)
-    ( do
-        activitiesQuiescent <-
-          Subprocess.proveBoundedCommandActivitiesQuiescent
-            paths
-            (harnessReservationProcessGroup reservation)
-        recoveredReservation <-
-          recoverHarnessConfigTransaction
-            activitiesQuiescent
-            paths
-            reservation
-        unless
-          ( harnessReservationConfigTransaction recoveredReservation
-              `elem` [HarnessConfigUntouched, HarnessConfigRestored]
-          )
-          ( ioError
-              ( userError
-                  "harness cluster-slot reclaim refused: the config transaction did not reach a terminal state"
+    ( Subprocess.withBoundedCommandActivitiesQuiescent
+        paths
+        (harnessReservationProcessGroup reservation)
+        ( \activitiesQuiescent -> do
+            recoveredReservation <-
+              recoverHarnessConfigTransaction
+                activitiesQuiescent
+                paths
+                reservation
+            unless
+              ( harnessReservationConfigTransaction recoveredReservation
+                  `elem` [HarnessConfigUntouched, HarnessConfigRestored]
               )
-          )
-        removeHarnessReservation activitiesQuiescent paths reservation
-        putStrLn "harness cluster-slot reservation reclaimed"
+              ( ioError
+                  ( userError
+                      "harness cluster-slot reclaim refused: the config transaction did not reach a terminal state"
+                  )
+              )
+            removeHarnessReservation activitiesQuiescent paths reservation
+            putStrLn "harness cluster-slot reservation reclaimed"
+        )
     )
 
 -- | The raw ownership-gated teardown. Forces its 'ClusterTeardownAuthority' (a

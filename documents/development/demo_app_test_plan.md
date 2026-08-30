@@ -144,7 +144,11 @@ Coverage:
   per-context ordering.
 - **Compact multi-user throughput.** The suite submits the default `ThroughputMatrix` (3 users × 2
   contexts × 2 prompts) through the durable prompt path, asserts exact per-context prompt/result
-  counts with no extras, and reports p95 completion latency for the full-suite smoke gate. The
+  counts with no extras, and reports p95 completion latency for the full-suite smoke gate. Prompts
+  request an exact short response so the smoke measures routing and queue behavior instead of
+  spending its budget on unconstrained prose. Because one machine owns exactly one engine process,
+  completion uses one substrate-specific deadline for the full serial engine queue rather than a
+  short timeout attached to whichever concurrently dispatched context the harness inspects first. The
   `validateMultiUserDurablePromptThroughputWith` surface permits larger matrices without changing
   the test body.
 - **Runtime KV-cache path.** `Infernix.Runtime.KVCache` flows through
@@ -349,6 +353,9 @@ Ordinary full-suite defaults:
 - N = 3 synthetic users
 - K = 2 independent contexts per user
 - P = 2 prompts per context, fired in rapid succession without waiting for prior responses
+- prompt: an exact short-response instruction carrying a unique validation token
+- generation shape: the generated demo LLM catalog carries a 64-token bound, consumed by the
+  framework and native engine invocation rather than restated in the test or runner
 - model: substrate-appropriate primary LLM lane
   (`linux-cpu` → SmolLM2-135M-Instruct on Transformers + PyTorch CPU; `linux-gpu` →
   Qwen2.5-1.5B-Instruct on vLLM; `apple-silicon` → Qwen1.5-1.8B-Chat-4bit on MLX-LM)
@@ -368,7 +375,9 @@ Assertions:
 4. **Batching is observed.** For engines that support continuous batching, total throughput
    exceeds single-stream throughput by a configurable margin recorded in the assertion.
 5. **Bounded p95 latency.** 95th-percentile per-prompt wall-clock latency stays under a
-   substrate-specific ceiling.
+   substrate-specific full-queue ceiling. The ceiling is the lane's bounded per-prompt queue slot
+   (180 seconds on Apple, 300 seconds on Linux CPU, and 120 seconds on Linux GPU) multiplied by
+   N × K × P, matching the supported one-engine-per-machine topology.
 6. **No producer-dedup false positives.** Every `UserPrompt` with a unique
    `clientIdempotencyKey` produces exactly one inference dispatch and exactly one result.
 

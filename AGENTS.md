@@ -114,8 +114,8 @@ Read first:
   carries a first-class `ClusterMutating` position, so a killed `infernix test all` leaves a persisted,
   detectable, reconcilable dirty cluster (`cluster status` reports the mutation-incomplete phase and the
   next `cluster up` uncordons drained nodes and scales deployments back) rather than a false
-  `steady-state`; the test-harness `./infernix.dhall` swap reconciles a leftover `.harness-backup` on
-  entry so a crash cannot leave the operator's config clobbered. Canonical doctrine:
+  `steady-state`; the test-harness `./infernix.dhall` swap reconciles a reservation-backed leftover
+  `.harness-backup` on entry so a crash cannot leave the operator's config clobbered. Canonical doctrine:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - memory-safety by construction rests on the generated typed execution plan, and a model's
   requirement is **derived from its artifact, never authored**: the tensor table in a checkpoint
