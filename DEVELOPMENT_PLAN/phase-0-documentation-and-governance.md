@@ -1,9 +1,11 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done. Sprint 0.27 aligns every plan-level model-staging and pool-delivery claim with the
-supported at-least-once transport and effectively-once observable outcome, and removes the two
-discharged Phase 0 cleanup-ledger rows. The phase is machine-independent throughout and carries no
-accelerator cohort.
+**Status**: Done. Sprint 0.36 closes this phase. Sprints 0.34 and 0.35 precede it: the first gives
+the phase a closing sprint and bounds the mechanical governance set by name, the second retains the
+attestation evidence a `Done` cites. Sprint 0.36 returns the phases carrying verified defects to
+`Active`, corrects the claims that misdirect a reader, and states in the plan's entry document how
+open work is identified. The phase is machine-independent throughout and carries no accelerator
+cohort, so it blocks no accelerator phase and takes no `Done` away from one.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -15,9 +17,12 @@ Phase 0 closes the documentation bootstrap only. Later phases still own follow-o
 work whenever the implementation direction changes, but they do so on top of the governed suite and
 lint rules established here.
 
-Governance reopens this phase whenever a doctrine defect is found rather than an implementation
-gap, and each reopen is a numbered sprint that re-closes on the machine-independent gates. Those
-reopens are machine-independent: they carry no accelerator cohort and block no accelerator phase.
+Phase 0 closes at Sprint 0.36 and does not reopen. A prose-only doctrine defect is recorded in
+the sprint that finds it and is not scheduled as work of its own. A defect in a mechanism claim —
+a document naming a construct that does not enforce what the document says it enforces — is a bug
+in the phase that owns that code, and the documentation edit travels with the code fix rather than
+becoming a governance sprint. This phase is machine-independent throughout: it carries no
+accelerator cohort and blocks no accelerator phase.
 
 ## Current Repo Assessment
 
@@ -549,7 +554,7 @@ None.
 `documents/tools/registry.md`, `documents/engineering/model_lifecycle.md`,
 `documents/engineering/object_storage.md`, `documents/development/no_env_vars.md`,
 `documents/development/haskell_style.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
-**Blocked by**: Sprint 0.13
+**Blocked by**: nothing — Sprint 0.13 is closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, the three-way non-negotiable mirror
 (`README.md` / `AGENTS.md` / `CLAUDE.md` plus `documents/development/assistant_workflow.md`), and
 the phase's existing engineering/reference docs
@@ -588,8 +593,7 @@ retirement (Sprint 6.41) are tracked as remaining, not claimed done. The doctrin
 
 - `infernix lint docs` and `infernix docs check` pass, confirming metadata, the broad-doctrine-doc
   structure for `managed_state_transitions.md`, root-doc metadata, link resolution, and the
-  monitoring-stance alignment (ProcessMonitor is not yet retired, so the "no monitoring doc" stance
-  still holds)
+  monitoring-stance alignment (monitoring is unsupported, so the "no monitoring doc" stance holds)
 - the `AGENTS.md` / `CLAUDE.md` non-negotiable blocks stay byte-identical to each other and a faithful
   subset of `assistant_workflow.md`
 
@@ -1087,8 +1091,7 @@ that contract without recording whether implementation or validation has landed.
 - the root `README.md` HA cleanup, and timeless topology and recovery rewrites across the daemon,
   demo, durable-context, web, object storage/access, Pulsar, PostgreSQL, testing, and runbook
   surfaces
-- removal of the unsupported Patroni replica reinitialization while preserving the supported live
-  startup-pod recycle path
+- the live startup-pod recycle path is the supported recovery, and it is the only one documented
 - removal of implementation status, phasing, and checklist prose from the Pulsar workflow contract
 - timeless `bounded_inference_memory.md` and `bounded_host_memory.md` rewrites, and direct-contract
   rewrites in `runtime_modes.md`, `model_catalog.md`, and `k8s_storage.md`
@@ -1306,6 +1309,285 @@ surfaces no longer exist.
 - `./.build/infernix lint plan`
 - `./.build/infernix lint docs`
 - `./.build/infernix docs check`
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 0.28: Standards Self-Consistency and the Chronology Scan [Done]
+
+**Status**: Done
+**Implementation**: `DEVELOPMENT_PLAN/development_plan_standards.md`, `src/Infernix/Lint/Plan.hs`, `test/unit/Spec.hs`
+**Docs to update**: none. The governed suite already states the single-instance topology and the
+host-tool accessor this sprint aligns the standards to.
+
+### Objective
+
+Make the standards internally consistent and subject to their own Section D.
+
+Three defects, all the same shape — a rule standing on the chronology that produced it rather than
+on its own statement. Section K described `coordinator.replicaCount` and `engine.replicaCount`
+knobs with "defaults ≥ 2" while Section L forbids describing replica knobs as supported surface at
+all and the chart deploys one replica per role; the contradiction survived because the Section K
+sentence is written as an account of what a sprint did, and an account is not read as a rule.
+Section O's canonical command surface omitted `infernix lint plan` while Section Q names it the
+enforcement of the standards. Section V named `runHostTool` as the canonical helper after it was
+removed as dead code.
+
+The triage verdict is **T1** throughout: each superseding decision is the current contract, so the
+standards yield, not the code.
+
+### Deliverables
+
+- Section K states the three-role Deployment shape, the absent service-data PVC, one process per
+  machine, and eager coordinator staging as present-tense rules, with no replica-count knob and no
+  sprint attribution
+- Section K states the three supported MinIO buckets as the whole set rather than naming the
+  placeholder buckets that are gone, and states the Playwright invocation rather than the image
+  whose retirement produced it
+- Section L states that no fused `infernix-service` pod exists, without narrating the split
+- Section O lists `infernix lint plan` in the canonical command surface
+- Section V names `hostToolPath`, with `readHostTool` / `readHostToolFallback` for the pre-manifest
+  `infernix init` window
+- `standardsChronologyViolations` rejects any `Sprint <phase>.<number>` reference in the standards
+  document. Scan 5 reads phase documents only, which is why the document that states Section D was
+  the one corpus member exempt from it
+
+### Validation
+
+- `./.build/infernix lint plan`
+- `./.build/infernix lint docs`
+- `./.build/infernix docs check`
+- `./.build/infernix test unit` — the negative fixture asserts the scan rejects the exact Section K
+  sentence removed here, admits the rule restated without its history, and leaves phase documents to
+  scan 8
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 0.29: Governed-Suite File-Type Closure [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Lint/Docs.hs`, `test/haskell-style/Spec.hs`
+**Docs to update**: none. `documents/development/python_policy.md` already confines Python to the
+adapter and native-runner surfaces.
+
+### Objective
+
+Close the hole that let a source file live in the documentation root governed by nothing.
+
+The coverage-completeness guard lists `.md` files before it checks registration, so a file that is
+not a document at all is invisible to it. A tracked Python measurement harness sat under
+`documents/engineering/` outside every policy: not on the Python surface `python_policy.md`
+permits, not in the Haskell style inventory, not in the `documents/README.md` index, referenced by
+no document, and citing a section number no governed document carries.
+
+Triage verdict **T3**: `python_policy.md` already declares the target — build helpers are Haskell —
+so the doc stands and the file goes.
+
+### Deliverables
+
+- `documents/engineering/crash_harness.py` is deleted; Git holds the measurement it recorded
+- `listAllFilesUnder` enumerates the suite without an extension filter, which the registration
+  guard's own listing cannot do
+- `governedSuiteFileTypeViolations` rejects any non-Markdown file under `documents/`
+
+### Validation
+
+- `./.build/infernix lint docs`
+- `./.build/infernix docs check`
+- `./.build/infernix test lint` — the negative fixture asserts the check rejects the exact path
+  that sat in the suite, and admits the governed documents beside it
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 0.31: Assistant-Workflow Guarantee Precision [Done]
+
+**Status**: Done
+**Implementation**: `documents/development/assistant_workflow.md`, `src/Infernix/Lint/Docs.hs`, `test/haskell-style/Spec.hs`
+**Docs to update**: `documents/development/assistant_workflow.md`
+
+### Objective
+
+Two rules in the canonical list claimed a stronger mechanism than the one that exists, and in both
+cases the entry-document mirrors already carried the precise statement — the canonical list was the
+weaker text. That inversion is the reason to fix it here rather than anywhere else: a mirror is
+supposed to be a faithful subset of the canonical list, so a mirror that is *more* accurate means
+the canonical is the copy a careful reader would be misled by.
+
+The cluster-ownership rule said tearing down an `OperatorOwned` cluster "does not typecheck". The
+type index decides the lease, not who owns a live cluster; ownership of a running cluster is a
+fail-closed evidence check under the held lease, so the refusal is a checked one rather than GHC's.
+The memory-safety rule said the capped-engine kernel OS-bounds resident memory and that observers
+enforce ceilings, without the per-lane qualification the doctrine carries everywhere else, and
+without the statement that no kernel mechanism bounds device memory on any lane.
+
+Triage verdict **T1** for both: the doctrine documents already state the precise mechanism, so the
+rule list yields to them.
+
+### Deliverables
+
+- the cluster-ownership rule states what the index decides and what remains a checked refusal
+- the memory-safety rule states the three enforcement layers, that a lane declares the strength it
+  has, and that no kernel mechanism bounds device memory on any lane
+- `mirrorRuleDivergenceViolations` rejects a `## Non-Negotiable Rules` section present in one entry
+  document and absent or altered in the other. The divergence is only ever observed by the reader
+  who loads the stale copy, which is why it needs a gate rather than a review habit
+- the check states what it does not decide: the mirrors paraphrase, so no textual comparison can
+  settle whether either is a faithful subset of the canonical list
+
+### Validation
+
+- `./.build/infernix lint docs`
+- `./.build/infernix docs check`
+- `./.build/infernix test lint` — the negative fixture asserts the check rejects both a rule added
+  to one mirror and a rule altered in one mirror, and admits two identical sections
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 0.34: Charter Termination and the Frozen Mechanical Set [Done]
+
+**Status**: Done
+**Implementation**: `DEVELOPMENT_PLAN/phase-0-documentation-and-governance.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`
+**Blocked by**: nothing.
+**Docs to update**: none. The change is to the plan's own governing text.
+
+### Objective
+
+Give this phase a closing sprint and remove the two rules that made closure unreachable.
+
+The reopen charter made a doctrine defect a mandatory sprint, and a governance sprint installs a
+check whose wider net finds the defect that becomes the next sprint. The result is a phase that
+audits its own audit apparatus: the implementation fields of the sprints before this one name the
+lint modules, the standards, the component inventory and the cleanup ledger, and nothing else.
+
+Section A also carried a gate — no code-writing phase marked `Active` or `Done` before this phase
+closes — that Section C's scope-independence rule already repealed in practice and that the corpus
+had contradicted for its whole history. Two rules answering one question differently is worse than
+either answer.
+
+### Deliverables
+
+- the charter states that this phase closes at Sprint 0.36 and does not reopen. A prose-only
+  doctrine defect is recorded in the sprint that finds it and is not scheduled as work of its own; a
+  defect in a mechanism claim is a bug in the phase that carries the code, and the documentation
+  edit travels with the code fix
+- Section A's standing gate and Section C's `Blocked`-instead-of-`Planned` rule are deleted; Section
+  C's scope-independence rule stands as the single statement on cross-phase status
+- Section Q enumerates the mechanical governance set by name rather than by count, and states that a
+  new check is added only by retiring a named member. `Infernix.Lint.HaskellStyle` is outside the
+  set: its rules bound what the code may do, and a newly reachable unsafe construct is a reason for
+  a new rule there
+- the enumeration states what holds it true — a review obligation, not a mechanism — because a list
+  and the dispatch it describes are two texts, and claiming a gate that does not exist is the defect
+  this phase spent three sprints removing from other documents
+
+### Validation
+
+- `infernix lint plan`
+- `infernix lint docs`
+- `infernix docs check`
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 0.35: Attestation Recording [Done]
+
+**Status**: Done
+**Implementation**: `DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/README.md`
+**Blocked by**: nothing.
+**Docs to update**: none.
+
+### Objective
+
+Retain the evidence a `Done` rests on.
+
+Section Q makes a committed per-lane attestation the gate for `Done`, and Section D deleted the
+record once the gate closed. Composed, the two guaranteed that the file the plan named as its
+attestation home was empty whenever the work was finished, and three documents pointed readers at it
+anyway. A status whose evidence has been destroyed cannot be checked by anyone, which is the
+opposite of what honest completion tracking is for.
+
+### Deliverables
+
+- `cohort-validation-waves.md` carries a Recorded Attestations table beside its open-gate table.
+  The table is append-only and strictly tabular: a cell holds an identifier, a lane, a gate, a
+  commit or an outcome, and the account of how a run went belongs to nothing in this plan
+- Section D distinguishes the narrative the plan does not carry from the tuple it does: a closure is
+  recorded as a row and the row is retained, while the chronology that produced it is deleted
+- Section Q states that a `Done` cites a row, and the register of what a clean lint report does not
+  establish names that citation, because a scan reads text on disk and cannot see when a status was
+  written
+- the phase and root documents that pointed at an empty file for per-lane attestation no longer
+  claim it
+
+### Validation
+
+- `infernix lint plan`
+- `infernix lint docs`
+- `infernix docs check`
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 0.36: Open-Work Rehoming and Phase 0 Closure [Done]
+
+**Status**: Done
+**Implementation**: `DEVELOPMENT_PLAN/`, `documents/architecture/configuration_doctrine.md`, `documents/architecture/tenant_isolation_doctrine.md`, `CLAUDE.md`, `AGENTS.md`
+**Blocked by**: nothing.
+**Docs to update**: `CLAUDE.md`, `AGENTS.md`
+
+### Objective
+
+Make the plan answer the question an assistant actually asks it: what is open, and where do I start.
+
+Every phase after this one read `Done` while the corpus carried verified defects, an instruction to
+rerun a suite after two phases that had already closed, a dependency on a sprint that had already
+discharged it, and twenty-five blocker fields naming sprints that were themselves closed. A reader
+navigating that corpus finds either nothing to do or several hundred imperative bullets inside
+closed sprints, and no way to tell the two apart.
+
+### Deliverables
+
+- Phases 4, 6, 8 and 9 return to `Active`, each header naming the sprints that carry its verified
+  defects and each phase carrying a `Remaining Work` body that lists them
+- every blocker field naming a closed sprint states `nothing` with the satisfied dependency in
+  prose, and the four fields that ran two bold keys together on one line are separated
+- the sections and sentences that asserted open work beneath a closed header are deleted, including
+  a reopened-work section whose subject had no antecedent
+- claims about constructs that do not exist, or that describe a wiring the code no longer has, are
+  corrected against the code
+- the cleanup ledger names a live owner for every row, and the row whose surface the code retains by
+  design is deleted
+- `README.md` states how open work is identified, because the marker and the prose disagree in
+  several hundred closed sprints and only the marker is reliable
+- the entry documents state each architectural invariant once and link its doctrine, rather than
+  restating the doctrine at a length no reader carries into a task
+
+### Validation
+
+- `infernix lint plan`
+- `infernix lint docs`
+- `infernix docs check`
 
 ### Remaining Work
 

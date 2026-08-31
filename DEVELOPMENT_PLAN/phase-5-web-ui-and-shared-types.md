@@ -1,9 +1,10 @@
 # Phase 5: Web UI and Shared Types
 
-No code-side work is open in this phase and no defect is known in its own surface. Sprint 5.11 is
-closed for typed inference errors in browser contracts and the demo UI. Sprints 5.1-5.10 remain
-closed for their original PureScript, generated-contract, and no-env scopes. **Referenced by**:
-[README.md](README.md), [00-overview.md](00-overview.md),
+**Status**: Done. Sprints 5.1 through 5.11 are closed and no defect is known in this phase's own
+surface: the PureScript demo UI, the generated contract path, the clustered hosting rule, the
+container-owned routed executor, the process-environment retirement, and the typed inference errors
+carried through the browser contracts.
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md),
 [system-components.md](system-components.md),
 [cohort-validation-waves.md](cohort-validation-waves.md)
 
@@ -211,8 +212,7 @@ Playwright executor from the active substrate image on Linux.
 ### Validation
 
 - the Linux substrate image build succeeds and carries the Playwright runtime
-- Apple host-native routed E2E runner code is fixture-driven and queued for the Apple cohort
-  validation batch
+- Apple host-native routed E2E runner code is fixture-driven, and its Apple cohort is complete
 - Linux routed E2E passes with `npm --prefix web exec -- playwright test` invoked from the outer
   container against the routed cluster
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references

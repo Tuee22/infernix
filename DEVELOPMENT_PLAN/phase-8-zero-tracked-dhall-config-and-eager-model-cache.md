@@ -1,8 +1,9 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Done — Sprints 8.1 through 8.13 are implemented and validated. The generated system and
-machine contracts name every engine member, bind each machine to the system-contract digest, and
-drive eager model staging before routed readiness.
+**Status**: Active. Sprints 8.1 through 8.13 are `Done`: the generated system and machine contracts
+name every engine member, bind each machine to the system-contract digest, and drive eager model
+staging before routed readiness. Sprint 8.14 is open — the wire contracts are split by role but the
+decoded value is not, so every role is still handed fields it must not act on.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
@@ -281,7 +282,7 @@ None (code-side); exercised end-to-end by the Phase 8 cohort full-suite.
 
 **Status**: Done — implemented and validated.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Cluster.hs`
-**Blocked by**: Sprint 3.14
+**Blocked by**: nothing — Sprint 3.14 is closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the
 phase's existing engineering/reference docs
 
@@ -334,7 +335,7 @@ machine-independent gate set, and the single-accelerator (apple-silicon) plus `l
 cohort sign-off closed on the selected accelerator plus `linux-cpu` with no remaining work.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_bootstrap.py`,
 `test/unit/Spec.hs`
-**Blocked by**: Sprint 1.18, Sprint 8.7
+**Blocked by**: nothing — Sprint 1.18 and Sprint 8.7 are closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and this plan
 
 ### Objective
@@ -1098,6 +1099,51 @@ That is the fail-closed rule working, not a defect in it. The defect is the miss
 None.
 
 ---
+
+## Sprint 8.14: The Decoded Contract Is Split By Role [Active]
+
+**Status**: Active
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig/Internal.hs`, `src/Infernix/Runtime/Daemon.hs`
+**Blocked by**: nothing.
+**Docs to update**: `documents/architecture/configuration_doctrine.md`
+
+### Objective
+
+The wire half of the whole-deployment record is closed: the generated system contract no longer
+carries the role, the two in-cluster daemon records, the member list, or a top-level model catalog,
+and the machine contract carries what is true of one box.
+
+The decoded value did not follow. One Haskell record still carries the coordinator daemon, the
+webapp daemon, the engine daemons, the pool graph, the member identities, the topic set and the
+model list at once, with the retired wire fields derived rather than removed, so every role is
+handed fields it must not act on. The disagreement between the contracts is gone; the over-broad
+handoff is not.
+
+### Deliverables
+
+- the decoded value is split so a role receives the fields its own execution reads
+- the derived stand-ins for the retired wire fields are removed with the split
+- routing, launch, publication and presentation each consume their own view
+
+### Validation
+
+- `cabal test infernix-unit` through the governed toolchain
+- `infernix lint docs`
+- routed integration on `linux-cpu`
+
+### Remaining Work
+
+The record is unchanged. This is a consumer-side change across four surfaces rather than a wire
+change, which is why it is scoped as its own sprint.
+
+---
+
+## Remaining Work
+
+Sprint 8.14 is open: the in-memory contract record still carries the coordinator daemon, the webapp
+daemon, the engine daemons, the pool graph, the member identities, the topic set and the model list
+at once, with the retired wire fields derived rather than removed. Sprints 8.1 through 8.13 are
+closed.
 
 ## Documentation Requirements
 

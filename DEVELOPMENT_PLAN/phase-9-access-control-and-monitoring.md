@@ -1,8 +1,10 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Done — every sprint is implemented and validated. The routed integration and browser
-stages exercise the admin-gated surfaces and authentication lifecycle, and this phase owns no known
-current defect or open code-side work.
+**Status**: Active. Sprints 9.1 through 9.10 are `Done`: the routed integration and browser stages
+exercise the admin-gated surfaces and the authentication lifecycle. Sprint 9.11 is open — the admin
+surface is gated twice in two idioms, once from application state and once from a cookie-driven
+detector in the copied HTML shell. Enforcement is unaffected; the duplication is a second rendering
+path no test drives.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
 
@@ -304,7 +306,8 @@ can intentionally switch from a regular self-registered account to the separate 
 ### Validation
 - Machine-independent gates: PureScript/web unit build, `node --check web/playwright/inference.spec.js`,
   `infernix test lint`, `infernix lint docs`, and `infernix docs check`.
-- Cohort gate: routed Playwright auth/RBAC lifecycle on `linux-cpu` plus the selected accelerator.
+- Cohort gate: the routed Playwright auth/RBAC lifecycle on `linux-cpu` plus the selected
+  accelerator is complete.
 
 ### Remaining Work
 None.
@@ -313,8 +316,7 @@ None.
 
 **Status**: Done — implemented and validated.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`
-**Blocked by**: Sprint
-4.28, 7.29
+**Blocked by**: nothing — Sprints 4.28 and 7.29 are closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the
 phase's existing engineering/reference docs
 
@@ -352,6 +354,42 @@ results-side realness contract to state transitions. See the doctrine at
 ### Remaining Work
 
 None.
+
+## Sprint 9.11: The Admin Gate Renders From Application State [Active]
+
+**Status**: Active
+**Implementation**: `web/src/Main.purs`, `web/src/index.html`
+**Blocked by**: nothing.
+**Docs to update**: none.
+
+### Objective
+
+The admin surface is gated twice in two idioms. The compiled application renders the signed-in and
+signed-out states, while the copied HTML shell carries a cookie-driven detector that gates the
+operator ribbon, the admin panel and the cluster summary cells, and fetches the personal dashboard
+with its own script.
+
+Enforcement is unaffected either way: the edge authorization rule, the backend admin gate and the
+server-side per-user scoping are the boundary, and none of them lives in the shell. What the
+duplication costs is a second rendering path that no test drives and that drifts from the first.
+
+### Deliverables
+
+- the admin dimension becomes application state, rendered by the same path as the other auth states
+- the cookie-driven detector, the panel script and the dashboard fetch leave the shell
+- the cleanup ledger row for the shell gate is deleted when the surface is gone
+
+### Validation
+
+- the web unit suite through the governed toolchain
+- routed browser coverage of the admin and non-admin paths on `linux-cpu`
+
+### Remaining Work
+
+The shell still carries the detector and the dashboard fetch, and the application state has no admin
+field.
+
+---
 
 ## Documentation Requirements
 

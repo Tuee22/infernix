@@ -15,7 +15,9 @@ import Infernix.BuildMemory
   )
 import Infernix.Config (Paths (..), discoverPathsWithHostManifest)
 import Infernix.Lint.Docs
-  ( prohibitedStatusMarkerForTest,
+  ( governedSuiteFileTypeViolations,
+    mirrorRuleDivergenceViolations,
+    prohibitedStatusMarkerForTest,
     prohibitedStatusSectionForTest,
     retiredDoctrineViolationsForTest,
   )
@@ -52,6 +54,8 @@ import System.IO (hClose, openTempFile)
 main :: IO ()
 main = do
   assertRetiredDoctrineBoundary
+  assertGovernedSuiteFileTypes
+  assertMirrorRuleAgreement
   assertAppleArtifactProvisioningBoundary
   assertAppleClosureFixtureOwnership
   assertAppleMaterializationTransactionOwnership
@@ -68,6 +72,65 @@ main = do
   assertNativeArtifactInvocationKernelOwnership
   assertProvisioningKernelOwnership
   runHaskellStyleLintWith checkOrmoluFormatting checkHLintHints
+
+-- | The governed suite holds documentation only.
+--
+-- The negative half is the point: the exact path that sat in the suite
+-- unreferenced must be rejected, because the coverage guard beside this one
+-- lists @.md@ files and so could never see it.
+assertGovernedSuiteFileTypes :: IO ()
+assertGovernedSuiteFileTypes =
+  unless
+    ( not (null (governedSuiteFileTypeViolations ["documents/engineering/crash_harness.py"]))
+        && not (null (governedSuiteFileTypeViolations ["documents/research/measure.sh"]))
+        && null
+          ( governedSuiteFileTypeViolations
+              [ "documents/README.md",
+                "documents/architecture/overview.md",
+                "documents/engineering/testing.md"
+              ]
+          )
+    )
+    (ioError (userError "governed-suite file-type check does not reject a non-Markdown file under documents/"))
+
+-- | The two entry-document mirrors agree.
+--
+-- The negative half uses the shape the divergence actually takes: one mirror
+-- gains a rule, which reads as absent to whoever loads the other.
+assertMirrorRuleAgreement :: IO ()
+assertMirrorRuleAgreement =
+  unless
+    ( null (mirrorRuleDivergenceViolations mirrorFixture mirrorFixture)
+        && not (null (mirrorRuleDivergenceViolations mirrorFixture divergentMirrorFixture))
+        && not (null (mirrorRuleDivergenceViolations mirrorFixture alteredMirrorFixture))
+    )
+    (ioError (userError "mirror-rule check does not reject a rule present or altered in only one entry document"))
+  where
+    mirrorFixture =
+      unlines
+        [ "# AGENTS.md",
+          "## Non-Negotiable Rules",
+          "- never run `git add`",
+          "- zero version-controlled `.dhall`",
+          "## Scope"
+        ]
+    divergentMirrorFixture =
+      unlines
+        [ "# CLAUDE.md",
+          "## Non-Negotiable Rules",
+          "- never run `git add`",
+          "- zero version-controlled `.dhall`",
+          "- no repo-owned native implementation source",
+          "## Scope"
+        ]
+    alteredMirrorFixture =
+      unlines
+        [ "# CLAUDE.md",
+          "## Non-Negotiable Rules",
+          "- never run `git add`",
+          "- some version-controlled `.dhall` is permitted",
+          "## Scope"
+        ]
 
 assertRetiredDoctrineBoundary :: IO ()
 assertRetiredDoctrineBoundary = do

@@ -693,7 +693,7 @@ None.
 code-side closure (machine-independent gates) plus the single-accelerator (apple-silicon) plus
 linux-cpu full-suite sign-off closed on the selected accelerator plus `linux-cpu`.
 **Implementation**: `src/Infernix/Cluster.hs`
-**Blocked by**: Sprint 1.16
+**Blocked by**: nothing — Sprint 1.16 is closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
 engineering/reference docs
 
@@ -748,7 +748,7 @@ None.
 closure (machine-independent gates) plus the single-accelerator (apple-silicon) plus linux-cpu
 full-suite sign-off closed on the selected accelerator plus `linux-cpu`.
 **Implementation**: `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Command.hs`
-**Blocked by**: Sprint 1.16, 3.14
+**Blocked by**: nothing — Sprint 1.16 and Sprint 3.14 are closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/tools/registry.md`,
 `documents/development/no_env_vars.md`, and the phase's existing engineering/reference docs
 
@@ -988,7 +988,7 @@ anonymous publication, the routed catalog, populated backing, and stateless pod 
 **Implementation**: `chart/templates/registry/{configmap,deployment,service}.yaml`, `chart/values.yaml`,
 `chart/Chart.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`,
 `src/Infernix/Cluster/Command.hs`, `src/Infernix/Routes.hs`, `src/Infernix/Lint/Chart.hs`
-**Blocked by**: Sprint 3.15
+**Blocked by**: nothing — Sprint 3.15 is closed.
 **Docs to update**: `documents/tools/registry.md`,
 `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`
 

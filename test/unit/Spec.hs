@@ -262,6 +262,7 @@ import Infernix.Lint.Plan
     receiptMarkerViolations,
     remainingWorkViolations,
     sprintBackwardEdgeViolations,
+    standardsChronologyViolations,
     statusVocabularyViolations,
   )
 import Infernix.MachineContract qualified as MachineContract
@@ -24102,6 +24103,23 @@ runPlanStandardsScanAssertions = do
     )
     "plan declarative scan caps receipt-bearing lines per phase document at the declared ceiling"
   assert
+    ( not
+        ( null
+            ( standardsChronologyViolations
+                [(planStandardsDocumentPath, planStandardsChronologyLine)]
+            )
+        )
+        && null
+          ( standardsChronologyViolations
+              [(planStandardsDocumentPath, "Each role runs one process per machine.\n")]
+          )
+        && null
+          ( standardsChronologyViolations
+              [(planPhaseDocumentPath 7, planStandardsChronologyLine)]
+          )
+    )
+    "plan standards scan rejects a rule attributed to a sprint, admits the same rule stated on its own, and leaves phase documents to scan 8"
+  assert
     ( not (null (ledgerDoubleListingViolations [(planLedgerDocumentPath, planLedgerDocument "Sprint 1.20" "Sprint 1.20")]))
         && null (ledgerDoubleListingViolations [(planLedgerDocumentPath, planLedgerDocument "Sprint 1.20" "Sprint 1.21")])
     )
@@ -24129,6 +24147,15 @@ planPhaseDocumentPath phase = "DEVELOPMENT_PLAN/phase-" <> show phase <> "-fixtu
 
 planLedgerDocumentPath :: FilePath
 planLedgerDocumentPath = "DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md"
+
+planStandardsDocumentPath :: FilePath
+planStandardsDocumentPath = "DEVELOPMENT_PLAN/development_plan_standards.md"
+
+-- | The exact chronology Section K carried: a topology rule justified by the
+-- sprint that produced it, rather than stated as the rule it became.
+planStandardsChronologyLine :: String
+planStandardsChronologyLine =
+  "  Sprint 7.7 of Phase 7 split the legacy fused `infernix-service` pod\n"
 
 -- | One sprint block in the Section G shape, with the given Remaining Work body.
 planSprintDocument :: String -> String -> [String] -> String

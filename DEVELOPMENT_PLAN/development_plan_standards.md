@@ -28,8 +28,7 @@ The plan reads as one ordered buildout from empty repository to supported local 
   environment-dependent blocker closes, the later phase explicitly names that open dependency in
   its `Phase Status` or `Current Repo Assessment` text instead of pretending the prerequisite is
   fully closed.
-- Phase 0 is always documentation and governance. No code-writing phase may be marked `Active` or
-  `Done` before Phase 0 closes.
+- Phase 0 is always documentation and governance, and it is the first phase built.
 - Newly discovered gaps are handled by adding explicit follow-on work, not by leaving stale
   completion claims in older documents.
 - A reader unfamiliar with the repo should be able to follow the plan from top to bottom without
@@ -72,7 +71,6 @@ Rules:
   whose accelerator cohort is pending is `Active` with a named `Cohort gate` residual, not a fifth
   status; `infernix lint plan` (Section Q scans 3 and 4) rejects any other value and checks that
   each status carries the obligations its row states.
-- If Phase 0 is still open, later code-writing phases use `Blocked`, not `Planned`.
 - **A phase's status describes only the scope that phase owns.** A later phase remains `Done` while an
   earlier phase is `Active` or `Blocked`, without qualification: the later phase's `Done` was earned
   against its own deliverables and its own cohort, and adding scope to an earlier phase does not take
@@ -101,17 +99,22 @@ Plan documents describe the intended supported architecture in present-tense dec
 
 - Say what the system uses, owns, validates, and exposes.
 - Do not turn phase docs into migration diaries.
-- **The plan carries no history.** It is one cohesive narrative of the system as it is intended to
-  be, and nothing in it describes a superseded architectural decision, a retired component, a
-  previous attempt, or a closure that already happened. A superseded decision is recorded as the
-  decision it became, in present tense, in the sprint that owns it; the chronology that produced it
-  is deleted rather than relocated, because once the status it justified is superseded the
-  chronology has no reader. Git holds the history.
+- **The plan carries no narrative history.** It is one cohesive narrative of the system as it is
+  intended to be, and nothing in it recounts a superseded architectural decision, a retired
+  component, or a previous attempt. A superseded decision is recorded as the decision it became, in
+  present tense, in the sprint that owns it; the chronology that produced it is deleted rather than
+  relocated, because once the status it justified is superseded the chronology has no reader. Git
+  holds the history.
+- **A closure is recorded as a tuple, never as prose.** The evidence a `Done` rests on is a row in
+  the Recorded Attestations table, and that row is retained. Deleting the account of how a run went
+  and deleting the record that it happened are different acts: the first keeps the plan declarative,
+  the second leaves a status nobody can check.
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) is the one exception, and only
   forward: it names surfaces that still exist and must be removed. A surface that is already gone
   leaves the ledger entirely rather than moving to a completed table.
 - [cohort-validation-waves.md](cohort-validation-waves.md) names the cohort gates that are still
-  open. A wave that has closed is deleted; the phase it validated simply reads `Done`.
+  open, and retains the attestation rows those gates produced. A wave that has closed leaves the
+  Wave Table; the row it produced is appended and stays.
 - Enforced as a proxy by `infernix lint plan` (Section Q scan 5): no process identifier, no
   wall-clock time, no inode number, and a capped number of receipt-bearing lines per phase
   document.
@@ -331,13 +334,11 @@ Rules:
   workloads governed by placement rules. On Apple silicon engine members are on-host
   `infernix service` daemons with stable host ids. Kubernetes pod names are observational only and
   must not become durable routing identities.
-  Sprint 7.7 of Phase 7 split the legacy fused `infernix-service` pod
-  into role-specific Deployments, removed the previous service-data PVC, introduced
-  `coordinator.replicaCount` and `engine.replicaCount` knobs (defaults ≥ 2 for the stateless
-  demo-on roles; engine replicas operator-set up to the number of engine-capable nodes), and added
-  the coordinator model-cache staging workflow described in
-  [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md) (Phase 8
-  makes this eager: the coordinator stages the mounted `infernix.dhall` model set at startup).
+  The three roles are separate Deployments and none carries a service-data PVC. Each role runs one
+  process per machine, so the chart's role replica counts are one: horizontal scale is adding a
+  machine, never raising a replica count (Section L). The coordinator eagerly stages the mounted
+  `infernix.dhall` model set at startup, as described in
+  [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md).
   Production deployments (`demo_ui = false`) keep the coordinator and engine pools and omit only the
   demo frontend, browser API, identity surface, and demo-only routes. The substrate decides where
   engine execution and result publication happen, not whether the coordinator exists.
@@ -348,8 +349,8 @@ Rules:
   startup from the mounted substrate model set, with producer-dedup + Failover collapsing
   at-least-once delivery to a single effective upload), `infernix-engine-artifacts` (always-on; optional immutable engine
   payloads), and `infernix-demo-objects` (demo-gated; user uploads + engine-generated
-  artifacts). The previously chart-reserved `infernix-runtime` and `infernix-results`
-  placeholder buckets and the `s3://infernix-runtime/` URI scheme are removed by Sprint 7.7.
+  artifacts). These three are the whole supported bucket set; no other bucket and no
+  `s3://infernix-runtime/` URI scheme is part of the contract.
 - On `apple-silicon`, the in-cluster `infernix-coordinator` Deployment owns cluster-side
   request-topic consumption and batch handoff via derived engine-pool topics. Same-binary on-host
   engine daemons consume their assigned pool/member topics, run the Apple-native inference engine,
@@ -382,10 +383,10 @@ Rules:
   configuration source.
 - On Apple Silicon, operators do not use Compose as a user-facing launcher for ordinary CLI work.
   Host-native routed E2E uses host `npm exec` Playwright fed by the same typed fixture against the
-  published localhost edge port and is covered by Apple cohort validation batches. Phase 3 Sprint 3.10
-  (the recorded validation) retired the previous dedicated `infernix-playwright:local` image and the
-  `docker compose run --rm playwright` invocation; Linux substrates now run Playwright in-container
-  inside the substrate image via `npm --prefix web exec -- playwright test ...`.
+  published localhost edge port and is covered by Apple cohort validation batches. Linux substrates
+  run Playwright in-container inside the substrate image via
+  `npm --prefix web exec -- playwright test ...`; there is no dedicated Playwright image and no
+  `docker compose run --rm playwright` invocation.
 - On Linux CPU, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
   plugins.
 - On Linux GPU, host prerequisites stop at the Linux CPU Docker baseline plus the supported NVIDIA
@@ -435,9 +436,8 @@ Rules:
   is the canonical Apple inference executor and result publisher.
 - On `linux-cpu` and `linux-gpu`, the stateless `infernix-coordinator` Deployment reads request
   topics and publishes batch work to derived pool/model topics, while engine-role Deployments
-  consume assigned pool topics, run inference, and publish the result. Sprint 7.7 of Phase 7
-  replaced the fused `infernix-service` pod with role-specific
-  Deployments.
+  consume assigned pool topics, run inference, and publish the result. There is no fused
+  `infernix-service` pod; each role is its own Deployment.
 - The supported topology is a **fleet of machines, one process per role per machine**. There is no
   within-role replication: horizontal scale is adding a machine, not raising a replica count, and
   phase docs must not describe replica or anti-affinity knobs as supported surface. One engine per
@@ -578,6 +578,7 @@ The canonical command surface is:
 - `infernix lint docs`
 - `infernix lint proto`
 - `infernix lint chart`
+- `infernix lint plan`
 - `infernix test init`
 - `infernix test lint`
 - `infernix test unit`
@@ -823,8 +824,50 @@ The scans, and what each one can and cannot decide:
    a re-home was correct; it decides only that the plan no longer claims an
    earlier phase depends on a later one.
 
+#### Q. The frozen mechanical set
+
+The checks above are the whole mechanical governance surface, and their membership is closed. A new
+check is added only by retiring a named member below, so the machinery that polices prose cannot
+grow without an explicit trade. This bound exists because a widened net finds violations, a
+violation is a doctrine defect, and a doctrine defect that mandates its own sprint is a governance
+apparatus that audits itself without end.
+
+The set is enumerated rather than counted, because a count cannot say which member was traded and a
+nested helper can be retired without the count moving.
+
+`Infernix.Lint.Plan`, dispatched from `scanPlanViolations`:
+
+`statusVocabularyViolations`, `remainingWorkViolations`, `backwardEdgeViolations`,
+`sprintBackwardEdgeViolations`, `dualAcceleratorGateViolations`, `receiptMarkerViolations`,
+`ledgerDoubleListingViolations`, `phaseStatusTableViolations`, `forwardOwnershipViolations`,
+`standardsChronologyViolations`.
+
+`Infernix.Lint.Docs`, invoked from `runDocsLint`:
+
+`governedSuiteFileTypeViolations`, `mirrorRuleDivergenceViolations`, `validateGovernedDocumentMetadata`,
+`validateRootDocMetadata`, `validateGeneratedSection`, `validateDhallSchemaDrift`,
+`validateForbiddenPhrases`, `validateProhibitedStatusSection`, `validateRetiredDoctrineClaims`,
+`validateForbiddenConfigurationOverrideReferences`, `validateDocumentStructure`,
+`validateReadmeRuntimeModeContract`, `validateReadmeMatrixCoverage`, `validateReadmeMatrixCellDrift`,
+`validateTestingDocOwnership`, `validateUnsupportedMonitoringStance`, `validatePhaseDoc`,
+`validateRelativeLinks`.
+
+`Infernix.Lint.HaskellStyle` is outside this set. Its rules bound what the code may do rather than
+how the prose reads, and a newly reachable unsafe construct is a reason for a new rule there. The
+bound applies to mechanical checks whose input is Markdown.
+
+Nothing mechanical holds the invoked set equal to this enumeration: the list and the dispatch are
+two texts, and keeping them equal is a review obligation. A test is not a member of the set, so
+enforcement may strengthen through tests without spending a trade.
+
+
+A `Done` cites the attestation row its accelerator evidence produced. No scan decides this: a scan
+reads text on disk and cannot see which status was written when, so citation is a review obligation
+and is listed below as something a clean report leaves open.
+
 What a clean report does not establish: that the plan is well written, that a
-recorded status is true, or that a cited receipt describes a run that happened.
+recorded status is true, that a cited receipt describes a run that happened, or
+that a `Done` cites the attestation row its evidence produced.
 
 `poetry run check-code` stays in the machine-independent gate set only because adapters never
 declare or top-level-import substrate-specific inference wheels; the lazy-import invariant that
@@ -1013,9 +1056,10 @@ Rules:
   reasoning lives in
   [../documents/architecture/bounded_inference_memory.md](../documents/architecture/bounded_inference_memory.md).
 - Every Haskell invocation reads the absolute path from the loaded `HostConfig` record (the
-  canonical helper is `runHostTool :: HostConfig -> HostTool -> [String] -> IO a`). Bare
+  canonical accessor is `hostToolPath :: HostConfig -> HostTool -> FilePath`, with
+  `readHostTool` / `readHostToolFallback` covering the pre-manifest `infernix init` window). Bare
   `proc "<name>"` calls and direct `findExecutable` / `findExecutables` discovery are forbidden
-  and rejected by the Haskell-style lint gate added in Phase 6 Sprint 6.28.
+  and rejected by the Haskell-style lint gate.
 - Every bootstrap-script invocation uses either a hardcoded absolute-path constant (for the small
   set of commands that precede the launcher binary — `apt-get`, `sudo`, `docker`, `ghcup` paths
   under the operator's `/etc/passwd`-derived home) or delegates to the launcher binary after it

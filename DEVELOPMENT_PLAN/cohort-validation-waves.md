@@ -14,13 +14,30 @@
 > natural phase order on whichever single machine is present, and **Stage 2** records the chosen
 > accelerator plus `linux-cpu` full-suite evidence. No phase waits on both accelerators as one
 > must-pass-together gate.
+> Closed evidence is retained as a row in Recorded Attestations.
 
-> **This file holds open gates only.** A wave that has closed is deleted, and the phase it validated
-> simply reads `Done`. Per Section D the plan carries no history: a closed wave has no reader.
+> **Open gates are deleted on close; the evidence they produced is not.** A wave that has closed
+> leaves the Wave Table, and its accelerator evidence is appended to Recorded Attestations as a
+> row. Section D keeps the narrative that produced a closure out of the plan; it does not delete
+> the tuple a `Done` rests on, because a status whose evidence has been destroyed cannot be
+> checked by anyone.
 
 ## Wave Table
 
 No cohort validation waves are open.
+
+## Recorded Attestations
+
+Append-only. One row per accelerator lane a phase closed on. Rows are never edited and never
+deleted: this table is the artifact Section Q's `Done` cites, so a removed row retroactively
+unsupports a status that still reads `Done`.
+
+The table carries tuples, never prose. A cell holds an identifier, a lane name, a gate name, a
+commit, or an outcome — the account of how a run went belongs to nothing in this plan.
+
+| Phase | Accelerator | Gate | Commit | Outcome |
+|-------|-------------|------|--------|---------|
+| — | — | — | — | No attestation is recorded. Phases 1-9 closed before this table existed and are not re-validated; their evidence is the git history of the sprints that closed them. |
 
 ## Cadence Rule
 

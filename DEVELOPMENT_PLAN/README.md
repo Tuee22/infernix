@@ -13,7 +13,7 @@ govern this plan.
 
 ## Current execution gate
 
-Phases 0 through 9 are `Done`. Phase 6 Sprint 6.53 closes its residual process-site lint,
+Phase 0 is `Done`. Phases 4, 6, 8 and 9 are `Active`; Phases 1, 2, 3, 5 and 7 are `Done`. Phase 6 Sprint 6.53 closes its residual process-site lint,
 recovery-authority, VRAM-first admission, config-independent reclaim, and cross-container
 descendant-quiescence scope against the selected current-source `linux-gpu` plus paired
 current-source native-amd64 `linux-cpu` full suites. Sprint 0.27 closes the plan-level delivery
@@ -39,7 +39,7 @@ to its own deliverables and validation gate.
 | [development_plan_standards.md](development_plan_standards.md) | Maintenance rules for the development plan |
 | [00-overview.md](00-overview.md) | Architecture baseline, hard constraints, substrate contract, and canonical repository shape |
 | [system-components.md](system-components.md) | Authoritative component inventory and state-location map |
-| [cohort-validation-waves.md](cohort-validation-waves.md) | Per-accelerator attestation ledgers (one per accelerator) under Section Q's single-accelerator-per-phase rule; a `linux-cpu` aggregation phase merges them |
+| [cohort-validation-waves.md](cohort-validation-waves.md) | Open cohort gates, plus the append-only Recorded Attestations table each closed gate leaves behind: one row per phase and accelerator lane under Section Q's single-accelerator-per-phase rule |
 | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite bootstrap plus the substrate-doctrine documentation reset |
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, CLI contract, build-root doctrine, launcher ownership, and substrate-selection closure |
 | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, registry-first image flow, substrate `.dhall` publication, Linux launcher closure, and lifecycle-progress hardening |
@@ -86,7 +86,12 @@ contract.
 
 ## Current Repo Assessment
 
-Phases 0 through 9 are `Done`. Phase 4's Bounded Engine Launch host half and Sprint 4.45
+Phase 0 is `Done`; it closes at Sprint 0.36 and does not reopen. Phases 1, 2, 3, 5 and 7 are `Done`.
+Phases 4, 6, 8 and 9 are `Active`, each carrying sprints for defects found by review against the
+code: the ceiling-refusal classifier, host ceiling calibration, the speech row's fixture, and one
+catalog row's declared load strategy in Phase 4; the preprocessor walls in the fixed observer in
+Phase 6; the by-role split of the decoded contract in Phase 8; and the duplicated admin gate in
+Phase 9. Under Section C each phase's status describes only its own scope. Phase 4's Bounded Engine Launch host half and Sprint 4.45
 runtime-capability closure pass on the selected Apple accelerator plus paired native-arm64
 `linux-cpu`. Phase 6's device half, Linux GPU host calibration, and residual safety and recovery
 implementation pass on the selected current-source CUDA accelerator plus paired current-source
@@ -269,20 +274,47 @@ native Linux arm64 hosts, but it does not run through Apple Silicon emulation an
 the CUDA Linux cohort when a phase explicitly chooses `linux-gpu` for GPU behavior, CUDA image
 construction, `nvkind`, or NVIDIA scheduling.
 
+## How To Resume Open Work
+
+Open work is identified by two markers and nothing else:
+
+- a phase document's `**Status**:` field, and
+- a sprint heading's bracketed status — `[Active]`, `[Blocked]` or `[Planned]`.
+
+Read those. Do not infer open work from prose. Every closed sprint states its `Deliverables` and
+`Validation` in the imperative — "replace", "add", "extend", "run" — because that is how the sprint
+was written before it closed, and the status marker is the only thing that distinguishes a finished
+deliverable from an outstanding one. A search for work-shaped sentences returns several hundred
+false positives.
+
+Three further conventions a reader needs:
+
+- A `**Blocked by**` field reading `nothing` names its satisfied dependency in prose. A blocker edge
+  is live only when it names a sprint whose own heading is not `[Done]`.
+- Each phase document ends with a `## Documentation Requirements` block written as a list of
+  documents. It records what the phase governs, not work outstanding.
+- [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) is the one forward-looking
+  ledger: every row names a surface that still exists and must be removed, with the phase or sprint
+  that carries it. A landed removal is deleted from the ledger rather than marked complete.
+
+The phase-status table below is the single current-state table in the plan. Nothing mechanical holds
+it equal to the phase headers it summarizes, so treat a disagreement between the two as a defect and
+trust the phase document.
+
 ## Current Phase Overview
 
 | Phase | Current status | Current gate and retained implementation state |
 |-------|----------------|----------------------------------------|
-| 0 | Done | Sprint 0.27 aligns all plan-level delivery claims with at-least-once transport and an effectively-once observable outcome; the machine-independent plan/docs gates pass. |
+| 0 | Done | Closed at Sprint 0.36. The charter states that this phase does not reopen; Section Q enumerates the mechanical governance set by name; the attestation evidence a `Done` cites is retained rather than deleted on close. |
 | 1 | Done | Sprint 1.40 removes its obsolete build-memory surfaces, makes clean Poetry bootstrap and Darwin framework sealing exact, and passes the governed Apple build, aggregate lint, complete unit gates, and standalone repository lints. |
 | 2 | Done | Every sprint is closed. Sprint 2.17 validates the single-binary registry bootstrap on the selected `linux-gpu` accelerator plus `linux-cpu`, including a populated second reconcile and stateless registry-pod reschedule. |
 | 3 | Done | Every sprint is closed. Sprint 3.17 validates anonymous single-binary registry publication, the routed catalog, populated backing, and stateless pod rescheduling on the selected `linux-gpu` accelerator plus `linux-cpu`; Sprint 3.16 enforces the one-worker topology, and Sprints 3.14 and 3.15 own the readiness and bounded-publication evidence boundaries. |
-| 4 | Done | Every sprint is closed. Sprint 4.45's stable Apple project environment, bounded observers, Pulsar broker envelope, typed generation shape, and artifact recipe identity pass the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full suites. |
+| 4 | **Active** | Sprints 4.46-4.49 are open: the ceiling-refusal classifier fires on ordinary engine faults, host ceiling calibration is an authored literal, the speech row's proof rests on a synthesized fixture, and one catalog row's declared load strategy disagrees with the runner's invocation. Sprint 4.45's stable Apple project environment, bounded observers, Pulsar broker envelope, typed generation shape, and artifact recipe identity pass the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full suites. |
 | 5 | Done | Every sprint is closed and no code-side work is open. |
-| 6 | Done | Every sprint is closed. Sprint 6.53's residual process-site lint, recovery-authority, VRAM-first admission, config-independent reclaim, and cross-container descendant-quiescence scope passes the selected current-source `linux-gpu` plus paired current-source native-amd64 `linux-cpu` full suites. |
+| 6 | **Active** | Sprint 6.54 is open: preprocessor walls in the fixed observer and the sampler-selection region present one arm per lane, so `-Wall -Werror` sees half of the module family it is the stated proof for. Sprint 6.53's residual process-site lint, recovery-authority, VRAM-first admission, config-independent reclaim, and cross-container descendant-quiescence scope passes the selected current-source `linux-gpu` plus paired current-source native-amd64 `linux-cpu` full suites. |
 | 7 | Done | Every sprint is closed and no code-side work is open. |
-| 8 | Done | Every sprint is closed. The generated system contract carries substrate and pool/model descriptors; the machine contract carries role, member identities, cache quota, and the system-contract digest; coordinator topic metadata and daemon startup checks reject disagreement; eager staging completes before routed readiness. |
-| 9 | Done | Every sprint is closed and no code-side work is open. |
+| 8 | **Active** | Sprint 8.14 is open: the wire contracts are split by role but the decoded value is not, so every role is handed fields it must not act on. The generated system contract carries substrate and pool/model descriptors; the machine contract carries role, member identities, cache quota, and the system-contract digest; coordinator topic metadata and daemon startup checks reject disagreement; eager staging completes before routed readiness. |
+| 9 | **Active** | Sprint 9.11 is open: the admin surface is gated twice, once from application state and once from a cookie-driven detector in the copied HTML shell. Enforcement is unaffected; the duplication is a second rendering path no test drives. |
 
 ## Canonical Outcome
 

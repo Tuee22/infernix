@@ -608,37 +608,6 @@ None.
 
 ---
 
-## Reopened Work
-
-Sprints 2.1–2.16 are `Done`. Publication publication verification is registry-only: cached host
-Docker content could satisfy the former `PublishVerifyPull` without proving remote blob
-servability, so the verifier now runs a bounded platform-selected `skopeo copy` from the
-registry's API authority into a fresh empty `dir:` store under a birth-identity-owned mode-0700
-directory, reads the selected manifest, config, and every layer, and preserves primary failures
-while removing protected auth and verification paths; dead-owner auth-directory reconciliation
-remains in force, with focused closed-command, credential-redaction, and absolute-path unit
-coverage. The obsolete C/Cabal boundary is removed. Phase 2's own ordered closure, Apple, and
-source-matched `linux-cpu` evidence are complete.
-
-Sprint 2.13 closed the env reads and HostTool routing: 5 env reads retired in `Cluster.hs`, 1
-`getEnvironment` read retired in `ProcessMonitor.hs`, the Apple setup `getEnvironment` capture
-retired in `Engines/AppleSilicon.hs`, `engineCommandOverridesFromEnvironment` deleted (and its
-later typed cluster-config replacement removed by Phase 1 Sprint 1.19), supporting unit-test
-fixture rewired, shared cluster command helpers resolve known tools through the staged host
-manifest, and `Cluster/PublishImages.hs` receives resolved `docker` + `skopeo` commands through
-`RegistryPublishOptions`.
-
-It does not close the writer-frozen snapshot and atomic persistence correction.
-
-Sprint 2.15 (Cluster Ownership and Mutation-Position) is the model half of the Cluster-Ownership &
-Mutation-Position reopen. The later correction preserves those terms and adds global cross-runtime
-inventory, owner/runtime-indexed teardown authority under one lifecycle lock, a process-group
-reservation before config takeover, and crash-recoverable config ownership. Phase 6 Sprint 6.43 is
-the harness half. The superseded ownerless `ClusterReady`-as-idle surface is recorded in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-
----
-
 ## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Done]
 
 **Status**: Done — implementation and current-source validation are complete. The all-Haskell
@@ -828,7 +797,7 @@ escape, and cross-lifecycle-region reuse each fail on their own rather than bein
 earlier compiler error. `cluster status` renders the owner and a `ClusterMutating` as an
 in-progress (dirty) phase never `steady-state`, and `reconcileInterruptedClusterMutation`
 uncordons drained nodes and clears the marker on the next `cluster up` (the following chart
-re-apply scales over-scaled deployments back). It does not prove the owner-atomic correction.
+re-apply scales over-scaled deployments back).
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Cluster.hs`,
 `src/Infernix/CLI.hs`
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
@@ -1046,7 +1015,7 @@ phase, and the selected `linux-gpu` accelerator plus `linux-cpu` full-suite gate
 fresh, populated-reconcile, and stateless-pod-reschedule paths against one source state.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Command.hs`,
 `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Types.hs`
-**Blocked by**: Sprint 2.16
+**Blocked by**: nothing — Sprint 2.16 is closed.
 **Docs to update**: `documents/tools/registry.md`, `documents/engineering/storage_and_state.md`,
 `documents/engineering/k8s_storage.md`, `documents/operations/cluster_bootstrap_runbook.md`
 

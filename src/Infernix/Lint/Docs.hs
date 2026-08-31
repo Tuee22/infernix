@@ -1,5 +1,7 @@
 module Infernix.Lint.Docs
-  ( prohibitedStatusMarkerForTest,
+  ( governedSuiteFileTypeViolations,
+    mirrorRuleDivergenceViolations,
+    prohibitedStatusMarkerForTest,
     prohibitedStatusSectionForTest,
     retiredDoctrineViolationsForTest,
     runDocsLint,
@@ -193,6 +195,73 @@ listMarkdownFilesUnder root relativeDir = do
       if isDirectory
         then listMarkdownFilesUnder root childRelative
         else pure [childRelative | ".md" `isSuffixOf` childRelative]
+
+-- | Recursively list every file under a repo-relative directory, whatever its
+-- extension.
+--
+-- 'listMarkdownFilesUnder' filters to @.md@ before the coverage guard sees the
+-- entry, so the guard that exists to stop an unregistered governed document is
+-- structurally blind to a file that is not a document at all. This listing is
+-- the one the file-type check needs.
+listAllFilesUnder :: FilePath -> FilePath -> IO [FilePath]
+listAllFilesUnder root relativeDir = do
+  entries <- listDirectory (root </> relativeDir)
+  fmap concat $
+    forM entries $ \entry -> do
+      let childRelative = relativeDir <> "/" <> entry
+      isDirectory <- doesDirectoryExist (root </> childRelative)
+      if isDirectory
+        then listAllFilesUnder root childRelative
+        else pure [childRelative]
+
+-- | The governed suite holds documents and nothing else.
+--
+-- @documents/@ is a documentation root, so a source file living there is
+-- outside every policy that governs source: it is not on the Python surface
+-- @python_policy.md@ permits, not in the inventory the Haskell style gate
+-- reads, and not in the index @documents\/README.md@ maintains. It is governed
+-- by nothing, which is why one sat there unreferenced. The rule is the simple
+-- one it should always have been: every file under @documents\/@ is Markdown.
+governedSuiteFileTypeViolations :: [FilePath] -> [String]
+governedSuiteFileTypeViolations discovered =
+  [ relativePath
+      <> ": non-Markdown file in the governed documentation suite; documents/ holds "
+      <> "documentation only, and code belongs on a surface its own policy governs"
+  | relativePath <- discovered,
+    not (".md" `isSuffixOf` relativePath)
+  ]
+
+-- | @AGENTS.md@ and @CLAUDE.md@ carry the same operational mirror of the
+-- canonical rule list.
+--
+-- The two entry documents are auto-loaded by different assistant tooling, so a
+-- rule edited in one and not the other is invisible to whoever reads the file
+-- that was updated — the divergence is only ever observed by the reader who
+-- gets the stale copy. Section J requires them updated together; this decides
+-- the half that is decidable, which is that their rule sections agree.
+--
+-- What it does not decide is whether either mirror is a faithful subset of
+-- @assistant_workflow.md@. The mirrors paraphrase, so no textual comparison can
+-- settle that; the canonical list stays the authority a reader checks.
+mirrorRuleDivergenceViolations :: String -> String -> [String]
+mirrorRuleDivergenceViolations agentsContents claudeContents
+  | agentsRules == claudeRules = []
+  | otherwise =
+      [ "AGENTS.md and CLAUDE.md carry different `## Non-Negotiable Rules` sections ("
+          <> show (length agentsRules)
+          <> " lines versus "
+          <> show (length claudeRules)
+          <> "); Section J requires the two entry-document mirrors updated together, and a rule "
+          <> "present in only one is read as absent by whoever loads the other"
+      ]
+  where
+    agentsRules = nonNegotiableRuleLines agentsContents
+    claudeRules = nonNegotiableRuleLines claudeContents
+
+-- | The body of the @## Non-Negotiable Rules@ section, to the next heading.
+nonNegotiableRuleLines :: String -> [String]
+nonNegotiableRuleLines contents =
+  takeWhile (not . isPrefixOf "## ") (drop 1 (dropWhile (/= "## Non-Negotiable Rules") (lines contents)))
 
 -- | Whether a discovered @DEVELOPMENT_PLAN/@ path is a numbered phase plan.
 isPhasePlanDoc :: FilePath -> Bool
@@ -460,6 +529,10 @@ runDocsLint = do
   -- DEVELOPMENT_PLAN/phase-*.md must be registered in phaseDocs. This stops a
   -- newly added governed doc or phase plan from silently bypassing the
   -- metadata / relative-link / Documentation-Requirements checks below.
+  discoveredSuiteFiles <- listAllFilesUnder (repoRoot paths) "documents"
+  case governedSuiteFileTypeViolations discoveredSuiteFiles of
+    [] -> pure ()
+    violations -> ioError (userError (intercalate "\n" violations))
   discoveredDocs <- listMarkdownFilesUnder (repoRoot paths) "documents"
   forM_ discoveredDocs $ \relativePath ->
     unless (relativePath `elem` requiredDocs) $
@@ -496,6 +569,11 @@ runDocsLint = do
   forM_ documentStructureRules $ \rule -> do
     contents <- readFile (repoRoot paths </> documentStructurePath rule)
     validateDocumentStructure rule contents
+  agentsMirrorContents <- readFile (repoRoot paths </> "AGENTS.md")
+  claudeMirrorContents <- readFile (repoRoot paths </> "CLAUDE.md")
+  case mirrorRuleDivergenceViolations agentsMirrorContents claudeMirrorContents of
+    [] -> pure ()
+    violations -> ioError (userError (intercalate "\n" violations))
   validateDhallSchemaDrift paths
   validateTestingDocOwnership paths
   validateUnsupportedMonitoringStance paths

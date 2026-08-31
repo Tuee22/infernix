@@ -109,9 +109,13 @@ this canonical list.
   outside that wrapper, enforced by the `unboundedHttpViolations` lint. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
 - cluster ownership and mutation-position by construction: the persisted cluster state names its
-  `ClusterOwner` (`OperatorOwned | HarnessOwned`) and `clusterDown` consumes typed ownership evidence, so
-  tearing down an `OperatorOwned` cluster does not typecheck (`infernix test all` fails closed on an
-  operator cluster instead of destroying it); the `ClusterLifecycle` machine carries a first-class
+  `ClusterOwner` (`OperatorOwned | HarnessOwned`) and the raw `clusterDown` teardown consumes typed
+  ownership evidence, so a teardown outside a held lifecycle-lock lease does not typecheck and a
+  teardown authority can neither escape its region nor be reused. What the index does not decide is
+  who owns a *live* cluster: that is a fail-closed evidence check under the same held lease, where
+  the persisted owner and the live Kind inventory are reread and compared, so `infernix test all`
+  fails closed on an operator's running cluster by a checked refusal rather than by GHC; the
+  `ClusterLifecycle` machine carries a first-class
   `ClusterMutating` position, so a killed `infernix test all` leaves a detectable, reconcilable dirty
   cluster rather than a false `steady-state`, and the test-harness `./infernix.dhall` swap reconciles a
   reservation-backed leftover `.harness-backup` on entry. Canonical:
@@ -119,11 +123,15 @@ this canonical list.
 - memory-safety by construction rests on the generated typed execution plan: compilation
   mints a resource-indexed `MemoryGrant`, package-owned live observations pair it with the matching
   `Enforcer`, and an inference subprocess can launch only from the resulting opaque
-  `ExecutableModel`. The capped-engine kernel OS-bounds actual resident memory to its
-  `MemoryCeiling`; a measured breach is a clean typed `ModelMemoryLimitExceeded`. The execution
-  authority remains inside the opaque engine capability so concurrent reuse is unrepresentable;
-  Apple/Linux CPU observers enforce resident-memory ceilings, and Linux GPU execution requires
-  independently indexed RAM and VRAM grants and observers. Physical RAM is a checked
+  `ExecutableModel`. Enforcement is three layers that are not interchangeable: a kernel limit
+  installed before the engine's first allocation on the lanes that can install one, a sampled
+  backstop over the residue that limit provably does not cover, and the engine reporting back the
+  limit it actually received. A breach names the resource and the observed footprint and is a clean
+  typed `ModelMemoryLimitExceeded`. The execution authority remains inside the opaque engine
+  capability so concurrent reuse is unrepresentable. A lane declares the strength it has: the
+  mechanism is part of the type, an uncalibrated lane declares detection only, and no kernel
+  mechanism bounds device memory on any lane. Linux GPU execution requires independently indexed
+  RAM and VRAM grants and observers. Physical RAM is a checked
   `HostMemoryPartition`, every model's requirement is derived from its own artifact as a
   resource-indexed `ModelMemoryRequirement`, and every `InferenceMemoryBudget` names its enforcer.
   Canonical:

@@ -26,6 +26,7 @@ module Infernix.Lint.Plan
     ledgerDoubleListingViolations,
     phaseStatusTableViolations,
     forwardOwnershipViolations,
+    standardsChronologyViolations,
     parseSprintBlocks,
     SprintBlock
       ( SprintBlock,
@@ -105,7 +106,8 @@ scanPlanViolations documents =
       receiptMarkerViolations phaseDocuments,
       ledgerDoubleListingViolations documents,
       phaseStatusTableViolations documents,
-      forwardOwnershipViolations phaseDocuments
+      forwardOwnershipViolations phaseDocuments,
+      standardsChronologyViolations documents
     ]
   where
     phaseDocuments = filter (isPhasePlanDocument . fst) documents
@@ -604,6 +606,45 @@ containsClockTime lineValue = any isClockTimeAt (suffixes lineValue)
 
 suffixes :: String -> [String]
 suffixes value = [drop index value | index <- [0 .. length value - 1]]
+
+-- | Section D applied to the document that states Section D.
+--
+-- Scan 5 reads phase documents only, so the standards accumulated exactly the
+-- narration they forbid: rules justified by the sprint that produced them. A
+-- rule carrying its own history invites the next reader to treat the history
+-- as part of the rule, and the chronology has no reader at all once the
+-- decision it produced /is/ the contract. So the standards name no sprint.
+--
+-- What this scan cannot decide is whether the surviving rule is correct. It
+-- decides only that the rule stands on its own statement rather than on an
+-- account of how it came to be.
+standardsChronologyViolations :: [(FilePath, String)] -> [String]
+standardsChronologyViolations documents =
+  [ relativePath
+      <> ":"
+      <> show lineNumber
+      <> ": the standards document attributes a rule to "
+      <> reference
+      <> "; Section D keeps the chronology that produced a rule out of the rule"
+  | (relativePath, contents) <- documents,
+    relativePath == standardsDocument,
+    (lineNumber, lineValue) <- zip [1 :: Int ..] (lines contents),
+    reference <- sprintReferencesIn lineValue
+  ]
+
+-- | Every @Sprint \<phase\>.\<number\>@ reference carried by one line.
+sprintReferencesIn :: String -> [String]
+sprintReferencesIn lineValue =
+  [ "Sprint " <> phaseText <> "." <> sprintText
+  | suffix <- suffixes lineValue,
+    "Sprint " `isPrefixOf` suffix,
+    let rest = drop (length "Sprint ") suffix,
+    let phaseText = takeWhile isDigit rest,
+    not (null phaseText),
+    "." `isPrefixOf` drop (length phaseText) rest,
+    let sprintText = takeWhile isDigit (drop (length phaseText + 1) rest),
+    not (null sprintText)
+  ]
 
 -- | How many lines carry a validation-receipt marker.
 receiptMarkerLineCount :: String -> Int

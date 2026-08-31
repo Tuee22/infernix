@@ -13,8 +13,8 @@ full live integration, and 16/16 routed Playwright cases including the twelve-mo
 matrix. Both harnesses completed their config transaction once, tore Kind down, and left absent
 idle clusters with zero live nodes and pods and no backup file. Phase 0 is closed, so the
 corrected host-memory ledger this phase's build-memory sprints implement is settled doctrine.
-Per-lane attestation lives in [cohort-validation-waves.md](cohort-validation-waves.md); superseded
-surfaces are listed in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+Superseded surfaces are listed in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
@@ -779,7 +779,7 @@ None.
 code-side closed on the machine-independent gates, and the single-accelerator (apple-silicon) plus
 `linux-cpu` full-suite sign-off is closed on the selected accelerator plus `linux-cpu`.
 **Implementation**: `src/Infernix/Evidence/Readiness.hs`, `src/Infernix/Evidence/Lease.hs`, `src/Infernix/Cluster/Subprocess.hs`
-**Blocked by**: Sprint 0.13
+**Blocked by**: nothing — Sprint 0.13 is closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
 
 ### Objective
@@ -821,10 +821,7 @@ None.
 
 **Status**: Done — implemented and validated.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`
-**Blocked by**: Sprint 1.16 **Docs to
-update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
-engineering/reference docs
-
+**Blocked by**: nothing — Sprint 1.16 is closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
 engineering/reference docs
 

@@ -45,37 +45,13 @@ Read first:
   spawn is routed through `Infernix.Cluster.Subprocess.runBoundedCommand`; the named exemptions are
   declared carve-outs, not gaps. Canonical:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
-- no repo-owned native implementation source: version-controlled native sources are forbidden,
-  including `.c`, `.h`, `.cc`, `.cpp`, `.m`, `.mm`, `.hsc`, C/C++ header variants, CUDA, assembly,
-  Metal, Swift, C2HS, and C-- sources. Cabal `c-sources:`, `cxx-sources:`, `asm-sources:`, and
-  `cmm-sources:` declarations and Cabal CPP definitions that synthesize a native boundary are
-  likewise forbidden.
-  Embedding native implementation source or compiler invocations inside Haskell, Python, shell,
-  JavaScript, configuration, or generated payload text is the same violation. `infernix lint files`
-  enforces these rules; native implementation inside upstream dependencies is allowed. Lifecycle
-  locking and bounded subprocess creation/control use public APIs from `filelock`, `process`, and
-  `unix` behind internal Haskell modules, never direct FFI declarations, inline C,
-  `System.Process.Internals`, or a cosmetic relocation of those unsafe boundaries. Direct
-  `foreign import` is forbidden throughout repo-owned Haskell, including observer code. Darwin
-  process birth identity is registry-backed Haskell state protected by `filelock`; Apple footprint
-  observation is a fixed, bounded public-tool kernel over `/usr/bin/top` and
-  `/usr/bin/footprint`, with no caller-supplied command specification, and the same shape governs
-  every fixed enforcement tool: an observer or a ceiling installer that follows a caller-supplied or
-  operator-editable path is redirectable, so those executables are pinned literals behind a closed
-  unexported specification rather than resolved from the host manifest. The nonblocking
-  exclusive `filelock` token remains enclosed by the rank-2 `Lease s ClusterMutationLocked` region.
-  For bounded commands, the parent starts one self-exec anchor through public `System.Process` with
-  `close_fds = True`, `create_group = True`, an explicit environment, and ordinary standard-stream
-  pipes; the anchor starts and reaps the supervisor, and a total length-bounded typed framed
-  protocol plus hidden constructors, a rank-2 session region, and linear phase transitions prevent
-  target start before durable activity evidence or reuse and escape of start authority. `close_fds`
-  is only bounded because the descriptor space is: `Infernix.DescriptorSpace` lowers the soft
-  `RLIMIT_NOFILE` to a 16384 ceiling as the first action of every process image, before the internal
-  self-exec dispatch and before any descriptor is opened, because the forked child closes every
-  descriptor up to that limit before `exec` — 313 s per spawn at a containerd pod's 1073741816,
-  measured. Every spawn kernel observes the bound immediately before `createProcess`, and the
-  `unboundedDescriptorSpawnViolations` lint keeps a new `close_fds` surface from skipping it.
-  Canonical:
+- no repo-owned native implementation source: no `.c`, `.h`, `.cc`, `.cpp`, `.m`, `.mm`, `.hsc`,
+  CUDA, assembly, Metal, Swift, C2HS or C-- source is version-controlled, no Cabal `c-sources:` /
+  `cxx-sources:` / `asm-sources:` / `cmm-sources:` stanza declares one, and no `foreign import`,
+  inline C, or `System.Process.Internals` use appears in repo-owned Haskell; embedding native source
+  or a compiler invocation inside Haskell, Python, shell, JavaScript, configuration, or generated
+  payload text is the same violation, while native implementation inside upstream dependencies is
+  allowed. `infernix lint files` enforces it. Canonical:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - Apple engine materialization is not a process-spawn exemption: every Poetry, Python/venv,
   exact-package, Audiveris image, installed-smoke, and provenance operation must use the closed
@@ -91,106 +67,40 @@ Read first:
   classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
   outside that wrapper, enforced by the `unboundedHttpViolations` lint. Canonical doctrine:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
-- cluster ownership and mutation-position by construction: the persisted cluster state names its owner
-  (`ClusterOwner = OperatorOwned | HarnessOwned`) and the raw `clusterDown` teardown consumes typed
-  ownership evidence, so a teardown outside a held lifecycle-lock lease does not typecheck and a
-  teardown authority can neither escape its region nor be reused. `ClusterTeardownAuthority` is
-  indexed by a promoted `ClusterOwner` as well as its lock region, so an authority minted for the
-  harness is not the same type as one minted for the operator and cannot be substituted for it — a
-  compile-fail fixture pins that. Be precise about what the index does *not* buy: it decides nothing
-  about who owns a *live* cluster. That remains a fail-closed evidence check under the same held
-  lease — the persisted owner and the live Kind inventory are reread and compared inside the lock —
-  so `infernix test all` fails closed on an operator's running cluster by a checked refusal, not by
-  GHC. Ownership evidence travels *with* the protected resource: the Kind cluster name is
-  machine-global while the lock, reservation, and persisted state are repo-local, so the lifecycle
-  records the creating checkout's host-side repo root inside the control-plane node at
-  `/etc/infernix/cluster-checkout-identity` and every authorization reads it back and requires
-  agreement. Relocating the lock and renaming the cluster were both rejected: neither works inside a
-  launcher container, where every checkout is baked with the same in-container repo root, so a
-  path-derived identity collides instead of discriminating. The identity resolver fails closed
-  rather than reusing the `/workspace` fallback for that reason. A cluster created before the
-  identity existed is adoptable by the operator (stamped under the same held lease) and refused to
-  the harness, which must prove the slot is its own before tearing it down. The `ClusterLifecycle` machine
-  carries a first-class `ClusterMutating` position, so a killed `infernix test all` leaves a persisted,
-  detectable, reconcilable dirty cluster (`cluster status` reports the mutation-incomplete phase and the
-  next `cluster up` uncordons drained nodes and scales deployments back) rather than a false
-  `steady-state`; the test-harness `./infernix.dhall` swap reconciles a reservation-backed leftover
-  `.harness-backup` on entry so a crash cannot leave the operator's config clobbered. Canonical doctrine:
+- cluster ownership and mutation-position by construction: the persisted cluster state names its
+  owner, the raw teardown consumes typed ownership evidence indexed by both owner and lock region,
+  and the lifecycle machine carries a first-class mutating position, so a teardown outside a held
+  lease does not typecheck and a killed run leaves a detectable, reconcilable dirty cluster rather
+  than a false steady state. What the index does not decide is who owns a *live* cluster: that is a
+  fail-closed evidence check under the same lease, so the harness refuses an operator's running
+  cluster by a checked refusal rather than by GHC. Canonical:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
-- memory-safety by construction rests on the generated typed execution plan, and a model's
-  requirement is **derived from its artifact, never authored**: the tensor table in a checkpoint
-  header gives exact weight bytes from a bounded prefix read, and the model's geometry plus the
-  declared execution shape gives exact cache bytes. The requirement is resource-indexed, so host and
-  device are different formulas rather than one scalar admitted twice — where weights stream to a
-  device, the model-size term is absent from the host formula entirely. Compilation mints one grant
-  per resource a placement consumes, live observations pair each with its matching enforcer, and an
-  inference subprocess can launch only from the resulting opaque executable capability. Enforcement is
-  three layers that are not interchangeable: a kernel limit **installed before the engine's first
-  allocation** on the lanes that can install one, a sampled backstop over the residue that limit
-  provably does not cover, and the engine reporting back the limit it actually received. A breach
-  names the resource it breached and the footprint it observed, and is a clean `status=failed`
-  `ModelMemoryLimitExceeded`, never a fabricated result. The execution authority remains inside the
-  opaque engine capability so concurrent reuse is unrepresentable. **A lane declares the strength it
-  has**: the mechanism is part of the type, an uncalibrated lane declares detection only, and no
-  kernel mechanism bounds device memory on any lane. What this makes unrepresentable is an unbounded
-  launch, per lane and per resource — not a host out-of-memory condition.
-  Canonical doctrine:
+- memory-safety by construction: a model's requirement is derived from its artifact's own bytes and
+  never authored, it is resource-indexed so host and device are different formulas, compilation
+  mints one grant per resource, and an inference subprocess launches only from the resulting opaque
+  capability. Enforcement is three non-interchangeable layers — a kernel limit installed before the
+  engine's first allocation on the lanes that can install one, a sampled backstop over the residue,
+  and the engine reporting the limit it received — and a lane declares the strength it has, with no
+  kernel mechanism bounding device memory on any lane. A breach is a clean `status=failed`
+  `ModelMemoryLimitExceeded`, never a fabricated result. Canonical:
   [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
   and [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
-- bounded host memory: the governed Cabal invocation runs under an authority-derived heap ceiling,
-  and a ceiling is inseparable from the claimant arithmetic it participates in. The normal
-  compiler phase is `jobs × compilerHeap + (jobs + 1) × controlHeap`: one fixed control/helper slot
-  per compiler worker plus the live Cabal driver. Native compiler helpers occupy those declared
-  slots; on Darwin that reserve is arithmetic and sampled evidence, not a kernel-enforced native
-  heap bound. The web dependency install and unit run, the routed end-to-end browser, and the Python
-  provisioning and adapter images are started by the same validation surface and carry no toolchain
-  ceiling; they are host-reserve claimants. The host inference daemon is a host-reserve claimant on
-  the same terms, but the engine executions it starts carry a ceiling of their own on the lanes that
-  can install one — carrying no *toolchain* ceiling is not the same as carrying none, and the two
-  rows bound different quantities by different mechanisms.
-  Inference is one claimant on host RAM; the toolchain is another, and an uncapped `cabal build`
-  exhausted a 124.94 GiB development host while the kernel, which selects per process
-  and ranked the build below every cluster pod, destroyed 111 pod processes and never touched it.
-  Three interactive compiler images this repository never started, holding 44.1, 29.9, and 27.4 GiB,
-  later exhausted a 64 GiB host that no account could see them on.
-  The compiler runtime reserves 1024.65 GiB of address space by default, so the built executable
-  declares a bounded reservation before any memory limit is installable at all. The mechanism is
-  resolved per lane and fails closed when unavailable: an existing cgroup maximum bounds the
-  aggregate on the Linux container lane, while Darwin has no cgroups and no installable
-  address-space ceiling, so no operating-system bound is engaged on that lane at all and what
-  remains is Haskell heap caps, bounded concurrency, claimant arithmetic, and sampled evidence.
-  The shipped operator CLI and its fixed observer and enforcement-installation tools are not
-  toolchain claimants; they remain in the host reserve and outside the sampled Cabal group. One
-  opaque authority serializes its own package-owned child lifecycles, which is narrower than the
-  host, so the account is admitted against an observation of available host memory and a census
-  finding no toolchain claimant outside this authority's own process tree; either observation
-  failing is a refusal naming what it found, and a claimant the census names is refused rather than
-  killed. Normal completion trusts and reaps the Cabal scheduler leader;
-  only exceptional cleanup signals its still-owned process group, so no normal descendant-absence
-  or hard-kill-survival proof is claimed. This does **not** make a host out-of-memory condition
-  impossible — native-helper growth beyond its measured
-  slot, page cache, kernel slab, the OOM-protected container runtime, and every process infernix did
-  not start remain outside the enforced bound, a named foreign claimant is attributed rather than
-  measured, and a transient peak between samples is unobserved wherever a sampled account is all
-  there is. Where an inference ceiling is installed the sampling gap closes for the memory that
-  ceiling charges, and stays open for the memory it does not: shared and pinned host mappings, and
-  device memory on every lane. The doctrine names what it does
-  not bound rather than overstating the guarantee. Canonical doctrine:
+- bounded host memory: the governed Cabal invocation runs under an authority-derived heap ceiling
+  whose claimant arithmetic is `jobs × compilerHeap + (jobs + 1) × controlHeap`, admitted against an
+  observed available-memory reading and a census finding no toolchain claimant outside this
+  authority's own process tree; either observation failing is a refusal naming what it found. The
+  mechanism is resolved per lane and fails closed when unavailable — a cgroup maximum bounds the
+  Linux container lane, while Darwin engages no operating-system bound and is left with Haskell heap
+  caps, bounded concurrency, claimant arithmetic, and sampled evidence. This does not make a host
+  out-of-memory condition impossible, and the doctrine names what it does not bound. Canonical:
   [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
-- per-machine fleet topology: the supported shape is multiple machines, each running **exactly one**
-  engine process, all consuming the same Pulsar `Shared` pool topic, each with its own model cache
-  and its own machine contract naming the pools it serves. One engine per machine is a correctness
-  rule, not a scheduling preference — two engines on one box hold two KV caches and two copies of
-  every loaded weight, and each independently admits work against the machine's whole observed
-  capacity. Member identity fails closed: a daemon that cannot establish which member it is refuses
-  to start rather than adopting a default. Memory admission happens on the machine that will
-  execute, never on the coordinator, and the capacity it admits against is **observed, never declared**; what that observation reports is the machine's capacity, and availability under a competing claimant is a separate observation owned by the host-memory ledger. Delivery is
-  **at-least-once with an effectively-once observable outcome**: acknowledgement follows the terminal
-  result, so a machine lost mid-inference costs a redelivery and duplicate compute rather than an
-  unanswered request — redelivery is the only recovery path the pipeline has, and no change may
-  acknowledge before the terminal event. There is no within-role replication and no repo-owned HA
-  topology; `Failover` as a Pulsar *subscription type* survives because it is how Pulsar provides the
-  coordination this relies on. Canonical doctrine:
+- per-machine fleet topology: multiple machines, each running **exactly one** engine process, all
+  consuming the same Pulsar `Shared` pool topic, each with its own model cache and machine contract.
+  One engine per machine is a correctness rule, not a scheduling preference — two engines on one box
+  hold two KV caches and each admits work against the whole observed capacity. Member identity fails
+  closed, memory admission happens on the executing machine against observed capacity, and delivery
+  is at-least-once with an effectively-once observable outcome, so acknowledgement follows the
+  terminal result and no change may acknowledge before it. Canonical:
   [documents/architecture/daemon_topology.md](documents/architecture/daemon_topology.md) and
   [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md)
 - review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance or
@@ -232,26 +142,12 @@ Read first:
   documented in [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md);
   the lint enforcement rejects violations
 - **zero version-controlled `.dhall`**: never commit a `.dhall` file. The `infernix` binary is the
-  sole generator of every `.dhall` — including the ConfigMap/Secret bodies (Helm only `nindent`s a
-  binary-produced string, never renders/parses Dhall). Schemas are reflected from the Haskell
-  decoder types. Operators create config with `infernix init` (runtime `./infernix.dhall` + host
-  manifest) and `infernix test init` (`./infernix.test.dhall`); help and init are config-independent
-  so `init --force` can replace a stale host schema through the closed writer. Ordinary `infernix`
-  commands still fail fast if config is missing, naming the init to run;
-  `./bootstrap/apple-silicon.sh up` explicitly runs `./.build/infernix init --if-missing` before
-  `cluster up`, while its `test` command runs the runtime-mode-specific `init --if-missing` before
-  test initialization and `test all`. The test harness generates
-  `./infernix.dhall` from `./infernix.test.dhall`, runs, and deletes it. The two files are a
-  **contract pair**: `./infernix.dhall` is the system contract every machine holds identically
-  (substrate mode plus the pool graph, each pool carrying its own model descriptors), and the
-  `machine` block of `./infernix-host.dhall` is this box's contract (default role, engine member
-  identities, model-cache quota, and the content digest of the system contract it was generated
-  against). The generator writes both together, so a system-contract change moves the digest and
-  re-stamps the manifest; a daemon paired with a contract it has never seen refuses to start and
-  names `infernix init --force`. The same digest is registered in the Pulsar topic's own
-  properties by the coordinator, and a daemon that verifies a disagreeing value is refused. The model set is whatever
-  the mounted runtime `infernix.dhall` lists (the `src/Infernix/Models.hs` matrix is a demo-only
-  generator); the coordinator eager-stages that set at startup. Canonical doctrine:
+  sole generator of every `.dhall`, including the ConfigMap and Secret bodies, and schemas are
+  reflected from the Haskell decoder types. Operators create config with `infernix init` and
+  `infernix test init`; ordinary commands fail fast when it is missing, naming the init to run, while
+  help and init stay config-independent. `./infernix.dhall` and the `machine` block of
+  `./infernix-host.dhall` are a contract pair bound by a content digest, so a daemon paired with a
+  contract it has never seen refuses to start. Canonical:
   [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md)
 
 ## Scope

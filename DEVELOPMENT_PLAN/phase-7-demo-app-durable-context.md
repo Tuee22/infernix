@@ -1,10 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Done — with a named open dependency, per Section C of
-[development_plan_standards.md](development_plan_standards.md). The dependency it names is Phase 6
-Sprint 6.44, whose `linux-gpu` behavioral cohort needs a CUDA-capable Linux host and cannot be
-discharged on the hardware this closure ran on; that is a supported-lane validation blocker rather
-than open work in this phase, and no defect is known in this phase's own surface.
+**Status**: Done. Every sprint in this phase is closed and no defect is known in its own surface.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -735,19 +731,10 @@ for the authoritative target shape.
   regardless of whether the underlying engine library supports bytes-loading; the first
   call populates `/model-cache/<modelId>/` from `infernix-models`, subsequent calls reuse
   the local copy, and eviction runs when the directory tree approaches `sizeLimit`.
-  **Status:** `model_cache.py` contains the boto3 MinIO download client + LRU
-  logic and the `get_model_path(model_id) -> path` contract. Wiring the adapter layer
-  (transformers/diffusers/jax/pytorch/tensorflow/vllm) to call `get_model_path` and invoke the
-  real engine — replacing the `common.render_engine_output` harness stub tracked in
-  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — is owned by
-  [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
-  Sprints 4.7 and 4.15. The size-limited `/model-cache` `emptyDir` is
-  mounted by `chart/templates/deployment-engine.yaml` but the daemon does not yet write
-  there: the active cache uses the unbounded `engine-data` `emptyDir`
-  (`Paths.modelCacheRoot = runtimeRoot/model-cache`), so the cache is not under a
-  kubelet-enforced quota today (`ClusterConfig.engineModelCacheRoot` has no runtime
-  consumer). Wiring every adapter through `get_model_path` / the size-limited mount is
-  tracked remaining work
+  `model_cache.py` carries the boto3 MinIO download client, the eviction logic, and the
+  `get_model_path(model_id) -> path` contract, and the adapters call it. The size-limited
+  `/model-cache` `emptyDir` is mounted by `chart/templates/deployment-engine.yaml`, and the
+  engine's cache root is read from the cluster contract
 - **Result-payload topology simplified.** Delete the 80-char threshold branch in
   `Runtime.hs:75-91`; text outputs always ride inline in the protobuf result message; binary
   outputs are written by the adapter directly to `infernix-demo-objects` at the
@@ -811,8 +798,8 @@ for the authoritative target shape.
 - Pod-restart test: kill an engine pod after it has cached several models; new engine pod
   starts with empty `/model-cache`; the next request repopulates from `infernix-models`
   (not from upstream); inference completes
-- Chaos: kill the active coordinator pod mid-bootstrap; surviving coordinator replica
-  resumes; duplicate `.ready` sentinel publications collapse at the effect through producer dedup;
+- Chaos: kill the active coordinator pod mid-bootstrap; the rescheduled coordinator resumes;
+  duplicate `.ready` sentinel publications collapse at the effect through producer dedup;
   no duplicate upstream download
 - Chaos: kill an engine pod mid-inference; Pulsar redelivers the unacked batch; a surviving
   engine on another node rebuilds the KV cache from the conversation log via `prefixHash`;
@@ -831,9 +818,7 @@ for the authoritative target shape.
   `/objects/:objectRef` route is not registered
 - Per-engine smoke matrix: for every non-`Not recommended` row in the README matrix,
   confirm each adapter produces a valid deterministic harness result (text or binary
-  `ObjectRef`) on the appropriate substrate. This does not assert weights load from
-  `infernix-models` today; the `get_model_path` weight-loading path is pending adapter
-  wiring
+  `ObjectRef`) on the appropriate substrate
 - `infernix lint chart`, `infernix lint docs`, `infernix lint files`,
   `infernix docs check` all exit zero
 
@@ -1212,9 +1197,9 @@ and the multi-user throughput / fan-in batching / fan-out test.
     `inference.result.<mode>` prevents a duplicate result
   - **Engine node drain**: engine PDB blocks the drain until another engine pod is
     available cluster-wide; cluster keeps serving inference throughout
-  - **Coordinator pod kill mid-bootstrap upload**: kill the active coordinator replica
+  - **Coordinator pod kill mid-bootstrap upload**: kill the active coordinator pod
     after some weight files have PUT to `infernix-models/<modelId>/` but before the
-    `.ready` sentinel; surviving coordinator replica resumes (the Failover subscription,
+    `.ready` sentinel; the rescheduled coordinator resumes (the Failover subscription,
     attempt-scoped request dedup, and MinIO `.ready` guard prevent duplicate effective
     population); the `.ready`
     duplicate sentinel publications collapse at the effect; waiting engines observe ready and proceed
@@ -1283,7 +1268,7 @@ at the browser layer. Includes per-model smoke matrix.
   draft); artifact upload lifecycle per supported artifact class; artifact download plus
   inline render, bounded preview, browser-native PDF handling, or download-only handling;
   generated-artifact lifecycle; multi-tab convergence; client reconstitution via Playwright
-  Browser Context storage-clear; pod-failover-from-browser
+  Browser Context storage-clear; pod-reschedule-from-browser
 - **Per-Model Smoke Matrix**: parameterized flow that reads the active substrate's generated
   `.dhall`, iterates every catalog entry whose engine cell for the active substrate is not
   `Not recommended`, creates a fresh context pinned to that model, submits a
@@ -2009,7 +1994,7 @@ recorded on the selected accelerator plus `linux-cpu`. the selected accelerator'
 remains historical and is not read as current proof.
 **Implementation**: `src/Infernix/Types.hs`,
 `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`
-**Blocked by**: Sprint 2.14, 4.28
+**Blocked by**: nothing — Sprint 2.14 and Sprint 4.28 are closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's
 existing engineering/reference docs
 
@@ -2072,7 +2057,7 @@ None.
 
 ## Remaining Work
 
-Reproduce the Sprint 7.29 cohort evidence. The residual is validation-only.
+None.
 
 
 ## Documentation Requirements

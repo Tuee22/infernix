@@ -1,7 +1,8 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Done — Sprint 6.53's implementation, focused gates, selected current-source
-`linux-gpu` full suite, and paired current-source native-amd64 `linux-cpu` full suite pass.
+**Status**: Active. Sprints 6.1 through 6.53 are `Done`. Sprint 6.54 is open: preprocessor walls in
+the fixed observer and the sampler-selection region present one arm per lane to the compiler, so
+`-Wall -Werror` — the stated primary proof for this module family — sees half of it.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -1840,8 +1841,7 @@ before the validation phase returns to `Done`.
 - Code-side gates: Linux-image `infernix lint docs`, Linux-image `cabal test infernix-unit`, and
   `poetry --directory python run check-code` pass.
 - Cohort gate: rebuilt `./bootstrap/linux-cpu.sh test` and `./bootstrap/linux-gpu.sh test` over the
-The historical per-attempt failure→fix diagnostics are recorded in
-[cohort-validation-waves.md](cohort-validation-waves.md).
+  corrected source are complete.
 
 ### Remaining Work
 
@@ -2027,7 +2027,7 @@ None.
 (machine-independent gates), and the single-accelerator (apple-silicon) plus linux-cpu full-suite
 sign-off is closed on the selected accelerator plus `linux-cpu`.
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `web/playwright/inference.spec.js`
-**Blocked by**: Sprint 1.16, 5.12
+**Blocked by**: nothing — Sprint 1.16 and Sprint 5.12 are closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
 engineering/reference docs
 
@@ -2082,7 +2082,7 @@ None.
 rules are code-side closed (machine-independent gates), and the single-accelerator (apple-silicon)
 plus linux-cpu full-suite sign-off is closed on the selected accelerator plus `linux-cpu`.
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`
-**Blocked by**: Sprint 1.16, 1.17, 6.39
+**Blocked by**: nothing — Sprint 1.16, Sprint 1.17 and Sprint 6.39 are closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
 `documents/development/haskell_style.md`, and the phase's existing engineering/reference docs
 
@@ -2131,7 +2131,7 @@ eager-model-cache barrier, the full twelve-wait individual bounded-wait migratio
 linux-cpu full-suite sign-off is closed on the selected accelerator plus `linux-cpu`.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Pulsar.hs`,
 `src/Infernix/Lint/HaskellStyle.hs`, `infernix.cabal` (`src/Infernix/ProcessMonitor.hs` deleted)
-**Blocked by**: Sprint 1.16, 6.40
+**Blocked by**: nothing — Sprint 1.16 and Sprint 6.40 are closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
 `documents/development/haskell_style.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, and the
 phase's existing engineering/reference docs
@@ -2205,10 +2205,7 @@ None.
 
 **Status**: Done — implemented and validated.
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`
-**Blocked by**: Sprint 4.30, 6.40 **Docs
-to update**: `documents/architecture/bounded_inference_memory.md`,
-`documents/development/haskell_style.md`, and the phase's existing engineering/reference docs
-
+**Blocked by**: nothing — Sprints 4.30 and 6.40 are closed.
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`,
 `documents/development/haskell_style.md`, and the phase's existing engineering/reference docs
 
@@ -2329,8 +2326,6 @@ unconditionally, the chaos mutations (drain / scale / cordon) leave the lifecycl
   `withTestHarnessConfig` restores the operator config from a planted leftover `.harness-backup`), and
   `cabal test infernix-haskell-style`, on both the apple-silicon and linux-cpu lanes
 - `infernix lint docs` stays clean
-  for the original behavioral contract; after Phases 2 and 4 close, rerun `infernix test all` on
-  apple-silicon plus `linux-cpu` for the owner-atomic correction
 
 ### Final cross-phase review
 
@@ -2378,7 +2373,8 @@ None.
 
 ## Remaining Work
 
-None.
+Sprint 6.54 is open: the fixed observer and the sampler-selection region are split by preprocessor
+walls, so only one arm per lane reaches the compiler. Sprints 6.1 through 6.53 are closed.
 
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Done]
 
@@ -3097,7 +3093,7 @@ None.
 **Status**: Done — code-side closed, and the `linux-cpu` integration run on the collapsed topology
 passed in this phase's shared cohort, recorded in
 [cohort-validation-waves.md](cohort-validation-waves.md).
-**Blocked by**: Sprint 3.16
+**Blocked by**: nothing — Sprint 3.16 is closed.
 **Implementation**: `test/integration/Spec.hs`, `test/unit/Spec.hs`,
 `web/playwright/inference.spec.js`, `src/Infernix/Cluster.hs`, `src/Infernix/CommandRegistry.hs`,
 `src/Infernix/CLI.hs`, `src/Infernix/Dispatch/SingleFlight.hs`, `src/Infernix/Runtime/Pulsar.hs`
@@ -3155,8 +3151,8 @@ cleanup.** The reduction is recorded in
   `cabal test infernix-haskell-style`, and `infernix lint files|chart|proto` pass. The
   registry assertion now pins that `internal playwright replace-demo-pods` **fails** to parse.
 - The suite contains no assertion that a second replica exists.
-- **Cohort gate (pending):** a full `linux-cpu` integration run on the collapsed topology, shared
-  with Sprint 3.16.
+- **Cohort gate:** the `linux-cpu` integration run on the collapsed topology, shared with Sprint
+  3.16, is complete.
 
 ### Remaining Work
 
@@ -3738,6 +3734,42 @@ quiescence.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 6.54: The Fixed Observer Compiles On Every Lane [Active]
+
+**Status**: Active
+**Implementation**: `src/Infernix/Runtime/CappedEngine/FixedObserver.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`
+**Blocked by**: nothing.
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`
+
+### Objective
+
+The fixed observer and the sampler-selection region behind it are split by preprocessor walls, so
+on any one lane only one arm is presented to the compiler. `-Wall -Werror` is the stated primary
+proof for this module family, and a wall halves what that proof can see inside the module family
+where a mistake is most expensive.
+
+The walls exist for a stated reason: an unreachable request vocabulary for the absent platform trips
+an unused-binding warning under `-Werror`. That is a reason to shape the code so both arms are
+reachable, not a reason to stop compiling one of them.
+
+### Deliverables
+
+- the per-platform tool specifications become ordinary values selected at run time, so both arms
+  typecheck on every lane
+- the preprocessor walls in the observer and the sampler-selection region are removed
+- no unused-binding exemption is introduced to replace them
+
+### Validation
+
+- `cabal build all` and `cabal test infernix-unit` through the governed toolchain, on `linux-cpu`
+- the same build on the phase's selected accelerator
+
+### Remaining Work
+
+The walls stand. Both the observer and the sampler-selection region still present one arm per lane.
 
 ---
 

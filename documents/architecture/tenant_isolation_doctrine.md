@@ -58,8 +58,8 @@ The `users/<sub>/` prefix carries a trailing slash, so a user whose `sub` is a p
 An orthogonal **IAM-layer** boundary sits behind this server-side check: when
 `cluster.minio.stsPerUser` is enabled, the object-proxy exchanges the shared root MinIO credential
 for a short-lived MinIO STS credential scoped by an inline session policy to the caller's
-`users/<sub>/` prefix before each object operation, so the shared root credential is no longer the
-sole isolation. `pathBelongsToUser` on the verified `sub` stays the first-line gate; the scoped
+`users/<sub>/` prefix before each object operation, so the shared root credential is not the sole
+isolation. `pathBelongsToUser` on the verified `sub` stays the first-line gate; the scoped
 credential is a second, defense-in-depth boundary. See
 [access_control_doctrine.md](access_control_doctrine.md).
 

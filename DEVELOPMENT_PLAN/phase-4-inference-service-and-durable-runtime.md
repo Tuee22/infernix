@@ -1,6 +1,10 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done
+**Status**: Active. Sprints 4.1 through 4.45 are `Done`. Sprints 4.46 through 4.49 are open and
+carry defects found by review against the code: the ceiling-refusal classifier fires on ordinary
+engine faults, host ceiling calibration is an authored literal rather than an observation, the
+speech row's real-output proof rests on a synthesized fixture, and one catalog row's declared load
+strategy disagrees with the invocation the native runner renders.
 **Current implementation state**: Sprints 4.37 through 4.42 landed in numerical order, each building
 on the one before: a breach names the resource it breached, the requirement becomes resource-indexed,
 the requirement is derived from the artifact's own bytes, three sampling loops become one, a kernel
@@ -119,8 +123,7 @@ readiness wait uses a 3600-second cold-start envelope aligned with the browser r
 upstream snapshot for the safetensors LLM row is not treated as a failure. The cluster image path
 uses source-fingerprint image reuse and dependency-layer caching, so a long Docker interval reflects
 Cabal dependency compilation, image export, registry push, and Helm/Pulsar readiness waits rather than
-a Docker daemon deadlock. Per-lane attestations live in
-[cohort-validation-waves.md](cohort-validation-waves.md).
+a Docker daemon deadlock.
 
 ## Current Repo Assessment
 
@@ -1432,11 +1435,7 @@ None.
 
 **Status**: Done — implemented and validated.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`
-**Blocked by**: Sprint 1.17, 4.28 **Docs to
-update**: `documents/architecture/managed_state_transitions.md`,
-`documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, and the
-phase's existing engineering/reference docs
-
+**Blocked by**: nothing — Sprints 1.17 and 4.28 are closed.
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
 `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, and the phase's
 existing engineering/reference docs
@@ -1543,11 +1542,7 @@ None.
 **Status**: Done — implemented and validated.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs`,
 `src/Infernix/Models.hs`, `src/Infernix/Web/Contracts.hs`
-**Blocked by**: Sprint 4.30 **Docs to
-update**: `documents/architecture/bounded_inference_memory.md`,
-`documents/architecture/model_catalog.md`, `documents/operations/apple_silicon_runbook.md`, and
-this plan
-
+**Blocked by**: nothing — Sprint 4.30 is closed.
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`,
 `documents/architecture/model_catalog.md`, `documents/operations/apple_silicon_runbook.md`, and this
 plan
@@ -1625,8 +1620,18 @@ None.
 
 ## Remaining Work
 
-None. Every sprint in this phase is `Done` and their per-lane attestations are recorded in
-[cohort-validation-waves.md](cohort-validation-waves.md). The last four — Sprint 4.31's
+Sprints 4.46, 4.47, 4.48 and 4.49 are open:
+
+- **4.46** — the ceiling-refusal classifier publishes a typed memory breach for an ordinary engine
+  fault, because its threshold reduces to the peak having reached the model's own weight bytes
+- **4.47** — `HostCeilingCalibration` is an authored constant, so its pending constructor is
+  unreachable and the doctrine's "once calibrated" names no observation
+- **4.48** — the speech row's fixture is a synthesized formant sweep, so the row proves the decoder
+  ran rather than that a real utterance transcribed
+- **4.49** — one catalog row compiles to a device-streaming placement on the CUDA lane while the
+  runner renders zero GPU layers, so a device grant is watched for a process that allocates none
+
+Sprints 4.1 through 4.45 are closed. The last four of those — Sprint 4.31's
 claimable-pool/toolchain-occupant correction, Sprint 4.32's verified Apple and Linux CPU execution
 enforcers, Sprint 4.34's Apple cohort, and Sprint 4.35's native runner front-end correction — closed
 together on one frozen source state validated on `apple-silicon` plus `linux-cpu`. The broker-side
@@ -2303,7 +2308,7 @@ cohort.
 `infernix docs check`.
 **Cohort validation**: the host half of bounded engine launch passes on this phase's selected
 `apple-silicon` accelerator plus `linux-cpu`.
-**Blocked by**: Sprint 4.37.
+**Blocked by**: nothing — Sprint 4.37 is closed.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/ExecutionPlan.hs`,
 `src/Infernix/ExecutionPlan/Internal.hs`, `src/Infernix/Runtime.hs`,
 `src/Infernix/Substrate/Internal.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Runtime/Pulsar.hs`,
@@ -2442,7 +2447,7 @@ check-code`, `infernix lint files|chart|proto|docs|plan`, and `infernix docs che
 **Cohort validation**: the selected `apple-silicon` plus `linux-cpu` cohort derives requirements
 from the exact staged artifacts, while underivable or malformed formats yield typed refusals rather
 than small requirements.
-**Blocked by**: Sprint 4.38.
+**Blocked by**: nothing — Sprint 4.38 is closed.
 **Implementation**: `src/Infernix/Models/Artifact.hs` (new), `src/Infernix/Models/Requirement.hs`
 (new), `src/Infernix/Models.hs`, `src/Infernix/ExecutionPlan.hs`, `src/Infernix/ExecutionPlan/Internal.hs`,
 `src/Infernix/Substrate/Internal.hs`, `src/Infernix/Runtime/Enforcer.hs`,
@@ -2617,7 +2622,7 @@ the selected `apple-silicon` plus `linux-cpu` cohort.
 check-code`, `infernix lint files|chart|proto|docs|plan`, and `infernix docs check`.
 **Cohort validation**: the Apple process-group footprint lane and Linux anonymous-residency lane
 drive the same loop and pass their full suites.
-**Blocked by**: Sprint 4.38.
+**Blocked by**: nothing — Sprint 4.38 is closed.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Internal.hs`,
 `src/Infernix/Runtime/CappedEngine/FixedObserver.hs`, `test/unit/Spec.hs`
 **Docs to update**: none.
@@ -2742,7 +2747,7 @@ The governed exact-image build, lint, compile-fail, observer, execution-plan, ar
 materializer, Haskell unit, and web unit gates pass.
 **Cohort validation**: Apple declares detection-only by construction and passes its full suite; the
 paired calibrated `linux-cpu` lane declares prevention and its full-suite evidence remains current.
-**Blocked by**: Sprint 4.38, Sprint 4.40.
+**Blocked by**: nothing — Sprint 4.38 and Sprint 4.40 are closed.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Ceiling.hs` (new),
 `src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/Lint/HaskellStyle.hs`,
 `test/compile-fail/Main.hs`, `test/unit/Spec.hs`
@@ -2901,7 +2906,7 @@ files|chart|proto|docs|plan` plus `infernix docs check` — with `lint proto` re
 binding inventory rather than the retired one.
 **Cohort validation**: real rows run under the carried shape on `apple-silicon` plus `linux-cpu`,
 with the acknowledged ceiling matching the installed quantity wherever a ceiling is installable.
-**Blocked by**: Sprint 4.39, Sprint 4.41.
+**Blocked by**: nothing — Sprint 4.39 and Sprint 4.41 are closed.
 **Implementation**: `proto/infernix/runtime/inference.proto`, `proto/haskell-bindings.sha256`,
 `src/Proto/`, `tools/generated_proto/`, `src/Infernix/Runtime/Worker.hs`,
 `src/Infernix/ExecutionPlan.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`,
@@ -3047,7 +3052,7 @@ None.
 **Status**: Done. The installed host ceiling is the greater of the artifact-derived requirement and
 the engine's bounded pre-flight projection, with the contributing quantities preserved as typed
 provenance.
-**Blocked by**: Sprint 4.39, Sprint 4.41.
+**Blocked by**: nothing — Sprint 4.39 and Sprint 4.41 are closed.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Projection.hs` (new),
 `src/Infernix/Runtime/CappedEngine/Ceiling.hs`,
 `src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/Runtime/Worker.hs`,
@@ -3270,7 +3275,7 @@ None.
 
 **Status**: Done. A kernel-refused allocation is classified as a typed memory breach independently
 of whether the installed ceiling is wide enough for a particular model.
-**Blocked by**: Sprint 4.37, Sprint 4.41.
+**Blocked by**: nothing — Sprint 4.37 and Sprint 4.41 are closed.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Internal.hs`,
 `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Engines/Artifact/Capability.hs`,
 `src/Infernix/Engines/Artifact/Internal.hs`, `src/Infernix/Types.hs`,
@@ -3469,6 +3474,148 @@ the capability or identity boundary structurally.
 ### Remaining Work
 
 None.
+
+## Sprint 4.46: The Ceiling Refusal Classifier Names A Refusal Only [Active]
+
+**Status**: Active
+**Implementation**: `src/Infernix/Runtime/CappedEngine/Internal.hs`, `test/unit/Spec.hs`
+**Blocked by**: nothing.
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`
+
+### Objective
+
+`classifyCeilingRefusal` decides that a non-zero engine exit was the kernel refusing an allocation.
+Its predicate compares the observed peak plus the cache margin against the installed ceiling, and
+the installed ceiling for a host load is the weight bytes plus the cache bytes with no headroom
+term, so the comparison reduces to the peak having reached the model's own weight bytes. Every
+engine fault after the weights are resident satisfies that, and a fault is then published as a
+typed memory breach.
+
+The realness contract draws three outcomes apart: a real result, a typed refusal, and a failure that
+names its own reason. A classifier that maps ordinary faults onto the middle one collapses the
+distinction the contract exists to hold.
+
+### Deliverables
+
+- the refusal constructor requires evidence a plain fault cannot produce, rather than a threshold an
+  ordinary crash crosses
+- a fault after the weights are resident publishes a failure naming its reason
+- the negative fixture asserts that an engine fault above the weight bytes is not classified as a
+  refusal
+
+### Validation
+
+- `cabal test infernix-unit` through the governed toolchain
+- `infernix lint docs`
+
+### Remaining Work
+
+The classifier is unchanged. The reduction above is arithmetic over the current constructors and has
+not been narrowed.
+
+---
+
+## Sprint 4.47: Calibration Is Observed Or Absent [Active]
+
+**Status**: Active
+**Implementation**: `src/Infernix/Runtime/CappedEngine/Ceiling.hs`, `documents/architecture/bounded_inference_memory.md`
+**Blocked by**: nothing.
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`
+
+### Objective
+
+`HostCeilingCalibration` is an authored constant. Its pending constructor is unreachable, so the
+readiness check over it compares two hand-written tables and the doctrine's "once calibrated"
+describes a state no observation establishes.
+
+A lane declaring the strength it has is the correct shape. A lane declaring a strength a literal
+asserts is the defect that shape exists to prevent.
+
+### Deliverables
+
+- either the calibrated constructor is reachable only through a checked observation, or the type is
+  removed and the lane strengths stand as the authored constants they are
+- the doctrine states the mechanism it actually has
+
+### Validation
+
+- `cabal test infernix-unit` through the governed toolchain
+- `infernix lint docs`
+
+### Remaining Work
+
+Neither branch is taken. The constant, the unreachable constructor, and the doctrine sentence all
+stand as described.
+
+---
+
+## Sprint 4.48: The Speech Row Proves Real Output [Active]
+
+**Status**: Active
+**Implementation**: `test/integration/Spec.hs`, `web/test/fixtures/artifactSamples.js`
+**Blocked by**: nothing.
+**Docs to update**: none.
+
+### Objective
+
+The speech row's fixture is a synthesized formant sweep. It is non-silent and speech-shaped, so the
+decoder runs on real signal rather than digital silence, and the harness comment says plainly that
+it is not a spoken utterance.
+
+A transcription row proves real output when a real utterance transcribes to what was said. A sweep
+proves the decoder ran.
+
+### Deliverables
+
+- a genuinely spoken mono 16 kHz sample replaces the synthesized fixture
+- the row asserts the transcription against what the sample says
+
+### Validation
+
+- routed integration on the phase's selected accelerator plus `linux-cpu`
+
+### Remaining Work
+
+The synthesized fixture stands, and the harness comment naming the gap is still accurate.
+
+---
+
+## Sprint 4.49: The Declared Load Strategy Matches The Invocation [Active]
+
+**Status**: Active
+**Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/ExecutionPlan.hs`
+**Blocked by**: nothing.
+**Docs to update**: `documents/architecture/typed_execution_plan.md`
+
+### Objective
+
+One catalog row compiles to a device-streaming placement on the CUDA lane because its selected
+engine binding declares the device, while the native runner renders zero GPU layers and the image's
+payload carries CPU backends only.
+
+Two consequences follow. The host formula drops a model term the host actually holds, and a device
+grant is admitted and watched for a process that allocates no device memory. The ceiling installed
+after the projection is correct for the execution that runs; the placement's description of that
+execution is not.
+
+### Deliverables
+
+- the row's declared shape matches the invocation the runner renders
+- the host formula carries the model term the host holds for that shape
+- no device grant is admitted for a placement that allocates no device memory
+
+### Validation
+
+- `cabal test infernix-unit` through the governed toolchain
+- routed integration on `linux-gpu` plus `linux-cpu`
+
+### Remaining Work
+
+The disagreement stands. Moving a catalog row's declared shape reaches the matrix projection and the
+device admission arithmetic, so the change is scoped here rather than inside the sprint that found
+it.
+
+---
 
 ## Documentation Requirements
 

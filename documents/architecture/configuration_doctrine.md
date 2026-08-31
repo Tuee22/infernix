@@ -141,10 +141,9 @@ pinned contract that name one of its members, and a machine whose members no poo
 rather than started with an empty subscription set.
 
 A model belongs to exactly one pool, and the wire says so structurally: a pool carries its own model
-descriptors, so there is no second list for it to disagree with. Five disagreement classes that
-previously had their own rejection — a pool naming a model the catalog does not define, a pool
-naming a member that does not exist, a member serving no pool, and a one-sided pool/member link in
-either direction — have no representation to write at all.
+descriptors, so there is no second list for it to disagree with. Five disagreement classes — a pool naming a model the catalog does not define, a pool naming a
+member that does not exist, a member serving no pool, and a one-sided pool/member link in either
+direction — have no representation to write at all.
 
 The pool graph is a `List` of pools keyed by an `id` field rather than a Dhall record keyed by pool
 name, and the reason is worth stating rather than leaving to inference: pool ids are derived from
