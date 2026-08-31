@@ -1,9 +1,7 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Active — Sprint 6.53 closes the residual validation and recovery gaps discovered by the
-current-source audit. Its implementation and machine-independent code-side closure are complete;
-the paired current-source native-arm64 `linux-cpu` full suite passes, while the selected
-`linux-gpu` full-suite sign-off remains open in Wave 6.53.
+**Status**: Done — Sprint 6.53's implementation, focused gates, selected current-source
+`linux-gpu` full suite, and paired current-source native-amd64 `linux-cpu` full suite pass.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -111,10 +109,11 @@ the paired current-source native-arm64 `linux-cpu` full suite passes, while the 
 > daemon session. That evidence predates and does not close the current Sprint 6.44 dual RAM/VRAM
 > enforcement construction.
 
-Phase 6 is `Active`: Sprints 6.1 through 6.52 retain their completed scope, while Sprint 6.53 owns
-the current residual closure and Wave 6.53 validation. The host and device columns retain their
-distinct calibrated strengths: Linux GPU pod RAM declares prevention, while NVIDIA device memory
-declares admission, arena sizing, and detection because no supported kernel mechanism bounds it.
+Phase 6 is `Done`: Sprints 6.1 through 6.53 are complete, including the selected current-source
+`linux-gpu` plus paired current-source native-amd64 `linux-cpu` full suites. The host and device
+columns retain their distinct calibrated strengths: Linux GPU pod RAM declares prevention, while
+NVIDIA device memory declares admission, arena sizing, and detection because no supported kernel
+mechanism bounds it.
 
 The inference-coverage sprints were upgraded from the metadata-echo assertion to the per-family
 result contract plus cohort hardware proof: the reopened Sprints 6.2, 6.3, and 6.6 assert the
@@ -2263,11 +2262,10 @@ remaining TOCTOU: harness seizure authorized teardown while holding the lifecycl
 released that lock before the `finally` cleanup invoked the generic `clusterDown`. An operator
 could acquire the shared cluster slot in that interval and then be torn down by the harness. The
 correction makes teardown owner-specific and rechecks ownership while holding the same
-cross-process lifecycle lock; Phase 6 behavioral validation remains open. This is the harness half
+cross-process lifecycle lock; Phase 6 behavioral validation passes. This is the harness half
 of the cluster-ownership and mutation-position work; [Phase 2 Sprint
 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half that lands the
-`ClusterOwner` / `ClusterMutating` types this sprint consumes. **Implementation status**: Landed;
-final cross-phase review and ordered gates remain. The original scope landed
+`ClusterOwner` / `ClusterMutating` types this sprint consumes. The implementation provides
 `seizeHarnessClusterSlot`, `HarnessOwned` cluster bring-up, reservation-aware interrupted-config
 reconcile, and `withPersistedClusterMutation`, and its machine-independent gates passed. The
 owner-atomic correction adds owner-specific `clusterDown` / `clusterDownHarness` paths, performs
@@ -2380,9 +2378,7 @@ None.
 
 ## Remaining Work
 
-Sprint 6.53 is the only open sprint. Its implementation and governed Apple rebuild are complete.
-The focused machine-independent gates and paired current-source native-arm64 `linux-cpu` full suite
-pass; the selected `linux-gpu` full suite remains in Wave 6.53.
+None.
 
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Done]
 
@@ -3684,13 +3680,10 @@ None.
 
 ---
 
-## Sprint 6.53: Residual Safety and Recovery Closure [Active]
+## Sprint 6.53: Residual Safety and Recovery Closure [Done]
 
-**Status**: Active
-**Code-side closure**: complete — the governed Apple build, `infernix test unit`, `infernix test
-lint`, direct files/docs/chart/proto/plan lints, `infernix docs check`, and `git diff --check` pass.
-**Cohort gate**: Wave 6.53 — the paired current-source native-arm64 `linux-cpu` full suite passes;
-the selected `linux-gpu` full suite remains pending against that frozen current-source state.
+**Status**: Done — the governed build, focused repository gates, selected current-source
+`linux-gpu` full suite, and paired current-source native-amd64 `linux-cpu` full suite pass.
 **Blocked by**: nothing.
 **Implementation**: `src/Infernix/Cluster/Subprocess.hs`,
 `src/Infernix/Cluster/Subprocess/Activity.hs`, `src/Infernix/Cluster/LifecycleLock.hs`,
@@ -3720,11 +3713,13 @@ quiescence.
   requiring a runtime config or host manifest, eliminating the circular recovery route.
 - Every bounded-command anchor, supervisor, and retained target-group pin holds the fixed
   `bounded-command-activity.held` kernel lock in shared mode. Quiescence and reservation retirement
-  occur inside a rank-2 region holding the same lock exclusively. Current version-5 activity leases
-  and protected version-6 incoming intents declare that evidence; foreign legacy records fail closed
-  and remain preserved. The Darwin distinct-token v6 prefix is decoded before its overlapping
-  namespaced prefix, and any bounded live-inventory observation completes before the exclusive
-  quiescence callback begins.
+  occur inside a rank-2 region holding the same lock exclusively. Exact-owner abandoned activity is
+  recovered before that exclusive acquisition so a stopped helper left by a dead owner cannot exclude
+  its own cleanup; live owners remain protected by their shared lock, while ambiguous legacy records
+  remain for the exclusive compatibility proof. Current version-5 activity leases and protected
+  version-6 incoming intents declare that evidence; foreign legacy records fail closed and remain
+  preserved. The Darwin distinct-token v6 prefix is decoded before its overlapping namespaced prefix,
+  and any bounded live-inventory observation completes before the exclusive quiescence callback begins.
 - Stale Phase 6 cleanup rows leave `legacy-tracking-for-deletion.md`; only genuinely outstanding
   work remains in the ledger.
 
@@ -3736,14 +3731,13 @@ quiescence.
   and per-site engine-spawn lint fixtures
 - `infernix test lint`, direct files/docs/chart/proto/plan lints, `infernix docs check`, and
   `git diff --check` validate the repository-wide policy and documentation surface
-- the native-arm64 `linux-cpu` outer-container full suite passes from a current-source rebuild,
-  including integration recovery and routed Playwright `16/16`
-- the selected current-source `linux-gpu` plus `linux-cpu` full suites close Wave 6.53
+- the current-source native `linux-cpu` outer-container full suite passes from a rebuild, including
+  integration recovery and routed Playwright `16/16`
+- the selected current-source `linux-gpu` plus paired native `linux-cpu` full suites pass
 
 ### Remaining Work
 
-- run the selected `linux-gpu` full suite on a native CUDA Linux host and close Wave 6.53 against
-  the already-passing paired `linux-cpu` receipt without changing the frozen source state
+None.
 
 ---
 

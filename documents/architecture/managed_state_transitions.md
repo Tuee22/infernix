@@ -207,10 +207,14 @@ evidence:
   leases plus namespace-indexed version 4 and current protected version 5. Every current anchor,
   supervisor, and retained target-group pin holds
   `.data/runtime/locks/bounded-command-activity.held` in shared mode for its complete helper
-  lifetime. Quiescence evidence is indexed by a rank-2 region that holds that lock exclusively
-  through config reconciliation and reservation retirement, so evidence cannot escape and no
-  protected helper can remain live or begin concurrently. Same-namespace records still require
-  exact group-absence proof. A protected foreign-namespace record is retired under the exclusive
+  lifetime. Before exclusive acquisition, exact-owner recovery preserves live owners and terminates
+  attributable same-namespace helper groups left by a dead owner; ambiguous legacy records remain
+  for the exclusive compatibility proof rather than becoming PID-only recovery authority. A live
+  command's shared lock then makes the nonblocking exclusive acquisition refuse. Quiescence evidence
+  is indexed by a rank-2 region that holds the lock exclusively through config reconciliation and
+  reservation retirement, so evidence cannot escape and no protected helper can remain live or begin
+  concurrently. Same-namespace records still require exact group-absence proof. A protected
+  foreign-namespace record is retired under the exclusive
   lock without probing namespace-local PIDs or groups; a foreign version-4 or older record lacks
   that kernel evidence, so recovery refuses and preserves it. Malformed or
   same-namespace-unverifiable leases fail closed. On Darwin, a
@@ -381,10 +385,12 @@ bounded-command quiescence proof and config-transaction reconciliation still run
 closed.
 The reservation-owner lock and the bounded-command activity lock prove different facts and are both
 required. A dead owner frees `harness-cluster-slot.held`; its surviving anchor, supervisor, or pin
-continues to hold `bounded-command-activity.held`, so reservation retirement refuses until the helper
-tree has actually terminated. Only after both exclusive regions are held may protected foreign
-activity be retired without PID/group probes. Legacy foreign activity is preserved because it never
-held the second lock, and legacy Linux UUID-shaped leases remain quarantined on Darwin.
+continues to hold `bounded-command-activity.held`, so exact-identity abandoned-activity recovery
+terminates and proves that attributable helper tree absent before reservation retirement can acquire
+the activity lock exclusively. A live owner's tree remains protected and makes that nonblocking
+acquisition refuse. Only after both exclusive regions are held may protected foreign activity be
+retired without PID/group probes. Legacy foreign activity is preserved because it never held the
+second lock, and legacy Linux UUID-shaped leases remain quarantined on Darwin.
 
 Readiness **observation** is itself three-valued, because a probe that reads a remote system does not
 always get to observe it. A transport fault — a reset idle NodePort keep-alive, a HEAD timeout, a

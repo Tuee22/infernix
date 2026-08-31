@@ -7763,7 +7763,15 @@ withBoundedCommandActivitiesQuiescent ::
   Integer ->
   (forall s. BoundedCommandActivitiesQuiescent s -> IO a) ->
   IO a
-withBoundedCommandActivitiesQuiescent paths ownerProcessGroup action =
+withBoundedCommandActivitiesQuiescent paths ownerProcessGroup action = do
+  -- A dead owner can leave a stopped anchor, supervisor, or target-group pin
+  -- holding the lifetime lock in shared mode. Recover those exact persisted
+  -- identities before asking the kernel for exclusive quiescence evidence;
+  -- otherwise the proof needed to retire them is permanently excluded by the
+  -- helpers it must recover. A concurrent live command remains protected: the
+  -- recovery sweep preserves its activity, and its shared lock makes the
+  -- following non-blocking exclusive acquisition fail closed.
+  _ <- recoverAttributableAbandonedBoundedCommandActivities paths
   withKernelFileLock
     "bounded-command activity quiescence"
     (boundedCommandActivityLifetimeLockPath (runtimeRoot paths))
@@ -7893,7 +7901,28 @@ proveBoundedCommandActivitiesQuiescent paths ownerProcessGroup
 recoverAbandonedBoundedCommandActivities ::
   Paths ->
   IO AbandonedActivitiesRecovered
-recoverAbandonedBoundedCommandActivities paths = do
+recoverAbandonedBoundedCommandActivities =
+  recoverAbandonedBoundedCommandActivitiesWith RefuseAmbiguousLegacyActivity
+
+-- | Recover only activities carrying an exact owner identity. Legacy records
+-- remain for the following exclusive quiescence proof, which can retire an
+-- absent legacy group without turning a deliberately ambiguous compatibility
+-- record into PID-only recovery authority.
+recoverAttributableAbandonedBoundedCommandActivities ::
+  Paths ->
+  IO AbandonedActivitiesRecovered
+recoverAttributableAbandonedBoundedCommandActivities =
+  recoverAbandonedBoundedCommandActivitiesWith PreserveAmbiguousLegacyActivity
+
+data AmbiguousLegacyActivityPolicy
+  = RefuseAmbiguousLegacyActivity
+  | PreserveAmbiguousLegacyActivity
+
+recoverAbandonedBoundedCommandActivitiesWith ::
+  AmbiguousLegacyActivityPolicy ->
+  Paths ->
+  IO AbandonedActivitiesRecovered
+recoverAbandonedBoundedCommandActivitiesWith ambiguousLegacyActivityPolicy paths = do
   currentProcessNamespace <-
     requireCurrentCommandActivityProcessNamespace
   let activeRuntimeRoot = runtimeRoot paths
@@ -7959,10 +7988,22 @@ recoverAbandonedBoundedCommandActivities paths = do
             currentProcessNamespace
             activity
         )
-        ( do
-            exactOwnerLive <- activityExactOwnerIsLive activity
-            unless exactOwnerLive (proveActivityQuiescent activityPath activity)
-        )
+        (recoverActivity activityPath activity)
+
+    recoverActivity activityPath activity
+      | preserveAmbiguousLegacyActivity ambiguousLegacyActivityPolicy activity = pure ()
+      | otherwise = do
+          exactOwnerLive <- activityExactOwnerIsLive activity
+          unless exactOwnerLive (proveActivityQuiescent activityPath activity)
+
+preserveAmbiguousLegacyActivity ::
+  AmbiguousLegacyActivityPolicy ->
+  CommandActivityLeaseDocument ->
+  Bool
+preserveAmbiguousLegacyActivity ambiguousLegacyActivityPolicy activity =
+  case ambiguousLegacyActivityPolicy of
+    RefuseAmbiguousLegacyActivity -> False
+    PreserveAmbiguousLegacyActivity -> isNothing (activityOwnerIdentity activity)
 
 commandActivityMatchesCurrentProcessNamespace ::
   Maybe ProcessNamespaceIdentity ->

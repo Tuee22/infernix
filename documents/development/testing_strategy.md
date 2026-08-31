@@ -51,11 +51,14 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
   is preserved and refused rather than restored. Reservation and teardown are owner-atomic over the
   all-Haskell lock and supervision boundary. Every bounded-command anchor, supervisor, and retained
   target-group pin holds a second fixed kernel lock in shared mode; interrupted-state recovery holds
-  it exclusively through quiescence evidence consumption and reservation retirement. Current
-  version-5 leases and protected version-6 incoming intents declare this lifetime evidence, while a
-  foreign legacy record is preserved and refused. Darwin's protected distinct-token prefix is
-  decoded before the overlapping namespaced prefix, and live inventory is observed before the
-  exclusive activity region so its callback never recursively starts a shared-lock helper.
+  it exclusively through quiescence evidence consumption and reservation retirement. Before that
+  exclusive acquisition, exact-owner recovery terminates attributable helpers left by a dead owner;
+  a live owner remains protected by the shared lock, and an ambiguous legacy record remains for the
+  exclusive compatibility proof. Current version-5 leases and protected version-6 incoming intents
+  declare this lifetime evidence, while a foreign legacy record is preserved and refused. Darwin's
+  protected distinct-token prefix is decoded before the overlapping namespaced prefix, and live
+  inventory is observed before the exclusive activity region so its callback never recursively
+  starts a shared-lock helper.
   `cluster reclaim-slot` is config-independent, so
   the reservation it recovers cannot make the command itself unreachable. Canonical home:
   [Configuration Doctrine](../architecture/configuration_doctrine.md). The Linux launcher image bakes

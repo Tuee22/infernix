@@ -13,23 +13,21 @@ govern this plan.
 
 ## Current execution gate
 
-Phases 0 through 5 and 7 through 9 are `Done` for their recorded scope. Phase 6 Sprint 6.53 is
-`Active`: its residual safety implementation and machine-independent code-side closure are complete,
-and its paired current-source native-arm64 `linux-cpu` full suite passes, while the selected
-`linux-gpu` full suite keeps Wave 6.53 open. Sprint 0.27 closes the plan-level delivery language on
-the supported at-least-once transport with an effectively-once observable outcome, and Sprint 1.40
-closes its build-memory and capability cleanup rows against the live implementation. Phase 4
-Sprint 4.45 closes against the selected current-source `apple-silicon` plus paired native-arm64
-`linux-cpu` full suites. Each phase retains the status earned by its own scope under Section C.
+Phases 0 through 9 are `Done`. Phase 6 Sprint 6.53 closes its residual process-site lint,
+recovery-authority, VRAM-first admission, config-independent reclaim, and cross-container
+descendant-quiescence scope against the selected current-source `linux-gpu` plus paired
+current-source native-amd64 `linux-cpu` full suites. Sprint 0.27 closes the plan-level delivery
+language on the supported at-least-once transport with an effectively-once observable outcome,
+Sprint 1.40 closes its build-memory and capability cleanup rows, and Phase 4 Sprint 4.45 closes
+against the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full
+suites. Each phase retains the status earned by its own scope under Section C.
 
 The Bounded Engine Launch host and device halves remain separate contracts on separate accelerators.
 Phase 4 owns the artifact-derived, resource-indexed host requirement, unified charged-field sampling,
 installed host ceiling, and execution-shape propagation. Phase 6 owns device admission, arena sizing,
 and the sampled device backstop; no lane claims a kernel device-memory bound.
 
-Wave 6.53 is the only open accelerator cohort gate: the selected current-source `linux-gpu` full
-suite on a native CUDA Linux host, paired with the passing native-arm64 `linux-cpu` receipt from the
-same frozen state.
+No cohort validation gate remains open.
 
 Under Section C, an earlier phase reopening does not revert a later one: each phase's `Done` is scoped
 to its own deliverables and validation gate.
@@ -88,12 +86,12 @@ contract.
 
 ## Current Repo Assessment
 
-Phases 0 through 5 and 7 through 9 are `Done` for their recorded scope. Phase 6 is `Active` for
-Sprint 6.53's selected cohort rerun. Phase 4's Bounded Engine Launch host half
-and Sprint 4.45 runtime-capability closure pass on the selected Apple accelerator plus paired
-native-arm64 `linux-cpu`. Phase 6 Sprint 6.51 closes the device half and
-the Linux GPU host calibration on the selected CUDA accelerator plus same-host `linux-cpu`; device
-memory remains honestly detection-only because no supported kernel mechanism bounds it.
+Phases 0 through 9 are `Done`. Phase 4's Bounded Engine Launch host half and Sprint 4.45
+runtime-capability closure pass on the selected Apple accelerator plus paired native-arm64
+`linux-cpu`. Phase 6's device half, Linux GPU host calibration, and residual safety and recovery
+implementation pass on the selected current-source CUDA accelerator plus paired current-source
+native-amd64 `linux-cpu`; device memory remains honestly detection-only because no supported kernel
+mechanism bounds it.
 
 The repository implements the explicit-init runtime-config architecture, the baked Linux
 outer-container launcher, the single-instance platform services, the Gateway-owned routed edge, the
@@ -281,7 +279,7 @@ construction, `nvkind`, or NVIDIA scheduling.
 | 3 | Done | Every sprint is closed. Sprint 3.17 validates anonymous single-binary registry publication, the routed catalog, populated backing, and stateless pod rescheduling on the selected `linux-gpu` accelerator plus `linux-cpu`; Sprint 3.16 enforces the one-worker topology, and Sprints 3.14 and 3.15 own the readiness and bounded-publication evidence boundaries. |
 | 4 | Done | Every sprint is closed. Sprint 4.45's stable Apple project environment, bounded observers, Pulsar broker envelope, typed generation shape, and artifact recipe identity pass the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full suites. |
 | 5 | Done | Every sprint is closed and no code-side work is open. |
-| 6 | Active | Sprint 6.53 closes residual process-site lint, recovery-authority, VRAM-first admission, config-independent reclaim, and cross-container descendant-quiescence gaps. The governed Apple build, focused gates, and paired native-arm64 `linux-cpu` full suite pass; the selected `linux-gpu` full suite keeps Wave 6.53 open. |
+| 6 | Done | Every sprint is closed. Sprint 6.53's residual process-site lint, recovery-authority, VRAM-first admission, config-independent reclaim, and cross-container descendant-quiescence scope passes the selected current-source `linux-gpu` plus paired current-source native-amd64 `linux-cpu` full suites. |
 | 7 | Done | Every sprint is closed and no code-side work is open. |
 | 8 | Done | Every sprint is closed. The generated system contract carries substrate and pool/model descriptors; the machine contract carries role, member identities, cache quota, and the system-contract digest; coordinator topic metadata and daemon startup checks reject disagreement; eager staging completes before routed readiness. |
 | 9 | Done | Every sprint is closed and no code-side work is open. |

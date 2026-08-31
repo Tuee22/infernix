@@ -20,9 +20,7 @@
 
 ## Wave Table
 
-| Wave | Phase / sprint | Stage 1: code-side closure | Stage 2: selected cohort gate |
-|------|----------------|----------------------------|-------------------------------|
-| 6.53 | Phase 6 / Sprint 6.53 | Complete: governed Apple build, unit/web suites, consolidated lint, and direct repository gates pass | Paired current-source native-arm64 `linux-cpu` full suite passes; selected `linux-gpu` full suite remains pending on a native CUDA Linux host against the frozen state |
+No cohort validation waves are open.
 
 ## Cadence Rule
 
@@ -63,7 +61,7 @@ available cohort during the active wave and record only the phase's chosen accel
 | 3 | No open disposition |
 | 4 | No open disposition |
 | 5 | No open disposition |
-| 6 | Wave 6.53: Stage 1 and paired native-arm64 `linux-cpu` are complete; selected `linux-gpu` sign-off remains open |
+| 6 | No open disposition |
 | 7 | No open disposition |
 | 8 | No open disposition |
 | 9 | No open disposition |
