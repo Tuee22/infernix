@@ -15576,6 +15576,10 @@ runMachineContractAssertions root = do
             configMapName = "infernix-demo-config-mirror",
             demoUiEnabled = not (demoUiEnabled appleSystemContract)
           }
+      changedMemberPools =
+        case enginePools appleSystemContract of
+          pool : remaining -> pool {enginePoolMemberIds = ["someone-else"]} : remaining
+          [] -> []
   assert
     (MachineContract.digestSystemContract publishedMirror == pinnedDigest)
     "two payloads of one contract that differ only in machine-local fields digest alike"
@@ -15583,10 +15587,7 @@ runMachineContractAssertions root = do
     ( MachineContract.digestSystemContract
         ( withEnginePools
             appleSystemContract
-            ( case enginePools appleSystemContract of
-                pool : remaining -> pool {enginePoolMemberIds = ["someone-else"]} : remaining
-                [] -> []
-            )
+            changedMemberPools
         )
         /= pinnedDigest
     )
@@ -20346,8 +20347,8 @@ assertHostConfig repoRootPath testRoot = do
         == Right
           "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12"
         && Provisioning.darwinPoetryFrameworkHomeFromPyvenvForTest
-          ( "home = /opt/homebrew/opt/python@3.12/bin\n"
-              <> "executable = /opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin/python3.12\n"
+          ( "home = /opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin\n"
+              <> "executable = /retired/command-executable-snapshot/python3.12\n"
           )
           == Right
             "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12"
@@ -20361,6 +20362,46 @@ assertHostConfig repoRootPath testRoot = do
           )
     )
     "Darwin Poetry closure resolution derives one fixed framework-version root from a standard pyvenv.cfg"
+  let poetryFrameworkRoot =
+        testRoot
+          </> "poetry-framework-resolution"
+          </> "Cellar"
+          </> "python@3.12"
+          </> "3.12.13_2"
+          </> "Frameworks"
+          </> "Python.framework"
+          </> "Versions"
+          </> "3.12"
+      poetryFrameworkExecutable =
+        poetryFrameworkRoot </> "bin" </> "python3.12"
+      poetryConfiguredHome =
+        testRoot
+          </> "poetry-framework-resolution"
+          </> "opt"
+          </> "python@3.12"
+          </> "bin"
+  removeTestPathIfPresent (testRoot </> "poetry-framework-resolution")
+  createDirectoryIfMissing True (takeDirectory poetryFrameworkExecutable)
+  createDirectoryIfMissing True (takeDirectory poetryConfiguredHome)
+  writeFile poetryFrameworkExecutable "fixed Python.framework fixture\n"
+  setFileMode poetryFrameworkExecutable 0o700
+  createSymbolicLink (takeDirectory poetryFrameworkExecutable) poetryConfiguredHome
+  resolvedPoetryFramework <-
+    Provisioning.resolveDarwinPoetryFrameworkHomeFromPyvenvForTest
+      ( Text.pack
+          ( "home = "
+              <> poetryConfiguredHome
+              <> "\nexecutable = "
+              <> ( testRoot
+                     </> "retired-command-snapshot"
+                     </> "python3.12"
+                 )
+              <> "\n"
+          )
+      )
+  assert
+    (resolvedPoetryFramework == Right poetryFrameworkRoot)
+    "Darwin Poetry closure resolution follows the stable pyvenv home to its exact fixed framework root"
   -- Phase 1 Sprint 1.14 — the allowlisted Apple headless artifact
   -- plan uses runtime adapter ids and typed manifests, not a Tart VM.
   assert

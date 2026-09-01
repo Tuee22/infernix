@@ -97,10 +97,6 @@ import System.IO
     stdout,
   )
 import System.IO.Error (isDoesNotExistError, isPermissionError)
--- infernix-lint: non-engine-process-site
-
--- infernix-lint: non-engine-process-site
-
 import System.Info (os)
 import System.Posix.Process
   ( getProcessGroupID,
@@ -128,10 +124,12 @@ import System.Process
       ),
     ProcessHandle,
     StdStream (CreatePipe, Inherit),
+    -- infernix-lint: non-engine-process-site
     createProcess,
     getPid,
     proc,
     terminateProcess,
+    -- infernix-lint: non-engine-process-site
     waitForProcess,
   )
 import System.Timeout (timeout)

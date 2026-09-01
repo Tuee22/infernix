@@ -46,7 +46,10 @@ surface the repository no longer has.
 
 ## Current Repo Assessment
 
-Phases 0, 1, 2, 3, 5 and 7 are `Done`; Phases 4, 6, 8 and 9 are `Active`. Phase 4 Sprint 4.45 closes its stable Apple project-environment,
+Phases 0, 2, 3, 5 and 7 are `Done`; Phases 1, 4, 6, 8 and 9 are `Active`. Phase 1 Sprint 1.41 is
+code-side closed: Darwin Poetry sealing canonicalizes the stable `pyvenv.cfg` home to one fixed
+framework version and Wave 1.1 retains the selected `apple-silicon` plus paired native-arm64
+`linux-cpu` full-suite sign-off. Phase 4 Sprint 4.45 closes its stable Apple project-environment,
 bounded-observer, Pulsar broker-envelope, typed generation-shape, and artifact recipe-identity work
 against the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full
 suites. Phase 4 owns the Bounded Engine Launch host half: Apple declares detection-only, the static
@@ -54,8 +57,8 @@ suites. Phase 4 owns the Bounded Engine Launch host half: Apple declares detecti
 contract consumes the declaration and refuses weaker strength. Its routed-speech correction is
 code-side closed: legacy Whisper GGML admission derives from the artifact extent, the selected row
 completes its reachable transcript assertion, and no-projection execution uses the admitted lane
-budget with distinct provenance. The paired current-source native-arm64 `linux-cpu` build and full
-suite pass; Wave 4.1 awaits the selected `apple-silicon` full suite. Phase 6's device-side
+budget with distinct provenance. Wave 4.1 retains the selected `apple-silicon` plus paired
+native-arm64 `linux-cpu` full suites. Phase 6's device-side
 correction, Linux GPU host calibration, and residual safety and recovery implementation are
 retained, and Sprint 6.54's fixed observer, samplers, probes, and watchdog seams compile as ordinary
 runtime-selected values in the governed Apple build and native-arm64 `linux-cpu` build plus unit
@@ -76,8 +79,8 @@ device memory remains admission, arena sizing, and detection because no supporte
 bounds it. Sprint 6.53 closes the residual process-site lint, recovery authority, deterministic
 dual-resource refusal, config-independent reclaim, and cross-container activity-lifetime contract.
 
-[cohort-validation-waves.md](cohort-validation-waves.md) holds Phase 4 Wave 4.1, Phase 6 Wave 6.1,
-Phase 8 Wave 8.1, and Phase 9 Wave 9.1, while
+[cohort-validation-waves.md](cohort-validation-waves.md) holds Phase 1 Wave 1.1, Phase 4 Wave 4.1,
+Phase 6 Wave 6.1, Phase 8 Wave 8.1, and Phase 9 Wave 9.1, while
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) inventories only surfaces that
 still require removal. [README.md](README.md) holds the plan's single phase-status table.
 

@@ -1,9 +1,8 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done — Sprint 1.40 reconciles the Phase 1 build-memory and capability cleanup ledger,
-removes the obsolete surfaces that remained, and closes on the governed Apple build plus the
-machine-independent aggregate lint and unit gates. The prior 39 sprints retain their validation
-receipts. The exact Apple full suite
+**Status**: Active — Sprint 1.41 is code-side closed and Wave 1.1 retains the selected
+`apple-silicon` plus native-arm64 `linux-cpu` full-suite sign-off for stable Darwin Poetry framework
+resolution. The prior 40 sprints retain their validation receipts. The exact Apple full suite
 rebuilt source fingerprint `bf22a3ad…` as runtime image
 `sha256:189d25e6b24e7699c87dff3e0c194e1bcd3b96a42b158e2b895dd3ca2a7e2400` and exited 0. The paired
 Linux launcher was then rebuilt from the current worktree as
@@ -25,7 +24,8 @@ Superseded surfaces are listed in
 
 ## Phase Status
 
-Sprints 1.1 through 1.40 are Done.
+Sprints 1.1 through 1.40 are Done. Sprint 1.41 is Active with code-side closure complete and Wave
+1.1 retaining its selected `apple-silicon` plus native-arm64 `linux-cpu` full-suite sign-off.
 The closed foundation work establishes the current repository scaffold, the one-binary role
 topology, the typed runtime-config contract, the baked Linux launcher image, the governed
 root-document posture, host-manifest materialization, and the native-only Apple Docker boundary.
@@ -2763,6 +2763,46 @@ obsolete surface that still exists, and leave the ledger naming only work owned 
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 1.41: Poetry Sealing Trusts the Stable Framework Home [Active]
+
+**Status**: Active. Code-side closure is complete; Wave 1.1 remains.
+**Code-side closure**: complete. The governed Apple build, aggregate lint, compile-fail capability
+fixtures, Haskell unit suites, and PureScript unit suite pass.
+**Cohort gate**: Wave 1.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
+**Implementation**: `src/Infernix/Engines/Provisioning.hs`, `test/unit/Spec.hs`
+**Blocked by**: nothing.
+**Docs to update**: none.
+
+### Objective
+
+The bounded `pyvenv.cfg` descriptor names its stable Darwin framework through `home`. Its
+`executable` field may identify a retired bounded-command snapshot and therefore carries no live
+filesystem authority. Poetry sealing canonicalizes `home`, proves that it resolves to one fixed
+`Python.framework/Versions/<version>/bin`, and rejects a target change during resolution.
+
+### Deliverables
+
+- `home` is the sole path used to derive the sealed `PYTHONHOME` framework root
+- canonical resolution accepts a stable symlink into one fixed framework version
+- duplicate descriptor fields, a malformed `home`, a non-framework target, and a target that
+  changes during resolution fail closed
+- a regression fixture retains a nonexistent snapshot `executable` while proving the stable
+  framework root is selected
+
+### Validation
+
+- `./bootstrap/apple-silicon.sh build`
+- `./.build/infernix test lint`
+- `./.build/infernix test unit`
+- selected current-source `apple-silicon` and paired native-arm64 `linux-cpu` full suites
+- standalone file, docs, chart, proto, and plan lints plus `docs check`
+
+### Remaining Work
+
+Complete Wave 1.1.
 
 ## Documentation Requirements
 

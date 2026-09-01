@@ -1,9 +1,8 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active. Sprints 4.1 through 4.45 are `Done`. Sprints 4.46, 4.47, and 4.49 are code-side
-closed. Sprint 4.48's routed-speech correction is code-side closed. The selected `apple-silicon`
-full suite remains in the Phase 4 gate owned by Wave 4.1; its paired current-source native-arm64
-`linux-cpu` full suite passes, including routed spoken-utterance output, in
+**Status**: Active. Sprints 4.1 through 4.45 are `Done`. Sprints 4.46 through 4.49 are code-side
+closed. Wave 4.1 retains the selected `apple-silicon` plus paired current-source native-arm64
+`linux-cpu` full suites; both are capacity-refused by the existing Colima daemon as recorded in
 [cohort-validation-waves.md](cohort-validation-waves.md).
 **Current implementation state**: Sprints 4.37 through 4.42 landed in numerical order, each building
 on the one before: a breach names the resource it breached, the requirement becomes resource-indexed,
@@ -38,9 +37,8 @@ Code-side closure is complete. The reader recognizes and validates the legacy Wh
 header, derives its resident charge from the actual object extent, and keeps artifact admission
 distinct from the lane-budget execution bound required when no trustworthy projection exists. The
 selected speech row is explicitly required to complete, and the normalized JFK transcript assertion
-is reachable. The governed current-source native-arm64 `linux-cpu` build and full suite pass,
-including the routed spoken-utterance row and the browser per-model matrix. Phase 4 remains `Active`
-until Wave 4.1 records the selected `apple-silicon` full suite against the same frozen phase state.
+is reachable. Phase 4 remains `Active` until Wave 4.1 records the selected `apple-silicon` plus paired
+native-arm64 `linux-cpu` full suites against one frozen phase state.
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python adapter boundary, the
 Pulsar-driven request and result contract, the explicit engine-runner dispatch, the mounted
@@ -1626,8 +1624,8 @@ None.
 ## Remaining Work
 
 Sprints 4.46 through 4.49 are code-side closed. The remaining residual is Wave 4.1's selected
-current-source `apple-silicon` full suite against the same frozen phase state as the passing paired
-native-arm64 `linux-cpu` full suite, including the routed spoken-utterance assertion.
+current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full suites against one frozen
+phase state, including the routed spoken-utterance assertion.
 
 Sprints 4.1 through 4.45 are closed. The last four of those — Sprint 4.31's
 claimable-pool/toolchain-occupant correction, Sprint 4.32's verified Apple and Linux CPU execution
@@ -3455,12 +3453,9 @@ embedded mono 16 kHz spoken sample. The integration guard now reaches the normal
 assertion before the general non-artifact return, and `speech-whisper-small` may no longer pass as a
 typed underivable refusal. The memory derivation recognizes whisper.cpp's legacy GGML fixed header,
 charges the actual object extent for host-resident admission, and records the admitted lane budget
-as the execution bound because upstream offers no projection that dominates the routed CLI. The
-governed native-arm64 `linux-cpu` build and `infernix test all` pass on the current source, including
-the exact spoken transcript and all browser rows.
-**Cohort gate**: Wave 4.1 — selected `apple-silicon` full-suite validation, currently waiting on a
-quiescent governed toolchain, against the same frozen phase state as the passing native-arm64
-`linux-cpu` lane.
+as the execution bound because upstream offers no projection that dominates the routed CLI.
+**Cohort gate**: Wave 4.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full-suite
+validation against one frozen phase state.
 **Implementation**: `src/Infernix/Models/Artifact.hs`,
 `src/Infernix/Runtime/CappedEngine/Ceiling.hs`,
 `src/Infernix/Runtime/CappedEngine/Internal.hs`, `test/fixtures/speech-jfk.wav`,

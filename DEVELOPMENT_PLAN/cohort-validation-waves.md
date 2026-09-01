@@ -26,7 +26,8 @@
 
 | Wave | Phase | Chosen accelerator | Paired lane | Gate | State |
 |------|-------|--------------------|-------------|------|-------|
-| 4.1 | 4 | `apple-silicon` | native-arm64 `linux-cpu` | current-source `infernix test all` on both lanes, including routed spoken-utterance output | Stage 2 validation-only: `apple-silicon` awaits a quiescent governed toolchain; paired `linux-cpu` passes |
+| 1.1 | 1 | `apple-silicon` | native-arm64 `linux-cpu` | current-source `infernix test all` on both lanes after stable Darwin Poetry framework resolution | Stage 2 validation-only: code-side closure and standalone gates pass; the existing Colima daemon exposes a 1952 MiB toolchain budget, below the governed 6144 MiB claimant minimum, so both full suites remain capacity-refused |
+| 4.1 | 4 | `apple-silicon` | native-arm64 `linux-cpu` | current-source `infernix test all` on both lanes, including routed spoken-utterance output | Stage 2 validation-only: both full suites remain; the selected Apple run and paired launcher build fail closed at the existing Colima daemon's 1952 MiB toolchain budget, below the governed 6144 MiB claimant minimum |
 | 6.1 | 6 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the unified fixed-observer correction | Stage 2 validation-only: code-side closure passes the governed Apple build and native-arm64 `linux-cpu` build plus unit suite; selected `linux-gpu` and paired full-suite sign-off remain |
 | 8.1 | 8 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the decoded role-contract split | Stage 2 validation-only: code-side closure passes the governed Apple build, native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed `linux-cpu` integration; selected `linux-gpu` and paired full-suite sign-off remain |
 | 9.1 | 9 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the application-owned admin-rendering correction | Stage 2 validation-only: code-side closure passes the native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed `linux-cpu` browser suite; selected `linux-gpu` and paired full-suite sign-off remain |
@@ -78,10 +79,10 @@ available cohort during the active wave and record only the phase's chosen accel
 | Phase | Current cohort disposition |
 |-------|----------------------------|
 | 0 | No accelerator cohort; machine-independent throughout, and it blocks no accelerator phase |
-| 1 | No open disposition |
+| 1 | Wave 1.1 Stage 2: stable Darwin Poetry framework resolution and standalone gates are code-side closed; selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full-suite sign-off remains capacity-refused by the existing Colima daemon's 1952 MiB toolchain budget |
 | 2 | No open disposition |
 | 3 | No open disposition |
-| 4 | Wave 4.1 Stage 2: code-side closure and paired native-arm64 `linux-cpu` full suite pass; selected `apple-silicon` full-suite sign-off awaits a quiescent governed toolchain |
+| 4 | Wave 4.1 Stage 2: code-side closure passes; selected `apple-silicon` and paired native-arm64 `linux-cpu` full-suite sign-off remains capacity-refused by the existing Colima daemon's 1952 MiB toolchain budget |
 | 5 | No open disposition |
 | 6 | Wave 6.1 Stage 2: code-side closure passes the governed Apple build and native-arm64 `linux-cpu` build plus unit suite; selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off remains |
 | 7 | No open disposition |

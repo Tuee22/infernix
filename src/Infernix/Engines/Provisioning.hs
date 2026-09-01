@@ -109,6 +109,7 @@ module Infernix.Engines.Provisioning
     relocationCandidateByteBoundForTest,
     validateRelocationCandidateByteSequenceForTest,
     darwinPoetryFrameworkHomeFromPyvenvForTest,
+    resolveDarwinPoetryFrameworkHomeFromPyvenvForTest,
     ProvisioningClosureBound (..),
     provisioningClosureBoundForTest,
     MachOClosureDimensions (..),
@@ -1734,11 +1735,9 @@ resolvePoetryPythonHome interpreterPath
                           (ioError . userError . ("Poetry pyvenv.cfg is not UTF-8: " <>) . show)
                           pure
                           (TextEncoding.decodeUtf8' contents)
-                      home <-
-                        either
-                          (ioError . userError)
-                          pure
-                          (darwinPoetryFrameworkHomeFromPyvenvForTest text)
+                      homeResult <-
+                        resolveDarwinPoetryFrameworkHomeFromPyvenv text
+                      home <- either (ioError . userError) pure homeResult
                       finalConfigStatus <- Posix.getFdStatus configDescriptor
                       reopenedConfigStatus <- reopenFileEntryStatus descriptor "pyvenv.cfg"
                       unless
@@ -1768,6 +1767,20 @@ darwinPoetryFrameworkHomeFromPyvenvForTest ::
   Text ->
   Either String FilePath
 darwinPoetryFrameworkHomeFromPyvenvForTest contents = do
+  sourceHome <- darwinPoetryHomeFromPyvenv contents
+  let frameworkHome = takeDirectory sourceHome
+  unlessEither
+    ( normalise sourceHome
+        == normalise (frameworkHome </> "bin")
+        && validDarwinPythonFrameworkHome frameworkHome
+    )
+    "Poetry pyvenv.cfg does not name a fixed Darwin Python.framework version"
+  pure frameworkHome
+
+darwinPoetryHomeFromPyvenv ::
+  Text ->
+  Either String FilePath
+darwinPoetryHomeFromPyvenv contents = do
   let homeValues =
         [ Text.unpack value
         | line <- Text.lines contents,
@@ -1778,29 +1791,54 @@ darwinPoetryFrameworkHomeFromPyvenvForTest contents = do
         | line <- Text.lines contents,
           Just value <- [Text.stripPrefix "executable = " line]
         ]
-  (sourcePath, frameworkHome, sourceNamesExecutable) <-
-    case executableValues of
-      [] -> do
-        home <- requireSinglePyvenvValue "home" homeValues
-        pure (home, takeDirectory home, False)
-      _ -> do
-        executable <- requireSinglePyvenvValue "executable" executableValues
-        pure (executable, takeDirectory (takeDirectory executable), True)
-  let frameworkBin = frameworkHome </> "bin"
-      frameworkComponents = splitDirectories (normalise frameworkHome)
+  sourceHome <- requireSinglePyvenvValue "home" homeValues
   unlessEither
-    ( validNormalizedAbsolutePath sourcePath
-        && ( if sourceNamesExecutable
-               then normalise (takeDirectory sourcePath) == normalise frameworkBin
-               else normalise sourcePath == normalise frameworkBin
-           )
-        && case reverse frameworkComponents of
-          version : "Versions" : "Python.framework" : _ ->
-            validFixedPathComponent version
-          _ -> False
+    ( validNormalizedAbsolutePath sourceHome
+        && length executableValues <= 1
     )
-    "Poetry pyvenv.cfg does not name a fixed Darwin Python.framework version"
-  pure frameworkHome
+    "Poetry pyvenv.cfg does not name one normalized absolute Python home"
+  pure sourceHome
+
+resolveDarwinPoetryFrameworkHomeFromPyvenv ::
+  Text ->
+  IO (Either String FilePath)
+resolveDarwinPoetryFrameworkHomeFromPyvenv contents =
+  case darwinPoetryHomeFromPyvenv contents of
+    Left failure -> pure (Left failure)
+    Right sourceHome -> do
+      result <-
+        try @IOException $ do
+          canonicalBin <- Directory.canonicalizePath sourceHome
+          let frameworkHome = takeDirectory canonicalBin
+          unless
+            ( normalise canonicalBin
+                == normalise (frameworkHome </> "bin")
+                && validDarwinPythonFrameworkHome frameworkHome
+            )
+            ( ioError
+                ( userError
+                    "Poetry pyvenv.cfg home does not resolve inside a fixed Darwin Python.framework version"
+                )
+            )
+          finalCanonicalBin <- Directory.canonicalizePath sourceHome
+          unless
+            (normalise finalCanonicalBin == normalise canonicalBin)
+            (ioError (userError "Poetry pyvenv.cfg home changed during resolution"))
+          pure frameworkHome
+      pure (displayCaughtProvisioningFailure result)
+
+resolveDarwinPoetryFrameworkHomeFromPyvenvForTest ::
+  Text ->
+  IO (Either String FilePath)
+resolveDarwinPoetryFrameworkHomeFromPyvenvForTest =
+  resolveDarwinPoetryFrameworkHomeFromPyvenv
+
+validDarwinPythonFrameworkHome :: FilePath -> Bool
+validDarwinPythonFrameworkHome frameworkHome =
+  case reverse (splitDirectories (normalise frameworkHome)) of
+    version : "Versions" : "Python.framework" : _ ->
+      validFixedPathComponent version
+    _ -> False
 
 data MachOInspection = MachOInspection
   { machODependencies :: ![FilePath],
