@@ -5,10 +5,11 @@ import Prelude
 import Affjax.ResponseFormat as ResponseFormat
 import Affjax.StatusCode (StatusCode(..))
 import Affjax.Web as AXWeb
-import Data.Array (filter, find, head, length, snoc)
+import Data.Array (filter, find, head, last, length, snoc, take)
 import Data.Either (Either(..))
 import Data.Foldable (traverse_)
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.String (Pattern(..), split)
 import Effect (Effect)
 import Effect.Aff (Aff, launchAff_)
 import Effect.Class (liftEffect)
@@ -64,9 +65,11 @@ import Infernix.Web.Auth
   , defaultInfernixRealmConfig
   , newTokenStore
   , readToken
+  , tokenHasAdminRole
   )
 import Infernix.Web.Browser
-  ( clearStoredActiveContext
+  ( bindDashboardRefresh
+  , clearStoredActiveContext
   , currentOrigin
   , installForceWebSocketClose
   , newUuid
@@ -74,6 +77,7 @@ import Infernix.Web.Browser
   , scheduleEffect
   , writeStoredActiveContext
   )
+import Infernix.Web.DashboardTransport (refreshAdminOverview)
 import Infernix.Web.Chat
   ( ChatViewState
   , applyConversationStatePatch
@@ -126,6 +130,17 @@ type StoredActiveContext =
   , modelId :: String
   }
 
+type AdminOverview =
+  { substrate :: String
+  , dispatchMode :: String
+  , catalogModelCount :: Int
+  , engineBindingCount :: Int
+  , enginePoolCount :: Int
+  , engineMemberCount :: Int
+  , modelCacheEntryCount :: Int
+  , usersWithObjects :: Maybe Int
+  }
+
 type AppState =
   { models :: Array ModelDescriptor
   , publication :: Maybe Publication
@@ -137,6 +152,10 @@ type AppState =
   , artifacts :: ArtifactsViewState
   , files :: FilesViewState
   , authenticated :: Boolean
+  , isAdmin :: Boolean
+  , personalDashboardStatus :: String
+  , adminOverview :: Maybe AdminOverview
+  , adminDashboardStatus :: String
   , token :: Maybe String
   , wsConnection :: Maybe WsConnection
   , wsGeneration :: Int
@@ -154,6 +173,12 @@ type Refs =
   , routeChat :: Element.Element
   , routeArtifacts :: Element.Element
   , routeFiles :: Element.Element
+  , operatorRibbon :: Element.Element
+  , runtimeSummary :: Element.Element
+  , controlPlaneSummary :: Element.Element
+  , daemonSummary :: Element.Element
+  , dispatchSummary :: Element.Element
+  , edgeSummary :: Element.Element
   , runtimeModeValue :: Element.Element
   , controlPlaneContext :: Element.Element
   , daemonLocation :: Element.Element
@@ -165,6 +190,20 @@ type Refs =
   , chatRoot :: Element.Element
   , artifactsRoot :: Element.Element
   , filesRoot :: Element.Element
+  , personalDashboard :: Element.Element
+  , personalDashboardStatus :: Element.Element
+  , personalObjectCount :: Element.Element
+  , personalObjectList :: Element.Element
+  , adminPanel :: Element.Element
+  , adminPanelStatus :: Element.Element
+  , adminSubstrate :: Element.Element
+  , adminDispatch :: Element.Element
+  , adminCatalogCount :: Element.Element
+  , adminEngineCount :: Element.Element
+  , adminPoolCount :: Element.Element
+  , adminMemberCount :: Element.Element
+  , adminCacheCount :: Element.Element
+  , adminUserCount :: Element.Element
   }
 
 main :: Effect Unit
@@ -217,6 +256,12 @@ main = do
       , authenticated: case maybeToken of
           Just _ -> true
           Nothing -> false
+      , isAdmin: case maybeToken of
+          Just token -> tokenHasAdminRole token
+          Nothing -> false
+      , personalDashboardStatus: "loading…"
+      , adminOverview: Nothing
+      , adminDashboardStatus: "loading…"
       , token: maybeToken
       , wsConnection: Nothing
       , wsGeneration: 0
@@ -227,6 +272,8 @@ main = do
   -- The Files view reuses the same upload/download transport, plus list + delete.
   bindArtifactTransport refs.filesRoot (handleUploadedArtifact stateRef refs) (handleArtifactError refs)
   bindFilesActions refs.filesRoot (handleDeletedFile stateRef refs) (handleArtifactError refs)
+  bindDashboardRefresh (refreshDashboards stateRef refs)
+  scheduleDashboardRefresh stateRef refs
   renderAll stateRef refs
   completeRedirect tokenStore defaultInfernixRealmConfig (establishAuthenticatedSession stateRef refs)
   case maybeToken of
@@ -256,6 +303,12 @@ captureRefs htmlDocument = do
   routeChat <- requireElement htmlDocument "route-chat"
   routeArtifacts <- requireElement htmlDocument "route-artifacts"
   routeFiles <- requireElement htmlDocument "route-files"
+  operatorRibbon <- requireElement htmlDocument "operator-ribbon"
+  runtimeSummary <- requireElement htmlDocument "runtime-summary"
+  controlPlaneSummary <- requireElement htmlDocument "control-plane-summary"
+  daemonSummary <- requireElement htmlDocument "daemon-summary"
+  dispatchSummary <- requireElement htmlDocument "dispatch-summary"
+  edgeSummary <- requireElement htmlDocument "edge-summary"
   runtimeModeValue <- requireElement htmlDocument "runtime-mode"
   controlPlaneContext <- requireElement htmlDocument "control-plane-context"
   daemonLocation <- requireElement htmlDocument "daemon-location"
@@ -267,6 +320,20 @@ captureRefs htmlDocument = do
   chatRoot <- requireElement htmlDocument "chat-root"
   artifactsRoot <- requireElement htmlDocument "artifacts-root"
   filesRoot <- requireElement htmlDocument "files-root"
+  personalDashboard <- requireElement htmlDocument "personal-dashboard"
+  personalDashboardStatus <- requireElement htmlDocument "personal-dashboard-status"
+  personalObjectCount <- requireElement htmlDocument "personal-object-count"
+  personalObjectList <- requireElement htmlDocument "personal-object-list"
+  adminPanel <- requireElement htmlDocument "admin-panel"
+  adminPanelStatus <- requireElement htmlDocument "admin-panel-status"
+  adminSubstrate <- requireElement htmlDocument "admin-substrate"
+  adminDispatch <- requireElement htmlDocument "admin-dispatch"
+  adminCatalogCount <- requireElement htmlDocument "admin-catalog-count"
+  adminEngineCount <- requireElement htmlDocument "admin-engine-count"
+  adminPoolCount <- requireElement htmlDocument "admin-pool-count"
+  adminMemberCount <- requireElement htmlDocument "admin-member-count"
+  adminCacheCount <- requireElement htmlDocument "admin-cache-count"
+  adminUserCount <- requireElement htmlDocument "admin-user-count"
   pure
     { document
     , body
@@ -278,6 +345,12 @@ captureRefs htmlDocument = do
     , routeChat
     , routeArtifacts
     , routeFiles
+    , operatorRibbon
+    , runtimeSummary
+    , controlPlaneSummary
+    , daemonSummary
+    , dispatchSummary
+    , edgeSummary
     , runtimeModeValue
     , controlPlaneContext
     , daemonLocation
@@ -289,6 +362,20 @@ captureRefs htmlDocument = do
     , chatRoot
     , artifactsRoot
     , filesRoot
+    , personalDashboard
+    , personalDashboardStatus
+    , personalObjectCount
+    , personalObjectList
+    , adminPanel
+    , adminPanelStatus
+    , adminSubstrate
+    , adminDispatch
+    , adminCatalogCount
+    , adminEngineCount
+    , adminPoolCount
+    , adminMemberCount
+    , adminCacheCount
+    , adminUserCount
     }
 
 bindEvents :: TokenStore -> Ref.Ref AppState -> Refs -> Effect Unit
@@ -313,8 +400,13 @@ bindEvents tokenStore stateRef refs = do
         ( \current ->
             current
               { authenticated = false
+              , isAdmin = false
               , token = Nothing
               , wsConnection = Nothing
+              , files = initialFilesViewState
+              , personalDashboardStatus = "loading…"
+              , adminOverview = Nothing
+              , adminDashboardStatus = "loading…"
               , newContextDialogOpen = false
               , wsGeneration = current.wsGeneration + 1
               , reconnectAttempts = 0
@@ -400,12 +492,16 @@ mountAuthenticatedSession :: Boolean -> Ref.Ref AppState -> Refs -> String -> Ef
 mountAuthenticatedSession resetReconnectAttempts stateRef refs token = do
   previous <- Ref.read stateRef
   let nextGeneration = previous.wsGeneration + 1
+      nextIsAdmin = tokenHasAdminRole token
   Ref.modify_
     ( \current ->
         current
           { authenticated = true
+          , isAdmin = nextIsAdmin
           , token = Just token
           , wsConnection = Nothing
+          , adminOverview = if nextIsAdmin then current.adminOverview else Nothing
+          , adminDashboardStatus = if nextIsAdmin then current.adminDashboardStatus else "loading…"
           , wsGeneration = nextGeneration
           , reconnectAttempts =
               if resetReconnectAttempts then 0 else current.reconnectAttempts
@@ -443,6 +539,7 @@ mountAuthenticatedSession resetReconnectAttempts stateRef refs token = do
     stateRef
   setStatus refs.appStatus "app-status ready" "Ready"
   renderAll stateRef refs
+  refreshDashboards stateRef refs
 
 initialSessionMessages :: AppState -> Array WsClientMessage
 initialSessionMessages state =
@@ -923,8 +1020,17 @@ handleArtifactError refs message =
 refreshFiles :: Ref.Ref AppState -> Refs -> Effect Unit
 refreshFiles stateRef refs = do
   state <- Ref.read stateRef
-  if state.authenticated then
-    refreshFilesList (handleFilesLoaded stateRef refs) (handleArtifactError refs)
+  if state.authenticated then do
+    Ref.modify_
+      ( \current ->
+          current
+            { files = current.files { status = "Refreshing" }
+            , personalDashboardStatus = "refreshing…"
+            }
+      )
+      stateRef
+    renderAll stateRef refs
+    refreshFilesList (handleFilesLoaded stateRef refs) (handleFilesLoadError stateRef refs)
   else
     pure unit
 
@@ -937,10 +1043,71 @@ handleFilesLoaded stateRef refs rawBody =
       let entries = filesEntriesFromObjectRefs (refsList :: Array ObjectRef)
       Ref.modify_
         ( \current ->
-            current { files = current.files { entries = entries, status = show (length entries) <> " files" } }
+            current
+              { files = current.files { entries = entries, status = show (length entries) <> " files" }
+              , personalDashboardStatus = "up to date"
+              }
         )
         stateRef
       renderAll stateRef refs
+
+handleFilesLoadError :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+handleFilesLoadError stateRef refs message = do
+  Ref.modify_
+    ( \current ->
+        current
+          { files = current.files { status = "Unavailable" }
+          , personalDashboardStatus = "unavailable"
+          }
+    )
+    stateRef
+  setStatus refs.appStatus "app-status error" message
+  renderAll stateRef refs
+
+-- | Refresh both application-owned dashboard views. The personal dashboard is
+-- | a second rendering of the Files view's already user-scoped state; only the
+-- | separately authorized administrator overview needs its own request.
+refreshDashboards :: Ref.Ref AppState -> Refs -> Effect Unit
+refreshDashboards stateRef refs = do
+  state <- Ref.read stateRef
+  if state.authenticated then do
+    refreshFiles stateRef refs
+    if state.isAdmin then refreshAdminDashboard stateRef refs else pure unit
+  else
+    pure unit
+
+scheduleDashboardRefresh :: Ref.Ref AppState -> Refs -> Effect Unit
+scheduleDashboardRefresh stateRef refs =
+  scheduleEffect 15000 do
+    refreshDashboards stateRef refs
+    scheduleDashboardRefresh stateRef refs
+
+refreshAdminDashboard :: Ref.Ref AppState -> Refs -> Effect Unit
+refreshAdminDashboard stateRef refs = do
+  Ref.modify_ (_ { adminDashboardStatus = "refreshing…" }) stateRef
+  renderAll stateRef refs
+  refreshAdminOverview
+    (handleAdminOverviewLoaded stateRef refs)
+    (handleAdminOverviewError stateRef refs)
+
+handleAdminOverviewLoaded :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+handleAdminOverviewLoaded stateRef refs rawBody =
+  case JSON.readJSON rawBody of
+    Left decodeError ->
+      handleAdminOverviewError stateRef refs ("Unable to decode admin overview: " <> show decodeError)
+    Right overview -> do
+      Ref.modify_
+        (_ { adminOverview = Just overview, adminDashboardStatus = "up to date" })
+        stateRef
+      renderAll stateRef refs
+
+handleAdminOverviewError :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+handleAdminOverviewError stateRef refs message = do
+  Ref.modify_
+    (_ { adminOverview = Nothing, adminDashboardStatus = "unavailable" })
+    stateRef
+  setStatus refs.appStatus "app-status error" message
+  renderAll stateRef refs
 
 handleDeletedFile :: Ref.Ref AppState -> Refs -> String -> Effect Unit
 handleDeletedFile stateRef refs _objectKey = do
@@ -1016,6 +1183,7 @@ renderAll :: Ref.Ref AppState -> Refs -> Effect Unit
 renderAll stateRef refs = do
   state <- Ref.read stateRef
   renderAuthGate refs state
+  renderDashboardSurfaces refs state
   renderSummary refs state
   renderRoutes refs.document refs.routeList state.publication
   renderRouteChrome refs state.route
@@ -1028,9 +1196,71 @@ renderAuthGate refs state =
   case refs.body of
     Just bodyElement ->
       Element.setClassName
-        (if state.authenticated then "auth-signed-in" else "auth-signed-out")
+        ( if state.authenticated then
+            if state.isAdmin then "auth-signed-in auth-admin" else "auth-signed-in auth-user"
+          else
+            "auth-signed-out"
+        )
         bodyElement
     Nothing -> pure unit
+
+renderDashboardSurfaces :: Refs -> AppState -> Effect Unit
+renderDashboardSurfaces refs state = do
+  let adminVisible = state.authenticated && state.isAdmin
+  setHidden (not state.authenticated) refs.personalDashboard
+  setHidden (not adminVisible) refs.operatorRibbon
+  setHidden (not adminVisible) refs.runtimeSummary
+  setHidden (not adminVisible) refs.controlPlaneSummary
+  setHidden (not adminVisible) refs.daemonSummary
+  setHidden (not adminVisible) refs.dispatchSummary
+  setHidden (not adminVisible) refs.edgeSummary
+  setHidden (not adminVisible) refs.adminPanel
+  renderPersonalDashboard refs state
+  renderAdminDashboard refs state
+
+renderPersonalDashboard :: Refs -> AppState -> Effect Unit
+renderPersonalDashboard refs state = do
+  setText refs.personalDashboardStatus state.personalDashboardStatus
+  setText refs.personalObjectCount (show (length state.files.entries))
+  clearChildren refs.personalObjectList
+  traverse_ (appendPersonalObject refs.document refs.personalObjectList) (take 20 state.files.entries)
+
+appendPersonalObject :: Document.Document -> Element.Element -> ArtifactEntry -> Effect Unit
+appendPersonalObject document container entry = do
+  item <- Document.createElement "li" document
+  setText item (personalObjectDisplayName entry.objectRef)
+  appendElement container item
+
+personalObjectDisplayName :: ObjectRef -> String
+personalObjectDisplayName (ObjectRef objectRef) =
+  fromMaybe objectRef.objectKey (last (split (Pattern "/") objectRef.objectKey))
+
+renderAdminDashboard :: Refs -> AppState -> Effect Unit
+renderAdminDashboard refs state = do
+  setText refs.adminPanelStatus state.adminDashboardStatus
+  case state.adminOverview of
+    Nothing -> do
+      setText refs.adminSubstrate "–"
+      setText refs.adminDispatch "–"
+      setText refs.adminCatalogCount "–"
+      setText refs.adminEngineCount "–"
+      setText refs.adminPoolCount "–"
+      setText refs.adminMemberCount "–"
+      setText refs.adminCacheCount "–"
+      setText refs.adminUserCount "–"
+    Just overview -> do
+      setText refs.adminSubstrate overview.substrate
+      setText refs.adminDispatch overview.dispatchMode
+      setText refs.adminCatalogCount (show overview.catalogModelCount)
+      setText refs.adminEngineCount (show overview.engineBindingCount)
+      setText refs.adminPoolCount (show overview.enginePoolCount)
+      setText refs.adminMemberCount (show overview.engineMemberCount)
+      setText refs.adminCacheCount (show overview.modelCacheEntryCount)
+      setText refs.adminUserCount
+        ( case overview.usersWithObjects of
+            Just userCount -> show userCount
+            Nothing -> "n/a"
+        )
 
 renderServerMessage :: WsServerMessage -> Ref.Ref AppState -> Refs -> Effect Unit
 renderServerMessage message stateRef refs = do
@@ -1151,6 +1381,13 @@ setStatus elementValue classNameValue message =
 setText :: Element.Element -> String -> Effect Unit
 setText elementValue message =
   Node.setTextContent message (Element.toNode elementValue)
+
+setHidden :: Boolean -> Element.Element -> Effect Unit
+setHidden hidden elementValue =
+  if hidden then
+    Element.setAttribute "hidden" "" elementValue
+  else
+    Element.removeAttribute "hidden" elementValue
 
 clearChildren :: Element.Element -> Effect Unit
 clearChildren elementValue =

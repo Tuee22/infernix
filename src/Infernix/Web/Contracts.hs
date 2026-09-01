@@ -6,8 +6,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.Web.Contracts
-  ( EngineBinding (..),
-    ErrorResponse (..),
+  ( ErrorResponse (..),
     InferenceRequest (..),
     InferenceResult (..),
     InferenceError (..),
@@ -136,18 +135,6 @@ data InferenceResult = InferenceResult
 data ErrorResponse = ErrorResponse
   { errorCode :: Text.Text,
     message :: Text.Text
-  }
-  deriving (Eq, Generic, Show)
-
-data EngineBinding = EngineBinding
-  { engine :: Text.Text,
-    adapterId :: Text.Text,
-    adapterType :: Text.Text,
-    adapterLocator :: Text.Text,
-    adapterEntrypoint :: Text.Text,
-    setupEntrypoint :: Text.Text,
-    projectDirectory :: Text.Text,
-    pythonNative :: Bool
   }
   deriving (Eq, Generic, Show)
 
@@ -657,7 +644,6 @@ contractSumTypes =
     let proxy = Proxy :: Proxy InferenceResult in equal proxy (mkSumType proxy),
     let proxy = Proxy :: Proxy InferenceError in equal proxy (mkSumType proxy),
     let proxy = Proxy :: Proxy ErrorResponse in equal proxy (mkSumType proxy),
-    let proxy = Proxy :: Proxy EngineBinding in equal proxy (mkSumType proxy),
     -- Phase 7 newtypes
     let proxy = Proxy :: Proxy UserId in equal proxy (mkSumType proxy),
     let proxy = Proxy :: Proxy ContextId in equal proxy (mkSumType proxy),
@@ -719,8 +705,7 @@ clientModelBootstrapDeadlineMarginSeconds = 900
 
 renderPursContractFooter :: Types.RuntimeMode -> String
 renderPursContractFooter activeRuntimeMode =
-  let contractEngines = map engineBindingFromInternal (Models.engineBindingsForMode activeRuntimeMode)
-      contractModels = map modelDescriptorFromInternal (Models.catalogForMode activeRuntimeMode)
+  let contractModels = map modelDescriptorFromInternal (Models.catalogForMode activeRuntimeMode)
    in "\n"
         <> unlines
           [ "apiBasePath :: String",
@@ -738,20 +723,7 @@ renderPursContractFooter activeRuntimeMode =
             "clientModelBootstrapDeadlineSeconds :: Int",
             "clientModelBootstrapDeadlineSeconds = " <> show (clientModelBootstrapDeadlineSeconds clientModelBootstrapDeadlineMarginSeconds),
             "",
-            "requestTopics :: Array String",
-            "requestTopics = " <> renderPursStringArray (map Text.unpack (Models.requestTopicsForMode activeRuntimeMode)),
-            "",
-            "resultTopic :: String",
-            "resultTopic = " <> show (Text.unpack (Models.resultTopicForMode activeRuntimeMode)),
-            "",
-            "engines :: Array EngineBinding",
-            "engines =",
-            "  ["
-          ]
-        <> intercalate ",\n" (map renderEngineBinding contractEngines)
-        <> "\n  ]\n\n"
-        <> unlines
-          [ "models :: Array ModelDescriptor",
+            "models :: Array ModelDescriptor",
             "models =",
             "  ["
           ]
@@ -846,20 +818,6 @@ renderPursContractFooter activeRuntimeMode =
             "errorResponseRecord :: ErrorResponse -> ErrorResponseRecord",
             "errorResponseRecord (ErrorResponse value) = value",
             "",
-            "type EngineBindingRecord =",
-            "  { engine :: String",
-            "  , adapterId :: String",
-            "  , adapterType :: String",
-            "  , adapterLocator :: String",
-            "  , adapterEntrypoint :: String",
-            "  , setupEntrypoint :: String",
-            "  , projectDirectory :: String",
-            "  , pythonNative :: Boolean",
-            "  }",
-            "",
-            "engineBindingRecord :: EngineBinding -> EngineBindingRecord",
-            "engineBindingRecord (EngineBinding value) = value",
-            "",
             "instance readForeignRequestField :: JSON.ReadForeign RequestField where",
             "  readImpl value = RequestField <$> JSON.readImpl value",
             "",
@@ -876,26 +834,10 @@ renderPursContractFooter activeRuntimeMode =
             "  readImpl value = InferenceResult <$> JSON.readImpl value",
             "",
             "instance readForeignErrorResponse :: JSON.ReadForeign ErrorResponse where",
-            "  readImpl value = ErrorResponse <$> JSON.readImpl value",
-            "",
-            "instance readForeignEngineBinding :: JSON.ReadForeign EngineBinding where",
-            "  readImpl value = EngineBinding <$> JSON.readImpl value"
+            "  readImpl value = ErrorResponse <$> JSON.readImpl value"
           ]
         <> "\n"
         <> renderPhase7PursInstances
-
-engineBindingFromInternal :: Types.EngineBinding -> EngineBinding
-engineBindingFromInternal internalBinding =
-  EngineBinding
-    { engine = Types.engineBindingName internalBinding,
-      adapterId = Types.engineBindingAdapterId internalBinding,
-      adapterType = Types.engineAdapterTypeId (Types.engineBindingAdapterType internalBinding),
-      adapterLocator = Types.engineBindingAdapterLocator internalBinding,
-      adapterEntrypoint = Types.engineBindingAdapterEntrypoint internalBinding,
-      setupEntrypoint = Types.engineBindingSetupEntrypoint internalBinding,
-      projectDirectory = Text.pack (Types.engineBindingProjectDirectory internalBinding),
-      pythonNative = Types.engineBindingPythonNative internalBinding
-    }
 
 modelDescriptorFromInternal :: Types.ModelDescriptor -> ModelDescriptor
 modelDescriptorFromInternal internalModel =
@@ -927,38 +869,6 @@ requestFieldFromInternal internalField =
       label = Types.label internalField,
       fieldType = Types.requestFieldTypeId (Types.fieldType internalField)
     }
-
-renderPursStringArray :: [String] -> String
-renderPursStringArray values = "[" <> intercalate ", " (map show values) <> "]"
-
-renderEngineBinding :: EngineBinding -> String
-renderEngineBinding binding =
-  "    EngineBinding\n"
-    <> "      { engine: "
-    <> show (Text.unpack (engine binding))
-    <> "\n"
-    <> "      , adapterId: "
-    <> show (Text.unpack (adapterId binding))
-    <> "\n"
-    <> "      , adapterType: "
-    <> show (Text.unpack (adapterType binding))
-    <> "\n"
-    <> "      , adapterLocator: "
-    <> show (Text.unpack (adapterLocator binding))
-    <> "\n"
-    <> "      , adapterEntrypoint: "
-    <> show (Text.unpack (adapterEntrypoint binding))
-    <> "\n"
-    <> "      , setupEntrypoint: "
-    <> show (Text.unpack (setupEntrypoint binding))
-    <> "\n"
-    <> "      , projectDirectory: "
-    <> show (Text.unpack (projectDirectory binding))
-    <> "\n"
-    <> "      , pythonNative: "
-    <> (if pythonNative binding then "true" else "false")
-    <> "\n"
-    <> "      }"
 
 renderModel :: ModelDescriptor -> String
 renderModel modelDescriptor =

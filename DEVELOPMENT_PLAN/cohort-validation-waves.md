@@ -24,7 +24,12 @@
 
 ## Wave Table
 
-No cohort validation waves are open.
+| Wave | Phase | Chosen accelerator | Paired lane | Gate | State |
+|------|-------|--------------------|-------------|------|-------|
+| 4.1 | 4 | `apple-silicon` | native-arm64 `linux-cpu` | current-source `infernix test all` on both lanes, including routed spoken-utterance output | Stage 2 validation-only: `apple-silicon` awaits a quiescent governed toolchain; paired `linux-cpu` passes |
+| 6.1 | 6 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the unified fixed-observer correction | Stage 2 validation-only: code-side closure passes the governed Apple build and native-arm64 `linux-cpu` build plus unit suite; selected `linux-gpu` and paired full-suite sign-off remain |
+| 8.1 | 8 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the decoded role-contract split | Stage 2 validation-only: code-side closure passes the governed Apple build, native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed `linux-cpu` integration; selected `linux-gpu` and paired full-suite sign-off remain |
+| 9.1 | 9 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the application-owned admin-rendering correction | Stage 2 validation-only: code-side closure passes the native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed `linux-cpu` browser suite; selected `linux-gpu` and paired full-suite sign-off remain |
 
 ## Recorded Attestations
 
@@ -76,12 +81,12 @@ available cohort during the active wave and record only the phase's chosen accel
 | 1 | No open disposition |
 | 2 | No open disposition |
 | 3 | No open disposition |
-| 4 | No open disposition |
+| 4 | Wave 4.1 Stage 2: code-side closure and paired native-arm64 `linux-cpu` full suite pass; selected `apple-silicon` full-suite sign-off awaits a quiescent governed toolchain |
 | 5 | No open disposition |
-| 6 | No open disposition |
+| 6 | Wave 6.1 Stage 2: code-side closure passes the governed Apple build and native-arm64 `linux-cpu` build plus unit suite; selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off remains |
 | 7 | No open disposition |
-| 8 | No open disposition |
-| 9 | No open disposition |
+| 8 | Wave 8.1 Stage 2: code-side closure passes the governed Apple build, native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed `linux-cpu` integration; selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off remains |
+| 9 | Wave 9.1 Stage 2: code-side closure passes the native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed browser suite; selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off remains |
 
 ## Cross-References
 

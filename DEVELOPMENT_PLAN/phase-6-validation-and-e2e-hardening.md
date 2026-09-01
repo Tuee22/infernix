@@ -1,8 +1,9 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Active. Sprints 6.1 through 6.53 are `Done`. Sprint 6.54 is open: preprocessor walls in
-the fixed observer and the sampler-selection region present one arm per lane to the compiler, so
-`-Wall -Werror` — the stated primary proof for this module family — sees half of it.
+**Status**: Active. Sprints 6.1 through 6.53 are `Done`. Sprint 6.54 is code-side closed: fixed
+observer requests, specifications, samplers, probes, and watchdog seams are ordinary Haskell values
+selected by the runtime host lane, so every arm reaches `-Wall -Werror` on every build. Wave 6.1
+retains the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite cohort gate.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -110,11 +111,13 @@ the fixed observer and the sampler-selection region present one arm per lane to 
 > daemon session. That evidence predates and does not close the current Sprint 6.44 dual RAM/VRAM
 > enforcement construction.
 
-Phase 6 is `Done`: Sprints 6.1 through 6.53 are complete, including the selected current-source
-`linux-gpu` plus paired current-source native-amd64 `linux-cpu` full suites. The host and device
-columns retain their distinct calibrated strengths: Linux GPU pod RAM declares prevention, while
-NVIDIA device memory declares admission, arena sizing, and detection because no supported kernel
-mechanism bounds it.
+Phase 6 is `Active`: Sprints 6.1 through 6.53 are complete and Sprint 6.54 is code-side closed.
+The unified observer module family passes the governed Apple build and the native-arm64
+`linux-cpu` build plus unit suite. Wave 6.1 retains the selected current-source `linux-gpu` plus
+paired `linux-cpu` full-suite sign-off against one frozen Phase 6 state. The host and device columns
+retain their distinct calibrated strengths: Linux GPU pod RAM declares prevention, while NVIDIA
+device memory declares admission, arena sizing, and detection because no supported kernel mechanism
+bounds it.
 
 The inference-coverage sprints were upgraded from the metadata-echo assertion to the per-family
 result contract plus cohort hardware proof: the reopened Sprints 6.2, 6.3, and 6.6 assert the
@@ -2373,8 +2376,9 @@ None.
 
 ## Remaining Work
 
-Sprint 6.54 is open: the fixed observer and the sampler-selection region are split by preprocessor
-walls, so only one arm per lane reaches the compiler. Sprints 6.1 through 6.53 are closed.
+Wave 6.1 must record the selected current-source `linux-gpu` plus paired `linux-cpu` full suites
+against one frozen Phase 6 state. Sprint 6.54's implementation and machine-independent validation
+are closed.
 
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Done]
 
@@ -3740,20 +3744,22 @@ None.
 ## Sprint 6.54: The Fixed Observer Compiles On Every Lane [Active]
 
 **Status**: Active
+**Code-side closure**: Complete. The governed Apple build and native-arm64 `linux-cpu` build plus
+unit suite compile the unified observer, sampler, probe, and watchdog vocabulary under
+`-Wall -Werror`; the focused fixed-observer and execution-plan tests pass.
+**Cohort gate**: Wave 6.1 — selected current-source `linux-gpu` plus paired `linux-cpu` full suites
+against one frozen Phase 6 state.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/FixedObserver.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`
 **Blocked by**: nothing.
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`
 
 ### Objective
 
-The fixed observer and the sampler-selection region behind it are split by preprocessor walls, so
-on any one lane only one arm is presented to the compiler. `-Wall -Werror` is the stated primary
-proof for this module family, and a wall halves what that proof can see inside the module family
-where a mistake is most expensive.
-
-The walls exist for a stated reason: an unreachable request vocabulary for the absent platform trips
-an unused-binding warning under `-Werror`. That is a reason to shape the code so both arms are
-reachable, not a reason to stop compiling one of them.
+The fixed observer and its sampler-selection region expose both platform arms as ordinary values
+selected through a closed runtime host-lane vocabulary. Every build therefore presents the complete
+module family to `-Wall -Werror`, including the absent platform's request specifications, samplers,
+probes, and watchdog seams. The runtime lane selection keeps every binding reachable without an
+unused-binding exemption.
 
 ### Deliverables
 
@@ -3769,7 +3775,8 @@ reachable, not a reason to stop compiling one of them.
 
 ### Remaining Work
 
-The walls stand. Both the observer and the sampler-selection region still present one arm per lane.
+Wave 6.1 must supply the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite
+sign-off against one frozen Phase 6 state.
 
 ---
 

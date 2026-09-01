@@ -2242,8 +2242,6 @@ forceArtifactProcessOutcome processOutcome =
     ArtifactProcessExited exitCode -> exitCode `seq` ()
     ArtifactProcessExceededCeiling resource ceilingMib observedMib ->
       resource `seq` ceilingMib `seq` observedMib `seq` ()
-    ArtifactProcessRefusedAtCeiling resource ceilingMib observedMib exitCode ->
-      resource `seq` ceilingMib `seq` observedMib `seq` exitCode `seq` ()
     ArtifactProcessEnforcementUnavailable reason -> Text.length reason `seq` ()
     ArtifactProcessOutputLimitExceeded outputStream -> outputStream `seq` ()
     ArtifactProcessOutputCaptureFailed outputStream reason ->

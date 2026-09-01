@@ -15,14 +15,15 @@
   This is an *engine-logic* guarantee for in-band failures the adapter/runner can raise or exit on,
   and it extends to model-memory capacity in two places rather than one: an over-capacity model
   remains `UnavailableModel` and its request must become a clean `status=failed`
-  `InferenceError.ModelMemoryLimitExceeded` before any subprocess or worker launch, **and an
-  allocation refused by an installed ceiling inside a launched engine must become that same typed
-  failure** rather than a generic non-zero exit. The enforcement half is owned by
+  `InferenceError.ModelMemoryLimitExceeded` before any subprocess or worker launch. A sampled
+  overrun inside a launched engine becomes the same typed failure; a kernel-refused allocation that
+  the engine does not explicitly report remains a bounded engine failure with the engine's own
+  diagnostics, because an exit code and nearby peak cannot distinguish it from an ordinary fault.
+  The enforcement half is owned by
   [bounded_inference_memory.md](bounded_inference_memory.md).
 - **A capacity refusal, a fabrication, and an ordinary model bug are three different facts.** A
-  failure mapping that collapses them reports the first as the third and leaves the second
-  unfalsifiable, so realness depends on the memory classification being typed rather than inferred
-  from an exit status.
+  failure mapping must not infer the first from an exit status: without explicit evidence the
+  outcome stays the third, which is safer than publishing a false typed diagnosis.
 - Tests therefore **trust the result** and assert only the per-family contract, failing closed on
   `failed`. Realness is a property of the engine code, not of the test.
 - A lint (`realnessFabricationViolations` in `Infernix.Lint.HaskellStyle` plus the Python
@@ -45,12 +46,11 @@ Pre-launch admission is not the whole of it, because an installed ceiling change
 dominant memory failure. Under a kernel limit that binds before the engine's first allocation, an
 over-budget engine dies from **an allocation refused inside itself**, not from an external kill, and
 that refusal arrives at the worker looking exactly like a model crash: a non-zero exit and no output.
-The worker therefore classifies it as a typed memory failure that **names the resource it breached
-and the footprint it observed**, using the ceiling the launch recorded and the limit the engine
-reported back from inside the process that allocates. This classification is load-bearing for
-realness rather than for tidiness: if a capacity refusal is indistinguishable from a bug, then "the
-engine failed" stops being evidence about the engine, and the pressure to paper over an unexplained
-non-zero exit with a synthesized result is exactly the pressure this contract exists to remove.
+The worker therefore does **not** classify that exit from the last sampled peak: an ordinary fault
+after the same weights became resident produces the same evidence. It remains a visible engine
+failure with bounded diagnostics unless the engine supplies a typed report on its owned protocol.
+Guessing a memory cause would make "capacity refusal" stop being evidence and is the same kind of
+false result this contract rejects.
 Within that scope, realness holds iff every adapter and native runner has **no fabrication branch**:
 
 - **Adapter** (`python/adapters/*_python.py` via `common.py` `run_*_adapter`): the only success is
@@ -102,7 +102,8 @@ the residue that ceiling does not charge everywhere else — over a checked `Hos
 a resource-indexed `ModelMemoryRequirement` derived from the model's own artifact and an
 enforcer-typed budget. A lane carries the strength its
 mechanism actually provides in its own type, so a lane that can only sample cannot present itself as
-one that prevents, and a refusal on either lane names its resource.
+one that prevents. A sampled breach names its resource; an unreported kernel refusal remains an
+engine failure rather than receiving a fabricated resource diagnosis.
 
 A row is an explicit residual in `residualMatrixRowIdsForMode` only when its *achievability* is
 uncertain. A row that is merely unbuilt stays declared-runnable and fails closed — never a
@@ -116,14 +117,12 @@ fabricated pass.
   fail-closed mapping covers engine-logic failures; model-memory capacity is additionally covered by
   typed resource admission, which rejects an over-budget request as `ModelMemoryLimitExceeded`
   before launch.
-- The adversarial memory gate changes shape with the mechanism the lane has, and the two shapes prove
-  different things. On a lane that installs a ceiling it is **attempt, then observe the refusal**: the
-  gate drives a launched engine at an over-budget allocation and requires a clean typed
-  `ModelMemoryLimitExceeded` naming the resource, a live daemon, and smaller placements still serving.
-  On a lane that can only sample it remains **exceed, then observe the kill**, and the pass condition
-  is that the sampled backstop terminated the group and produced the same typed failure rather than a
-  `SIGKILL` reported as an engine bug. Neither shape may be satisfied by a fabricated result, which is
-  why both assert the typed constructor rather than the absence of a crash.
+- The adversarial memory gate changes shape with the mechanism the lane has. On a lane that installs
+  a ceiling it proves the allocation is prevented, the daemon survives, and smaller placements keep
+  serving; a typed memory diagnosis additionally requires an engine-owned report. On a lane that can
+  only sample, the pass condition is that the sampled backstop terminates the group and produces a
+  typed failure rather than an unexplained missing result. Neither shape may be satisfied by a
+  fabricated result.
 - `infernix lint docs` rejects the retired fabrication-blessing doc phrases.
 
 ## Cross-References
@@ -137,8 +136,8 @@ fabricated pass.
 - [bounded_inference_memory.md](bounded_inference_memory.md) — the enforcement half of the memory
   contract: an executable capability carries the matching indexed grant/enforcer pair per physical
   resource; adversarial gates prove that an *admitted inference* cannot exceed its ceiling without a
-  typed failure naming the resource it breached — by refusal where a ceiling is installed, and by the
-  sampled backstop where one is not.
+  typed failure naming the resource it breached when the sampled backstop observes an overrun; an
+  installed ceiling separately prevents the private allocation it bounds.
 - [bounded_host_memory.md](bounded_host_memory.md) — the capacity ledger that inference is one row
   of, and the canonical statement of which host out-of-memory conditions are not bounded by any
   phase.

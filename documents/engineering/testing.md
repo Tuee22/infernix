@@ -85,18 +85,15 @@
   launching the engine. Smaller rows remain usable and must honor their per-family real-output
   contract. Canonical doctrine:
   [Bounded Inference Memory](../architecture/bounded_inference_memory.md).
-- The classifier separates **four** outcomes, and conflating any two of them is exactly the confusion
+- The classifier separates the evidence it actually has, and conflating outcomes is exactly the confusion
   the [realness contract](../architecture/realness_contract.md) forbids. A **typed capacity refusal**
   is decided before launch: the row never ran, and the published result names the resource and the
-  quantities that refused it. An **in-run allocation refusal** is decided inside a live engine on a
-  lane that prevents: the process started, the kernel ceiling installed before its first allocation
-  refused an allocation, and the row ends as a clean terminal `status=failed` naming the resource it
-  breached and the footprint it observed. A **missing result** — including an OS out-of-memory kill,
+  quantities that refused it. A **measured in-run breach** is decided only when the watchdog observes
+  a footprint above its ceiling and publishes that observation. A plain non-zero exit remains an
+  **engine failure**, even when its last sampled peak was near the installed ceiling: the same fact
+  accompanies ordinary post-load faults. A **missing result** — including an OS out-of-memory kill,
   and any stall that publishes no terminal event at all — is the pipeline failing rather than a
   decision the pipeline made. A **fabricated pass** is a realness violation whatever memory did.
-  Reading the second class as a crash is the specific error to avoid: an allocation the kernel
-  refused is the mechanism doing its job, while a row that dies with no terminal event is the
-  mechanism absent.
 
 ## Canonical Entry Points
 

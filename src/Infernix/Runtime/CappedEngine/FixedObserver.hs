@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -98,8 +97,14 @@ import System.IO
     stdout,
   )
 import System.IO.Error (isDoesNotExistError, isPermissionError)
+-- infernix-lint: non-engine-process-site
+
+-- infernix-lint: non-engine-process-site
+
+import System.Info (os)
 import System.Posix.Process
-  ( getProcessGroupIDOf,
+  ( getProcessGroupID,
+    getProcessGroupIDOf,
     getProcessID,
   )
 import System.Posix.Signals
@@ -123,19 +128,13 @@ import System.Process
       ),
     ProcessHandle,
     StdStream (CreatePipe, Inherit),
-    -- infernix-lint: non-engine-process-site
     createProcess,
     getPid,
     proc,
     terminateProcess,
-    -- infernix-lint: non-engine-process-site
     waitForProcess,
   )
 import System.Timeout (timeout)
-
-#if defined(darwin_HOST_OS)
-import System.Posix.Process (getProcessGroupID)
-#endif
 
 data FixedObserverKernelTest
   = ObserverNormalCompletion
@@ -152,24 +151,30 @@ data FixedObserverKernelTest
   | ObserverMembershipRecheckFailure
   deriving (Bounded, Enum, Eq, Show)
 
--- The fixed observation requests exist only where their public tools do: the
--- Apple pair on Darwin, the NVIDIA pair everywhere else. A request vocabulary
--- for the absent platform would be unreachable and would fail
--- @-Wunused-top-binds@ under @-Werror@, so each platform compiles only its own.
-#if defined(darwin_HOST_OS)
 data FixedObserverRequest
   = DiscoverProcessGroup CPid
   | MeasureProcessFootprint CPid
-#else
-data FixedObserverRequest
-  = QueryNvidiaComputeApps
+  | QueryNvidiaComputeApps
   | QueryNvidiaDeviceMemory
   | -- | Phase 6 Sprint 6.51: what the card currently has free, as distinct from
     -- what it contains. Admission is against capacity by doctrine, so a
     -- competing tenant changes nothing about what was admitted; what it changes
     -- is whether the admitted arena can actually be taken.
     QueryNvidiaDeviceFreeMemory
-#endif
+
+-- | The one closed host selection for the fixed observer. Both lanes remain
+-- ordinary reachable Haskell values, so every compiler invocation typechecks
+-- every fixed request and specification under @-Wall -Werror@. The selection
+-- changes only which public-tool family may execute on the current host.
+data FixedObserverLane
+  = AppleFixedObserverLane
+  | NvidiaFixedObserverLane
+  deriving (Eq, Show)
+
+currentFixedObserverLane :: FixedObserverLane
+currentFixedObserverLane
+  | os == "darwin" = AppleFixedObserverLane
+  | otherwise = NvidiaFixedObserverLane
 
 data FixedObserverSpec = FixedObserverSpec
   { observerExecutable :: FilePath,
@@ -229,16 +234,15 @@ data ObserverSpawnEvidence = ObserverSpawnEvidence
 -- pre-reap live-member proof. The owner then crosses a masked leader-reap
 -- transition and must not treat the reusable numeric PGID as evidence.
 processGroupHasNoLiveMembers :: CPid -> IO (Either Text Bool)
-#if defined(darwin_HOST_OS)
 processGroupHasNoLiveMembers processGroup =
-  captureSynchronousFailure "Apple process-group live-member observation failed" $ do
-    deadline <- deadlineFromNow observerSampleTimeoutMicros
-    output <- runFixedObserverRequest deadline (DiscoverProcessGroup processGroup)
-    pure (output >>= parseTopProcessGroupLiveMembersAbsent processGroup)
-#else
-processGroupHasNoLiveMembers _ =
-  pure (Left "Apple process-group live-member observation is unavailable on this platform")
-#endif
+  case currentFixedObserverLane of
+    AppleFixedObserverLane ->
+      captureSynchronousFailure "Apple process-group live-member observation failed" $ do
+        deadline <- deadlineFromNow observerSampleTimeoutMicros
+        output <- runFixedObserverRequest deadline (DiscoverProcessGroup processGroup)
+        pure (output >>= parseTopProcessGroupLiveMembersAbsent processGroup)
+    NvidiaFixedObserverLane ->
+      pure (Left "Apple process-group live-member observation is unavailable on this platform")
 
 -- | Phase 4 Sprint 4.40 — how many live members the group holds.
 --
@@ -248,34 +252,32 @@ processGroupHasNoLiveMembers _ =
 -- discovery the footprint sample already performs and adds no caller-supplied
 -- command specification.
 processGroupMemberCount :: CPid -> IO (Either Text Int)
-#if defined(darwin_HOST_OS)
 processGroupMemberCount processGroup =
-  captureSynchronousFailure "Apple process-group member-count observation failed" $ do
-    deadline <- deadlineFromNow observerSampleTimeoutMicros
-    discovered <- discoverProcessGroupMembers deadline processGroup
-    pure (fmap length discovered)
-#else
-processGroupMemberCount _ =
-  pure (Left "Apple process-group member-count observation is unavailable on this platform")
-#endif
+  case currentFixedObserverLane of
+    AppleFixedObserverLane ->
+      captureSynchronousFailure "Apple process-group member-count observation failed" $ do
+        deadline <- deadlineFromNow observerSampleTimeoutMicros
+        discovered <- discoverProcessGroupMembers deadline processGroup
+        pure (fmap length discovered)
+    NvidiaFixedObserverLane ->
+      pure (Left "Apple process-group member-count observation is unavailable on this platform")
 
 processGroupPhysicalFootprintBytes :: CPid -> IO (Either Text Word64)
-#if defined(darwin_HOST_OS)
 processGroupPhysicalFootprintBytes processGroup =
-  captureSynchronousFailure "Apple physical-footprint observation failed" $ do
-    deadline <- deadlineFromNow observerSampleTimeoutMicros
-    discovered <- discoverProcessGroupMembers deadline processGroup
-    case discovered of
-      Left reason -> pure (Left reason)
-      Right members ->
-        sampleCompleteProcessGroupSnapshotWith
-          (observeProcessGroupMembers deadline processGroup)
-          (measureProcessFootprint deadline)
-          members
-#else
-processGroupPhysicalFootprintBytes _ =
-  pure (Left "Apple physical-footprint observation is unavailable on this platform")
-#endif
+  case currentFixedObserverLane of
+    AppleFixedObserverLane ->
+      captureSynchronousFailure "Apple physical-footprint observation failed" $ do
+        deadline <- deadlineFromNow observerSampleTimeoutMicros
+        discovered <- discoverProcessGroupMembers deadline processGroup
+        case discovered of
+          Left reason -> pure (Left reason)
+          Right members ->
+            sampleCompleteProcessGroupSnapshotWith
+              (observeProcessGroupMembers deadline processGroup)
+              (measureProcessFootprint deadline)
+              members
+    NvidiaFixedObserverLane ->
+      pure (Left "Apple physical-footprint observation is unavailable on this platform")
 
 -- | Sum one complete process-group membership snapshot. A member can exit
 -- after @top@ publishes the snapshot but before @footprint@ opens that PID. A
@@ -325,38 +327,33 @@ sampleCompleteProcessGroupSnapshotWith observeMembers measureMember initialMembe
               sampleMembers remaining nextTotal
 
 verifyPhysicalFootprintObserver :: IO Bool
-#if defined(darwin_HOST_OS)
 verifyPhysicalFootprintObserver = do
   observed <- probePhysicalFootprintObserver
   pure $
     case observed of
       Right physicalBytes -> physicalBytes > 0
       Left _ -> False
-#else
-verifyPhysicalFootprintObserver = pure False
-#endif
 
 probePhysicalFootprintObserver :: IO (Either Text Word64)
-#if defined(darwin_HOST_OS)
 probePhysicalFootprintObserver =
-  captureSynchronousFailure "Apple physical-footprint startup probe failed" $ do
-    processId <- getProcessID
-    processGroup <- getProcessGroupID
-    deadline <- deadlineFromNow observerSampleTimeoutMicros
-    discovered <- discoverProcessGroupMembers deadline processGroup
-    case discovered of
-      Left reason -> pure (Left reason)
-      Right members
-        | processId `notElem` members ->
-            pure
-              ( Left
-                  "Apple process-group discovery omitted the current process"
-              )
-        | otherwise -> measureProcessFootprint deadline processId
-#else
-probePhysicalFootprintObserver =
-  pure (Left "Apple physical-footprint observation is unavailable on this platform")
-#endif
+  case currentFixedObserverLane of
+    AppleFixedObserverLane ->
+      captureSynchronousFailure "Apple physical-footprint startup probe failed" $ do
+        processId <- getProcessID
+        processGroup <- getProcessGroupID
+        deadline <- deadlineFromNow observerSampleTimeoutMicros
+        discovered <- discoverProcessGroupMembers deadline processGroup
+        case discovered of
+          Left reason -> pure (Left reason)
+          Right members
+            | processId `notElem` members ->
+                pure
+                  ( Left
+                      "Apple process-group discovery omitted the current process"
+                  )
+            | otherwise -> measureProcessFootprint deadline processId
+    NvidiaFixedObserverLane ->
+      pure (Left "Apple physical-footprint observation is unavailable on this platform")
 
 -- | One NVIDIA compute application as @nvidia-smi@ attributes it. The process
 -- id is reported in the *caller's* PID namespace: NVML resolves each compute
@@ -375,15 +372,14 @@ data NvidiaComputeApp = NvidiaComputeApp
 -- discovery of its own, so the NVIDIA lane spawns one fixed command per sample
 -- rather than the Darwin lane's per-member pair.
 observeNvidiaComputeApps :: IO (Either Text [NvidiaComputeApp])
-#if defined(darwin_HOST_OS)
 observeNvidiaComputeApps =
-  pure (Left "NVIDIA compute-application observation is unavailable on this platform")
-#else
-observeNvidiaComputeApps = do
-  deadline <- deadlineFromNow observerSampleTimeoutMicros
-  output <- runFixedObserverRequest deadline QueryNvidiaComputeApps
-  pure (output >>= parseNvidiaComputeApps)
-#endif
+  case currentFixedObserverLane of
+    AppleFixedObserverLane ->
+      pure (Left "NVIDIA compute-application observation is unavailable on this platform")
+    NvidiaFixedObserverLane -> do
+      deadline <- deadlineFromNow observerSampleTimeoutMicros
+      output <- runFixedObserverRequest deadline QueryNvidiaComputeApps
+      pure (output >>= parseNvidiaComputeApps)
 
 -- | Observe the installed NVIDIA device's total VRAM (MiB). This is the outer
 -- envelope a VRAM grant must fit inside, the GPU analogue of the pod cgroup
@@ -396,26 +392,24 @@ observeNvidiaComputeApps = do
 -- did not start, which is exactly the claimant a refusal must name instead of
 -- assuming absent.
 observeNvidiaDeviceFreeMib :: IO (Either Text Int)
-#if defined(darwin_HOST_OS)
 observeNvidiaDeviceFreeMib =
-  pure (Left "NVIDIA device free-memory observation is unavailable on this platform")
-#else
-observeNvidiaDeviceFreeMib = do
-  deadline <- deadlineFromNow observerSampleTimeoutMicros
-  output <- runFixedObserverRequest deadline QueryNvidiaDeviceFreeMemory
-  pure (output >>= parseNvidiaDeviceTotalMib)
-#endif
+  case currentFixedObserverLane of
+    AppleFixedObserverLane ->
+      pure (Left "NVIDIA device free-memory observation is unavailable on this platform")
+    NvidiaFixedObserverLane -> do
+      deadline <- deadlineFromNow observerSampleTimeoutMicros
+      output <- runFixedObserverRequest deadline QueryNvidiaDeviceFreeMemory
+      pure (output >>= parseNvidiaDeviceTotalMib)
 
 observeNvidiaDeviceTotalMib :: IO (Either Text Int)
-#if defined(darwin_HOST_OS)
 observeNvidiaDeviceTotalMib =
-  pure (Left "NVIDIA device observation is unavailable on this platform")
-#else
-observeNvidiaDeviceTotalMib = do
-  deadline <- deadlineFromNow observerSampleTimeoutMicros
-  output <- runFixedObserverRequest deadline QueryNvidiaDeviceMemory
-  pure (output >>= parseNvidiaDeviceTotalMib)
-#endif
+  case currentFixedObserverLane of
+    AppleFixedObserverLane ->
+      pure (Left "NVIDIA device observation is unavailable on this platform")
+    NvidiaFixedObserverLane -> do
+      deadline <- deadlineFromNow observerSampleTimeoutMicros
+      output <- runFixedObserverRequest deadline QueryNvidiaDeviceMemory
+      pure (output >>= parseNvidiaDeviceTotalMib)
 
 -- | Startup probe for the NVIDIA VRAM sampler. Both fixed requests must
 -- succeed: the device envelope must be positive and the compute-application
@@ -424,21 +418,20 @@ observeNvidiaDeviceTotalMib = do
 -- The per-execution watchdog still treats every later sampling failure as
 -- terminal; this probe is an observation, not permanent evidence.
 probeNvidiaVramObserver :: IO (Either Text Int)
-#if defined(darwin_HOST_OS)
 probeNvidiaVramObserver =
-  pure (Left "NVIDIA VRAM observation is unavailable on this platform")
-#else
-probeNvidiaVramObserver = do
-  observedTotal <- observeNvidiaDeviceTotalMib
-  case observedTotal of
-    Left reason -> pure (Left reason)
-    Right totalMib
-      | totalMib <= 0 ->
-          pure (Left "NVIDIA device reported a non-positive total VRAM")
-      | otherwise -> do
-          computeApps <- observeNvidiaComputeApps
-          pure (totalMib <$ computeApps)
-#endif
+  case currentFixedObserverLane of
+    AppleFixedObserverLane ->
+      pure (Left "NVIDIA VRAM observation is unavailable on this platform")
+    NvidiaFixedObserverLane -> do
+      observedTotal <- observeNvidiaDeviceTotalMib
+      case observedTotal of
+        Left reason -> pure (Left reason)
+        Right totalMib
+          | totalMib <= 0 ->
+              pure (Left "NVIDIA device reported a non-positive total VRAM")
+          | otherwise -> do
+              computeApps <- observeNvidiaComputeApps
+              pure (totalMib <$ computeApps)
 
 verifyNvidiaVramObserver :: IO Bool
 verifyNvidiaVramObserver = do
@@ -447,8 +440,6 @@ verifyNvidiaVramObserver = do
     case observed of
       Right totalMib -> totalMib > 0
       Left _ -> False
-
-#if defined(darwin_HOST_OS)
 
 -- | Discover the group's members for a sample.
 --
@@ -508,8 +499,6 @@ measureProcessFootprint deadline processId = do
   output <- runFixedObserverRequest deadline (MeasureProcessFootprint processId)
   pure (output >>= parseFootprintPhysicalBytes)
 
-#endif
-
 runFixedObserverRequest ::
   ObserverDeadline ->
   FixedObserverRequest ->
@@ -530,7 +519,6 @@ runFixedObserverRequest deadline request =
 -- executable is pinned here rather than resolved from the host-tools manifest
 -- that the operator-facing prerequisite probes use.
 fixedObserverSpec :: FixedObserverRequest -> FixedObserverSpec
-#if defined(darwin_HOST_OS)
 fixedObserverSpec request =
   case request of
     DiscoverProcessGroup processGroup ->
@@ -566,9 +554,6 @@ fixedObserverSpec request =
           observerStdoutLimit = maximumFootprintOutputBytes,
           observerRequiresFixtureGate = False
         }
-#else
-fixedObserverSpec request =
-  case request of
     QueryNvidiaComputeApps ->
       FixedObserverSpec
         { observerExecutable = nvidiaSmiExecutable,
@@ -602,7 +587,6 @@ fixedObserverSpec request =
           observerStdoutLimit = maximumNvidiaOutputBytes,
           observerRequiresFixtureGate = False
         }
-#endif
 
 successfulObserverOutput ::
   FixedObserverSpec ->
@@ -2069,11 +2053,10 @@ fixtureBlockingIntervalMicros = 60000000
 -- fifteen-second sample bound. Linux keeps the five-second NVIDIA bound whose
 -- healthy query is measured in tens of milliseconds.
 observerSampleTimeoutMicros :: Int
-#if defined(darwin_HOST_OS)
-observerSampleTimeoutMicros = 15000000
-#else
-observerSampleTimeoutMicros = 5000000
-#endif
+observerSampleTimeoutMicros =
+  case currentFixedObserverLane of
+    AppleFixedObserverLane -> 15000000
+    NvidiaFixedObserverLane -> 5000000
 
 observerCleanupTimeoutMicros :: Int
 observerCleanupTimeoutMicros = 2000000
@@ -2109,12 +2092,9 @@ maximumNvidiaProcessRows = 1024
 
 -- | The fixed NVIDIA observation tool. Pinned as an absolute path for the same
 -- reason as @\/usr\/bin\/top@: enforcement must not follow a caller-supplied,
--- manifest-supplied, or @PATH@-resolved executable. Only the non-Darwin
--- request vocabulary names it, so the constant lives with that vocabulary.
-#if !defined(darwin_HOST_OS)
+-- manifest-supplied, or @PATH@-resolved executable.
 nvidiaSmiExecutable :: FilePath
 nvidiaSmiExecutable = "/usr/bin/nvidia-smi"
-#endif
 
 maximumFixtureOutputBytes :: Int
 maximumFixtureOutputBytes = 64 * 1024

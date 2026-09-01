@@ -1,10 +1,10 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Active. Sprints 9.1 through 9.10 are `Done`: the routed integration and browser stages
-exercise the admin-gated surfaces and the authentication lifecycle. Sprint 9.11 is open — the admin
-surface is gated twice in two idioms, once from application state and once from a cookie-driven
-detector in the copied HTML shell. Enforcement is unaffected; the duplication is a second rendering
-path no test drives.
+**Status**: Active. Sprints 9.1 through 9.10 are `Done`, and Sprint 9.11 is code-side complete: the
+admin dimension, cluster overview, and personal dashboard render from application state while the
+HTML shell remains static. The current-source native-arm64 `linux-cpu` build, governed unit suite,
+and routed browser suite pass. Wave 9.1 retains the selected current-source `linux-gpu` plus paired
+`linux-cpu` full-suite sign-off.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
 
@@ -29,12 +29,12 @@ credentials are hardcoded (demo app). Enforcement is at two points: the Envoy **
 host-worker **data plane** (MinIO NodePort 30011, Pulsar-proxy NodePort 30080) is loopback-only and
 trust-boundary-internal — it never transits the admin-gated edge.
 
-All ten sprints are code-side complete and the machine-independent gate set is clean: `cabal build
-all`, `cabal test infernix-unit` (including the admin-claim, STS scoped-credential / session-token,
-and generated-Kind-config loopback assertions), `cabal test infernix-haskell-style`, `infernix lint
-chart|docs|files|proto`, `infernix docs check`, and `poetry run check-code`. Every SPA-side Phase 9
-change lives in the verbatim-copied `web/src/index.html`, which the web build copies without
-compilation, so the phase requires no `spago` build.
+All eleven sprints are code-side complete and the machine-independent gate set is clean through the
+governed native-arm64 `linux-cpu` build and `infernix test unit`, including the admin-claim, STS
+scoped-credential / session-token, generated-Kind-config loopback, and compiled PureScript
+application-state assertions. The standalone files, docs, chart, and protobuf lints plus the docs
+check pass. The HTML shell contains only static markup and the compiled application module; admin
+role decoding and both dashboard transports live in the PureScript application boundary.
 
 
 - **Unauthenticated** `GET /api/admin/overview`, `GET /api/cache`, `POST /api/cache/evict`, `/registry`,
@@ -53,16 +53,16 @@ compilation, so the phase requires no `spago` build.
   cross-user key (403); B's `/api/objects/list` is empty and scoped to `users/<B>/`.
 - **Per-user STS (9.7)**: with the default-on `cluster.minio.stsPerUser` the object path works
   end-to-end through the scoped `AssumeRole` credential.
-- **Routed Playwright RBAC + dashboard + lifecycle suite passes** on the accelerator cohort (admin
+- **Routed Playwright RBAC + dashboard + lifecycle suite passes** on current-source native-arm64
+  `linux-cpu` (admin
   sees ribbon/panel/cluster cells; non-admin denied; personal dashboard disjoint;
   logout/re-login/token-refresh; returning-user sign-in; wrong-password rejected; deleted-account
-  auth loop). Browser rendering is substrate-independent — both cohorts deploy the identical baked
-  SPA carrying the admin panel and the personal dashboard — so that run carries to `linux-cpu`,
-  which is validated at the API level above rather than by its own browser run.
+  auth loop). Browser rendering is substrate-independent: every lane deploys the identical baked
+  SPA carrying the application-owned admin panel and personal dashboard.
 
-A later UAT pass surfaced a logout/session-switching defect, closed in Sprint 9.9 and revalidated
-on the selected accelerator plus `linux-cpu` on `linux-cpu` plus the selected `linux-gpu`
-accelerator.
+Sprint 9.9 owns the logout/session-switching contract and its routed authentication-lifecycle
+coverage. Wave 9.1 owns the current-source selected `linux-gpu` plus paired `linux-cpu` full-suite
+closure for the phase.
 
 ## Remaining Work — UAT auth residual [Done]
 
@@ -175,7 +175,9 @@ None.
 ## Sprint 9.5: Admin operator-ribbon gating + cluster-wide monitoring panel [Done]
 
 **Status**: Done
-**Implementation**: `web/src/index.html`, `src/Infernix/Demo/Api.hs`, `web/src/Main.purs`, `web/src/Infernix/Web/Router.purs`
+**Implementation**: `web/src/index.html`, `src/Infernix/Demo/Api.hs`, `web/src/Main.purs`,
+`web/src/Infernix/Web/Auth.purs`, `web/src/Infernix/Web/DashboardTransport.purs`,
+`web/src/Infernix/Web/Router.purs`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/architecture/demo_app_design.md`
 
 ### Objective
@@ -183,23 +185,18 @@ Hide cluster-wide surfaces from non-admins and give admins an in-app cluster-wid
 health, catalog size, all-user counts, runtime/substrate/dispatch).
 
 ### Deliverables
-- SPA hides the operator ribbon from non-admins — **landed** (`index.html`)
+- SPA hides the operator ribbon from non-admins through `AppState.isAdmin` and the application
+  renderer; the shell marks the surface hidden before the compiled module mounts
 - admin-gated `GET /api/admin/overview` endpoint (`withAdminRequest`) returning real cluster-wide
   aggregates (substrate, dispatch mode, catalog/engine-pool sizes, coordinator-visible model-cache
-  manifest count, and the count of distinct `users/<sub>/` object prefixes) — **landed**
-  (`cabal build all` + `cabal test infernix-unit` green)
-- admin cluster-wide panel (`#admin-panel`, reads `/api/admin/overview`) + gating the platform summary
-  grid — **landed**: the five infrastructure summary cells (`.summary-item.cluster-summary`: Runtime,
-  Control Plane, Daemon, Dispatch, Edge) and `#admin-panel` are admin-only, while Catalog, Connection,
-  and the per-user personal dashboard stay visible to every authenticated user (`index.html`)
-- the verbatim-copied `index.html` detector plus vanilla-JS panels are the shipped form of this
-  gate. Folding the ribbon + panel + grid gate into PureScript state (`AppState.isAdmin` +
-  `renderAuthGate`) is the more idiomatic form and is a deferral the plan accepts as a choice, not
-  as blocked work: the web build lane already exists (`web/spago.yaml`, built and exercised by
-  `infernix test unit` through `spago build` / `spago test`), so nothing gates the refinement. It
-  is deferred because the SPA gate is presentation only — the edge `SecurityPolicy` (9.3) and the
-  backend `withAdminRequest` gate are the enforcement boundary — so the two forms are equivalent
-  in access-control terms and the rewrite buys idiom rather than security
+  manifest count, and the count of distinct `users/<sub>/` object prefixes), covered by the
+  governed unit suite
+- admin cluster-wide panel (`#admin-panel`, reads `/api/admin/overview`) plus the platform summary
+  grid are rendered from the same state transition as the signed-in gate: Runtime, Control Plane,
+  Daemon, Dispatch, Edge, and `#admin-panel` are admin-only, while Catalog, Connection, and the
+  personal dashboard remain visible to every authenticated user
+- the in-memory access token derives the presentation-only admin dimension; the edge
+  `SecurityPolicy` and backend `withAdminRequest` remain the authorization boundaries
 
 ### Validation
 - unit + build green; admin sees panel/ribbon and the cluster-summary cells; non-admin does not
@@ -211,7 +208,8 @@ None.
 ## Sprint 9.6: User personal dashboard [Done]
 
 **Status**: Done
-**Implementation**: `web/src/index.html`, `src/Infernix/Demo/Api.hs` (existing `handleObjectsList`)
+**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/FilesTransport.purs`,
+`src/Infernix/Demo/Api.hs` (existing `handleObjectsList`)
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/architecture/demo_app_design.md`
 
 ### Objective
@@ -219,13 +217,10 @@ Every user gets a dashboard scoped strictly to their own data (own artifacts / o
 existing per-user `/api/objects/list`. No cluster-wide data.
 
 ### Deliverables
-- personal dashboard view; disjoint per user by construction — **landed** (`index.html` +
-  `/api/objects/list`)
-- the `index.html` vanilla-JS panel is the shipped form, consistent with Sprint 9.5; folding the
-  dashboard into PureScript state is a deferral the plan accepts as a choice rather than blocked
-  work, since the `spago` build lane already exists. Disjointness does not depend on which form
-  renders it: `handleObjectsList` scopes the listing server-side to the caller's verified
-  `users/<sub>/` prefix
+- the personal dashboard is a second rendering of the Files view's application state and therefore
+  uses the same authenticated `/api/objects/list` transport
+- `handleObjectsList` scopes the listing server-side to the caller's verified `users/<sub>/` prefix,
+  so dashboard disjointness is independent of the presentation renderer
 
 ### Validation
 - routed e2e: a second user sees a disjoint set (Sprint 9.8)
@@ -358,36 +353,46 @@ None.
 ## Sprint 9.11: The Admin Gate Renders From Application State [Active]
 
 **Status**: Active
-**Implementation**: `web/src/Main.purs`, `web/src/index.html`
+**Code-side closure**: Complete — the governed native-arm64 `linux-cpu` build and unit suite plus
+the routed `linux-cpu` browser suite pass.
+**Cohort gate**: Wave 9.1 — selected current-source `linux-gpu` plus paired `linux-cpu`
+`infernix test all` remain.
+**Implementation**: `web/src/Main.purs`, `web/src/index.html`, `web/src/Infernix/Web/Auth.purs`,
+`web/src/Infernix/Web/Auth.js`, `web/src/Infernix/Web/Browser.purs`,
+`web/src/Infernix/Web/Browser.js`, `web/src/Infernix/Web/DashboardTransport.purs`,
+`web/src/Infernix/Web/DashboardTransport.js`, `web/test/Infernix/Web/AuthSpec.purs`,
+`web/playwright/inference.spec.js`
 **Blocked by**: nothing.
 **Docs to update**: none.
 
 ### Objective
 
-The admin surface is gated twice in two idioms. The compiled application renders the signed-in and
-signed-out states, while the copied HTML shell carries a cookie-driven detector that gates the
-operator ribbon, the admin panel and the cluster summary cells, and fetches the personal dashboard
-with its own script.
-
-Enforcement is unaffected either way: the edge authorization rule, the backend admin gate and the
-server-side per-user scoping are the boundary, and none of them lives in the shell. What the
-duplication costs is a second rendering path that no test drives and that drifts from the first.
+The admin dimension is application state and the same renderer owns signed-in state, the operator
+ribbon, cluster summary cells, cluster monitoring, and the personal dashboard. The HTML shell is a
+static mount surface. Enforcement remains at the edge authorization rule, backend admin gate, and
+server-side per-user scoping boundaries.
 
 ### Deliverables
 
-- the admin dimension becomes application state, rendered by the same path as the other auth states
-- the cookie-driven detector, the panel script and the dashboard fetch leave the shell
-- the cleanup ledger row for the shell gate is deleted when the surface is gone
+- `AppState.isAdmin` derives from the in-memory Keycloak access token and renders through the same
+  path as the other authentication states
+- the admin overview transport and the Files-backed personal dashboard update typed application
+  state; focus, visibility restoration, and the bounded refresh loop dispatch one application action
+- `index.html` contains no cookie-driven detector, panel script, or dashboard fetch
+- the cleanup ledger contains no row for the retired shell gate
 
 ### Validation
 
-- the web unit suite through the governed toolchain
-- routed browser coverage of the admin and non-admin paths on `linux-cpu`
+- governed native-arm64 `linux-cpu` image build and `infernix test unit`, including 86/86 web tests
+- routed native-arm64 `linux-cpu` `infernix test e2e`: 16/16 browser tests, including admin,
+  non-admin, personal-dashboard isolation, authentication lifecycle, and every catalog model
+- `infernix lint files|docs|chart|proto`, `infernix docs check`, and `infernix lint plan`
+- cohort: Wave 9.1 selected `linux-gpu` plus paired `linux-cpu` full suites
 
 ### Remaining Work
 
-The shell still carries the detector and the dashboard fetch, and the application state has no admin
-field.
+Validation-only: Wave 9.1 retains selected current-source `linux-gpu` plus paired `linux-cpu`
+`infernix test all` against one frozen Phase 9 state.
 
 ---
 

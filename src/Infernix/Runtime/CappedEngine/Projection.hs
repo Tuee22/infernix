@@ -82,9 +82,11 @@ data EngineProjectionRequest = EngineProjectionRequest
 -- | The closed per-family projection catalog.
 --
 -- @Nothing@ is a positive statement rather than an omission: that engine family
--- ships no projection tool, so its ceiling is the artifact-derived quantity and
--- its provenance says exactly that. It is not the same outcome as a probe that
--- was asked and failed, which is a typed refusal at the call site.
+-- ships no projection tool, so artifact derivation remains its admission
+-- quantity while the admitted lane budget bounds execution. The installed
+-- value records that distinction in its provenance. This is not the same
+-- outcome as a probe that was asked and failed, which is a typed refusal at the
+-- call site.
 --
 -- llama.cpp ships @llama-fit-params@ in the same pinned payload as the
 -- completion front-end, and @-fitp on@ makes it print its estimated required

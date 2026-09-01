@@ -124,7 +124,12 @@ import Infernix.ClusterConfig
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig (renderGeneratedDemoConfigPayload, resolveInferenceMemoryBudget, restampMachineContractPin)
-import Infernix.DemoConfig.Internal (decodeBootstrapDemoConfigFile, decodeDemoConfigFile)
+import Infernix.DemoConfig.Internal
+  ( decodeBootstrapDemoConfigFile,
+    decodeBootstrapPublicationConfigFile,
+    decodePresentationConfigFile,
+    decodePublicationConfigFile,
+  )
 import Infernix.DhallSchema.Enums (daemonRoleToDhall)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Error
@@ -1359,8 +1364,8 @@ warmModelCache paths runtimeMode inputs
   | not (clusterUpDemoUiEnabled inputs) =
       putStrLn "warm-model-cache: demo_ui disabled; skipping"
   | otherwise = do
-      demoConfig <- decodeDemoConfigFile (clusterUpPublishedCatalogPath inputs)
-      let configuredModelIds = map modelId (models demoConfig)
+      demoConfig <- decodePublicationConfigFile (clusterUpPublishedCatalogPath inputs)
+      let configuredModelIds = map modelId (publicationModels demoConfig)
       if null configuredModelIds
         then putStrLn "warm-model-cache: no models configured (empty-models config); skipping"
         else do
@@ -1420,9 +1425,9 @@ prepareClusterUpInputs paths runtimeMode = do
   requestedRegistryPort <- chooseRegistryPort paths
   requestedPulsarHttpPort <- choosePulsarHttpPort paths
   generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
-  generatedConfig <- decodeBootstrapDemoConfigFile generatedConfigPath
+  generatedConfig <- decodeBootstrapPublicationConfigFile generatedConfigPath
   inferenceMemoryBudgetValue <- resolveInferenceMemoryBudget paths runtimeMode
-  let demoUiEnabledValue = demoUiEnabled generatedConfig
+  let demoUiEnabledValue = publicationDemoUiEnabled generatedConfig
       publishedCatalogPath = Config.publishedConfigMapCatalogPath paths
       configMapManifestPath = Config.publishedConfigMapManifestPath paths
       publicationPath = Config.publicationStatePath paths
@@ -1432,7 +1437,7 @@ prepareClusterUpInputs paths runtimeMode = do
       -- dimension across that regeneration. Read from the declared member ids,
       -- which is the only place the generated contract records it.
       publishedMachineCount =
-        engineMachineCountFromMemberIds (map engineMemberId (engineMembers generatedConfig))
+        engineMachineCountFromMemberIds (map engineMemberId (publicationEngineMembers generatedConfig))
       payload =
         Lazy.fromStrict
           ( renderGeneratedDemoConfigPayload
@@ -1459,7 +1464,7 @@ prepareClusterUpInputs paths runtimeMode = do
     renderFleetMachineContracts
       paths
       publishedDigest
-      (fleetMemberIdsForPublication runtimeMode (map engineMemberId (engineMembers generatedConfig)))
+      (fleetMemberIdsForPublication runtimeMode (map engineMemberId (publicationEngineMembers generatedConfig)))
   pure
     ClusterUpInputs
       { clusterUpControlPlane = Config.controlPlaneContext paths,
@@ -1472,7 +1477,7 @@ prepareClusterUpInputs paths runtimeMode = do
         clusterUpPublishedCatalogPath = publishedCatalogPath,
         clusterUpConfigMapManifestPath = configMapManifestPath,
         clusterUpMountedCatalogPath = mountedCatalogPath,
-        clusterUpEngineMemberIds = map engineMemberId (engineMembers generatedConfig),
+        clusterUpEngineMemberIds = map engineMemberId (publicationEngineMembers generatedConfig),
         clusterUpFleetMachineContracts = fleetMachineContracts,
         clusterUpPayload = payload
       }
@@ -3524,8 +3529,8 @@ runPlaywrightPrepareEngine requestedModelId =
                 (Command.WorkloadRef workload)
                 replicas
             )
-    demoConfig <- decodeDemoConfigFile (generatedDemoConfigPath state)
-    case configRuntimeMode demoConfig of
+    demoConfig <- decodePresentationConfigFile (generatedDemoConfigPath state)
+    case presentationRuntimeMode demoConfig of
       AppleSilicon -> pure ()
       LinuxCpu ->
         -- Phase 8 Sprint 8.12: a fleet deploys one Deployment per machine and
@@ -3539,7 +3544,7 @@ runPlaywrightPrepareEngine requestedModelId =
           maybe
             (ioError . userError $ "Playwright model is absent from the generated catalog: " <> Text.unpack requestedModelId)
             pure
-            (List.find ((== requestedModelId) . modelId) (models demoConfig))
+            (List.find ((== requestedModelId) . modelId) (presentationModels demoConfig))
         binding <-
           maybe
             (ioError . userError $ "Playwright model has no selected engine binding: " <> Text.unpack requestedModelId)
@@ -6381,8 +6386,8 @@ writeGeneratedKindConfig paths runtimeMode machineCount edgePortValue registryPo
 resolveClusterEngineMachineCount :: Paths -> RuntimeMode -> IO EngineMachineCount
 resolveClusterEngineMachineCount paths runtimeMode = do
   generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
-  generatedConfig <- decodeBootstrapDemoConfigFile generatedConfigPath
-  pure (engineMachineCountFromMemberIds (map engineMemberId (engineMembers generatedConfig)))
+  generatedConfig <- decodeBootstrapPublicationConfigFile generatedConfigPath
+  pure (engineMachineCountFromMemberIds (map engineMemberId (publicationEngineMembers generatedConfig)))
 
 -- | Phase 3 follow-on (2026-05-29): the containerd registry-hosts
 -- namespace is keyed on @localhost:<host-port>@ — the same address

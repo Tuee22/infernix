@@ -1,5 +1,14 @@
 export const currentOrigin = () => window.location.origin;
 
+export const bindDashboardRefresh = (action) => () => {
+  window.addEventListener("focus", () => action());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      action();
+    }
+  });
+};
+
 const activeContextKey = "infernix.activeContext";
 
 export const readStoredActiveContext = () => {

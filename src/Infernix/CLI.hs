@@ -126,6 +126,7 @@ import Infernix.Types
     PersistentClaim (..),
     ResultPayload (..),
     RuntimeMode (AppleSilicon),
+    engineMembers,
     runtimeModeId,
   )
 import Infernix.Web.Contracts qualified as Contracts

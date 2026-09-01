@@ -52,10 +52,6 @@ import Infernix.Models
   ( catalogForMode,
     engineBindingForSelectedEngine,
   )
-import Infernix.Models.Requirement
-  ( keyValueCacheBytes,
-    modelRequirementBytesToMib,
-  )
 import Infernix.Runtime (executeExecutableInferenceWithKVCache)
 import Infernix.Runtime.CappedEngine qualified as CappedEngine
 import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
@@ -65,7 +61,6 @@ import Infernix.Runtime.Worker
     WorkerModelCacheConfig (..),
     buildWorkerRequest,
     modelCeilingBreachError,
-    modelCeilingRefusalError,
     runExecutableInferenceWorker,
     workerFailureResponse,
     workerRequestModelCacheConfig,
@@ -75,8 +70,6 @@ import Infernix.Types
     DaemonConfig (..),
     DaemonRole (..),
     DemoConfig (..),
-    EngineMember (..),
-    EnginePool (..),
     HostMemoryPartition,
     InferenceMemoryBudget
       ( DualEnforcedBudget,
@@ -86,6 +79,7 @@ import Infernix.Types
     InferenceRequest (..),
     ModelDescriptor (modelId, runtimeMode, selectedEngine),
     PodMemoryLimit (..),
+    PoolCatalog (..),
     PulsarConnectionMode (ConfiguredTransport),
     RuntimeMode (AppleSilicon, LinuxCpu, LinuxGpu),
     defaultModelBootstrapTopic,
@@ -813,149 +807,47 @@ assertBreachPayloadFidelity =
             ( "Sprint 4.42: the acknowledgement comparison reads the launch's own "
                 <> "installed ceiling, so its resource is the one the region bound"
             )
-          runCeilingRefusalAssertions model executable
+          runCeilingExitClassificationAssertions model executable
 
--- | Phase 4 Sprint 4.44 — a kernel-refused allocation is a typed breach.
---
--- The Wave Z run that produced this sprint published @status=failed@ with no
--- typed error at all: the payload read @native engine worker failed:
--- llama-cpp-cli (exit code 1)@ while the ceiling was what caused that exit.
--- Neither existing layer caught it, so an operator could not tell "the bound I
--- installed was too tight" from "the engine is broken" — and the two demand
--- opposite responses.
-runCeilingRefusalAssertions :: ModelDescriptor -> ExecutableModel -> IO ()
-runCeilingRefusalAssertions model executable = do
+-- | Phase 4 Sprint 4.46 — a plain non-zero exit is never promoted to a memory
+-- refusal. The kernel reports only the failed allocation to the engine; it does
+-- not report its cause to this parent. A resident-set peak near the installed
+-- limit is therefore not evidence: an ordinary fault after loading the same
+-- weights has the same observation. Only an explicit watchdog breach produces
+-- the typed memory outcome.
+runCeilingExitClassificationAssertions :: ModelDescriptor -> ExecutableModel -> IO ()
+runCeilingExitClassificationAssertions model executable = do
   let laneCeiling =
         CappedEngine.executableEngineCeiling Ceiling.NoEngineProjection executable
       installedMib = Ceiling.installedCeilingMib laneCeiling
-      -- This fixture's descriptor is an `apple-silicon` catalog row, whose lane
-      -- installs nothing by construction. The classifier is a property of the
-      -- lane that /does/ install, so it is exercised against that lane's own
-      -- resolved ceiling at the same admitted quantity, and the detection-only
-      -- lane is asserted separately as the negative it is.
-      installed =
-        Ceiling.resolveEngineCeiling
-          Types.LinuxCpu
-          Types.PodRam
-          installedMib
-          Ceiling.NoEngineProjection
-      marginMib = CappedEngine.accountedAllocationMarginMibForTest executable
-      shape = Types.modelExecutionShape model
-      expectedMarginMib =
-        case Types.modelGeometry model of
-          Nothing -> 0
-          Just geometry ->
-            modelRequirementBytesToMib
-              ( keyValueCacheBytes
-                  geometry
-                  (Types.executionContextLength shape)
-                  (Types.executionCacheElementWidth shape)
-              )
-      classify =
-        CappedEngine.classifyCeilingRefusalForTest executable installed
       failedExit = CappedEngine.EngineExited (ExitFailure 1)
-      refusalAt peakMib =
-        CappedEngine.EngineRefusedAtCeiling
-          Types.PodRam
-          installedMib
-          peakMib
-          (ExitFailure 1)
-      refusalPeakMib = max 0 (installedMib - 2)
-      refusal =
-        modelCeilingRefusalError model Types.PodRam installedMib refusalPeakMib
       breachPayload =
         modelCeilingBreachError model Types.PodRam installedMib (installedMib + 5)
   assert
-    (marginMib == expectedMarginMib && marginMib > 0)
-    ( "Sprint 4.44: the classification margin is the model's own derived cache "
-        <> "term, which is a quantity the plan already computed rather than an "
-        <> "authored constant"
+    (CappedEngine.unreportedEngineExitForTest (ExitFailure 1) == failedExit)
+    ( "Sprint 4.46: an ordinary engine fault remains an ordinary fault even "
+        <> "after the model's resident weights have been loaded"
     )
   assert
-    (classify [(Types.PodRam, installedMib)] failedExit == refusalAt installedMib)
-    ( "Sprint 4.44: a non-zero exit whose peak reached the installed ceiling is "
-        <> "classified as a refusal naming the resource and the ceiling"
-    )
-  assert
-    ( classify [(Types.PodRam, installedMib - marginMib)] failedExit
-        == refusalAt (installedMib - marginMib)
-    )
-    ( "Sprint 4.44: a peak within the accounted allocation of the ceiling is a "
-        <> "refusal for an allocation the plan itself knew about"
-    )
-  -- The load-bearing negative. A classifier that fired on any non-zero exit
-  -- would pass every assertion above and replace a missing diagnosis with a
-  -- wrong one, which is the defect pointing the other way.
-  assert
-    (classify [(Types.PodRam, installedMib - marginMib - 1)] failedExit == failedExit)
-    ( "Sprint 4.44: an exit whose peak stayed clear of the ceiling is left an "
-        <> "ordinary engine failure rather than guessed at"
-    )
-  assert
-    ( classify [] failedExit == failedExit
-        && classify [(Types.NvidiaVram, installedMib)] failedExit == failedExit
-    )
-    ( "Sprint 4.44: a peak on another resource, or no peak at all, is not "
-        <> "evidence about the resource the ceiling bound"
-    )
-  assert
-    ( classify [(Types.PodRam, installedMib)] (CappedEngine.EngineExited ExitSuccess)
+    ( CappedEngine.unreportedEngineExitForTest ExitSuccess
         == CappedEngine.EngineExited ExitSuccess
     )
-    "Sprint 4.44: a successful engine is never reclassified as a memory failure"
+    "Sprint 4.46: an unreported successful exit keeps its exit shape"
   assert
-    ( CappedEngine.classifyCeilingRefusalForTest
-        executable
-        laneCeiling
-        [(Types.PodRam, installedMib)]
-        failedExit
-        == failedExit
+    ( Types.inferenceErrorSource breachPayload
+        == Types.cappedEngineResidentCeilingSource
+        && Types.inferenceErrorRequiredMib breachPayload
+          > Types.inferenceErrorAvailableMib breachPayload
     )
-    ( "Sprint 4.44: a detection-only lane installed no ceiling, so nothing there "
-        <> "can have been refused by one"
-    )
-  assert
-    ( classify
-        [(Types.PodRam, installedMib)]
-        (CappedEngine.EngineExceededCeiling Types.PodRam installedMib (installedMib + 5))
-        == CappedEngine.EngineExceededCeiling Types.PodRam installedMib (installedMib + 5)
-    )
-    ( "Sprint 4.44: a sampled overrun keeps its own shape and is not rewritten "
-        <> "as a refusal"
-    )
-  assert
-    ( Types.inferenceErrorSource refusal == Types.cappedEngineRefusedAtCeilingSource
-        && Types.inferenceErrorSource breachPayload
-          == Types.cappedEngineResidentCeilingSource
-    )
-    ( "Sprint 4.44: the payload distinguishes a refusal at the boundary from an "
-        <> "overrun above it by naming its own source"
-    )
-  assert
-    ( Types.inferenceErrorAvailableMib refusal == installedMib
-        && Types.inferenceErrorRequiredMib refusal == refusalPeakMib
-        && Types.inferenceErrorRequiredMib refusal
-          <= Types.inferenceErrorAvailableMib refusal
-    )
-    ( "Sprint 4.44: the refusal reports the ceiling it installed and the peak "
-        <> "that was actually observed, inventing no number above the limit"
+    ( "Sprint 4.46: the typed memory outcome is reserved for a watchdog's "
+        <> "explicit observation above the ceiling"
     )
   assert
     ( Text.isInfixOf
-        "was refused an allocation"
-        (Types.message (workerFailureResponse (WorkerTypedInferenceFailure refusal)))
-        && Text.isInfixOf
-          "breached its admitted"
-          ( Types.message
-              (workerFailureResponse (WorkerTypedInferenceFailure breachPayload))
-          )
+        "breached its admitted"
+        (Types.message (workerFailureResponse (WorkerTypedInferenceFailure breachPayload)))
     )
-    "Sprint 4.44: the two shapes render operator lines a reader can tell apart"
-  assert
-    ( errorCode (workerFailureResponse (WorkerTypedInferenceFailure refusal))
-        == Types.modelMemoryLimitExceededErrorCode
-    )
-    "Sprint 4.44: a refusal is still a memory-limit outcome on the reserved code"
+    "Sprint 4.46: an observed breach retains its diagnosable operator message"
   -- Phase 4 Sprint 4.43: an underivable projection renders its own code and
   -- reads no quantity out of a payload that deliberately carries none.
   let underivable =
@@ -1534,33 +1426,16 @@ sampleConfig =
       generatedPath = ".build/execution-plan-internal.dhall",
       mountedPath = "/opt/infernix/execution-plan-internal.dhall",
       demoUiEnabled = False,
-      coordinatorDaemon = coordinatorConfig,
-      webappDaemon = webappConfig,
-      engineDaemons = [engineDaemonConfig],
-      enginePools =
-        [ EnginePool
-            { enginePoolId = samplePoolId,
-              enginePoolRuntimeMode = AppleSilicon,
-              enginePoolModelIds = [sampleModelId],
-              enginePoolMemberIds = [sampleMemberId],
-              enginePoolSubscriptionType = ConsumerShared,
-              enginePoolMaxInflightPerMember = 1
+      configPoolCatalogs =
+        [ PoolCatalog
+            { poolCatalogId = samplePoolId,
+              poolCatalogMemberIds = [sampleMemberId],
+              poolCatalogSubscriptionType = ConsumerShared,
+              poolCatalogModels = [sampleModel]
             }
         ],
-      engineMembers =
-        [ EngineMember
-            { engineMemberId = sampleMemberId,
-              engineMemberRuntimeMode = AppleSilicon,
-              engineMemberLocation = "control-plane-host",
-              engineMemberPoolIds = [samplePoolId]
-            }
-        ],
-      requestTopics = [sampleCoordinatorTopic],
-      resultTopic = sampleResultTopic,
       modelsBucket = defaultModelsBucket,
       modelBootstrapTopic = defaultModelBootstrapTopic,
-      engines = [sampleEngineBinding],
-      models = [sampleModel],
       inferenceMemoryBudget = HostEnforcedBudget expectedHostPartition
     }
 
@@ -1580,7 +1455,10 @@ gpuConfig =
   sampleConfig
     { configRuntimeMode = LinuxGpu,
       inferenceMemoryBudget = DualEnforcedBudget residentPodLimit gpuPodLimit,
-      models = [gpuSampleModel]
+      configPoolCatalogs =
+        [ catalog {poolCatalogModels = [gpuSampleModel]}
+        | catalog <- configPoolCatalogs sampleConfig
+        ]
     }
 
 coordinatorConfig :: DaemonConfig

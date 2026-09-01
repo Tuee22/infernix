@@ -559,7 +559,7 @@ test("admin sees cluster-wide surfaces", async ({ page, request, infernixFixture
   expect(publication.runtimeMode).toBeTruthy();
 
   await loginExistingKeycloakUser(page, baseUrl, "admin", "infernix-admin-demo");
-  await expect(page.locator("html")).toHaveClass(/infernix-admin/, { timeout: 30000 });
+  await expect(page.locator("body")).toHaveClass(/auth-admin/, { timeout: 30000 });
 
   await expectOperatorRibbon(page);
   await expectAdminPanel(page);
@@ -686,7 +686,7 @@ test("sign out clears SSO before switching from user to admin", async ({ page, i
   await page.locator("#login-button").click();
   await completeLoginPrompt(page, { username: "admin", password: "infernix-admin-demo" });
   await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
-  await expect(page.locator("html")).toHaveClass(/infernix-admin/, { timeout: 30000 });
+  await expect(page.locator("body")).toHaveClass(/auth-admin/, { timeout: 30000 });
   await expectOperatorRibbon(page);
 });
 
@@ -2238,16 +2238,16 @@ async function loginExistingKeycloakUser(page, baseUrl, username, password) {
   await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
 }
 
-// Phase 9 Sprint 9.8: a non-admin never sees the operator ribbon — the ribbon is
-// CSS-hidden and <html> never carries the .infernix-admin marker class.
+// A non-admin never sees the operator ribbon and the application state renderer
+// never marks the signed-in body as administrative.
 async function expectNoOperatorRibbon(page) {
   await expect(page.locator(".operator-ribbon")).toBeHidden();
-  await expect(page.locator("html")).not.toHaveClass(/infernix-admin/);
+  await expect(page.locator("body")).not.toHaveClass(/auth-admin/);
 }
 
-// Phase 9 Sprint 9.8: the admin monitoring panel is visible (CSS-gated on
-// <html class="infernix-admin">, which already proves the admin gate applied)
-// and populated by the admin-gated /api/admin/overview fetch. A real substrate
+// The admin monitoring panel is visible through the same application-state
+// renderer as the signed-in gate and populated by the admin-gated
+// /api/admin/overview fetch. A real substrate
 // id is alphanumeric and never the "loading"/"–" placeholder. The fetch only
 // fires once the page is admin, so nudge a dashboard refresh each poll to avoid
 // waiting a full 15s interval.

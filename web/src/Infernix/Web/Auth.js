@@ -9,6 +9,37 @@ let refreshToken = null;
 let idToken = null;
 let refreshTimeoutId = null;
 
+const adminRole = "infernix-admin";
+
+function base64UrlDecode(segment) {
+  const padded = segment.replace(/-/g, "+").replace(/_/g, "/").padEnd(
+    segment.length + ((4 - (segment.length % 4)) % 4),
+    "=",
+  );
+  try {
+    return globalThis.atob(padded);
+  } catch {
+    return "";
+  }
+}
+
+export const tokenHasAdminRole = (token) => {
+  if (!token) {
+    return false;
+  }
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return false;
+  }
+  try {
+    const payload = JSON.parse(base64UrlDecode(parts[1]));
+    const roles = payload?.realm_access?.roles;
+    return Array.isArray(roles) && roles.includes(adminRole);
+  } catch {
+    return false;
+  }
+};
+
 function absoluteUrl(value) {
   return new URL(value, window.location.origin).toString();
 }

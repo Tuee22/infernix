@@ -78,8 +78,16 @@ import Infernix.Types hiding (generatedDemoConfigPath)
 -- Pulsar transport module. The daemon layer decides which role starts
 -- coordinator loops, which role owns engine execution, and which
 -- process-local engine KV cache is threaded into request handling.
+--
+-- Phase 8 Sprint 8.14 gives routing its own nominal view. A coordinator never
+-- receives an engine execution capability, while an engine cannot be passed a
+-- routing value in its place.
+newtype RoutingExecutionPlan = RoutingExecutionPlan
+  { routingRuntimePlan :: CompiledRuntimePlan
+  }
+
 data DaemonExecutionPlan
-  = RoutingDaemonPlan CompiledRuntimePlan
+  = RoutingDaemonPlan RoutingExecutionPlan
   | ExecutingDaemonPlan Text.Text EngineExecutionPlan
 
 runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> Maybe FilePath -> DaemonRole -> Maybe Text.Text -> IO ()
@@ -139,7 +147,7 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
                     (userError "compiled engine daemon has no member identity")
                 Just memberId -> pure memberId
             pure (ExecutingDaemonPlan memberIdValue executionPlan)
-      Coordinator -> pure (RoutingDaemonPlan compiledPlan)
+      Coordinator -> pure (RoutingDaemonPlan (RoutingExecutionPlan compiledPlan))
       Webapp ->
         ioError
           (userError "webapp role does not run the inference topic daemon")
@@ -180,8 +188,8 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
 daemonExecutableModelCount :: DaemonExecutionPlan -> Int
 daemonExecutableModelCount daemonPlan =
   case daemonPlan of
-    RoutingDaemonPlan compiledPlan ->
-      length (compiledPlanAvailableModels compiledPlan)
+    RoutingDaemonPlan routingPlan ->
+      length (compiledPlanAvailableModels (routingRuntimePlan routingPlan))
     ExecutingDaemonPlan _ executionPlan ->
       let runtimePlan = engineExecutionRuntimePlan executionPlan
        in length (runtimePlanModels runtimePlan)
@@ -189,7 +197,7 @@ daemonExecutableModelCount daemonPlan =
 daemonCompiledPlan :: DaemonExecutionPlan -> CompiledRuntimePlan
 daemonCompiledPlan daemonPlan =
   case daemonPlan of
-    RoutingDaemonPlan compiledPlan -> compiledPlan
+    RoutingDaemonPlan routingPlan -> routingRuntimePlan routingPlan
     ExecutingDaemonPlan _ executionPlan ->
       runtimePlanCompiledPlan (engineExecutionRuntimePlan executionPlan)
 
@@ -198,8 +206,8 @@ daemonTopicCapabilities ::
   Either String [DaemonTopicCapability]
 daemonTopicCapabilities daemonPlan =
   case daemonPlan of
-    RoutingDaemonPlan compiledPlan ->
-      Right (coordinatorTopicCapabilities compiledPlan)
+    RoutingDaemonPlan routingPlan ->
+      Right (coordinatorTopicCapabilities (routingRuntimePlan routingPlan))
     ExecutingDaemonPlan memberIdValue executionPlan ->
       engineTopicCapabilities memberIdValue executionPlan
 
@@ -322,9 +330,10 @@ withDaemonEngineMemberClaim transport daemonPlan action =
 
 startCoordinatorLoops ::
   PulsarTransport ->
-  CompiledRuntimePlan ->
+  RoutingExecutionPlan ->
   IO ()
-startCoordinatorLoops transport compiledPlan = do
+startCoordinatorLoops transport routingPlan = do
+  let compiledPlan = routingRuntimePlan routingPlan
   putStrLn "serviceResultBridgeMode: failover-subscription"
   _ <-
     forkIO

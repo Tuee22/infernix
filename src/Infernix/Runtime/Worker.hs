@@ -9,7 +9,6 @@ module Infernix.Runtime.Worker
     buildWorkerRequest,
     loadWorkerModelCacheConfig,
     modelCeilingBreachError,
-    modelCeilingRefusalError,
     nativeArtifactMarkerPathsForTest,
     nativeModelCacheObjectKeys,
     pythonEngineBootstrapManifestRequiredForTest,
@@ -63,8 +62,7 @@ import Infernix.Runtime.CappedEngine
         EngineExceededCeiling,
         EngineExited,
         EngineOutputCaptureFailed,
-        EngineOutputLimitExceeded,
-        EngineRefusedAtCeiling
+        EngineOutputLimitExceeded
       ),
     EngineOutputStream (EngineStandardError, EngineStandardOutput),
     NativeArtifactCache,
@@ -206,31 +204,6 @@ modelCeilingBreachError model resource ceilingMib observedMib =
       inferenceErrorSource = cappedEngineResidentCeilingSource
     }
 
--- | Phase 4 Sprint 4.44 — the payload for a /kernel refusal at the boundary/,
--- which is a different shape from a sampled overrun above it.
---
--- Both numbers are ones that were measured: @availableMib@ is the ceiling that
--- was installed, and @requiredMib@ is the peak the sampler actually observed,
--- which for a refused allocation is at or below that ceiling rather than above
--- it. Sprint 4.37's invariant that required strictly exceeds available belongs
--- to 'modelCeilingBreachError' and is left there rather than weakened: inventing
--- a number above the limit to satisfy it here would be the same fabrication the
--- breach path was corrected for. The source names which shape this is.
-modelCeilingRefusalError ::
-  ModelDescriptor ->
-  Resource ->
-  Int ->
-  Int ->
-  InferenceError
-modelCeilingRefusalError model resource ceilingMib observedMib =
-  ModelMemoryLimitExceeded
-    { inferenceErrorModelId = modelId model,
-      inferenceErrorRequiredMib = observedMib,
-      inferenceErrorAvailableMib = ceilingMib,
-      inferenceErrorResource = resource,
-      inferenceErrorSource = cappedEngineRefusedAtCeilingSource
-    }
-
 -- | Phase 4 Sprint 4.37 — the one rendering of a worker failure into the
 -- operator-facing response. A typed failure's log line is derived from the same
 -- typed value the result payload carries, so the two cannot disagree, and the
@@ -265,37 +238,21 @@ workerFailureResponse failure =
           { inferenceErrorModelId,
             inferenceErrorRequiredMib,
             inferenceErrorAvailableMib,
-            inferenceErrorResource,
-            inferenceErrorSource
-          }
-            | inferenceErrorSource == cappedEngineRefusedAtCeilingSource ->
-                ErrorResponse
-                  { errorCode = modelMemoryLimitExceededErrorCode,
-                    message =
-                      "inference for "
-                        <> inferenceErrorModelId
-                        <> " was refused an allocation at its installed "
-                        <> resourceText inferenceErrorResource
-                        <> " ceiling of "
-                        <> Text.pack (show inferenceErrorAvailableMib)
-                        <> " MiB (peak observed "
-                        <> Text.pack (show inferenceErrorRequiredMib)
-                        <> " MiB), so the engine exited without allocating it"
-                  }
-            | otherwise ->
-                ErrorResponse
-                  { errorCode = modelMemoryLimitExceededErrorCode,
-                    message =
-                      "inference for "
-                        <> inferenceErrorModelId
-                        <> " breached its admitted "
-                        <> resourceText inferenceErrorResource
-                        <> " ceiling of "
-                        <> Text.pack (show inferenceErrorAvailableMib)
-                        <> " MiB (observed "
-                        <> Text.pack (show inferenceErrorRequiredMib)
-                        <> " MiB) and was terminated by the capped-engine kernel"
-                  }
+            inferenceErrorResource
+          } ->
+            ErrorResponse
+              { errorCode = modelMemoryLimitExceededErrorCode,
+                message =
+                  "inference for "
+                    <> inferenceErrorModelId
+                    <> " breached its admitted "
+                    <> resourceText inferenceErrorResource
+                    <> " ceiling of "
+                    <> Text.pack (show inferenceErrorAvailableMib)
+                    <> " MiB (observed "
+                    <> Text.pack (show inferenceErrorRequiredMib)
+                    <> " MiB) and was terminated by the capped-engine kernel"
+              }
 
 -- | A non-breach worker failure in the 'WorkerFailure' channel.
 workerFailed :: ErrorResponse -> Either WorkerFailure a
@@ -591,15 +548,6 @@ runNativeWorker paths executableModel request _cacheObservation = do
                 ( Left
                     ( WorkerTypedInferenceFailure
                         (modelCeilingBreachError model resource ceilingMib observedMib)
-                    )
-                )
-            -- Phase 4 Sprint 4.44: a kernel refusal at the installed ceiling is
-            -- a typed memory outcome, not an unclassified engine fault.
-            EngineRefusedAtCeiling resource ceilingMib observedMib _refusedExitCode ->
-              pure
-                ( Left
-                    ( WorkerTypedInferenceFailure
-                        (modelCeilingRefusalError model resource ceilingMib observedMib)
                     )
                 )
             EngineEnforcementUnavailable reason ->
@@ -1293,11 +1241,6 @@ runWorkerInvocation readAuthority paths executableModel model inputPayload = do
             Left
               ( WorkerTypedInferenceFailure
                   (modelCeilingBreachError model resource ceilingMib observedMib)
-              )
-          EngineRefusedAtCeiling resource ceilingMib observedMib _refusedExitCode ->
-            Left
-              ( WorkerTypedInferenceFailure
-                  (modelCeilingRefusalError model resource ceilingMib observedMib)
               )
           EngineEnforcementUnavailable reason ->
             workerFailed (modelEnforcementUnavailableError model reason)

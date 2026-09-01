@@ -1773,18 +1773,33 @@ darwinPoetryFrameworkHomeFromPyvenvForTest contents = do
         | line <- Text.lines contents,
           Just value <- [Text.stripPrefix "home = " line]
         ]
-  home <- requireSinglePyvenvValue "home" homeValues
-  let frameworkHome = takeDirectory home
+      executableValues =
+        [ Text.unpack value
+        | line <- Text.lines contents,
+          Just value <- [Text.stripPrefix "executable = " line]
+        ]
+  (sourcePath, frameworkHome, sourceNamesExecutable) <-
+    case executableValues of
+      [] -> do
+        home <- requireSinglePyvenvValue "home" homeValues
+        pure (home, takeDirectory home, False)
+      _ -> do
+        executable <- requireSinglePyvenvValue "executable" executableValues
+        pure (executable, takeDirectory (takeDirectory executable), True)
+  let frameworkBin = frameworkHome </> "bin"
       frameworkComponents = splitDirectories (normalise frameworkHome)
   unlessEither
-    ( validNormalizedAbsolutePath home
-        && takeFileName home == "bin"
+    ( validNormalizedAbsolutePath sourcePath
+        && ( if sourceNamesExecutable
+               then normalise (takeDirectory sourcePath) == normalise frameworkBin
+               else normalise sourcePath == normalise frameworkBin
+           )
         && case reverse frameworkComponents of
           version : "Versions" : "Python.framework" : _ ->
             validFixedPathComponent version
           _ -> False
     )
-    "Poetry pyvenv.cfg home is not a fixed Darwin Python.framework version"
+    "Poetry pyvenv.cfg does not name a fixed Darwin Python.framework version"
   pure frameworkHome
 
 data MachOInspection = MachOInspection

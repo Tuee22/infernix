@@ -104,8 +104,9 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
   `infernix internal materialize-substrate linux-cpu --demo-ui false`, and edge-port rediscovery
   on the host-native `apple-silicon` lane. This per-model catalog traversal is bounded by the
   resource-admission doctrine: a full run completes rows that fit the active budget and fails closed
-  per row with typed `ModelMemoryLimitExceeded`, the breached resource, and explicit MiB quantities —
-  whether the refusal is decided at admission or by an installed ceiling inside a running engine (see
+  per row with typed `ModelMemoryLimitExceeded`, the breached resource, and explicit MiB quantities
+  when admission refuses the row or a watchdog measures an overrun. A plain engine exit stays a
+  diagnosable engine failure rather than being inferred as a ceiling refusal (see
   `## Resource Memory-Bounded Validation`)
 - `infernix test e2e` validates the routed browser surface through the full durable-context
   Playwright flow alongside the SPA root, the `Infernix` heading, and the published platform-state
@@ -338,7 +339,7 @@ that names only one resource still fails plan compilation closed with
 `GpuDualResourceBudgetRequired`, and a dual budget whose halves name the wrong physical resources is
 rejected by `InvalidMemoryEnforcer`.
 
-A per-model row lands in exactly one of three supported outcomes:
+A per-model row lands in one of these supported outcomes:
 
 - **completes** — the model fits the active enforced budget, runs, and honors its per-family
   real-output contract
@@ -346,11 +347,11 @@ A per-model row lands in exactly one of three supported outcomes:
   of the resources it names, so the row is a clean per-row `status=failed` with typed
   `ModelMemoryLimitExceeded`, the breached resource, and explicit MiB quantities, and no engine
   starts
-- **refused in run** — on a lane that prevents, the engine starts and the kernel ceiling installed
-  before its first allocation refuses an allocation, so the row is the same clean per-row
-  `status=failed` naming the resource it breached and the footprint it observed. An admitted row can
-  still be refused mid-run, and a suite that recognizes only the first two outcomes reads that
-  refusal as a crash
+- **measured breach in run** — the engine starts, a sampled resource footprint exceeds its ceiling,
+  and the watchdog publishes a clean per-row `status=failed` naming the resource and observation
+- **engine failure** — the engine exits non-zero without explicit enforcement evidence. This includes
+  a kernel-refused allocation the engine does not report; the last sampled peak cannot distinguish it
+  from an ordinary post-load fault, so the result keeps the engine's bounded diagnostics
 
 Two obligations attach to a lane that installs a ceiling, and neither is discharged by inspecting the
 launch that installed it.
@@ -370,9 +371,10 @@ launch that installed it.
 Validation proves cross-family topic collisions are rejected, bootstrap
 model/URL/timestamp drift fails before side effects, the raw publisher is absent, and non-ASCII
 substrate metadata round-trips through explicit UTF-8 Dhall emission. The validation classifier
-must distinguish a typed memory-capacity failure — refused at admission or refused in run — from the
-two disallowed outcomes: a **stall** (a genuinely missing result, including an OS-OOM kill) and a
-**fabricated pass**. Machine-independent GPU enforcement tests cover the fixed `nvidia-smi`
+must distinguish a typed admission failure, a watchdog-observed in-run breach, a plain engine
+failure, a **stall** (a genuinely missing result, including an OS-OOM kill), and a
+**fabricated pass**. A nearby peak does not promote a plain exit to a memory diagnosis.
+Machine-independent GPU enforcement tests cover the fixed `nvidia-smi`
 observer's parsers, the group
 attribution arithmetic and its overflow rejections, and a live no-CUDA-context sample that must
 complete without a fabricated breach or an enforcement failure) runs in `infernix-unit` and

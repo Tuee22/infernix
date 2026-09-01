@@ -87,10 +87,6 @@ data ArtifactProcessOutcome
     -- them, because a value that is complete at the sampler and lossy one
     -- frame up is not carried, it is re-guessed.
     ArtifactProcessExceededCeiling !Resource !Int !Int
-  | -- | Phase 4 Sprint 4.44: the kernel refused an allocation at the installed
-    -- ceiling. It carries the resource, the ceiling, the peak the sampler
-    -- observed, and the engine's own exit code.
-    ArtifactProcessRefusedAtCeiling !Resource !Int !Int !ExitCode
   | ArtifactProcessEnforcementUnavailable !Text
   | ArtifactProcessOutputLimitExceeded !ArtifactOutputStream
   | ArtifactProcessOutputCaptureFailed !ArtifactOutputStream !Text

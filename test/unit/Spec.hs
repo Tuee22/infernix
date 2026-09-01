@@ -177,7 +177,7 @@ import Infernix.DemoConfig
     renderGeneratedDemoConfigPayload,
     validateDemoConfigFile,
   )
-import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
+import Infernix.DemoConfig.Internal (decodeDemoConfigFile, presentationConfig)
 import Infernix.DemoConfig.Properties qualified as DemoConfigProperties
 import Infernix.DescriptorSpace
   ( descriptorSpaceBoundLimit,
@@ -2122,6 +2122,34 @@ runArtifactRequirementAssertions unitTestRoot = do
     (either (const False) ((< 4096) . artifactHeaderPrefixBytes) ggufHeader)
     "Sprint 4.39: the GGUF derivation reads only the header prefix"
 
+  -- Phase 4 Sprint 4.48 cohort correction: whisper.cpp's legacy GGML format
+  -- carries a fixed 48-byte model header, then filter/vocabulary records and
+  -- tensor records interleaved with their payloads. The bounded reader proves
+  -- the family and header invariants, while the actual object extent is the
+  -- conservative host-resident weight charge.
+  let whisperPath = artifactRoot </> "clean-whisper-ggml.bin"
+      whisperBytes = whisperGgmlArtifactBytes
+  BS.writeFile whisperPath whisperBytes
+  whisperHeader <- readArtifactHeader whisperPath
+  assert
+    ( fmap artifactHeaderWeightBytes whisperHeader
+        == Right (toInteger (BS.length whisperBytes))
+    )
+    "Sprint 4.48: the legacy Whisper GGML weight charge is its actual object extent"
+  assert
+    (fmap artifactHeaderPrefixBytes whisperHeader == Right 48)
+    "Sprint 4.48: the legacy Whisper GGML derivation reads only its fixed header"
+  let malformedWhisperPath = artifactRoot </> "malformed-whisper-ggml.bin"
+      malformedWhisperBytes =
+        BS.take 16 whisperBytes
+          <> BS.replicate 4 0
+          <> BS.drop 20 whisperBytes
+  BS.writeFile malformedWhisperPath malformedWhisperBytes
+  malformedWhisperHeader <- readArtifactHeader malformedWhisperPath
+  assert
+    (either (const True) (const False) malformedWhisperHeader)
+    "Sprint 4.48: a legacy Whisper GGML header with no audio heads is refused"
+
   -- The recorded digest is a statement about one exact header: changing a single
   -- header byte moves it, so a requirement cannot be reattributed to a different
   -- header at the same path.
@@ -2213,6 +2241,30 @@ ggufArtifactBytes tensors =
     headerBytes = 4 + 4 + 8 + 8 + infoBytes
     padding = (32 - (headerBytes `mod` 32)) `mod` 32
     payloadBytes = sum [ggufAlignedSize (product dims * 4) | (_, _, dims) <- tensors]
+
+-- | A minimal legacy whisper.cpp GGML container. Only the fixed header is
+-- interpreted by the requirement reader; the suffix stands in for the
+-- format's interleaved filters, vocabulary, tensor records, and tensor bytes.
+whisperGgmlArtifactBytes :: BS.ByteString
+whisperGgmlArtifactBytes =
+  ByteString8.pack "lmgg"
+    <> BS.concat
+      [ BS.pack (littleEndianBytes 4 value)
+      | value <-
+          [ 51865,
+            1500,
+            768,
+            12,
+            12,
+            448,
+            768,
+            12,
+            12,
+            80,
+            1
+          ]
+      ]
+    <> BS.replicate 128 0
 
 ggufAlignedSize :: Int -> Int
 ggufAlignedSize value = ((value + 31) `div` 32) * 32
@@ -4060,15 +4112,34 @@ main = do
             && not ("host_batch_topic" `isInfixOf` demoConfigContents)
         )
         "generated substrate materialization omits every field the binary derives"
+      let publicPresentation = presentationConfig demoConfig
+          publicPresentationJson = LazyChar8.unpack (Aeson.encode publicPresentation)
       decodedJsonConfig <-
-        maybe (fail "public JSON demo config decode failed") pure (Aeson.decode (Aeson.encode demoConfig))
+        maybe (fail "public JSON presentation config decode failed") pure (Aeson.decode (Aeson.encode publicPresentation))
       assert
-        (not (null (engineDaemons decodedJsonConfig)))
-        "public JSON demo-config decode preserves engine daemon metadata"
+        (not (null (presentationModels decodedJsonConfig)))
+        "public JSON presentation config preserves the model catalog"
+      assert
+        ( not
+            ( any
+                (`isInfixOf` publicPresentationJson)
+                [ "engineDaemons",
+                  "enginePools",
+                  "engineMembers",
+                  "request_topics",
+                  "result_topic",
+                  "engines",
+                  "inferenceMemoryBudget",
+                  "generatedPath",
+                  "mountedPath"
+                ]
+            )
+        )
+        "public JSON presentation config cannot expose routing, launch, publication, or admission metadata"
       -- Phase 8 Sprint 8.9: the JSON projection of the budget names its
       -- alternative with a key, not with a string under a shared `kind` key.
-      -- `/api/demo-config` is the only surface that carries it and the
-      -- Playwright reader is its only consumer, so pin the shape here.
+      -- The budget's own diagnostic JSON remains a key-named union even though
+      -- the presentation endpoint no longer receives or publishes that value.
       let renderedBudgetJson =
             LazyChar8.unpack
               (Aeson.encode (inferenceMemoryBudget demoConfig))
@@ -4095,7 +4166,11 @@ main = do
       assert (daemonConfigLocation (coordinatorDaemon decodedConfig) == "cluster-pod") "demo-config decode preserves cluster daemon metadata"
       assert (daemonConfigRole (webappDaemon decodedConfig) == Webapp) "demo-config decode preserves webapp daemon metadata"
       assert (not (null (engineDaemons decodedConfig))) "linux demo-config decode preserves engine daemon metadata"
-      let emptyModelsConfig = demoConfig {models = []}
+      let emptyModelsConfig =
+            demoConfig
+              { configPoolCatalogs =
+                  [catalog {poolCatalogModels = []} | catalog <- configPoolCatalogs demoConfig]
+              }
           emptyModelsConfigPath = buildRoot paths </> "demo-config-empty-models-test.dhall"
       Lazy.writeFile emptyModelsConfigPath (encodeDemoConfig emptyModelsConfig)
       strictEmptyModelsDecode <- try (validateDemoConfigFile emptyModelsConfigPath) :: IO (Either IOError ())
@@ -4141,10 +4216,15 @@ main = do
       assert
         (length startupTopics == length (nub startupTopics))
         "startup topic reconciliation produces a deduplicated topic set"
-      assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
+      assert
+        ( all
+            (isJust . engineBindingForSelectedEngine LinuxCpu . selectedEngine)
+            (models decodedConfig)
+        )
+        "every decoded model projects a canonical Linux engine binding"
       assert (length (models decodedConfig) == length (catalogForMode LinuxCpu)) "demo-config decode preserves the model list"
-      case (enginePools decodedConfig, engineMembers decodedConfig) of
-        (firstPool : secondPool : remainingPools, firstMember : remainingMembers) -> do
+      case enginePools decodedConfig of
+        firstPool : secondPool : remainingPools -> do
           firstModelId <-
             maybe
               (fail "expected linux-cpu demo config to include at least one model")
@@ -4154,17 +4234,17 @@ main = do
             unitTestRoot
             "duplicate-pool-id"
             "DuplicatePoolId"
-            decodedConfig {enginePools = firstPool : firstPool : secondPool : remainingPools}
+            (withEnginePools decodedConfig (firstPool : firstPool : secondPool : remainingPools))
           assertDemoConfigDecodeFails
             unitTestRoot
             "invalid-pool-id"
             "InvalidPoolId"
-            decodedConfig {enginePools = firstPool {enginePoolId = "persistent://bad/topic"} : secondPool : remainingPools}
+            (withEnginePools decodedConfig (firstPool {enginePoolId = "persistent://bad/topic"} : secondPool : remainingPools))
           assertDemoConfigDecodeFails
             unitTestRoot
             "failover-pool"
             "InvalidPoolSubscription"
-            decodedConfig {enginePools = firstPool {enginePoolSubscriptionType = ConsumerFailover} : secondPool : remainingPools}
+            (withEnginePools decodedConfig (firstPool {enginePoolSubscriptionType = ConsumerFailover} : secondPool : remainingPools))
           -- Phase 8 Sprint 8.11: five disagreement classes that used to have
           -- their own rejection are now unrepresentable on the wire, so the
           -- assertion is that the round trip /succeeds/ and produces the
@@ -4176,7 +4256,7 @@ main = do
           assertDemoConfigWireCannotExpress
             unitTestRoot
             "dangling-pool-model"
-            decodedConfig {enginePools = firstPool {enginePoolModelIds = "missing-model" : enginePoolModelIds firstPool} : secondPool : remainingPools}
+            (withEnginePools decodedConfig (firstPool {enginePoolModelIds = "missing-model" : enginePoolModelIds firstPool} : secondPool : remainingPools))
             ( \roundTripped ->
                 all
                   (all (`elem` map modelId (models roundTripped)) . enginePoolModelIds)
@@ -4186,7 +4266,7 @@ main = do
           assertDemoConfigWireCannotExpress
             unitTestRoot
             "dangling-pool-member"
-            decodedConfig {enginePools = firstPool {enginePoolMemberIds = ["missing-member"]} : secondPool : remainingPools}
+            (withEnginePools decodedConfig (firstPool {enginePoolMemberIds = ["missing-member"]} : secondPool : remainingPools))
             ( \roundTripped ->
                 all
                   (all (`elem` map engineMemberId (engineMembers roundTripped)) . enginePoolMemberIds)
@@ -4196,7 +4276,7 @@ main = do
           assertDemoConfigWireCannotExpress
             unitTestRoot
             "one-sided-member-link"
-            decodedConfig {engineMembers = firstMember {engineMemberPoolIds = []} : remainingMembers}
+            decodedConfig
             ( \roundTripped ->
                 and
                   [ enginePoolId pool `elem` engineMemberPoolIds member
@@ -4215,7 +4295,7 @@ main = do
           assertDemoConfigWireCannotExpress
             unitTestRoot
             "duplicate-member-id"
-            decodedConfig {engineMembers = firstMember : firstMember : remainingMembers}
+            decodedConfig
             ( \roundTripped ->
                 let memberIds = map engineMemberId (engineMembers roundTripped)
                  in memberIds == nub memberIds
@@ -4225,7 +4305,7 @@ main = do
             unitTestRoot
             "ambiguous-model-pool"
             "MultiplyPlacedModel"
-            decodedConfig {enginePools = firstPool : secondPool {enginePoolModelIds = firstModelId : enginePoolModelIds secondPool} : remainingPools}
+            (withEnginePools decodedConfig (firstPool : secondPool {enginePoolModelIds = firstModelId : enginePoolModelIds secondPool} : remainingPools))
           -- The catalog is the pool graph, so an unplaced model has no wire
           -- representation at all: a model exists because a pool declares it.
           assert
@@ -15501,12 +15581,13 @@ runMachineContractAssertions root = do
     "two payloads of one contract that differ only in machine-local fields digest alike"
   assert
     ( MachineContract.digestSystemContract
-        appleSystemContract
-          { enginePools =
-              case enginePools appleSystemContract of
+        ( withEnginePools
+            appleSystemContract
+            ( case enginePools appleSystemContract of
                 pool : remaining -> pool {enginePoolMemberIds = ["someone-else"]} : remaining
                 [] -> []
-          }
+            )
+        )
         /= pinnedDigest
     )
     "a changed pool member moves the contract digest"
@@ -16029,18 +16110,7 @@ assertJsonEncodingContains label value needle = do
 assertDerivedClusterDaemonMetadata :: FilePath -> DemoConfig -> IO ()
 assertDerivedClusterDaemonMetadata root demoConfig = do
   let configPath = root </> "derived-cluster-daemon-metadata.dhall"
-  Lazy.writeFile
-    configPath
-    ( encodeDemoConfig
-        demoConfig
-          { coordinatorDaemon =
-              (coordinatorDaemon demoConfig)
-                { daemonConfigRole = Webapp,
-                  daemonConfigMemberId = Just "not-a-member",
-                  daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
-                }
-          }
-    )
+  Lazy.writeFile configPath (encodeDemoConfig demoConfig)
   roundTripped <- decodeDemoConfigFile configPath
   assert
     ( daemonConfigRole (coordinatorDaemon roundTripped) == Coordinator
@@ -16048,7 +16118,7 @@ assertDerivedClusterDaemonMetadata root demoConfig = do
         && daemonConfigPulsarConnectionMode (coordinatorDaemon roundTripped) == ConfiguredTransport
         && daemonConfigLocation (coordinatorDaemon roundTripped) == "cluster-pod"
     )
-    "the coordinator daemon round-trips as the derived record, whatever the in-memory config said"
+    "the coordinator daemon is projected from the system contract"
   assert
     (daemonConfigRole (webappDaemon roundTripped) == Webapp)
     "the webapp daemon round-trips as the derived record"
@@ -16462,7 +16532,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
       "derive a single-model execution-plan fixture"
       (singleModelExecutionPlanConfig applePlan appleConfig)
   model <- expectSingleton "single-model execution-plan model" (models singleAppleConfig)
-  binding <- expectSingleton "single-model execution-plan engine" (engines singleAppleConfig)
   pool <- expectSingleton "single-model execution-plan pool" (enginePools singleAppleConfig)
   member <- expectSingleton "single-model execution-plan member" (engineMembers singleAppleConfig)
   daemon <- expectSingleton "single-model execution-plan daemon" (engineDaemons singleAppleConfig)
@@ -16550,16 +16619,8 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
           { enginePoolId = secondPoolId,
             enginePoolMemberIds = [secondMemberId]
           }
-      secondMember =
-        member
-          { engineMemberId = secondMemberId,
-            engineMemberPoolIds = [secondPoolId]
-          }
       multiplyPlacedConfig =
-        singleAppleConfig
-          { enginePools = [pool, secondPool],
-            engineMembers = [member, secondMember]
-          }
+        withEnginePools singleAppleConfig [pool, secondPool]
       podLimitFor resource source limitMib =
         PodMemoryLimit
           { podMemoryLimitResource = resource,
@@ -16630,9 +16691,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     singleAppleConfig
     model
-    binding
     pool
-    member
     invalidIdentifiers
   -- Phase 8 Sprint 8.10: the engine list is derived from the models' selected
   -- engines, so a drifted, arbitrary, lookalike, or cross-runtime binding is no
@@ -16650,18 +16709,14 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     (ExecutionPlan.UnknownSelectedEngine modelIdValue "vLLM")
     (withCatalog singleAppleConfig [model {selectedEngine = "vLLM"}])
   assertExecutionPlanError root "empty-model-catalog" ExecutionPlan.EmptyModelCatalog (withCatalog singleAppleConfig [])
-  assertExecutionPlanError root "empty-pool-catalog" ExecutionPlan.EmptyPoolCatalog (singleAppleConfig {enginePools = []})
+  assertExecutionPlanError root "empty-pool-catalog" ExecutionPlan.EmptyPoolCatalog (withEnginePools singleAppleConfig [])
   -- Phase 8 Sprint 8.11: an empty member catalog is expressible only by
   -- emptying every pool's member list, which the pool-side check reports first.
   assertExecutionPlanError
     root
     "empty-member-catalog"
     ExecutionPlan.EmptyMemberCatalog
-    ( singleAppleConfig
-        { enginePools = map (\poolValue -> poolValue {enginePoolMemberIds = []}) (enginePools singleAppleConfig),
-          engineMembers = []
-        }
-    )
+    (withEnginePools singleAppleConfig (map (\poolValue -> poolValue {enginePoolMemberIds = []}) (enginePools singleAppleConfig)))
   assertExecutionPlanError root "blank-models-bucket" ExecutionPlan.BlankModelsBucket (singleAppleConfig {modelsBucket = " "})
   assertExecutionPlanError
     root
@@ -16703,7 +16758,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "invalid-model-descriptor"
     (ExecutionPlan.InvalidModelDescriptor modelIdValue)
-    (singleAppleConfig {models = [model {requestShape = []}]})
+    (withCatalog singleAppleConfig [model {requestShape = []}])
   assertExecutionPlanError
     root
     "unenforceable-model-execution-shape"
@@ -16718,16 +16773,12 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "duplicate-matrix-row-id"
     (ExecutionPlan.DuplicateMatrixRowId (matrixRowId model))
-    ( singleAppleConfig
-        { models = [model, duplicateMatrixModel],
-          enginePools = [duplicateMatrixPool]
-        }
-    )
+    (withEnginePoolsAndModels singleAppleConfig [duplicateMatrixPool] [model, duplicateMatrixModel])
   assertExecutionPlanError
     root
     "duplicate-pool-id"
     (ExecutionPlan.DuplicatePoolId poolIdValue)
-    (singleAppleConfig {enginePools = [pool, pool]})
+    (withEnginePools singleAppleConfig [pool, pool])
   -- Phase 8 Sprint 8.11: a duplicate member identity has no wire
   -- representation — members are inverted out of the pool graph, so the same id
   -- named twice is one member. The plan compiler keeps the check for the
@@ -16748,13 +16799,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "bootstrap-ready-topic-family-collision"
     (ExecutionPlan.TopicFamilyCollision bootstrapReadyTopicValue ["model-bootstrap-ready", "model-bootstrap-request"])
     (withModelBootstrapTopic bootstrapReadyTopicValue)
-  assertDerivedRouteTopicCollision
-    root
-    singleAppleConfig
-    model
-    pool
-    member
-    daemon
+  assertDerivedRouteTopicCollision root singleAppleConfig model pool
   assertExecutionPlanError
     root
     "duplicate-pool-model-reference"
@@ -16766,43 +16811,39 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "duplicate-pool-member-reference"
     (ExecutionPlan.DuplicatePoolMemberReference poolIdValue memberIdValue)
-    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = [memberIdValue, memberIdValue]}]})
+    (withEnginePools singleAppleConfig [pool {enginePoolMemberIds = [memberIdValue, memberIdValue]}])
   assertExecutionPlanError
     root
     "duplicate-member-pool-reference"
     (ExecutionPlan.DuplicateMemberPoolReference memberIdValue poolIdValue)
     -- Phase 8 Sprint 8.11: a member's pools are the pools that name it, so a
     -- repeated pool reference is one pool id written twice in the pool list.
-    (singleAppleConfig {enginePools = [pool, pool]})
+    (withEnginePools singleAppleConfig [pool, pool])
   assertExecutionPlanError
     root
     "duplicate-request-field"
     (ExecutionPlan.DuplicateRequestField modelIdValue (name requestField))
-    (singleAppleConfig {models = [model {requestShape = [requestField, requestField]}]})
+    (withCatalog singleAppleConfig [model {requestShape = [requestField, requestField]}])
   assertExecutionPlanError
     root
     "invalid-pool-id"
     (ExecutionPlan.InvalidPoolId "unit/bad-pool")
-    (singleAppleConfig {enginePools = [pool {enginePoolId = "unit/bad-pool"}]})
+    (withEnginePools singleAppleConfig [pool {enginePoolId = "unit/bad-pool"}])
   assertExecutionPlanError
     root
     "invalid-member-id"
     (ExecutionPlan.InvalidMemberId "unit/bad-member")
-    ( singleAppleConfig
-        { enginePools = [pool {enginePoolMemberIds = ["unit/bad-member"]}],
-          engineMembers = [member {engineMemberId = "unit/bad-member"}]
-        }
-    )
+    (withEnginePools singleAppleConfig [pool {enginePoolMemberIds = ["unit/bad-member"]}])
   assertExecutionPlanError
     root
     "empty-pool-models"
     (ExecutionPlan.EmptyPoolModels poolIdValue)
-    (singleAppleConfig {enginePools = [pool {enginePoolModelIds = []}]})
+    (withEnginePools singleAppleConfig [pool {enginePoolModelIds = []}])
   assertExecutionPlanError
     root
     "empty-pool-members"
     (ExecutionPlan.EmptyPoolMembers poolIdValue)
-    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = []}]})
+    (withEnginePools singleAppleConfig [pool {enginePoolMemberIds = []}])
   assertExecutionPlanError
     root
     "unknown-selected-engine"
@@ -16832,12 +16873,12 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "invalid-pool-subscription"
     (ExecutionPlan.InvalidPoolSubscription poolIdValue)
-    (singleAppleConfig {enginePools = [pool {enginePoolSubscriptionType = ConsumerFailover}]})
+    (withEnginePools singleAppleConfig [pool {enginePoolSubscriptionType = ConsumerFailover}])
   assertExecutionPlanError
     root
     "invalid-exclusive-pool-subscription"
     (ExecutionPlan.InvalidPoolSubscription poolIdValue)
-    (singleAppleConfig {enginePools = [pool {enginePoolSubscriptionType = ConsumerExclusive}]})
+    (withEnginePools singleAppleConfig [pool {enginePoolSubscriptionType = ConsumerExclusive}])
   -- Phase 8 Sprint 8.10 retired this assertion with the field it was about: the
   -- per-pool in-flight knob is no longer on the wire, so "a negative value is
   -- unrepresentable" would be a claim about something that is not there. It is
@@ -16934,21 +16975,10 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
             matrixRowId = matrixRowId model <> "-oversized"
           }
       oversizedConfig =
-        singleAppleConfig
-          { models = [model, oversizedModel],
-            enginePools =
-              [pool {enginePoolModelIds = enginePoolModelIds pool <> [oversizedModelIdValue]}],
-            -- The derived per-model request topic is the pool topic suffixed with
-            -- the model id, so the engine daemon's declared topics have to grow
-            -- with the pool or the compiled graph disagrees with the daemon.
-            engineDaemons =
-              [ daemon
-                  { daemonConfigRequestTopics =
-                      daemonConfigRequestTopics daemon
-                        <> map (<> "-oversized") (daemonConfigRequestTopics daemon)
-                  }
-              ]
-          }
+        withEnginePoolsAndModels
+          singleAppleConfig
+          [pool {enginePoolModelIds = enginePoolModelIds pool <> [oversizedModelIdValue]}]
+          [model, oversizedModel]
   oversizedPlan <- expectCompiledExecutionPlan root "one-unavailable-model" oversizedConfig
   assert
     ( sort (map (modelId . ExecutionPlan.compiledPlacementDescriptor) (ExecutionPlan.compiledRuntimePlanPlacements oversizedPlan))
@@ -17117,6 +17147,26 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
         (ExecutionPlan.compiledRuntimePlanPlacements linuxGpuPlan)
     )
     "Linux GPU catalog places at least one device-using model, so the dual-resource arm is exercised"
+  case find
+    ((== "llm-tinyllama-gguf") . modelId . ExecutionPlan.compiledPlacementDescriptor)
+    (ExecutionPlan.compiledRuntimePlanPlacements linuxGpuPlan) of
+    Nothing -> fail "Linux GPU plan omitted llm-tinyllama-gguf"
+    Just ggufPlacement -> do
+      let ggufDescriptor = ExecutionPlan.compiledPlacementDescriptor ggufPlacement
+      assert
+        ( executionLoadStrategy (modelExecutionShape ggufDescriptor) == LoadResidentHost
+            && not (requiresGpu ggufDescriptor)
+        )
+        ( "Sprint 4.49: the CUDA GGUF row declares host residency because its "
+            <> "native invocation renders --gpu-layers 0"
+        )
+      assert
+        ( ExecutionPlan.compiledPlanPlacementEnforcedResources linuxGpuPlan ggufPlacement
+            == [PodRam]
+        )
+        ( "Sprint 4.49: the host-resident CUDA GGUF placement receives no "
+            <> "NVIDIA VRAM grant"
+        )
 
 assertCatalogEngineResolution :: RuntimeMode -> IO ()
 assertCatalogEngineResolution mode =
@@ -17166,8 +17216,8 @@ assertCatalogPlanCoverage mode demoConfig compiledPlan =
             pure
             (engineBindingForSelectedEngine mode (selectedEngine descriptor))
         assert
-          (binding `elem` engines demoConfig)
-          ( "generated config omitted the canonical binding for "
+          (binding `elem` engineBindingsForMode mode)
+          ( "the selected engine omitted the canonical binding for "
               <> Text.unpack (modelId descriptor)
           )
         assert
@@ -17191,25 +17241,42 @@ engineBindingSelectionError configError =
 -- disagreeing without noticing.
 withCatalog :: DemoConfig -> [ModelDescriptor] -> DemoConfig
 withCatalog demoConfig catalog =
-  case enginePools demoConfig of
-    [] -> demoConfig {models = catalog}
+  case configPoolCatalogs demoConfig of
+    [] -> demoConfig
     firstPool : remainingPools ->
       demoConfig
-        { models = catalog,
-          enginePools =
-            firstPool {enginePoolModelIds = map modelId catalog} : remainingPools
+        { configPoolCatalogs =
+            firstPool {poolCatalogModels = catalog} : remainingPools
         }
+
+withEnginePools :: DemoConfig -> [EnginePool] -> DemoConfig
+withEnginePools demoConfig pools =
+  withEnginePoolsAndModels demoConfig pools (models demoConfig)
+
+withEnginePoolsAndModels :: DemoConfig -> [EnginePool] -> [ModelDescriptor] -> DemoConfig
+withEnginePoolsAndModels demoConfig pools catalog =
+  demoConfig
+    { configPoolCatalogs = map (poolCatalogFromEnginePool catalog) pools
+    }
+
+poolCatalogFromEnginePool :: [ModelDescriptor] -> EnginePool -> PoolCatalog
+poolCatalogFromEnginePool catalog pool =
+  PoolCatalog
+    { poolCatalogId = enginePoolId pool,
+      poolCatalogMemberIds = enginePoolMemberIds pool,
+      poolCatalogSubscriptionType = enginePoolSubscriptionType pool,
+      poolCatalogModels =
+        [model | model <- catalog, modelId model `elem` enginePoolModelIds pool]
+    }
 
 assertExecutionPlanIdentifierCoverage ::
   FilePath ->
   DemoConfig ->
   ModelDescriptor ->
-  EngineBinding ->
   EnginePool ->
-  EngineMember ->
   [(FilePath, Text.Text)] ->
   IO ()
-assertExecutionPlanIdentifierCoverage root demoConfig model _binding pool member =
+assertExecutionPlanIdentifierCoverage root demoConfig model pool =
   mapM_
     ( \(label, invalidIdentifier) -> do
         assertExecutionPlanError
@@ -17226,18 +17293,14 @@ assertExecutionPlanIdentifierCoverage root demoConfig model _binding pool member
           root
           ("invalid-pool-id-" <> label)
           (ExecutionPlan.InvalidPoolId invalidIdentifier)
-          (demoConfig {enginePools = [pool {enginePoolId = invalidIdentifier}]})
+          (withEnginePools demoConfig [pool {enginePoolId = invalidIdentifier}])
         -- Phase 8 Sprint 8.11: a member exists because a pool names it, so an
         -- invalid member identity is written on the pool.
         assertExecutionPlanError
           root
           ("invalid-member-id-" <> label)
           (ExecutionPlan.InvalidMemberId invalidIdentifier)
-          ( demoConfig
-              { enginePools = [pool {enginePoolMemberIds = [invalidIdentifier]}],
-                engineMembers = [member {engineMemberId = invalidIdentifier}]
-              }
-          )
+          (withEnginePools demoConfig [pool {enginePoolMemberIds = [invalidIdentifier]}])
     )
 
 assertDerivedRouteTopicCollision ::
@@ -17245,10 +17308,8 @@ assertDerivedRouteTopicCollision ::
   DemoConfig ->
   ModelDescriptor ->
   EnginePool ->
-  EngineMember ->
-  DaemonConfig ->
   IO ()
-assertDerivedRouteTopicCollision root demoConfig model pool member daemon = do
+assertDerivedRouteTopicCollision root demoConfig model pool = do
   let firstModelId = "b.model.c"
       secondModelId = "c"
       firstPoolId = "a"
@@ -17275,14 +17336,10 @@ assertDerivedRouteTopicCollision root demoConfig model pool member daemon = do
             enginePoolModelIds = [secondModelId]
           }
       collisionConfig =
-        demoConfig
-          { engineDaemons =
-              [daemon {daemonConfigRequestTopics = [collisionTopic, collisionTopic]}],
-            enginePools = [firstPool, secondPool],
-            engineMembers =
-              [member {engineMemberPoolIds = [firstPoolId, secondPoolId]}],
-            models = [firstModel, secondModel]
-          }
+        withEnginePoolsAndModels
+          demoConfig
+          [firstPool, secondPool]
+          [firstModel, secondModel]
       expectedSources =
         [(firstPoolId, firstModelId), (secondPoolId, secondModelId)]
   result <- compileExecutionPlanFixture root "derived-route-topic-collision" collisionConfig
@@ -17529,7 +17586,7 @@ assertCompiledExecutionPlanRoutes demoConfig compiledPlan = do
             expectedEngine =
               find
                 ((== selectedEngine descriptor) . engineBindingName)
-                (engines demoConfig)
+                (engineBindingsForMode (configRuntimeMode demoConfig))
         assert
           (ExecutionPlan.lookupCompiledPlacement (modelId descriptor) compiledPlan == Just placement)
           "compiled execution-plan lookup returns the exact placement"
@@ -17606,27 +17663,12 @@ singleModelExecutionPlanConfig compiledPlan demoConfig = do
       (Left "first model pool has no member")
       Right
       (listToMaybe (enginePoolMemberIds pool))
-  member <-
-    maybe
-      (Left "first model pool member is missing")
-      Right
-      (find ((== memberIdValue) . engineMemberId) (engineMembers demoConfig))
-  binding <-
-    maybe
-      (Left "first model selected engine is missing")
-      Right
-      (find ((== selectedEngine model) . engineBindingName) (engines demoConfig))
-  daemon <-
-    maybe
-      (Left "engine daemon catalog is empty")
-      Right
-      (listToMaybe (engineDaemons demoConfig))
   placement <-
     maybe
       (Left "first model has no compiled placement")
       Right
       (ExecutionPlan.lookupCompiledPlacement (modelId model) compiledPlan)
-  route <-
+  _ <-
     maybe
       (Left "first model has no compiled route for its selected pool member")
       Right
@@ -17637,31 +17679,16 @@ singleModelExecutionPlanConfig compiledPlan demoConfig = do
           )
           (NonEmpty.toList (ExecutionPlan.compiledPlacementRoutes placement))
       )
-  let poolIdValue = enginePoolId pool
-      routeTopic = ExecutionPlan.engineRouteTopic route
   pure
-    demoConfig
-      { engineDaemons =
-          [ daemon
-              { daemonConfigRole = Engine,
-                daemonConfigMemberId = Just memberIdValue,
-                daemonConfigRequestTopics = [routeTopic]
-              }
-          ],
-        enginePools =
-          [ pool
-              { enginePoolModelIds = [modelId model],
-                enginePoolMemberIds = [memberIdValue]
-              }
-          ],
-        engineMembers =
-          [ member
-              { engineMemberPoolIds = [poolIdValue]
-              }
-          ],
-        engines = [binding],
-        models = [model]
-      }
+    ( withEnginePoolsAndModels
+        demoConfig
+        [ pool
+            { enginePoolModelIds = [modelId model],
+              enginePoolMemberIds = [memberIdValue]
+            }
+        ]
+        [model]
+    )
 
 executionPlanConfigForRuntime ::
   RuntimeMode ->
@@ -17671,52 +17698,25 @@ executionPlanConfigForRuntime ::
 executionPlanConfigForRuntime runtimeModeValue budget demoConfig =
   demoConfig
     { configRuntimeMode = runtimeModeValue,
-      engineDaemons =
-        [ daemon
-            { daemonConfigLocation = memberLocation,
-              daemonConfigPulsarConnectionMode = engineConnectionMode
+      configPoolCatalogs =
+        [ poolCatalog
+            { poolCatalogModels = map retargetModel (poolCatalogModels poolCatalog)
             }
-        | daemon <- engineDaemons demoConfig
-        ],
-      enginePools =
-        [pool {enginePoolRuntimeMode = runtimeModeValue} | pool <- enginePools demoConfig],
-      engineMembers =
-        [ member
-            { engineMemberRuntimeMode = runtimeModeValue,
-              engineMemberLocation = memberLocation
-            }
-        | member <- engineMembers demoConfig
-        ],
-      models =
-        [ configuredModel
-            { runtimeMode = runtimeModeValue,
-              runtimeLane = runtimeLaneForMode runtimeModeValue (requiresGpu configuredModel),
-              -- Phase 8 Sprint 8.10: the engine list is derived from the models'
-              -- selected engines, so retargeting a fixture at another runtime has
-              -- to retarget the selected engine too. Otherwise the fixture reports
-              -- `UnknownSelectedEngine` for an engine the new runtime does not
-              -- have, instead of the property it exists to pin.
-              selectedEngine =
-                maybe
-                  (selectedEngine configuredModel)
-                  selectedEngine
-                  (findModel runtimeModeValue (modelId configuredModel))
-            }
-        | configuredModel <- models demoConfig
+        | poolCatalog <- configPoolCatalogs demoConfig
         ],
       inferenceMemoryBudget = budget
     }
   where
-    memberLocation =
-      case runtimeModeValue of
-        AppleSilicon -> "control-plane-host"
-        LinuxCpu -> "cluster-pod"
-        LinuxGpu -> "cluster-pod"
-    engineConnectionMode =
-      case runtimeModeValue of
-        AppleSilicon -> PublicationEdgeAutoDiscovery
-        LinuxCpu -> ConfiguredTransport
-        LinuxGpu -> ConfiguredTransport
+    retargetModel configuredModel =
+      configuredModel
+        { runtimeMode = runtimeModeValue,
+          runtimeLane = runtimeLaneForMode runtimeModeValue (requiresGpu configuredModel),
+          selectedEngine =
+            maybe
+              (selectedEngine configuredModel)
+              selectedEngine
+              (findModel runtimeModeValue (modelId configuredModel))
+        }
 
 expectSingleton :: String -> [a] -> IO a
 expectSingleton label values =
@@ -19009,10 +19009,10 @@ assertLinuxHostBatchForwarding paths = do
   let batchTopic =
         ExecutionPlan.engineRouteTopic
           (NonEmpty.head (ExecutionPlan.compiledPlacementRoutes placement))
-      resultTopic = ExecutionPlan.compiledPlanResultTopic compiledPlan
+      resultTopicValue = ExecutionPlan.compiledPlanResultTopic compiledPlan
       requestDirectory = topicDirectoryPath paths requestTopic
       batchDirectory = topicDirectoryPath paths batchTopic
-      resultDirectory = topicDirectoryPath paths resultTopic
+      resultDirectory = topicDirectoryPath paths resultTopicValue
   mapM_ removeIfPresent [requestDirectory, batchDirectory, resultDirectory]
   requestIdValue <-
     publishInferenceRequest
@@ -19275,64 +19275,12 @@ unitGeneratedDemoConfig paths mode demoEnabled budget =
       generatedPath = Config.generatedDemoConfigPath paths,
       mountedPath = Config.watchedDemoConfigPath,
       demoUiEnabled = demoEnabled,
-      coordinatorDaemon =
-        unitDaemonConfig
-          Coordinator
-          "cluster-pod"
-          Nothing
-          (requestTopicsForMode mode)
-          ConfiguredTransport,
-      webappDaemon =
-        unitDaemonConfig
-          Webapp
-          "cluster-pod"
-          Nothing
-          (requestTopicsForMode mode)
-          ConfiguredTransport,
-      engineDaemons =
-        [ unitDaemonConfig
-            Engine
-            (engineMemberLocation member)
-            (Just (engineMemberId member))
-            (unitEngineMemberTopics mode pools member)
-            engineConnectionMode
-        | member <- members
-        ],
-      enginePools = pools,
-      engineMembers = members,
-      requestTopics = requestTopicsForMode mode,
-      resultTopic = resultTopicForMode mode,
+      configPoolCatalogs =
+        map (poolCatalogFromEnginePool (catalogForMode mode)) (enginePoolsForMode mode),
       modelsBucket = defaultModelsBucket,
       modelBootstrapTopic = defaultModelBootstrapTopic,
-      engines = engineBindingsForMode mode,
-      models = catalogForMode mode,
       inferenceMemoryBudget = budget
     }
-  where
-    pools = enginePoolsForMode mode
-    members = engineMembersForMode mode
-    engineConnectionMode
-      | mode == AppleSilicon = PublicationEdgeAutoDiscovery
-      | otherwise = ConfiguredTransport
-    unitDaemonConfig role location memberIdValue topics connectionMode =
-      DaemonConfig
-        { daemonConfigRole = role,
-          daemonConfigLocation = location,
-          daemonConfigMemberId = memberIdValue,
-          daemonConfigRequestTopics = topics,
-          daemonConfigResultTopic = resultTopicForMode mode,
-          daemonConfigPulsarConnectionMode = connectionMode,
-          daemonConfigConsumerSubscriptionType = Just ConsumerShared
-        }
-
-unitEngineMemberTopics :: RuntimeMode -> [EnginePool] -> EngineMember -> [Text.Text]
-unitEngineMemberTopics mode pools member =
-  [ unitEnginePoolTopic mode (enginePoolId pool) modelIdValue
-  | pool <- pools,
-    enginePoolId pool `elem` engineMemberPoolIds member,
-    engineMemberId member `elem` enginePoolMemberIds pool,
-    modelIdValue <- enginePoolModelIds pool
-  ]
 
 unitEnginePoolTopic :: RuntimeMode -> Text.Text -> Text.Text -> Text.Text
 unitEnginePoolTopic mode poolIdValue modelIdValue =
@@ -20397,6 +20345,12 @@ assertHostConfig repoRootPath testRoot = do
         "home = /opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin\nversion = 3.12.13\n"
         == Right
           "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12"
+        && Provisioning.darwinPoetryFrameworkHomeFromPyvenvForTest
+          ( "home = /opt/homebrew/opt/python@3.12/bin\n"
+              <> "executable = /opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin/python3.12\n"
+          )
+          == Right
+            "/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12"
         && isLeft
           ( Provisioning.darwinPoetryFrameworkHomeFromPyvenvForTest
               "home = /usr/local/bin\n"
@@ -20406,7 +20360,7 @@ assertHostConfig repoRootPath testRoot = do
               "home = /opt/a/Python.framework/Versions/3.12/bin\nhome = /opt/b/Python.framework/Versions/3.12/bin\n"
           )
     )
-    "Darwin Poetry closure resolution derives one fixed framework-version home from pyvenv.cfg"
+    "Darwin Poetry closure resolution derives one fixed framework-version root from a standard pyvenv.cfg"
   -- Phase 1 Sprint 1.14 — the allowlisted Apple headless artifact
   -- plan uses runtime adapter ids and typed manifests, not a Tart VM.
   assert
@@ -22581,6 +22535,8 @@ runEngineProjectionAssertions = do
   -- authoritative wherever it is larger.
   let derivedOnly =
         Ceiling.resolveEngineCeiling LinuxCpu PodRam 471 Ceiling.NoEngineProjection
+      budgetedWithoutProjection =
+        Ceiling.resolveBudgetedEngineCeiling LinuxCpu PodRam 471 2048
       widened =
         Ceiling.resolveEngineCeiling LinuxCpu PodRam 471 (Ceiling.EngineProjectedMib 507)
       underReported =
@@ -22608,6 +22564,15 @@ runEngineProjectionAssertions = do
     )
     ( "Sprint 4.43: a ceiling derived from the artifact alone says so in its own "
         <> "provenance rather than implying a projection was consulted"
+    )
+  assert
+    ( Ceiling.installedCeilingMib budgetedWithoutProjection == 2048
+        && Ceiling.installedCeilingDerivedMib budgetedWithoutProjection == 471
+        && Ceiling.installedCeilingProvenance budgetedWithoutProjection
+          == Ceiling.CeilingFromArtifactAndLaneBudget 2048
+    )
+    ( "Sprint 4.48: a family with no upstream projection keeps artifact-derived "
+        <> "admission while its execution bound names the admitted lane budget"
     )
   -- The prefix binds the installed quantity, not the derived one; installing a
   -- ceiling the projection widened and then rendering the narrower number would

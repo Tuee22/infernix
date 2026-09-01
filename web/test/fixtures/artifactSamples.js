@@ -73,38 +73,11 @@ function encodePcm16Wav(sampleRate, channels, samples) {
   return buffer;
 }
 
-function deterministicNoise(index) {
-  const seeded = (1103515245 * (index + 12345) + 12345) % 2147483648;
-  return seeded / 1073741824 - 1;
-}
-
-// A non-silent, speech-like mono 16 kHz waveform: a falling-pitch sawtooth
-// glottal source shaped by two gliding formants plus light aspiration noise.
-// Speech-shaped, not genuinely spoken; a real utterance should be sourced for
-// the cohort gate.
+// Phase 4 Sprint 4.48: the genuinely spoken mono 16 kHz whisper.cpp JFK sample,
+// shared with the Haskell integration fixture. SHA-256:
+// 59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e.
 export function speechWavBuffer() {
-  const sampleRate = 16000;
-  const durationSeconds = 1.6;
-  const sampleCount = Math.round(durationSeconds * sampleRate);
-  const samples = new Array(sampleCount);
-  for (let index = 0; index < sampleCount; index += 1) {
-    const t = index / sampleRate;
-    const progress = t / durationSeconds;
-    const f0 = 150 - 55 * progress;
-    let source = 0;
-    for (let harmonic = 1; harmonic <= 12; harmonic += 1) {
-      source += (1 / harmonic) * Math.sin(2 * Math.PI * f0 * harmonic * t);
-    }
-    const formant1 = 500 + 300 * progress;
-    const formant2 = 1500 + 700 * progress;
-    const shaped =
-      source * (0.6 + 0.4 * Math.sin(2 * Math.PI * formant1 * t)) +
-      0.3 * source * Math.sin(2 * Math.PI * formant2 * t);
-    const noise = deterministicNoise(index) * 0.08;
-    const envelope = Math.min(1, Math.min(progress * 8, (1 - progress) * 8));
-    samples[index] = 0.5 * envelope * (shaped + noise);
-  }
-  return encodePcm16Wav(sampleRate, 1, samples);
+  return readFileSync(new URL("../../../test/fixtures/speech-jfk.wav", import.meta.url));
 }
 
 // A real music-like mixture for source separation: a sustained major triad, a

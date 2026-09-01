@@ -485,11 +485,11 @@ a kernel limit inside an engine produces only a failed allocation and an exit st
 quantity, no observed value, no configured value, and no object. The obligation therefore falls on the
 launch and not on the kernel: the launch records the ceiling it installed and the resource it
 installed it for, the engine reports back the limit it actually received from inside the process that
-will allocate, and the breach names the resource it breached and the footprint it observed. A refusal
-that cannot say *which* resource it is about cannot be acted on, because host and device breaches have
-different fixes; and a breach that arrives as a bare non-zero exit is indistinguishable from an
-ordinary model crash, which is the confusion the [realness contract](realness_contract.md) forbids on
-the results side.
+will allocate, and a sampled breach names the resource it breached and the footprint it observed. A
+kernel refusal that the engine does not report cannot say which resource it is about and remains a
+plain engine failure: a bare non-zero exit plus a nearby sampled peak is indistinguishable from an
+ordinary model crash, so promoting it would fabricate the diagnosis the
+[realness contract](realness_contract.md) forbids on the results side.
 
 Two audit obligations bound the review surface: **probe honesty**
 (each evidence type has exactly one mint, co-located with its hidden constructor, that must consume a

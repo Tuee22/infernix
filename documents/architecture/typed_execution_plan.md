@@ -40,7 +40,7 @@ binary-generated Dhall
 |---|---|---|---|
 | Dhall typecheck | generated expression | structurally typed expression | missing union payloads, fields from the wrong alternative, negative quantities |
 | Haskell decode and compile | `RawRuntimeConfig` | `CompiledRuntimePlan` | zero quantities, dangling pool/member references, resource/enforcer mismatch, capacity oversubscription, unroutable models |
-| Runtime refinement | `CompiledRuntimePlan` + live observations | `RuntimePlan` | an unavailable sampler for any resource the placement consumes, ineffective outer cgroup envelope, unavailable Apple footprint probe, unavailable NVIDIA accounting, chart/config limit drift, a lane that declares an installed ceiling its mechanism cannot install, a ceiling never calibrated against a real engine on that lane |
+| Runtime refinement | `CompiledRuntimePlan` + live observations | `RuntimePlan` | an unavailable sampler for any resource the placement consumes, ineffective outer cgroup envelope, unavailable Apple footprint probe, unavailable NVIDIA accounting, chart/config limit drift, a lane that declares an installed ceiling its mechanism cannot install |
 | Capability-gated routing/execution | coordinator projections from `CompiledRuntimePlan`; engine projections from `RuntimePlan` | total outcomes | raw unbounded command spawn, coordinator routing without compiled placement/daemon authority, engine launch without a matching grant and enforcer |
 
 Dhall cannot prove a live OS fact. A Dhall alternative names the only permitted enforcement
@@ -111,9 +111,9 @@ resource, so three per-platform watchdog alternatives would spell an implementat
 times and still leave the load-bearing distinction unsaid: `InstalledDataSegmentCeiling` claims a
 kernel limit in force before the engine's first allocation, with the backstop covering the residue
 that limit does not charge, while `SampledFootprintOnly` claims detection and nothing more. A lane
-that can install no ceiling — and a lane whose ceiling has never been calibrated against a real
-engine on it — has only the second spelling available, so an unearned claim of prevention is a
-refusal at refinement rather than a sentence in a comment.
+  that can install no ceiling has only the second spelling available, so an unsupported claim of
+  prevention is a refusal at refinement rather than a sentence in a comment. The closed lane table
+  declares mechanism; cohort calibration is its validation receipt, not a runtime constructor.
 
 The device arm has no mechanism alternative to choose from, because no kernel mechanism bounds
 device memory on any supported lane: it names the devices, the arena the admitted quantity sizes,
@@ -245,7 +245,7 @@ Generated substrate Dhall is converted to bytes with explicit UTF-8 encoding.
 Admission capacity and execution enforcement are distinct. Admission capacity answers whether work
 may start; the execution ceiling is the exact quantity the launched process is held to — and *how*
 it is held there differs by resource, which is the reason the two are not one number. On a host lane
-whose ceiling is calibrated and installed by the launch prefix before the engine's first allocation,
+whose ceiling is installed by the launch prefix before the engine's first allocation,
 the process is literally prevented from exceeding it: the over-budget allocation is refused inside
 the process, and nothing observes a breach because none occurs. On the device, and on any lane that can only sample,
 nothing prevents the allocation at all: the ceiling is the quantity a sampled footprint is compared
@@ -271,6 +271,20 @@ command overrides are absent. The execution shape the cache term was derived fro
 that same executable value onto the typed worker request, so the engine runs the context length,
 batch, generation bound, and load strategy the compiler reasoned about instead of restating literals
 of its own.
+
+The declared load strategy matches the invocation that actually runs. In particular, the CUDA GGUF
+row invokes the CPU-only llama.cpp payload with `--gpu-layers 0`, so it declares
+`LoadResidentHost`: its host formula includes the model bytes and its placement carries no NVIDIA
+VRAM grant or device sampler.
+
+The artifact-derived grant remains the quantity compilation admits. The execution bound is a
+separate value with explicit provenance: an engine-owned projection widens it where upstream ships
+a trustworthy projection tool, while a family with no such tool is bounded by the already-admitted
+per-execution lane budget. That distinction is required even for a native runner. A legacy Whisper
+GGML object's extent establishes its conservative resident weight charge, but it does not describe
+whisper.cpp's compute buffers, allocator arenas, or input-decoder working set; treating native code
+as intrinsically negligible would turn a correct admission into an allocation failure under the
+installed ceiling.
 
 Enforcement is one ceiling installer plus one resource-parameterised sampling kernel, not one
 implementation per platform. The installer is what differs between lanes; the kernel differs only in
@@ -310,8 +324,7 @@ limit or a CUDA exit code is never accepted as device evidence: an unavailable s
 it would never consume is not evidence of anything.
 
 What each lane may declare is fixed by what it can install: `apple-silicon` declares detection,
-`linux-cpu` and `linux-gpu` declare prevention over private writable mappings once their ceiling is
-calibrated against a real engine on that lane and detection over the residue, and the device half
+`linux-cpu` and `linux-gpu` declare prevention over private writable mappings and detection over the residue, and the device half
 declares admission plus arena sizing plus detection everywhere. The per-lane table is owned by
 [bounded_inference_memory.md](bounded_inference_memory.md).
 
@@ -472,9 +485,8 @@ The contract is proved by:
   the limit binds, after the image is replaced and before a weight is loaded, and comparing them with
   the quantity the plan installed; a limit that was written is a different claim from a limit the
   running image is bound by, and only the second is evidence;
-- a lane claims prevention only where a real engine on that lane has been observed to refuse an
-  over-budget allocation cleanly under an installed ceiling; without that observation the lane
-  declares detection and the gate that would prove prevention is red;
+- cohort calibration exercises the lane's authored prevention mechanism with a real engine and is
+  retained as validation evidence rather than represented by an authored observation constructor;
 - adversarial Apple, Linux CPU, and CUDA tests exceed each declared ceiling and observe a typed,
   terminal per-request failure naming the breached resource and the observed footprint, while the
   host and daemon remain alive;

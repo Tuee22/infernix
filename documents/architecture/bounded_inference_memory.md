@@ -31,11 +31,14 @@
   does not typecheck. The analogy is exact where the ceiling is a process limit installed before the
   first allocation, because such a limit is as intrinsic to a process as a deadline is.
 - **A requirement is derived, never authored.** A model's memory requirement is computed from the
-  artifact's own bytes — the tensor table in its header gives exact weight bytes, and its declared
-  geometry plus the execution shape gives exact key/value cache bytes — under a bounded header read
-  that fails closed on an artifact whose header and file disagree. An authored per-family constant is
-  a number that can disagree with the model it describes, which is the same objection that makes
-  capacity an observation rather than a declaration.
+  artifact's own bytes. Safetensors and GGUF expose a prefix-indexed tensor table that gives exact
+  weight bytes; whisper.cpp's legacy GGML container interleaves tensor records with their payloads,
+  so its fixed header establishes the family and geometry while the actual object extent is the
+  conservative host-resident weight charge. Declared geometry plus the execution shape gives exact
+  key/value cache bytes where that cache exists. Every reader is bounded and fails closed on a
+  malformed or self-contradicting artifact. An authored per-family constant is a number that can
+  disagree with the model it describes, which is the same objection that makes capacity an
+  observation rather than a declaration.
 - **The admitted quantity and the installed ceiling are different values, and the ceiling records
   which quantities produced it.** The artifact-derived requirement is what admission compares against
   a machine's observed capacity, and it stays authoritative wherever it is the larger number. What it
@@ -45,9 +48,11 @@
   weights themselves. Where an engine
   family ships a tool that projects what it will need, the ceiling installed for it is the greater of
   the derived and the projected quantity, taken through a bounded pre-flight probe under a closed
-  package-internal specification; where no such tool exists, the ceiling is the derived quantity
-  alone. A ceiling derived from artifact-plus-projection is not the same value as one derived from
-  the artifact alone, so the installation carries its provenance rather than implying a single one. A
+  package-internal specification. Where no trustworthy projection exists, execution is bounded by
+  the already-admitted per-execution lane budget: the artifact-derived quantity remains admission,
+  while the budget covers runtime residency the checkpoint cannot state. A ceiling derived from
+  artifact-plus-projection is not the same value as one widened to the lane budget, so the
+  installation carries both quantities and its provenance rather than implying a single one. A
   projection that cannot be obtained is a typed refusal naming the model and the reason — never a
   fall back to the derived quantity and never an unbounded launch — because a derived quantity that
   is structurally incomplete refuses a model that would have run and reports it as an engine fault.
@@ -55,19 +60,16 @@
   to a device, host residency is bounded by the staging window rather than by the model, so the
   model-size term is absent from the host formula entirely. A single scalar admitted against two
   physical resources is a category error that no amount of validation repairs.
-- A breach of the ceiling at runtime is a **clean, typed, terminal per-request failure**
+- A measured breach of the ceiling at runtime is a **clean, typed, terminal per-request failure**
   (`status=failed` with `InferenceError.ModelMemoryLimitExceeded`) — the same fail-clean shape the
   [realness contract](realness_contract.md) gives for engine-logic failures — never a kill of the
-  daemon that admitted it and never a retryable transient. That holds for **both** enforcement
-  layers, and the two are different shapes the payload distinguishes rather than one shape reported
-  twice. A *sampled overrun* reports an observation strictly above the ceiling it breached. A
-  *kernel refusal at the boundary* has no such observation to report — the allocation was refused, so
-  the memory never became resident — and reports the ceiling that was installed beside the peak the
-  sampler actually observed, which is at or below it, naming its own source rather than inventing a
-  number above the limit. Classification rests on the ceiling this process installed and its own
-  sampler's peak, never on matching an engine's standard-error text, which is an upstream format this
-  repository does not own. Where the evidence does not support it the failure stays a plain engine
-  failure, because guessing replaces a missing diagnosis with a wrong one.
+  daemon that admitted it and never a retryable transient. A sampled overrun reports an observation
+  strictly above the ceiling it breached. A kernel-refused allocation is prevented, but the generic
+  parent process receives only the engine's non-zero exit: a nearby sampled peak is also produced by
+  an ordinary fault after the weights are resident, so it is not evidence of refusal. Unless the
+  engine reports a typed refusal on its owned protocol, that exit stays a plain engine failure and
+  retains the engine's bounded diagnostic output. Standard-error matching is not evidence because it
+  is an upstream format this repository does not own.
 - Enforcement has three layers, and they are not interchangeable. **Prevention** is a kernel limit
   installed before the engine's first allocation, so an over-budget allocation is refused rather than
   observed. **Detection** is the sampled backstop over the residue that limit provably does not cover.
@@ -152,10 +154,10 @@ device but carries no device grant is not a constructible term.
   real model loaded, and treating scheduler pressure as enforcement loss killed a valid execution.
 - **A lane declares the strength it has.** The enforcement mechanism is part of the type, so a lane
   that can install a kernel ceiling and a lane that can only sample are different values, and a
-  contract that requires prevention refuses readiness on a lane that offers only detection. A lane
-  whose ceiling has never been calibrated against a real engine on that lane declares detection only:
-  an uncalibrated limit is a guess wearing an enforcement costume, and installing one low enough to
-  refuse a legitimate allocation converts a capacity question into a redelivery loop.
+  contract that requires prevention refuses readiness on a lane that offers only detection. The
+  closed per-lane table is an authored statement of mechanism, not an observation disguised as a
+  constructor. Cohort calibration is retained as validation evidence about that table's behavior;
+  it is not runtime evidence minted by process-local observation.
 
 The capacity these grants draw from is itself a checked partition, and the model's requirement is
 derived rather than authored, so the related unmanaged states are also unbuildable:
@@ -188,13 +190,15 @@ derived rather than authored, so the related unmanaged states are also unbuildab
   occupant rather than as a headroom tenant; the exclusive host claim that keeps the two from being
   resident together is owned by [bounded_host_memory.md](bounded_host_memory.md).
 - **Every model's requirement is derived from its artifact, and the derivation fails closed.** The
-  weight term is the sum over the artifact's own tensor table of each tensor's element count times its
-  element width — read from a bounded prefix of the artifact, without loading it. The cache term is the
-  closed function of the model's declared geometry and the execution shape the engine will actually
-  run under. The derivation refuses an artifact whose header overruns its file, whose tensor extents
-  disagree with their declared shapes, whose offsets do not tile densely, or whose geometry disagrees
-  with its own header, so an artifact that misdescribes itself yields no requirement rather than a
-  small one. The resulting quantity is resource-indexed and its constructor is hidden, so a host
+  weight term is the sum over the artifact's own prefix-indexed tensor table of each tensor's element
+  count times its element width. The legacy Whisper GGML exception has no prefix-indexed table, so a
+  validated fixed header plus the actual object extent yields a conservative host-resident charge
+  without reading or trusting an authored family constant. The cache term is the closed function of
+  the model's declared geometry and the execution shape the engine will actually run under. The
+  derivation refuses an artifact whose header overruns its file, whose tensor extents disagree with
+  their declared shapes, whose offsets do not tile densely, or whose geometry disagrees with its own
+  header, so an artifact that misdescribes itself yields no requirement rather than a small one. The
+  resulting quantity is resource-indexed and its constructor is hidden, so a host
   quantity cannot be admitted against a device limit; a requirement that is absent, zero, or built from
   anything but a verified artifact is unrepresentable.
 - **The execution shape is one value with two consumers.** The context length, batch, generation bound,
@@ -203,8 +207,8 @@ derived rather than authored, so the related unmanaged states are also unbuildab
   execution kernel, not an unaccounted caller choice: an engine free to choose its own arena from the
   size of the device it happens to find is not bounded by anything the compiler reasoned about.
 
-Because the ceiling is the model footprint (not the whole budget) and the partition reserves real
-headroom, a host whose pledged co-tenant reserve leaves less inference capacity than a model's footprint
+Because admission is against the model footprint and the partition reserves real headroom, a host
+whose pledged co-tenant reserve leaves less inference capacity than a model's footprint
 **fail-closes that model cleanly at admission** rather than admitting it and racing the watchdog — the
 type makes the capacity tradeoff explicit (running an oversized model requires a machine with more
 headroom, or a smaller co-tenant pledge, not silently over-committing physical RAM). A partition that
@@ -224,7 +228,7 @@ with different drivers.**
 | Types | GHC module export lists and nominal resource roles over the opaque plan, executable, requirement, and grant/enforcer types, under `-Wall -Werror` | constructing or relabeling a grant; admitting a host quantity against a device limit; refining from caller-fabricated observations; launching from a raw model/config record; a requirement built from anything but a verified artifact; a budget with no named enforcer; a device-using placement carrying no device grant |
 | Region | package-internal rank-2 capped-engine region with `bracket` teardown, entered only from an `ExecutableModel`-gated worker launch | an engine handle that escapes its capped region; a subprocess that runs or persists without the executable's ceiling and watchdog |
 | Serialization | one opaque process-local execution authority owned inside the engine API | concurrent reuse of independently admitted footprints that collectively exceed the host/pod partition |
-| OS (prevention) | a fixed public-tool launch prefix lowering the soft and hard data-segment limit, then replacing itself with the engine image, at the greater of the artifact-derived requirement and the engine's own bounded pre-flight projection | one process of an admitted engine allocating private writable memory beyond its installed ceiling. Bounds neither shared mappings nor device memory, and bounds a tree only per process |
+| OS (prevention) | a fixed public-tool launch prefix lowering the soft and hard data-segment limit, then replacing itself with the engine image, at the greater of the artifact-derived requirement and the engine's own bounded pre-flight projection, or at the admitted lane budget when no trustworthy projection exists | one process of an admitted engine allocating private writable memory beyond its installed ceiling. Bounds neither shared mappings nor device memory, and bounds a tree only per process |
 | OS (detection) | one resource-parameterised sampling kernel over process-group physical footprint, anonymous residency, or per-process device bytes | the residue prevention does not cover — pinned and shared host memory, and device memory on every lane — exceeding its ceiling without a clean, typed, terminal per-request failure. This half is sample-and-kill on a fixed cadence: a breach is detected and terminated, not prevented |
 | Installation | the launch prefix is a closed constructor whose only free values are quantities rendered from indexed types; the target executable and argument vector come from the already-closed engine command; the projection probe is a closed per-family specification naming a sibling of the validated entry object inside the same sealed immutable closure, rendering the same execution operands the engine invocation renders | a caller-supplied or manifest-supplied enforcement executable; an engine spawned without passing through the installation region |
 | Partition | `HostMemoryPartition` smart constructor over one checked `HostClaimablePool` | a VM reserve that empties the pool; a pool too small to retain its derived co-tenant headroom plus positive inference capacity; independently authored headroom or toolchain residuals |
@@ -236,9 +240,9 @@ comes from a verified artifact and a declared execution shape, never from a cons
 honesty** (only live package-owned observations mint enforcers), **serialization containment** (the
 single-flight authority remains inside the opaque execution API), **retry containment** (a measured
 breach maps directly to a typed terminal failure, never a string-classified retryable outcome), and
-**calibration honesty** (a lane claims prevention only where a real engine on that lane has been
-observed to refuse cleanly under an installed ceiling; absent that observation the lane declares
-detection only, and says so in its type rather than in prose).
+**mechanism honesty** (the closed lane table claims only what its installer actually provides, and
+cohort calibration is recorded as validation evidence rather than represented by an authored
+"observed" constructor).
 
 ### Per-lane enforcement
 
@@ -248,12 +252,14 @@ lane may not claim a strength its mechanism does not provide.
 | Lane | Host memory | Installed-ceiling provenance | Device memory |
 |---|---|---|---|
 | `apple-silicon` | detection — unified memory, no cgroups, and the address-space limit is aliased to an advisory limit that rejects every finite ceiling | not applicable — this lane installs nothing, so no projection is taken | not applicable |
-| `linux-cpu` | prevention once calibrated, over private writable mappings, under a larger pod envelope; detection over the residue | artifact, or artifact plus the engine's own projection where its family ships a projection tool | not applicable |
-| `linux-gpu` | prevention once calibrated, over private writable mappings; detection over pinned and shared host memory | artifact, or artifact plus the engine's own projection where its family ships a projection tool | admission and arena sizing, plus detection. No kernel mechanism bounds device memory on any lane |
+| `linux-cpu` | prevention over private writable mappings, under a larger pod envelope; detection over the residue | artifact plus the engine's own projection where its family ships one; otherwise artifact admission plus the admitted lane budget | not applicable |
+| `linux-gpu` | prevention over private writable mappings; detection over pinned and shared host memory | artifact plus the engine's own projection where its family ships one; otherwise artifact admission plus the admitted lane budget | admission and arena sizing, plus detection. No kernel mechanism bounds device memory on any lane |
 
 The projection is asked for exactly where its answer is used. It only ever changes an *installed*
 quantity — the launch prefix and the read-back it is compared against — so a lane whose arm is
 detection-only takes no projection at all: probing there would spend a process to change nothing.
+Its sampled execution bound still uses the admitted lane budget when no projection is taken, and the
+value records that this budget is not an artifact-derived requirement.
 
 **Declared exemption.** The operator CLI passthrough and the pre-manifest host-tool probes are named
 exemptions from the raw-spawn gate: their executable and argv come
@@ -275,6 +281,11 @@ whose `FixedObserverSpec` is unexported, so no caller can supply an executable, 
 environment, or working directory. Enforcement pins `/usr/bin/nvidia-smi` as a literal absolute path
 rather than resolving it from the host-tools manifest: an enforcement observer that follows a
 configurable path is redirectable, which is exactly what the closed catalog exists to prevent.
+The Apple and NVIDIA request catalogs, fixed specifications, samplers, probes, and watchdog seams are
+ordinary Haskell values selected from `System.Info.os` at run time. There is no CPP wall around
+either family: every supported build presents both arms to GHC, so the repository's `-Wall -Werror`
+gate checks the whole enforcement module family even though only the host-appropriate public tools
+may execute.
 
 Two properties make per-process attribution sound inside an engine pod, and both were measured
 rather than assumed:
@@ -311,8 +322,8 @@ a fabricated pass.
 
 
 - `cabal build all` under `-Wall -Werror` plus the negative-compilation suite proves external callers
-  cannot construct or relabel grants/enforcers, add a device quantity to a host sum, claim a proven
-  bound from an uncalibrated reserve, refine a plan from raw observations, import hidden
+  cannot construct or relabel grants/enforcers, add a device quantity to a host sum, refine a plan
+  from raw observations, import hidden
   decoder/routing modules, launch an engine from a raw model/config record, or reach a spawn without
   passing through the installation region. The suite carries a matching positive control for each
   such refusal, because a negative fixture that would fail for an unrelated reason proves nothing.
@@ -331,11 +342,10 @@ a fabricated pass.
   observed peak sits inside its derived ceiling. The last of those is what makes the run evidence
   rather than absence of evidence. Completing without exhaustion is a sample of this lane's behaviour,
   not evidence that a bound exists; the bound is proved by the typed gates above.
-- A lane's claim to prevention is proved by a calibration observation on that lane: a real engine
-  started under an installed ceiling, its device runtime initialized, and an over-budget allocation
-  refused cleanly rather than killing the process tree. Until that observation exists for a lane, the
-  lane declares detection only, and the gate that would prove prevention is red — which is the honest
-  backlog, not a defect in this contract.
+- Cohort calibration validates the authored mechanism table: a real engine starts under the installed
+  ceiling, reads it back, initializes its runtime, and an over-budget allocation is prevented without
+  killing the daemon. The receipt is behavioral evidence; no `HostCeilingCalibrationObserved`
+  constructor is minted from a handwritten constant.
 - `infernix lint docs` keeps this document registered and its cross-references resolving.
 
 ## Cross-References

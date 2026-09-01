@@ -1,9 +1,10 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Active. Sprints 8.1 through 8.13 are `Done`: the generated system and machine contracts
-name every engine member, bind each machine to the system-contract digest, and drive eager model
-staging before routed readiness. Sprint 8.14 is open — the wire contracts are split by role but the
-decoded value is not, so every role is still handed fields it must not act on.
+**Status**: Active. Sprints 8.1 through 8.13 are `Done`. Sprint 8.14 is code-side closed: the
+generated system and machine contracts name every engine member, bind each machine to the
+system-contract digest, drive eager model staging before routed readiness, and decode into
+role-specific routing, launch, publication, and presentation views. Wave 8.1 retains the selected
+`linux-gpu` plus paired `linux-cpu` full-suite sign-off.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
@@ -1103,47 +1104,55 @@ None.
 ## Sprint 8.14: The Decoded Contract Is Split By Role [Active]
 
 **Status**: Active
-**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig/Internal.hs`, `src/Infernix/Runtime/Daemon.hs`
-**Blocked by**: nothing.
+**Code-side closure**: Complete — governed Apple build, native-arm64 `linux-cpu` build and unit
+suite, standalone lint/docs gates, and routed `linux-cpu` integration pass.
+**Cohort gate**: Wave 8.1 — selected current-source `linux-gpu` plus paired `linux-cpu`
+`infernix test all` remain.
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig/Internal.hs`,
+`src/Infernix/Substrate/Internal.hs`, `src/Infernix/ExecutionPlan.hs`,
+`src/Infernix/Runtime/Daemon.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`,
+`src/Infernix/Webapp.hs`, `src/Infernix/Web/Contracts.hs`, `web/test/Main.purs`,
+`test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`
 
 ### Objective
 
-The wire half of the whole-deployment record is closed: the generated system contract no longer
-carries the role, the two in-cluster daemon records, the member list, or a top-level model catalog,
-and the machine contract carries what is true of one box.
-
-The decoded value did not follow. One Haskell record still carries the coordinator daemon, the
-webapp daemon, the engine daemons, the pool graph, the member identities, the topic set and the
-model list at once, with the retired wire fields derived rather than removed, so every role is
-handed fields it must not act on. The disagreement between the contracts is gone; the over-broad
-handoff is not.
+Give each consumer only the facts and derived authority its role reads. The generated system
+contract carries shared substrate and pool-catalog facts, the machine contract carries what is true
+of one box, and decoded routing, launch, publication, and presentation views expose no sibling
+role's authority.
 
 ### Deliverables
 
-- the decoded value is split so a role receives the fields its own execution reads
-- the derived stand-ins for the retired wire fields are removed with the split
-- routing, launch, publication and presentation each consume their own view
+- `DemoConfig` decodes only shared wire facts and raw pool catalogs; role-specific daemon, topic,
+  membership, model, and pool values are projections rather than stored stand-ins
+- `RoutingExecutionPlan` carries coordinator routing authority while engine launch consumes the
+  compiled execution plan and its executable-model capabilities
+- cluster publication consumes `PublicationConfig`; the browser API and webapp consume
+  `PresentationConfig`, which cannot expose routing, launch, admission, or deployment metadata
+- unit and routed integration assertions reject the retired broad JSON surface and require the
+  active runtime plus model catalog from the presentation view
 
 ### Validation
 
-- `cabal test infernix-unit` through the governed toolchain
-- `infernix lint docs`
-- routed integration on `linux-cpu`
+- governed Apple build
+- native-arm64 `linux-cpu` image build and `infernix test unit`
+- `infernix lint files`, `infernix lint docs`, `infernix lint chart`, `infernix lint proto`, and
+  `infernix docs check`
+- routed `linux-cpu` integration, including the narrow presentation contract, real inference,
+  retained PostgreSQL rebinding, and the `demo_ui=false` branch
+- cohort: Wave 8.1 selected `linux-gpu` plus paired `linux-cpu` full suites
 
 ### Remaining Work
 
-The record is unchanged. This is a consumer-side change across four surfaces rather than a wire
-change, which is why it is scoped as its own sprint.
+Wave 8.1 records the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite gate.
 
 ---
 
 ## Remaining Work
 
-Sprint 8.14 is open: the in-memory contract record still carries the coordinator daemon, the webapp
-daemon, the engine daemons, the pool graph, the member identities, the topic set and the model list
-at once, with the retired wire fields derived rather than removed. Sprints 8.1 through 8.13 are
-closed.
+Wave 8.1 records the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite gate for
+Sprint 8.14. No code-side work remains.
 
 ## Documentation Requirements
 

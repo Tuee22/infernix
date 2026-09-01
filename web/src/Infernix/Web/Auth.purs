@@ -29,6 +29,7 @@ module Infernix.Web.Auth
   , readToken
   , writeToken
   , clearToken
+  , tokenHasAdminRole
   , beginLoginRedirect
   , beginRegisterRedirect
   , beginLogoutRedirect
@@ -75,6 +76,11 @@ writeToken (TokenStore ref) token = Ref.write (Just token) ref
 
 clearToken :: TokenStore -> Effect Unit
 clearToken (TokenStore ref) = Ref.write Nothing ref
+
+-- | Derive the presentation-only admin dimension from the same in-memory
+-- | Keycloak access token used by the authenticated application session.
+-- | Authorization remains enforced at the edge and backend boundaries.
+foreign import tokenHasAdminRole :: String -> Boolean
 
 beginLoginRedirect :: RealmConfig -> Effect Unit
 beginLoginRedirect = beginLoginRedirectImpl

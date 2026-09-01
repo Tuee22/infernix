@@ -14,6 +14,17 @@ module Infernix.Types
     DaemonConfig (..),
     DaemonRole (..),
     DemoConfig (..),
+    PoolCatalog (..),
+    PresentationConfig (..),
+    PublicationConfig (..),
+    coordinatorDaemon,
+    engineDaemons,
+    engineMembers,
+    enginePools,
+    models,
+    requestTopics,
+    resultTopic,
+    webappDaemon,
     EngineAdapterType (..),
     engineAdapterTypeId,
     parseEngineAdapterType,
@@ -89,7 +100,6 @@ module Infernix.Types
     cappedEngineResidentCeilingSource,
     modelMemoryLimitExceededErrorCode,
     modelRequirementUnderivableErrorCode,
-    cappedEngineRefusedAtCeilingSource,
     mkHostMemoryPartition,
     mkHostAndDeviceRequirement,
     mkHostResidentRequirement,
@@ -136,6 +146,7 @@ import Data.Aeson
   )
 import Data.Aeson.Types (Parser)
 import Data.Char (isAlphaNum)
+import Data.List (nub)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -647,32 +658,29 @@ data CacheManifest = CacheManifest
   }
   deriving (Eq, Read, Show)
 
+-- | One pool together with the model descriptors it owns on the system wire.
+--
+-- Phase 8 Sprint 8.14 keeps this nesting after decode. The retired decoded
+-- shape flattened every pool's models into a top-level catalog and then kept
+-- the pool ids beside it, recreating the cross-reference the wire had removed.
+data PoolCatalog = PoolCatalog
+  { poolCatalogId :: Text,
+    poolCatalogMemberIds :: [Text],
+    poolCatalogSubscriptionType :: ConsumerSubscriptionType,
+    poolCatalogModels :: [ModelDescriptor]
+  }
+  deriving (Eq, Show)
+
+-- | The decoded system contract, restricted to facts that are actually on its
+-- wire. Role metadata, member records, topics, engine bindings, and a top-level
+-- model catalog are projections and are deliberately not fields of this value.
 data DemoConfig = DemoConfig
   { configRuntimeMode :: RuntimeMode,
     configMapName :: Text,
     generatedPath :: FilePath,
     mountedPath :: FilePath,
     demoUiEnabled :: Bool,
-    -- | Coordinator role metadata. On Linux substrates this drives the
-    -- in-cluster @infernix-coordinator@ Deployment; on Apple silicon
-    -- it drives the in-cluster Pulsar coordination role too.
-    -- Sprint 7.7 renamed this field from @clusterDaemon@ to track the
-    -- new daemon-role vocabulary.
-    coordinatorDaemon :: DaemonConfig,
-    -- | Webapp role metadata. The in-cluster @infernix-demo@
-    -- Deployment now starts through @infernix service --role webapp@
-    -- instead of the retired @infernix-demo@ executable.
-    webappDaemon :: DaemonConfig,
-    -- | Engine role metadata. The first entry is the generic engine
-    -- daemon (Apple host engine, or the Linux native-runner fallback
-    -- topic). Linux GPU framework engines add one entry per isolated
-    -- per-engine image, selected by @infernix service --role engine
-    -- --engine-name <name>@.
-    engineDaemons :: [DaemonConfig],
-    enginePools :: [EnginePool],
-    engineMembers :: [EngineMember],
-    requestTopics :: [Text],
-    resultTopic :: Text,
+    configPoolCatalogs :: [PoolCatalog],
     -- | Always-on MinIO bucket the coordinator's bootstrap subscription
     -- populates with platform model weights, keyed by @<modelId>/<filename>@
     -- with a @.ready@ sentinel written last (Phase 7 Sprint 7.7).
@@ -683,14 +691,136 @@ data DemoConfig = DemoConfig
     -- 'modelsBucket', and acknowledges with @model.bootstrap.ready.<modelId>@
     -- (Phase 7 Sprint 7.7).
     modelBootstrapTopic :: Text,
-    engines :: [EngineBinding],
-    models :: [ModelDescriptor],
     -- | Phase 4 Sprint 4.27 — the typed per-substrate memory budget used
     -- by runtime admission. Enforced budgets reject only the oversized
     -- request; they no longer invalidate the whole generated catalog.
     inferenceMemoryBudget :: InferenceMemoryBudget
   }
   deriving (Eq, Show)
+
+-- | Presentation receives only the fields the browser surface reads. Routing,
+-- launch, publication paths, member identity, topics, and memory admission are
+-- not representable in this value.
+data PresentationConfig = PresentationConfig
+  { presentationRuntimeMode :: RuntimeMode,
+    presentationDemoUiEnabled :: Bool,
+    presentationModels :: [ModelDescriptor],
+    presentationEnginePoolCount :: Int,
+    presentationEngineMemberCount :: Int
+  }
+  deriving (Eq, Show)
+
+-- | Cluster publication receives the deployment facts it renders and waits
+-- on, without daemon capabilities or launch metadata.
+data PublicationConfig = PublicationConfig
+  { publicationRuntimeMode :: RuntimeMode,
+    publicationConfigMapName :: Text,
+    publicationGeneratedPath :: FilePath,
+    publicationMountedPath :: FilePath,
+    publicationDemoUiEnabled :: Bool,
+    publicationEnginePools :: [EnginePool],
+    publicationEngineMembers :: [EngineMember],
+    publicationModels :: [ModelDescriptor]
+  }
+  deriving (Eq, Show)
+
+enginePools :: DemoConfig -> [EnginePool]
+enginePools config =
+  [ EnginePool
+      { enginePoolId = poolCatalogId poolCatalog,
+        enginePoolRuntimeMode = configRuntimeMode config,
+        enginePoolModelIds = map modelId (poolCatalogModels poolCatalog),
+        enginePoolMemberIds = poolCatalogMemberIds poolCatalog,
+        enginePoolSubscriptionType = poolCatalogSubscriptionType poolCatalog,
+        enginePoolMaxInflightPerMember = defaultMaxInflightPerMember
+      }
+  | poolCatalog <- configPoolCatalogs config
+  ]
+
+models :: DemoConfig -> [ModelDescriptor]
+models = concatMap poolCatalogModels . configPoolCatalogs
+
+engineMembers :: DemoConfig -> [EngineMember]
+engineMembers config =
+  [ EngineMember
+      { engineMemberId = memberIdValue,
+        engineMemberRuntimeMode = configRuntimeMode config,
+        engineMemberLocation = engineMemberLocationForMode (configRuntimeMode config),
+        engineMemberPoolIds =
+          [ enginePoolId pool
+          | pool <- enginePools config,
+            memberIdValue `elem` enginePoolMemberIds pool
+          ]
+      }
+  | memberIdValue <- nub (concatMap enginePoolMemberIds (enginePools config))
+  ]
+
+requestTopics :: DemoConfig -> [Text]
+requestTopics config =
+  [ "persistent://infernix/demo/inference.request."
+      <> runtimeModeId (configRuntimeMode config)
+  ]
+
+resultTopic :: DemoConfig -> Text
+resultTopic config =
+  "persistent://infernix/demo/inference.result."
+    <> runtimeModeId (configRuntimeMode config)
+
+coordinatorDaemon :: DemoConfig -> DaemonConfig
+coordinatorDaemon = clusterRoleDaemon Coordinator
+
+webappDaemon :: DemoConfig -> DaemonConfig
+webappDaemon = clusterRoleDaemon Webapp
+
+clusterRoleDaemon :: DaemonRole -> DemoConfig -> DaemonConfig
+clusterRoleDaemon roleValue config =
+  DaemonConfig
+    { daemonConfigRole = roleValue,
+      daemonConfigLocation = clusterDaemonLocation,
+      daemonConfigMemberId = Nothing,
+      daemonConfigRequestTopics = requestTopics config,
+      daemonConfigResultTopic = resultTopic config,
+      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigConsumerSubscriptionType = Just ConsumerShared
+    }
+
+engineDaemons :: DemoConfig -> [DaemonConfig]
+engineDaemons config = map daemonForMember (engineMembers config)
+  where
+    daemonForMember member =
+      DaemonConfig
+        { daemonConfigRole = Engine,
+          daemonConfigLocation = engineMemberLocation member,
+          daemonConfigMemberId = Just (engineMemberId member),
+          daemonConfigRequestTopics = memberRequestTopics member,
+          daemonConfigResultTopic = resultTopic config,
+          daemonConfigPulsarConnectionMode =
+            if configRuntimeMode config == AppleSilicon
+              then PublicationEdgeAutoDiscovery
+              else ConfiguredTransport,
+          daemonConfigConsumerSubscriptionType = Just ConsumerShared
+        }
+    memberRequestTopics member =
+      [ "persistent://infernix/demo/inference.batch."
+          <> runtimeModeId (configRuntimeMode config)
+          <> ".pool."
+          <> routingTopicSegment (enginePoolId pool)
+          <> ".model."
+          <> routingTopicSegment modelIdValue
+      | pool <- enginePools config,
+        enginePoolId pool `elem` engineMemberPoolIds member,
+        engineMemberId member `elem` enginePoolMemberIds pool,
+        modelIdValue <- enginePoolModelIds pool
+      ]
+
+routingTopicSegment :: Text -> Text
+routingTopicSegment =
+  Text.map
+    ( \character ->
+        if isAlphaNum character || character `elem` ("._-" :: String)
+          then character
+          else '-'
+    )
 
 -- | Phase 4 Sprint 4.38 — the physical resource a quantity is about.
 --
@@ -1347,19 +1477,6 @@ modelRequirementUnderivableErrorCode = "model_requirement_underivable"
 cappedEngineResidentCeilingSource :: Text
 cappedEngineResidentCeilingSource = "capped-engine-resident-ceiling"
 
--- | Phase 4 Sprint 4.44 — the @inferenceErrorSource@ a /kernel refusal at the
--- installed ceiling/ names, as distinct from a sampled overrun above it.
---
--- The two are different shapes and the payload has to be able to say which. An
--- overrun reports an observation strictly above the ceiling; a refusal has no
--- such observation to report, because the kernel refused the allocation and the
--- memory never became resident. Its payload therefore carries the ceiling that
--- was installed and the peak that was actually observed — which is at or below
--- it — rather than a number invented above the limit to satisfy an invariant
--- that belongs to the other shape.
-cappedEngineRefusedAtCeilingSource :: Text
-cappedEngineRefusedAtCeilingSource = "capped-engine-refused-at-ceiling"
-
 data InferenceError
   = ModelMemoryLimitExceeded
       { inferenceErrorModelId :: Text,
@@ -1970,88 +2087,22 @@ instance FromJSON ErrorResponse where
       <$> value .: "errorCode"
       <*> value .: "message"
 
-instance ToJSON DemoConfig where
-  toJSON demoConfig =
+instance ToJSON PresentationConfig where
+  toJSON presentationConfig =
     object
-      [ "runtimeMode" .= configRuntimeMode demoConfig,
-        "configMapName" .= configMapName demoConfig,
-        "generatedPath" .= generatedPath demoConfig,
-        "mountedPath" .= mountedPath demoConfig,
-        "demo_ui" .= demoUiEnabled demoConfig,
-        "coordinator" .= coordinatorDaemon demoConfig,
-        "webapp" .= webappDaemon demoConfig,
-        "engineDaemons" .= engineDaemons demoConfig,
-        "enginePools" .= enginePools demoConfig,
-        "engineMembers" .= engineMembers demoConfig,
-        "request_topics" .= requestTopics demoConfig,
-        "result_topic" .= resultTopic demoConfig,
-        "models_bucket" .= modelsBucket demoConfig,
-        "model_bootstrap_topic" .= modelBootstrapTopic demoConfig,
-        "engines" .= engines demoConfig,
-        "models" .= models demoConfig,
-        "inferenceMemoryBudget" .= inferenceMemoryBudget demoConfig
+      [ "runtimeMode" .= presentationRuntimeMode presentationConfig,
+        "demo_ui" .= presentationDemoUiEnabled presentationConfig,
+        "models" .= presentationModels presentationConfig
       ]
 
-instance FromJSON DemoConfig where
-  parseJSON = withObject "DemoConfig" $ \value -> do
-    runtimeModeValue <- value .: "runtimeMode"
-    requestTopicValues <- value .: "request_topics"
-    resultTopicValue <- value .: "result_topic"
-    -- Phase 7 Sprint 7.7 renamed the JSON keys from
-    -- @clusterDaemon@ / @hostDaemon@ to @coordinator@ / @engine@.
-    -- Both names parse during the transition window.
-    coordinatorDaemonValue <-
-      do
-        coordinatorMaybe <- value .:? "coordinator"
-        case coordinatorMaybe of
-          Just coordinator -> pure coordinator
-          Nothing -> do
-            clusterMaybe <- value .:? "clusterDaemon"
-            case clusterMaybe of
-              Just legacyCluster -> pure legacyCluster
-              Nothing ->
-                pure
-                  ( defaultCoordinatorDaemonConfig
-                      runtimeModeValue
-                      requestTopicValues
-                      resultTopicValue
-                  )
-    webappDaemonValue <-
-      value
-        .:? "webapp"
-        .!= defaultWebappDaemonConfig runtimeModeValue requestTopicValues resultTopicValue
-    enginePoolValues <- value .:? "enginePools" .!= []
-    engineMemberValues <- value .:? "engineMembers" .!= []
-    parsedEngineDaemonValues <-
-      value .:? "engineDaemons" .!= []
-    let engineDaemonValues =
-          if null parsedEngineDaemonValues
-            then deriveEngineDaemonConfigs runtimeModeValue enginePoolValues engineMemberValues resultTopicValue
-            else parsedEngineDaemonValues
-    modelsBucketValue <- value .:? "models_bucket" .!= defaultModelsBucket
-    modelBootstrapTopicValue <-
-      value .:? "model_bootstrap_topic" .!= defaultModelBootstrapTopic
-    -- Phase 8 Sprint 8.9: the budget is required. The retired
-    -- @inferenceRamBudgetMib@ scalar fallback defaulted to @0@ when both keys
-    -- were absent, so a malformed document decoded to a silent zero-MiB budget
-    -- instead of failing. Nothing in the repo ever produced that key.
-    inferenceMemoryBudgetValue <- value .: "inferenceMemoryBudget"
-    (DemoConfig runtimeModeValue <$> value .: "configMapName")
-      <*> value .: "generatedPath"
-      <*> value .: "mountedPath"
+instance FromJSON PresentationConfig where
+  parseJSON = withObject "PresentationConfig" $ \value ->
+    PresentationConfig
+      <$> value .: "runtimeMode"
       <*> value .: "demo_ui"
-      <*> pure coordinatorDaemonValue
-      <*> pure webappDaemonValue
-      <*> pure engineDaemonValues
-      <*> pure enginePoolValues
-      <*> pure engineMemberValues
-      <*> pure requestTopicValues
-      <*> pure resultTopicValue
-      <*> pure modelsBucketValue
-      <*> pure modelBootstrapTopicValue
-      <*> value .: "engines"
       <*> value .: "models"
-      <*> pure inferenceMemoryBudgetValue
+      <*> pure 0
+      <*> pure 0
 
 -- | Synthesize a valid 'HostMemoryPartition' whose inference capacity is a given
 -- MiB value, holding back exactly the claimable-pool policy's co-tenant headroom and no VM
@@ -2094,74 +2145,6 @@ defaultModelsBucket = "infernix-models"
 defaultModelBootstrapTopic :: Text
 defaultModelBootstrapTopic =
   "persistent://infernix/system/model.bootstrap.request"
-
-defaultCoordinatorDaemonConfig :: RuntimeMode -> [Text] -> Text -> DaemonConfig
-defaultCoordinatorDaemonConfig _runtimeMode requestTopicValues resultTopicValue =
-  DaemonConfig
-    { daemonConfigRole = Coordinator,
-      daemonConfigLocation = "cluster-pod",
-      daemonConfigMemberId = Nothing,
-      daemonConfigRequestTopics = requestTopicValues,
-      daemonConfigResultTopic = resultTopicValue,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport,
-      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-    }
-
-defaultWebappDaemonConfig :: RuntimeMode -> [Text] -> Text -> DaemonConfig
-defaultWebappDaemonConfig _runtimeMode requestTopicValues resultTopicValue =
-  DaemonConfig
-    { daemonConfigRole = Webapp,
-      daemonConfigLocation = "cluster-pod",
-      daemonConfigMemberId = Nothing,
-      daemonConfigRequestTopics = requestTopicValues,
-      daemonConfigResultTopic = resultTopicValue,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport,
-      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-    }
-
-deriveEngineDaemonConfigs :: RuntimeMode -> [EnginePool] -> [EngineMember] -> Text -> [DaemonConfig]
-deriveEngineDaemonConfigs runtimeMode pools members resultTopicValue =
-  map engineDaemonConfigForMember members
-  where
-    engineDaemonConfigForMember member =
-      DaemonConfig
-        { daemonConfigRole = Engine,
-          daemonConfigLocation = engineMemberLocation member,
-          daemonConfigMemberId = Just (engineMemberId member),
-          daemonConfigRequestTopics = derivedEngineMemberRequestTopics runtimeMode pools member,
-          daemonConfigResultTopic = resultTopicValue,
-          daemonConfigPulsarConnectionMode =
-            if runtimeMode == AppleSilicon
-              then PublicationEdgeAutoDiscovery
-              else ConfiguredTransport,
-          daemonConfigConsumerSubscriptionType = Just ConsumerShared
-        }
-
-derivedEngineMemberRequestTopics :: RuntimeMode -> [EnginePool] -> EngineMember -> [Text]
-derivedEngineMemberRequestTopics runtimeMode pools member =
-  [ derivedEnginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue
-  | pool <- pools,
-    enginePoolId pool `elem` engineMemberPoolIds member,
-    engineMemberId member `elem` enginePoolMemberIds pool,
-    modelIdValue <- enginePoolModelIds pool
-  ]
-
-derivedEnginePoolTopicForMode :: RuntimeMode -> Text -> Text -> Text
-derivedEnginePoolTopicForMode runtimeMode poolId modelIdValue =
-  "persistent://infernix/demo/inference.batch."
-    <> runtimeModeId runtimeMode
-    <> ".pool."
-    <> topicSegment poolId
-    <> ".model."
-    <> topicSegment modelIdValue
-
-topicSegment :: Text -> Text
-topicSegment =
-  Text.map replaceInvalid
-  where
-    replaceInvalid character
-      | isAlphaNum character || character == '-' || character == '_' || character == '.' = character
-      | otherwise = '-'
 
 formatUtc :: UTCTime -> String
 formatUtc = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"

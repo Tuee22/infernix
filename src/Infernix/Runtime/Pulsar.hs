@@ -3509,7 +3509,7 @@ runResultBridgeLoop ::
   CompiledRuntimePlan ->
   IO ()
 runResultBridgeLoop transport compiledPlan = do
-  topicRef <- requireTopicRef resultTopic
+  topicRef <- requireTopicRef resultTopicValue
   processLabel <- currentProcessLabel
   let runtimeModeText = runtimeModeId runtimeMode
       subscriptionName = "result-bridge-" <> runtimeModeText
@@ -3532,14 +3532,14 @@ runResultBridgeLoop transport compiledPlan = do
         hPutStrLn
           stderr
           ( "result-bridge session for "
-              <> Text.unpack resultTopic
+              <> Text.unpack resultTopicValue
               <> " failed:\n"
               <> displayException err
           )
         threadDelay 1_000_000
   where
     runtimeMode = compiledPlanRuntimeMode compiledPlan
-    resultTopic =
+    resultTopicValue =
       compiledDaemonResultTopic (compiledPlanCoordinatorDaemon compiledPlan)
     topicNamespace = ConversationTopic.defaultDemoTopicNamespace
 

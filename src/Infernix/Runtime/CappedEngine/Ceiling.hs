@@ -30,6 +30,7 @@ module Infernix.Runtime.CappedEngine.Ceiling
     requireCeilingStrength,
     validateRuntimeCeilingReadiness,
     resolveEngineCeiling,
+    resolveBudgetedEngineCeiling,
     projectionProbeCeiling,
     ceilingReadBackMatches,
   )
@@ -60,26 +61,11 @@ data CeilingStrength
 -- | The minimum strength a production lane contract accepts at readiness.
 --
 -- This is deliberately distinct from 'CeilingStrength': one is what the
--- contract requires and the other is what the calibrated mechanism provides.
--- Keeping both values means readiness compares two independently named facts
--- instead of treating the resolver's declaration as its own proof.
+-- contract requires and the other is the mechanism the lane declares. Keeping
+-- both values makes readiness reject a weaker mechanism explicitly.
 data CeilingRequirement
   = CeilingDetectionPermitted
   | CeilingPreventionRequired
-  deriving (Eq, Show)
-
--- | Whether a real engine on a host lane has demonstrated a clean allocation
--- refusal under the installed mechanism.
---
--- Constructors stay private. Calibration is a cohort property of the pinned
--- lane implementation, not a caller-supplied runtime option: both Linux host
--- lanes have their real cohort observation. Apple and device resources never
--- reach this declaration because they have no installable mechanism. The
--- pending arm remains the fail-closed representation for any future Linux host
--- lane until its own observation exists.
-data HostCeilingCalibration
-  = HostCeilingCalibrationPending
-  | HostCeilingCalibrationObserved
   deriving (Eq, Show)
 
 -- | Phase 4 Sprint 4.43 — what an engine projects it needs, or that its family
@@ -87,11 +73,10 @@ data HostCeilingCalibration
 --
 -- The two arms are not the same statement and the type keeps them apart. An
 -- engine that was asked and answered contributes a quantity; an engine family
--- whose upstream ships no projection tool contributes nothing, and the ceiling
--- it receives is the artifact-derived quantity with its provenance saying so. A
--- probe that was asked and /failed/ is neither: it never reaches this type,
--- because a failed projection is a typed refusal at the call site rather than an
--- absent quantity here.
+-- whose upstream ships no projection tool contributes nothing here and is
+-- bounded separately by its admitted lane budget. A probe that was asked and
+-- /failed/ is neither: it never reaches this type, because a failed projection
+-- is a typed refusal at the call site rather than an absent quantity here.
 data EngineCeilingProjection
   = NoEngineProjection
   | EngineProjectedMib !Int
@@ -100,23 +85,26 @@ data EngineCeilingProjection
 -- | Phase 4 Sprint 4.43 — which quantities produced the installed value.
 --
 -- A ceiling derived from artifact-plus-projection is not the same value as one
--- derived from the artifact alone, so the per-lane strength table can state the
--- difference rather than implying a single provenance. The projected quantity is
--- retained beside the installed one because the margin between the two is the
--- evidence a later calibration reads; discarding it would leave the difference
--- recoverable only by re-running.
+-- derived from the artifact alone or one bounded by the admitted lane budget,
+-- so the per-lane strength table can state the difference rather than implying
+-- a single provenance. The projected quantity is retained beside the installed
+-- one because the margin between the two is the evidence a later calibration
+-- reads; discarding it would leave the difference recoverable only by re-running.
 data CeilingProvenance
   = CeilingFromArtifact
   | CeilingFromArtifactAndProjection !Int
+  | CeilingFromArtifactAndLaneBudget !Int
   deriving (Eq, Show)
 
--- | An installation. Its constructor is hidden; 'resolveEngineCeiling' is the
--- only mint, and the spawn kernel is the only consumer of its argument prefix.
+-- | An installation. Its constructor is hidden; the resolvers in this module
+-- are the only mints, and the spawn kernel is the only consumer of its argument
+-- prefix.
 data InstalledCeiling = InstalledCeiling
   { installedCeilingStrength :: CeilingStrength,
     installedCeilingResource :: Resource,
-    -- | The quantity actually installed: the greater of the artifact-derived
-    -- requirement and the engine's own projection.
+    -- | The quantity actually installed: never below the artifact-derived
+    -- requirement, and widened either by the engine's own projection or by the
+    -- admitted lane budget when no projection exists.
     installedCeilingMib :: Int,
     -- | The artifact-derived requirement alone, retained beside the installed
     -- quantity so the two are never confused for one another.
@@ -147,11 +135,10 @@ ceilingEnforcementTool = "/usr/bin/prlimit"
 -- an unimplemented case, not a silent fall-through to the Linux path, and not a
 -- claim of prevention that the mechanism does not provide.
 --
--- The device arm is detection-only for a different reason, and the two are kept
--- distinct: a host column reads detection because the calibration observation
--- has not been made yet, while the device column reads it because there is no
--- mechanism to calibrate. Collapsing them would let an absent mechanism be
--- mistaken for a pending measurement.
+-- The device arm is detection-only because there is no kernel device-memory
+-- mechanism on a supported lane. No runtime value claims that a cohort
+-- observation minted the static lane declaration: behavioral calibration is a
+-- validation receipt, not process-local evidence available at readiness.
 resolveEngineCeiling ::
   RuntimeMode ->
   Resource ->
@@ -159,9 +146,12 @@ resolveEngineCeiling ::
   EngineCeilingProjection ->
   InstalledCeiling
 resolveEngineCeiling runtimeModeValue resource derivedMib projection =
-  case ceilingStrengthForLane runtimeModeValue resource of
-    CeilingDetectionOnly -> detectionOnly
-    CeilingInstalledDataSegment -> installedDataSegment
+  resolveInstalledCeiling
+    runtimeModeValue
+    resource
+    derivedMib
+    installedMib
+    provenance
   where
     -- Phase 4 Sprint 4.43 — the greater of the two quantities, never a
     -- replacement of one by the other. The derivation stays authoritative
@@ -174,6 +164,43 @@ resolveEngineCeiling runtimeModeValue resource derivedMib projection =
           ( max derivedMib projectedMib,
             CeilingFromArtifactAndProjection projectedMib
           )
+
+-- | Resolve the bounded quantity for an engine family that offers no
+-- model-specific projection.
+--
+-- The artifact-derived requirement remains the admission quantity. It cannot,
+-- however, describe interpreter/runtime residency, compute graphs, allocator
+-- arenas, or other engine working memory. When upstream provides no projection
+-- the only constructed bound that covers those terms is the already-admitted
+-- per-execution lane budget. This function keeps both quantities and names that
+-- provenance; it never substitutes a family constant or claims the budget was
+-- derived from the checkpoint.
+resolveBudgetedEngineCeiling ::
+  RuntimeMode ->
+  Resource ->
+  Int ->
+  Int ->
+  InstalledCeiling
+resolveBudgetedEngineCeiling runtimeModeValue resource derivedMib laneBudgetMib =
+  resolveInstalledCeiling
+    runtimeModeValue
+    resource
+    derivedMib
+    (max derivedMib laneBudgetMib)
+    (CeilingFromArtifactAndLaneBudget laneBudgetMib)
+
+resolveInstalledCeiling ::
+  RuntimeMode ->
+  Resource ->
+  Int ->
+  Int ->
+  CeilingProvenance ->
+  InstalledCeiling
+resolveInstalledCeiling runtimeModeValue resource derivedMib installedMib provenance =
+  case ceilingStrengthForLane runtimeModeValue resource of
+    CeilingDetectionOnly -> detectionOnly
+    CeilingInstalledDataSegment -> installedDataSegment
+  where
     detectionOnly =
       InstalledCeiling
         { installedCeilingStrength = CeilingDetectionOnly,
@@ -193,30 +220,20 @@ resolveEngineCeiling runtimeModeValue resource derivedMib projection =
           installedCeilingArgumentPrefix = dataSegmentPrefix installedMib
         }
 
--- | The strength the selected lane has earned for one resource.
+-- | The mechanism each lane declares for one resource.
 --
--- Linux CPU prevention is backed by a real pinned llama.cpp run that
--- initialized the backend and model under the data-segment ceiling and then
--- refused an over-budget compute-buffer allocation with an ordinary non-zero
--- exit. Linux GPU's host column is backed by the paired CUDA cohort: a real
--- framework engine initialized its device runtime and completed under the
--- installed data-segment ceiling, while the adversarial allocation path kept
--- an ordinary non-zero refusal attributable. Device memory and Apple unified
--- memory have no installable mechanism and therefore cannot be promoted by
--- calibration.
+-- This is a closed architecture table, not evidence minted by an observation.
+-- Cohort validation measures the table's behavior and records its receipt; it
+-- cannot turn a handwritten constructor into runtime proof. Device memory and
+-- Apple unified memory have no installable mechanism and remain detection-only.
 ceilingStrengthForLane :: RuntimeMode -> Resource -> CeilingStrength
 ceilingStrengthForLane runtimeModeValue resource =
   case (runtimeModeValue, resource) of
     (AppleSilicon, _) -> CeilingDetectionOnly
     (_, NvidiaVram) -> CeilingDetectionOnly
-    (LinuxCpu, PodRam) -> strengthFromCalibration HostCeilingCalibrationObserved
-    (LinuxGpu, PodRam) -> strengthFromCalibration HostCeilingCalibrationObserved
+    (LinuxCpu, PodRam) -> CeilingInstalledDataSegment
+    (LinuxGpu, PodRam) -> CeilingInstalledDataSegment
     _ -> CeilingDetectionOnly
-  where
-    strengthFromCalibration calibration =
-      case calibration of
-        HostCeilingCalibrationPending -> CeilingDetectionOnly
-        HostCeilingCalibrationObserved -> CeilingInstalledDataSegment
 
 -- | Refuse a required prevention contract when the lane declares only
 -- detection. Detection-permitted contracts accept either strength.
@@ -231,7 +248,7 @@ requireCeilingStrength requirement provided =
 -- | Production readiness check for every physical resource the runtime mode
 -- can execute against.
 --
--- Both Linux contracts require their calibrated host mechanism. The Apple
+-- Both Linux contracts require their declared host mechanism. The Apple
 -- contract permits its honest detection-only host mechanism. The Linux GPU
 -- device resource is permanently detection-only because no kernel mechanism
 -- bounds device memory on any supported lane.

@@ -3,7 +3,10 @@
 
 module Infernix.DemoConfig.Internal
   ( decodeBootstrapDemoConfigFile,
+    decodeBootstrapPublicationConfigFile,
     decodeDemoConfigFile,
+    decodePresentationConfigFile,
+    decodePublicationConfigFile,
     materializeEmptyModelsDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     materializeBuildMemoryCeilingFile,
@@ -17,6 +20,8 @@ module Infernix.DemoConfig.Internal
     stripDemoConfigBanner,
     validateDemoConfig,
     validateDemoConfigFile,
+    presentationConfig,
+    publicationConfig,
     writeProjectConfigFile,
   )
 where
@@ -35,7 +40,6 @@ import Infernix.Config (Paths)
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig.Colima (observeActiveColimaPledgeMib)
 import Infernix.DhallSchema.Enums (daemonRoleToDhall)
-import Infernix.EngineRouting (engineMemberRequestTopics)
 import Infernix.HostConfig (HostConfig)
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostMemory qualified as HostMemory
@@ -51,8 +55,6 @@ import Infernix.Models
     linuxEngineInferenceRamBudgetMib,
     linuxEngineInferenceVramBudgetMib,
     linuxGpuEngineInferenceRamBudgetMib,
-    requestTopicsForMode,
-    resultTopicForMode,
   )
 import Infernix.Substrate (demoConfigGeneratedBannerLine)
 import Infernix.Substrate.Internal (decodeSubstrateConfigFile)
@@ -82,6 +84,35 @@ decodeDemoConfigFile filePath = do
     Left message -> ioError (userError ("invalid demo config: " <> message))
     Right validDemoConfig -> pure validDemoConfig
 
+decodePresentationConfigFile :: FilePath -> IO PresentationConfig
+decodePresentationConfigFile filePath = presentationConfig <$> decodeDemoConfigFile filePath
+
+decodePublicationConfigFile :: FilePath -> IO PublicationConfig
+decodePublicationConfigFile filePath = publicationConfig <$> decodeDemoConfigFile filePath
+
+presentationConfig :: DemoConfig -> PresentationConfig
+presentationConfig config =
+  PresentationConfig
+    { presentationRuntimeMode = configRuntimeMode config,
+      presentationDemoUiEnabled = demoUiEnabled config,
+      presentationModels = models config,
+      presentationEnginePoolCount = length (enginePools config),
+      presentationEngineMemberCount = length (engineMembers config)
+    }
+
+publicationConfig :: DemoConfig -> PublicationConfig
+publicationConfig config =
+  PublicationConfig
+    { publicationRuntimeMode = configRuntimeMode config,
+      publicationConfigMapName = configMapName config,
+      publicationGeneratedPath = generatedPath config,
+      publicationMountedPath = mountedPath config,
+      publicationDemoUiEnabled = demoUiEnabled config,
+      publicationEnginePools = enginePools config,
+      publicationEngineMembers = engineMembers config,
+      publicationModels = models config
+    }
+
 -- | Decode the image-baked launcher config. It may intentionally carry an
 -- empty model set so one-shot container commands do not trigger downloads; the
 -- daemon-facing config path still uses 'decodeDemoConfigFile' and rejects that
@@ -92,6 +123,10 @@ decodeBootstrapDemoConfigFile filePath = do
   case validateDemoConfigAllowingEmptyModels demoConfig of
     Left message -> ioError (userError ("invalid demo config: " <> message))
     Right validDemoConfig -> pure validDemoConfig
+
+decodeBootstrapPublicationConfigFile :: FilePath -> IO PublicationConfig
+decodeBootstrapPublicationConfigFile filePath =
+  publicationConfig <$> decodeBootstrapDemoConfigFile filePath
 
 validateDemoConfigFile :: FilePath -> IO ()
 validateDemoConfigFile filePath = do
@@ -397,17 +432,18 @@ generatedDemoConfig paths runtimeMode machineCount demoUiEnabledValue modelSet b
       generatedPath = Config.generatedDemoConfigPath paths,
       mountedPath = Config.watchedDemoConfigPath,
       demoUiEnabled = demoUiEnabledValue,
-      coordinatorDaemon = coordinatorDaemonConfig runtimeMode,
-      webappDaemon = webappDaemonConfig runtimeMode,
-      engineDaemons = engineDaemonConfigs runtimeMode machineCount,
-      enginePools = enginePoolsForFleet runtimeMode machineCount,
-      engineMembers = engineMembersForFleet runtimeMode machineCount,
-      requestTopics = requestTopicsForMode runtimeMode,
-      resultTopic = resultTopicForMode runtimeMode,
+      configPoolCatalogs =
+        [ PoolCatalog
+            { poolCatalogId = enginePoolId pool,
+              poolCatalogMemberIds = enginePoolMemberIds pool,
+              poolCatalogSubscriptionType = enginePoolSubscriptionType pool,
+              poolCatalogModels =
+                [model | model <- modelSet, modelId model `elem` enginePoolModelIds pool]
+            }
+        | pool <- enginePoolsForFleet runtimeMode machineCount
+        ],
       modelsBucket = defaultModelsBucket,
       modelBootstrapTopic = defaultModelBootstrapTopic,
-      engines = engineBindingsForMode runtimeMode,
-      models = modelSet,
       inferenceMemoryBudget = budget
     }
 
@@ -576,59 +612,6 @@ readMaybeInt text = case reads text of
   [(value, "")] -> Just value
   _ -> Nothing
 
-coordinatorDaemonConfig :: RuntimeMode -> DaemonConfig
-coordinatorDaemonConfig runtimeMode =
-  DaemonConfig
-    { daemonConfigRole = Coordinator,
-      daemonConfigLocation = "cluster-pod",
-      daemonConfigMemberId = Nothing,
-      daemonConfigRequestTopics = requestTopicsForMode runtimeMode,
-      daemonConfigResultTopic = resultTopicForMode runtimeMode,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport,
-      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-    }
-
-webappDaemonConfig :: RuntimeMode -> DaemonConfig
-webappDaemonConfig runtimeMode =
-  DaemonConfig
-    { daemonConfigRole = Webapp,
-      daemonConfigLocation = "cluster-pod",
-      daemonConfigMemberId = Nothing,
-      daemonConfigRequestTopics = requestTopicsForMode runtimeMode,
-      daemonConfigResultTopic = resultTopicForMode runtimeMode,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport,
-      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-    }
-
--- | Phase 7 Sprint 7.7: the engine role is deployed on every supported
--- substrate. On Apple silicon it runs as the on-host daemon (location
--- @control-plane-host@, Pulsar transport discovered through the
--- publication edge). On Linux substrates it runs as the in-cluster
--- @infernix-engine@ Deployment (location @cluster-pod@, Pulsar transport
--- from the mounted cluster config). In every case the engine consumes
--- the derived pool/model topics assigned to its stable member id.
-engineDaemonConfigs :: RuntimeMode -> EngineMachineCount -> [DaemonConfig]
-engineDaemonConfigs runtimeMode machineCount =
-  map (engineDaemonConfigForMember runtimeMode pools) members
-  where
-    pools = enginePoolsForFleet runtimeMode machineCount
-    members = engineMembersForFleet runtimeMode machineCount
-
-engineDaemonConfigForMember :: RuntimeMode -> [EnginePool] -> EngineMember -> DaemonConfig
-engineDaemonConfigForMember runtimeMode pools member =
-  DaemonConfig
-    { daemonConfigRole = Engine,
-      daemonConfigLocation = engineMemberLocation member,
-      daemonConfigMemberId = Just (engineMemberId member),
-      daemonConfigRequestTopics = engineMemberRequestTopics runtimeMode pools member,
-      daemonConfigResultTopic = resultTopicForMode runtimeMode,
-      daemonConfigPulsarConnectionMode =
-        if runtimeMode == AppleSilicon
-          then PublicationEdgeAutoDiscovery
-          else ConfiguredTransport,
-      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-    }
-
 renderModelListing :: DemoConfig -> String
 renderModelListing demoConfig =
   unlines
@@ -718,7 +701,7 @@ validateDemoConfig allowEmptyModels demoConfig
     missingEngineBindings =
       [ Text.unpack engineName
       | engineName <- nub (map selectedEngine (models demoConfig)),
-        engineName `notElem` map engineBindingName (engines demoConfig)
+        engineName `notElem` map engineBindingName (engineBindingsForMode (configRuntimeMode demoConfig))
       ]
     duplicateModelIds = duplicates (map (Text.unpack . modelId) (models demoConfig))
     duplicateMatrixRows = duplicates (map (Text.unpack . matrixRowId) (models demoConfig))

@@ -52,7 +52,7 @@ import Infernix.Demo.Auth
   )
 import Infernix.Demo.Bootstrap (requiredDemoBuckets)
 import Infernix.Demo.WebSocket qualified as DemoWebSocket
-import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
+import Infernix.DemoConfig.Internal (decodePresentationConfigFile)
 import Infernix.Models (engineBindingForSelectedEngine)
 import Infernix.Objects.Layout
   ( DemoObjectsBucket (..),
@@ -196,7 +196,7 @@ loadJwksCached (JwksCache cacheRef) realmConfig = do
 runDemoApiServer :: DemoApiOptions -> IO ()
 runDemoApiServer options = do
   -- Fail fast when the generated catalog is invalid so cluster/test flows surface the error early.
-  demoConfig <- decodeDemoConfigFile (demoConfigPath options)
+  demoConfig <- decodePresentationConfigFile (demoConfigPath options)
   jwksCache <- newJwksCache
   -- Phase 7 Sprint 7.17: realm wiring now comes from the typed
   -- @ClusterConfig.keycloak.*@ fields when the chart ConfigMap is
@@ -204,7 +204,7 @@ runDemoApiServer options = do
   -- manifest fall back to 'defaultInfernixRealmConfig'.
   maybeClusterConfig <- tryLoadClusterConfig
   maybeBucketsProvisioned <-
-    if demoUiEnabled demoConfig
+    if presentationDemoUiEnabled demoConfig
       then repairDemoBucketsAtStartup maybeClusterConfig
       else pure Nothing
   let realmConfig = loadRealmConfigFromCluster maybeClusterConfig
@@ -357,7 +357,7 @@ tryLoadClusterConfig = do
 -- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
 application :: DemoApiOptions -> JwksCache -> KeycloakRealmConfig -> Maybe ClusterConfig.ClusterConfig -> Maybe DemoBucketsProvisioned -> Application
 application options jwksCache realmConfig maybeClusterConfig maybeBucketsProvisioned request respond = do
-  demoEnabled <- demoUiEnabled <$> decodeDemoConfigFile (demoConfigPath options)
+  demoEnabled <- presentationDemoUiEnabled <$> decodePresentationConfigFile (demoConfigPath options)
   case pathInfo request of
     ["healthz"]
       | requestMethod request == methodGet && demoEnabled ->
@@ -626,8 +626,9 @@ handleAdminOverview ::
   IO responseReceived
 handleAdminOverview options jwksCache realmConfig request respond =
   withAdminRequest jwksCache realmConfig request respond $ do
-    demoConfig <- decodeDemoConfigFile (demoConfigPath options)
-    let activeRuntimeMode = configRuntimeMode demoConfig
+    demoConfig <- decodePresentationConfigFile (demoConfigPath options)
+    let activeRuntimeMode = presentationRuntimeMode demoConfig
+        engineNames = nub (map selectedEngine (presentationModels demoConfig))
     manifests <- listCacheManifests (demoPaths options) activeRuntimeMode
     userCountResult <- countUsersWithObjects
     let usersWithObjectsMaybe = either (const Nothing) Just userCountResult
@@ -639,12 +640,12 @@ handleAdminOverview options jwksCache realmConfig request respond =
               [ "runtimeMode" .= runtimeModeId activeRuntimeMode,
                 "substrate" .= runtimeModeId activeRuntimeMode,
                 "dispatchMode" .= bridgeModeLabel (demoBridgeMode options),
-                "demoUiEnabled" .= demoUiEnabled demoConfig,
-                "catalogModelCount" .= length (models demoConfig),
-                "engineBindingCount" .= length (engines demoConfig),
-                "engineNames" .= nub (map engineBindingName (engines demoConfig)),
-                "enginePoolCount" .= length (enginePools demoConfig),
-                "engineMemberCount" .= length (engineMembers demoConfig),
+                "demoUiEnabled" .= presentationDemoUiEnabled demoConfig,
+                "catalogModelCount" .= length (presentationModels demoConfig),
+                "engineBindingCount" .= length engineNames,
+                "engineNames" .= engineNames,
+                "enginePoolCount" .= presentationEnginePoolCount demoConfig,
+                "engineMemberCount" .= presentationEngineMemberCount demoConfig,
                 "modelCacheEntryCount" .= length manifests,
                 "usersWithObjects" .= (usersWithObjectsMaybe :: Maybe Int),
                 "usersWithObjectsError" .= (usersWithObjectsErrorMaybe :: Maybe String)
@@ -1499,18 +1500,18 @@ servePublication options respond = do
 
 serveDemoConfig :: DemoApiOptions -> (Response -> IO responseReceived) -> IO responseReceived
 serveDemoConfig options respond = do
-  demoConfig <- decodeDemoConfigFile (demoConfigPath options)
+  demoConfig <- decodePresentationConfigFile (demoConfigPath options)
   respond (jsonResponse status200 demoConfig)
 
 serveModels :: DemoApiOptions -> (Response -> IO responseReceived) -> IO responseReceived
 serveModels options respond = do
-  demoConfig <- decodeDemoConfigFile (demoConfigPath options)
-  respond (jsonResponse status200 (models demoConfig))
+  demoConfig <- decodePresentationConfigFile (demoConfigPath options)
+  respond (jsonResponse status200 (presentationModels demoConfig))
 
 serveModel :: DemoApiOptions -> Text.Text -> (Response -> IO responseReceived) -> IO responseReceived
 serveModel options requestedModelId respond = do
-  demoConfig <- decodeDemoConfigFile (demoConfigPath options)
-  case filter ((== requestedModelId) . modelId) (models demoConfig) of
+  demoConfig <- decodePresentationConfigFile (demoConfigPath options)
+  case filter ((== requestedModelId) . modelId) (presentationModels demoConfig) of
     modelDescriptor : _ -> respond (jsonResponse status200 modelDescriptor)
     [] -> respond (jsonResponse status404 (ErrorResponse "unknown_model" "The requested model is not registered."))
 
@@ -1522,7 +1523,7 @@ serveCacheStatus options respond = do
 
 currentDemoRuntimeMode :: DemoApiOptions -> IO RuntimeMode
 currentDemoRuntimeMode options =
-  configRuntimeMode <$> decodeDemoConfigFile (demoConfigPath options)
+  presentationRuntimeMode <$> decodePresentationConfigFile (demoConfigPath options)
 
 buildCachePayload :: DemoApiOptions -> RuntimeMode -> IO [Value]
 buildCachePayload options runtimeMode = do

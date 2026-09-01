@@ -650,9 +650,11 @@ and generic inference-success fallback behavior from the supported execution pat
 name the single substrate they exercised and do not imply coverage that was not run. - A
 resource-exhaustion result is classified into **four** outcomes, not two, and a suite that
 collapses any pair of them is not evidence. A model refused at admission is a typed capacity
-failure with no launch. An allocation refused inside a live engine by an installed ceiling is a
-typed memory failure of an admitted model — a different fact, on a lane that prevents rather than
-samples. A missing result, including a host out-of-memory kill, is a stall. And a pass produced
+failure with no launch. A watchdog observation above an installed ceiling is a typed memory
+failure of an admitted model — a different fact, on a lane that prevents and samples. A plain
+non-zero engine exit near that ceiling remains an engine failure because neither the exit code nor
+a nearby sampled peak proves which allocation the kernel refused. A missing result, including a
+host out-of-memory kill, is a stall. And a pass produced
 without real output is a fabrication. The first two are supported outcomes; the last two are
 defects. - when an owning phase calls out real-cluster lifecycle or recovery assertions, the
 supported non-Apple-cluster lane owns those checks on the deployed single-instance substrate

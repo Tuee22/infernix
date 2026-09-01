@@ -29,9 +29,11 @@ import Infernix.Types
     InferenceMemoryBudget (HostEnforcedBudget, SubstrateEnforcedBudget),
     PodMemoryLimit (..),
     PodMemoryLimitSource (..),
+    PoolCatalog (..),
     Resource (PodRam),
     RuntimeMode (AppleSilicon, LinuxCpu),
     hostPartitionForCapacity,
+    models,
     singleEngineMachine,
   )
 import System.Directory (createDirectoryIfMissing)
@@ -137,7 +139,12 @@ runDemoConfigParserProperties paths = do
     "the private strict parser accepts a generated Linux CPU config"
   LazyByteString.writeFile
     emptyConfigPath
-    (encodeDemoConfig linuxConfig {models = []})
+    ( encodeDemoConfig
+        linuxConfig
+          { configPoolCatalogs =
+              [catalog {poolCatalogModels = []} | catalog <- configPoolCatalogs linuxConfig]
+          }
+    )
   strictEmptyResult <-
     try (decodeDemoConfigFile emptyConfigPath) ::
       IO (Either IOException DemoConfig)

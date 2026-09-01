@@ -13,10 +13,11 @@ govern this plan.
 
 ## Current execution gate
 
-Phase 0 is `Done`. Phases 4, 6, 8 and 9 are `Active`; Phases 1, 2, 3, 5 and 7 are `Done`. Phase 6 Sprint 6.53 closes its residual process-site lint,
-recovery-authority, VRAM-first admission, config-independent reclaim, and cross-container
-descendant-quiescence scope against the selected current-source `linux-gpu` plus paired
-current-source native-amd64 `linux-cpu` full suites. Sprint 0.27 closes the plan-level delivery
+Phase 0 is `Done`. Phases 4, 6, 8 and 9 are `Active`; Phases 1, 2, 3, 5 and 7 are `Done`. Phase 6
+Sprint 6.54 is code-side closed: its platform request vocabulary, specifications, samplers, probes,
+and watchdog seams compile as ordinary runtime-selected Haskell values in the governed Apple build
+and the native-arm64 `linux-cpu` build plus unit suite. Wave 6.1 retains the selected current-source
+`linux-gpu` plus paired `linux-cpu` full-suite sign-off. Sprint 0.27 closes the plan-level delivery
 language on the supported at-least-once transport with an effectively-once observable outcome,
 Sprint 1.40 closes its build-memory and capability cleanup rows, and Phase 4 Sprint 4.45 closes
 against the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full
@@ -27,7 +28,15 @@ Phase 4 owns the artifact-derived, resource-indexed host requirement, unified ch
 installed host ceiling, and execution-shape propagation. Phase 6 owns device admission, arena sizing,
 and the sampled device backstop; no lane claims a kernel device-memory bound.
 
-No cohort validation gate remains open.
+Waves 4.1, 6.1, 8.1, and 9.1 retain the remaining accelerator sign-offs for Phases 4, 6, 8, and 9
+respectively.
+Phase 4's routed-speech correction is code-side closed, and the paired native-arm64 `linux-cpu`
+build and full suite pass, including the routed spoken-utterance and browser per-model rows. Phase
+6's fixed-observer correction is code-side closed. Phase 8's decoded role-contract split is also
+code-side closed after the governed Apple build, native-arm64 `linux-cpu` build and unit suite,
+standalone gates, and routed `linux-cpu` integration. Phase 9's application-owned admin renderer is
+code-side closed after the native-arm64 `linux-cpu` build and unit suite, standalone gates, and
+routed browser suite; the four validation-only residuals remain queued.
 
 Under Section C, an earlier phase reopening does not revert a later one: each phase's `Done` is scoped
 to its own deliverables and validation gate.
@@ -87,13 +96,16 @@ contract.
 ## Current Repo Assessment
 
 Phase 0 is `Done`; it closes at Sprint 0.36 and does not reopen. Phases 1, 2, 3, 5 and 7 are `Done`.
-Phases 4, 6, 8 and 9 are `Active`, each carrying sprints for defects found by review against the
-code: the ceiling-refusal classifier, host ceiling calibration, the speech row's fixture, and one
-catalog row's declared load strategy in Phase 4; the preprocessor walls in the fixed observer in
-Phase 6; the by-role split of the decoded contract in Phase 8; and the duplicated admin gate in
-Phase 9. Under Section C each phase's status describes only its own scope. Phase 4's Bounded Engine Launch host half and Sprint 4.45
-runtime-capability closure pass on the selected Apple accelerator plus paired native-arm64
-`linux-cpu`. Phase 6's device half, Linux GPU host calibration, and residual safety and recovery
+Phases 4, 6, 8 and 9 are `Active`. Phase 4's routed-speech correction is code-side closed and Wave
+4.1 awaits selected `apple-silicon` validation; Phase 6's unified fixed-observer correction is
+code-side closed and Wave 6.1 retains its selected `linux-gpu` plus paired `linux-cpu` sign-off;
+Phase 8's by-role decoded-contract split is code-side closed and Wave 8.1 retains its selected
+`linux-gpu` plus paired `linux-cpu` sign-off; and Phase 9's application-owned admin renderer is
+code-side closed, with Wave 9.1 retaining its selected `linux-gpu` plus paired `linux-cpu`
+full-suite sign-off.
+Under Section C each phase's status describes only its own scope. Phase 4's Bounded Engine Launch
+host half and Sprint 4.45 runtime-capability closure pass on the selected Apple accelerator plus
+paired native-arm64 `linux-cpu`. Phase 6's device half, Linux GPU host calibration, and residual safety and recovery
 implementation pass on the selected current-source CUDA accelerator plus paired current-source
 native-amd64 `linux-cpu`; device memory remains honestly detection-only because no supported kernel
 mechanism bounds it.
@@ -309,12 +321,12 @@ trust the phase document.
 | 1 | Done | Sprint 1.40 removes its obsolete build-memory surfaces, makes clean Poetry bootstrap and Darwin framework sealing exact, and passes the governed Apple build, aggregate lint, complete unit gates, and standalone repository lints. |
 | 2 | Done | Every sprint is closed. Sprint 2.17 validates the single-binary registry bootstrap on the selected `linux-gpu` accelerator plus `linux-cpu`, including a populated second reconcile and stateless registry-pod reschedule. |
 | 3 | Done | Every sprint is closed. Sprint 3.17 validates anonymous single-binary registry publication, the routed catalog, populated backing, and stateless pod rescheduling on the selected `linux-gpu` accelerator plus `linux-cpu`; Sprint 3.16 enforces the one-worker topology, and Sprints 3.14 and 3.15 own the readiness and bounded-publication evidence boundaries. |
-| 4 | **Active** | Sprints 4.46-4.49 are open: the ceiling-refusal classifier fires on ordinary engine faults, host ceiling calibration is an authored literal, the speech row's proof rests on a synthesized fixture, and one catalog row's declared load strategy disagrees with the runner's invocation. Sprint 4.45's stable Apple project environment, bounded observers, Pulsar broker envelope, typed generation shape, and artifact recipe identity pass the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full suites. |
+| 4 | **Active** | Sprints 4.46 through 4.49 are code-side closed. The selected speech row completes with its reachable transcript assertion, legacy Whisper GGML admission derives from the artifact extent, and a no-projection execution records the admitted lane budget as its bound. The paired current-source native-arm64 `linux-cpu` build and full suite pass; Wave 4.1 awaits the selected `apple-silicon` full suite against the same frozen phase state. |
 | 5 | Done | Every sprint is closed and no code-side work is open. |
-| 6 | **Active** | Sprint 6.54 is open: preprocessor walls in the fixed observer and the sampler-selection region present one arm per lane, so `-Wall -Werror` sees half of the module family it is the stated proof for. Sprint 6.53's residual process-site lint, recovery-authority, VRAM-first admission, config-independent reclaim, and cross-container descendant-quiescence scope passes the selected current-source `linux-gpu` plus paired current-source native-amd64 `linux-cpu` full suites. |
+| 6 | **Active** | Sprint 6.54 is code-side closed: the fixed observer and sampler-selection region expose both platform arms as ordinary runtime-selected values, and the governed Apple build plus native-arm64 `linux-cpu` build and unit suite pass. Wave 6.1 retains the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off against one frozen Phase 6 state. |
 | 7 | Done | Every sprint is closed and no code-side work is open. |
-| 8 | **Active** | Sprint 8.14 is open: the wire contracts are split by role but the decoded value is not, so every role is handed fields it must not act on. The generated system contract carries substrate and pool/model descriptors; the machine contract carries role, member identities, cache quota, and the system-contract digest; coordinator topic metadata and daemon startup checks reject disagreement; eager staging completes before routed readiness. |
-| 9 | **Active** | Sprint 9.11 is open: the admin surface is gated twice, once from application state and once from a cookie-driven detector in the copied HTML shell. Enforcement is unaffected; the duplication is a second rendering path no test drives. |
+| 8 | **Active** | Sprint 8.14 is code-side closed: shared wire facts decode once, routing and engine launch consume distinct execution views, cluster publication consumes its publication view, and the browser receives only the active runtime plus model catalog. Wave 8.1 retains the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off. |
+| 9 | **Active** | Sprint 9.11 is code-side closed: the in-memory access token derives `AppState.isAdmin`, the application renderer owns the operator ribbon, cluster summaries, admin overview, and Files-backed personal dashboard, and the shell contains only static markup plus the compiled module. The native-arm64 `linux-cpu` build, unit suite, standalone gates, and routed 16/16 browser suite pass; Wave 9.1 retains the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off. |
 
 ## Canonical Outcome
 

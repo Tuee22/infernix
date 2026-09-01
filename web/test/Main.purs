@@ -8,19 +8,15 @@ import Data.Newtype (un)
 import Effect (Effect)
 import Effect.Aff (error, launchAff_, throwError)
 import Generated.Contracts
-  ( EngineBinding
-  , ModelDescriptor
+  ( ModelDescriptor
   , apiBasePath
-  , engineBindingRecord
-  , engines
   , maxInlineOutputLength
   , modelDescriptorRecord
   , models
-  , requestTopics
-  , resultTopic
   , runtimeMode
   )
 import Infernix.Web.ArtifactsSpec as ArtifactsSpec
+import Infernix.Web.AuthSpec as AuthSpec
 import Infernix.Web.ChatSpec as ChatSpec
 import Infernix.Web.ContractsSpec as ContractsSpec
 import Test.Spec (describe, it)
@@ -42,14 +38,11 @@ main =
         it "publish the active runtime constants" do
           apiBasePath `shouldEqual` "/api"
           maxInlineOutputLength `shouldEqual` 80
-          requestTopics `shouldEqual` [ "persistent://infernix/demo/inference.request." <> runtimeMode ]
-          resultTopic `shouldEqual` ("persistent://infernix/demo/inference.result." <> runtimeMode)
-          length engines `shouldEqual` expectedEngineCount runtimeMode
           length models `shouldEqual` expectedModelCount runtimeMode
-          any hasEngineMetadata engines `shouldEqual` true
           any hasModelMetadata models `shouldEqual` true
 
       ContractsSpec.spec
+      AuthSpec.spec
       ChatSpec.spec
       ArtifactsSpec.spec
 
@@ -63,19 +56,6 @@ expectedModelCount mode =
     "linux-cpu" -> 12
     "linux-gpu" -> 16
     _ -> 0
-
-expectedEngineCount :: String -> Int
-expectedEngineCount mode =
-  case mode of
-    "apple-silicon" -> 11
-    "linux-cpu" -> 7
-    "linux-gpu" -> 8
-    _ -> 0
-
-hasEngineMetadata :: EngineBinding -> Boolean
-hasEngineMetadata binding =
-  let bindingValue = engineBindingRecord binding
-  in bindingValue.engine /= "" && bindingValue.adapterId /= "" && bindingValue.adapterType /= "" && bindingValue.adapterLocator /= ""
 
 hasModelMetadata :: ModelDescriptor -> Boolean
 hasModelMetadata model =

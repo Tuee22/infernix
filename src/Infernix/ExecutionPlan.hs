@@ -86,6 +86,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word64)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
+import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
 import Infernix.EngineRouting (enginePoolTopicForMode)
 import Infernix.ExecutionPlan.Internal
   ( CompiledDaemon (..),
@@ -128,15 +129,23 @@ import Infernix.Types
     PulsarConnectionMode (..),
     RequestField (..),
     RuntimeMode (..),
+    coordinatorDaemon,
     defaultModelBootstrapTopic,
     defaultModelsBucket,
+    engineDaemons,
+    engineMembers,
+    enginePools,
     hostPartitionInferenceCapacityMib,
     inferenceMemoryBudgetPodLimits,
     inferenceMemoryBudgetResource,
     inferenceMemoryBudgetSource,
     modelHostResidencyRequirement,
     modelMemoryRequirementMib,
+    models,
+    requestTopics,
     requiresGpu,
+    resultTopic,
+    webappDaemon,
   )
 import Infernix.Types qualified as Types
 
@@ -258,6 +267,17 @@ mapLeftSingleton :: Either ConfigError value -> Either ConfigErrors value
 mapLeftSingleton =
   either (Left . (:| [])) Right
 
+-- | Executable adapter metadata is a launch projection of each model's selected
+-- engine. It is not retained in the decoded system contract, whose wire carries
+-- the selected engine exactly once on the model descriptor.
+derivedEngineBindings :: DemoConfig -> [EngineBinding]
+derivedEngineBindings config =
+  [ binding
+  | model <- models config,
+    Just binding <-
+      [canonicalEngineBindingForSelectedEngine (configRuntimeMode config) (selectedEngine model)]
+  ]
+
 -- | Phase 8 Sprint 8.10: the engine daemons are derived one per member, so the
 -- missing-daemon and duplicate-member refusals this used to raise have no
 -- inhabitant left and are retired with the field they guarded.
@@ -305,7 +325,7 @@ compileModel config model = do
         placementRoutes = routes
       }
   where
-    engineMap = Map.fromList [(engineBindingName binding, binding) | binding <- engines config]
+    engineMap = Map.fromList [(engineBindingName binding, binding) | binding <- derivedEngineBindings config]
     memberMap = Map.fromList [(engineMemberId member, member) | member <- engineMembers config]
     routeForMember pool memberIdValue = do
       member <-
@@ -525,7 +545,7 @@ compilerErrors config =
   where
     modelIds = map modelId (models config)
     matrixIds = map matrixRowId (models config)
-    engineIds = map engineBindingName (engines config)
+    engineIds = map engineBindingName (derivedEngineBindings config)
     poolIds = map enginePoolId (enginePools config)
     memberIds = map engineMemberId (engineMembers config)
     modelIdSet = Set.fromList modelIds

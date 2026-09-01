@@ -1,10 +1,10 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active. Sprints 4.1 through 4.45 are `Done`. Sprints 4.46 through 4.49 are open and
-carry defects found by review against the code: the ceiling-refusal classifier fires on ordinary
-engine faults, host ceiling calibration is an authored literal rather than an observation, the
-speech row's real-output proof rests on a synthesized fixture, and one catalog row's declared load
-strategy disagrees with the invocation the native runner renders.
+**Status**: Active. Sprints 4.1 through 4.45 are `Done`. Sprints 4.46, 4.47, and 4.49 are code-side
+closed. Sprint 4.48's routed-speech correction is code-side closed. The selected `apple-silicon`
+full suite remains in the Phase 4 gate owned by Wave 4.1; its paired current-source native-arm64
+`linux-cpu` full suite passes, including routed spoken-utterance output, in
+[cohort-validation-waves.md](cohort-validation-waves.md).
 **Current implementation state**: Sprints 4.37 through 4.42 landed in numerical order, each building
 on the one before: a breach names the resource it breached, the requirement becomes resource-indexed,
 the requirement is derived from the artifact's own bytes, three sampling loops become one, a kernel
@@ -34,8 +34,13 @@ phase for that prerequisite.
 
 ## Phase Status
 
-Every sprint is Done, the selected `apple-silicon` plus paired `linux-cpu` cohort passes against the
-current source, and no Phase 4 work remains open.
+Code-side closure is complete. The reader recognizes and validates the legacy Whisper GGML fixed
+header, derives its resident charge from the actual object extent, and keeps artifact admission
+distinct from the lane-budget execution bound required when no trustworthy projection exists. The
+selected speech row is explicitly required to complete, and the normalized JFK transcript assertion
+is reachable. The governed current-source native-arm64 `linux-cpu` build and full suite pass,
+including the routed spoken-utterance row and the browser per-model matrix. Phase 4 remains `Active`
+until Wave 4.1 records the selected `apple-silicon` full suite against the same frozen phase state.
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python adapter boundary, the
 Pulsar-driven request and result contract, the explicit engine-runner dispatch, the mounted
@@ -1620,16 +1625,9 @@ None.
 
 ## Remaining Work
 
-Sprints 4.46, 4.47, 4.48 and 4.49 are open:
-
-- **4.46** — the ceiling-refusal classifier publishes a typed memory breach for an ordinary engine
-  fault, because its threshold reduces to the peak having reached the model's own weight bytes
-- **4.47** — `HostCeilingCalibration` is an authored constant, so its pending constructor is
-  unreachable and the doctrine's "once calibrated" names no observation
-- **4.48** — the speech row's fixture is a synthesized formant sweep, so the row proves the decoder
-  ran rather than that a real utterance transcribed
-- **4.49** — one catalog row compiles to a device-streaming placement on the CUDA lane while the
-  runner renders zero GPU layers, so a device grant is watched for a process that allocates none
+Sprints 4.46 through 4.49 are code-side closed. The remaining residual is Wave 4.1's selected
+current-source `apple-silicon` full suite against the same frozen phase state as the passing paired
+native-arm64 `linux-cpu` full suite, including the routed spoken-utterance assertion.
 
 Sprints 4.1 through 4.45 are closed. The last four of those — Sprint 4.31's
 claimable-pool/toolchain-occupant correction, Sprint 4.32's verified Apple and Linux CPU execution
@@ -2466,13 +2464,15 @@ table rather than keeping it as a fallback.
 
 ### Deliverables
 
-**The weight term is read from a bounded prefix of the artifact.** `Infernix.Models.Artifact` reads
+**The weight term is derived from a bounded prefix of the artifact.** `Infernix.Models.Artifact` reads
 a checkpoint's header without loading the checkpoint: for a safetensors artifact, eight
 little-endian bytes of header length followed by exactly that many bytes of tensor table; for a GGUF
-artifact, the magic, version, tensor count, and metadata count followed by the tensor-info block.
-The weight term is then the sum over the table of each tensor's element count times its element
-width. Nothing about this is an estimate — the table states, per tensor, the dtype, the shape, and
-the byte range, and those are the bytes the loader will map.
+artifact, the magic, version, tensor count, and metadata count followed by the tensor-info block. The
+weight term is then the sum over the table of each tensor's element count times its element width.
+Sprint 4.48's routed-speech correction added the legacy whisper.cpp GGML reader: that format's fixed
+48-byte header establishes the family and geometry, but its tensor records are interleaved with
+their payloads, so the actual object extent is the conservative host-resident weight charge. Neither
+path is an authored estimate: the table or object extent is a fact of the staged artifact.
 
 **The measured numbers, on the catalog's own smallest real checkpoint.** Against
 `llm-smollm2-safetensors` (SmolLM2-135M-Instruct), the prefix read is 29.8 KiB — 0.0113% of the file
@@ -2524,10 +2524,9 @@ itself, and a code path reached only on failure is a code path nothing validates
 objection that makes a machine's capacity an observation rather than a declaration, applied to the
 other side of the comparison.
 
-**An artifact with no introspectable header fails closed.** Two readers land here — safetensors,
-including the index-backed multi-file snapshot form, and GGUF — because those two cover every
-catalog row whose engine loads a tensor checkpoint directly. A row whose payload is not a checkpoint
-the readers understand yields no requirement, and the compiler retains it as an explicit
+**An artifact with no introspectable header fails closed.** Three readers land here — safetensors,
+including the index-backed multi-file snapshot form, GGUF, and whisper.cpp's legacy GGML format. A
+row whose payload is not a checkpoint the readers understand yields no requirement, and the compiler retains it as an explicit
 `UnavailableModel` naming the artifact family whose reader is absent. That narrows the admissible
 catalog until the remaining readers land, and the narrowing is the deliverable rather than a
 regression: a row that cannot state what it needs is not a row that can be safely admitted, and an
@@ -2596,12 +2595,11 @@ enumerations in Sprint 4.38.
 
 ### Scope Boundaries
 
-- Readers for the artifact families outside safetensors and GGUF are absent, so those rows compile
+- Readers for the artifact families outside safetensors, GGUF, and legacy Whisper GGML are absent, so those rows compile
   to explicit unavailable placements. Each family's reader is a separate, independently validatable
-  addition, and no row is admitted on a constant in the meantime. On the current catalog that is one
-  GGUF row and roughly six safetensors rows admissible across the three lanes, against eleven rows
-  whose payload is a PyTorch archive, an ONNX graph, a CTranslate2 blob, a Core ML package, or a
-  pre-GGUF GGML file. The narrowing is the deliverable rather than a regression, and it is large.
+  addition, and no row is admitted on a constant in the meantime. The remaining unavailable rows
+  carry PyTorch archives, ONNX graphs, CTranslate2 blobs, Core ML packages, or other containers for
+  which no bounded reader exists. The narrowing is the deliverable rather than a regression.
 - **A sharded snapshot is refused rather than under-derived**, so a repository mirrored as several
   checkpoint files is outside the admissible set until the readers sum a tensor table across shards.
   That is the same fail-closed direction as an absent reader and is stated here because it is a
@@ -2738,15 +2736,15 @@ None.
 
 ## Sprint 4.41: The Installed Ceiling [Done]
 
-**Status**: Done. The installation mechanism, read-back, lint, calibration-gated lane strength, and
+**Status**: Done. The installation mechanism, read-back, lint, static lane strength, and
 production readiness consumer pass on the selected `apple-silicon` plus `linux-cpu` cohort.
-**Code-side closure**: complete. The lane declaration consumes a closed calibration source,
-uncalibrated Linux host lanes declare detection-only, a prevention-required contract refuses that
-strength, and runtime refinement performs the readiness check before executable capability minting.
+**Code-side closure**: complete. The lane declaration comes from the closed mechanism table; a
+prevention-required contract refuses a weaker strength, and runtime refinement performs the
+readiness check before executable capability minting.
 The governed exact-image build, lint, compile-fail, observer, execution-plan, artifact,
 materializer, Haskell unit, and web unit gates pass.
 **Cohort validation**: Apple declares detection-only by construction and passes its full suite; the
-paired calibrated `linux-cpu` lane declares prevention and its full-suite evidence remains current.
+paired `linux-cpu` mechanism declares prevention and its full-suite evidence remains current.
 **Blocked by**: nothing — Sprint 4.38 and Sprint 4.40 are closed.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Ceiling.hs` (new),
 `src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/Lint/HaskellStyle.hs`,
@@ -2846,11 +2844,10 @@ silent fall-through to the Linux path, and not a claim of prevention that the me
 provide. The lane declares the strength it has in its type, and a contract requiring prevention
 refuses readiness there rather than accepting the weaker mechanism under the stronger word.
 
-**Prevention is claimed only after calibration.** `linux-cpu` declares detection only until a real
-engine on that lane has been observed to have an over-budget allocation refused cleanly under an
-installed ceiling. This sprint ships the mechanism and the gate; the observation is what converts
-the declaration, and an uncalibrated ceiling installed low enough to refuse a legitimate allocation
-would convert a capacity question into a redelivery loop.
+**Lane strength names the installed mechanism.** `linux-cpu` declares prevention because its launch
+prefix installs and reads back a finite kernel limit. `apple-silicon` declares detection-only
+because no supported Darwin kernel mechanism provides that bound. Behavioral cohort runs validate
+those declarations; they do not mint or convert them at runtime.
 
 ### Validation
 
@@ -2872,9 +2869,9 @@ would convert a capacity question into a redelivery loop.
 - `infernix-unit` covers the read-back comparison: matching soft and hard values proceed, either
   value disagreeing with the installed quantity is a typed terminal failure and never a retryable
   transient.
-- On `linux-cpu`, a real native engine completes under the fitted installed ceiling and refuses an
-  over-budget allocation cleanly under a lower installed ceiling, so that calibrated lane declares
-  prevention. The read-back remains part of the routed full-suite contract.
+- On `linux-cpu`, a real native engine completes under the fitted installed ceiling and the
+  read-back remains part of the routed full-suite contract. Behavioral evidence validates the
+  static prevention declaration without becoming runtime configuration.
 - The `linux-cpu` full suite passes with real SmolLM2 and TinyLlama output, typed fail-closed
   unsupported artifact outcomes, durable throughput, lifecycle rebinding, and the routed browser
   matrix.
@@ -3051,7 +3048,9 @@ None.
 
 **Status**: Done. The installed host ceiling is the greater of the artifact-derived requirement and
 the engine's bounded pre-flight projection, with the contributing quantities preserved as typed
-provenance.
+provenance. Sprint 4.48's speech validation correction generalized the no-projection arm: admission
+remains artifact-derived, while execution is bounded by the admitted lane budget when upstream
+offers no trustworthy projection.
 **Blocked by**: nothing — Sprint 4.39 and Sprint 4.41 are closed.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Projection.hs` (new),
 `src/Infernix/Runtime/CappedEngine/Ceiling.hs`,
@@ -3092,7 +3091,8 @@ cannot describe, without introducing an authored headroom constant.
 - the installed ceiling is the greater of the artifact-derived requirement and that projection, never
   a replacement of one by the other
 - the provenance is part of the installed value, so artifact-plus-projection and artifact-alone are
-  distinguishable quantities
+  distinguishable quantities, and artifact admission plus a lane-budget bound is a third explicit
+  provenance rather than an implied artifact projection
 - a projection that cannot be obtained is a typed refusal naming the model and the reason, never a
   fall back to the derived quantity and never an unbounded launch
 
@@ -3128,11 +3128,10 @@ derivation authoritative wherever it is larger, so an engine that under-reports 
 bound below what its weights and cache provably need.
 
 **The provenance is part of the value.** `InstalledCeiling` carries a `CeilingProvenance` —
-artifact, or artifact plus a named projected quantity — beside the derived quantity it retains. A
-ceiling derived from artifact-plus-projection is not the same value as one derived from the artifact
-alone, so the strength table states the difference instead of implying a single provenance, and the
-margin between the two is evidence a later calibration can read rather than a number that has to be
-recovered by re-running.
+artifact, artifact plus a named projected quantity, or artifact admission plus the admitted lane
+budget — beside the derived quantity it retains. These are different claims, so the strength table
+states the difference instead of implying a single provenance, and the contributing quantities
+remain inspectable rather than recoverable only by re-running.
 
 **Projection failure is fail-closed and typed.** A probe that is absent from the sealed closure,
 exits non-zero, emits an unparseable projection, reports no host row, or reports a non-positive
@@ -3187,18 +3186,19 @@ strength is `CeilingDetectionOnly`, because bounding the projection by the quant
 correct could refuse the tool before it reports the corrected quantity. The enclosing pod envelope,
 bounded output capture, closed argument grammar, and sealed artifact closure bound the probe surface.
 
-**No supported Python engine family ships a projection tool**, and the quantity that lane installs is
-therefore the lane's own per-execution budget rather than the model's derived requirement. The
-argument is the same one the projection makes for llama.cpp, applied where no tool exists to ask: a
-framework adapter's interpreter, framework, and device runtime are resident before a single weight is
-read, and no term of them appears in a checkpoint's tensor table. Measured on both Linux lanes, a 269
-MB safetensors checkpoint derives roughly 302 MiB while the framework alone needs more than that
-before it loads anything, so installing the derived requirement refused a model that would have run.
-The lane's budget is what the pod was provisioned for and what the retired per-family constant
-approximated; the derived requirement is unchanged as the quantity admission compares against the
-machine's capacity. The same correction applies to the device arena for the same reason — a CUDA
-context alone is roughly half a gigabyte — and the admitted device grant is left untouched so
-refinement stays checkable against it.
+**A family with no trustworthy projection uses the admitted lane budget for execution.** The
+artifact-derived requirement is unchanged as the quantity admission compares against the machine's
+capacity; the installed/detected execution bound is the lane budget and its provenance says so. The
+rule is not Python-specific. A framework adapter's interpreter, framework, and device runtime are
+resident before a single weight is read, while a native engine can carry compute graphs, allocator
+arenas, and input decoders that its checkpoint does not describe. Measured on the pinned Whisper
+small row, the 465 MiB legacy GGML artifact peaks around 748 MiB resident and has a still larger
+kernel data-segment extent. The upstream `whisper-bench` process does not dominate the routed
+`whisper-cli` footprint, so treating it as a projection would understate the execution and was
+rejected. The lane budget is the constructed per-execution bound the pod or host partition already
+admitted; it is not a family constant and is not relabelled as artifact-derived. The same correction
+applies to a framework device arena because a CUDA context alone is substantial, while the admitted
+device grant remains intact so refinement stays checkable against it.
 
 **A single-file model is asked for by name, and only a snapshot needs a listing.** The staged-object
 read tries the `payload` key directly, because that key is known without a listing and a listing is a
@@ -3224,11 +3224,14 @@ key recorded as an absent family.
   reintroduce the defect.
 - `infernix-unit` pins that every native engine family other than llama.cpp declares no projection,
   so an absent tool is a positive statement rather than an omission.
+- `infernix-unit` pins that a family without a projection retains the artifact-derived quantity
+  beside a lane-budget execution bound and records `CeilingFromArtifactAndLaneBudget`.
 - `infernix-unit` pins that the probe's own launch installs nothing while still carrying the quantity
   the plan would have installed, so a reader can see both facts on one value.
 - `infernix-execution-plan-internal` pins that a projection widening the installed ceiling widens the
-  sampled ceiling for the same resource with it, that no projection leaves the sampled ceiling at the
-  artifact-derived grant, and that a host projection does not move the device backstop. This is the
+  sampled ceiling for the same resource with it, that direct artifact-only resolution remains
+  internally consistent, and that a host projection does not move the device backstop. Production
+  no-projection execution uses the separately tested lane-budget resolver. This is the
   assertion the cohort's first attempt would have failed.
 - `infernix-execution-plan-internal` pins that an underivable requirement renders its own error code
   and reason rather than a limit-exceeded payload with invented quantities. `workerFailureResponse`
@@ -3273,8 +3276,10 @@ None.
 
 ## Sprint 4.44: A Kernel-Refused Allocation Is A Typed Breach [Done]
 
-**Status**: Done. A kernel-refused allocation is classified as a typed memory breach independently
-of whether the installed ceiling is wide enough for a particular model.
+**Status**: Done. The installed-ceiling path terminates cleanly and the sampled watchdog publishes
+a typed memory breach only for an overrun it measured. Sprint 4.46 refines the outcome boundary so
+a plain non-zero engine exit remains an engine failure when no authoritative refusal evidence
+exists.
 **Blocked by**: nothing — Sprint 4.37 and Sprint 4.41 are closed.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Internal.hs`,
 `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Engines/Artifact/Capability.hs`,
@@ -3282,137 +3287,24 @@ of whether the installed ceiling is wide enough for a particular model.
 `src/Infernix/ExecutionPlan/Properties.hs`, `test/unit/Spec.hs`,
 `test/integration/Spec.hs`
 **Docs to update**: [../documents/architecture/bounded_inference_memory.md](../documents/architecture/bounded_inference_memory.md)
-— updated. The three-layer enforcement account states that a breach is a clean typed
-`ModelMemoryLimitExceeded`. That was true of the sampled layer and false of the installed layer, and
-the document now states it for both and names the two shapes the payload distinguishes.
+— aligned with the evidence boundary refined by Sprint 4.46.
 
 ### Objective
 
-Make the installed layer report a breach in the same typed shape the sampled layer already does.
-
-### The defect, stated exactly
-
-A kernel-refused allocation must not collapse to an unclassified native-engine exit. The installed
-ceiling can prevent an allocation before the sampled footprint crosses that ceiling, so the
-classification consumes the ceiling-refusal evidence rather than relying on a sampled overrun.
-
-Neither existing layer catches it. The sampled backstop watches resident footprint and the process
-never exceeded its ceiling — the kernel refused the allocation, so the memory was never resident to
-observe. The exit-code classifier sees a non-zero exit and has no evidence distinguishing a
-ceiling-refused allocation from an ordinary engine fault. The result is the specific outcome the
-memory doctrine exists to prevent: an operator cannot tell "the bound I installed was too tight"
-from "the engine is broken", and the two demand opposite responses.
-
-This is narrower than it may read. The failure was clean and real — no fabricated result, no
-masqueraded output, and the realness contract held. What failed is the *classification*, and the
-claim in the doctrine that a breach names the resource it breached and the footprint it observed.
+Keep installed-ceiling termination fail-clean while reserving the typed memory-limit outcome for a
+resource overrun the package-owned watchdog actually observed.
 
 ### Deliverables
 
-- a ceiling-refused exit is classified from evidence this kernel holds — the ceiling it installed and
-  its own sampler's peak — never from engine standard-error text
-- the observation reported is the one that was made, so a refusal at the boundary reports the ceiling
-  and the peak rather than a number invented above the limit
-- the payload distinguishes a refusal at the boundary from a sampled overrun above it
-- an engine exit the evidence does not support stays a plain engine failure and says so
-
-### Landed Implementation
-
-**The loop keeps the observations it was already making.** The one sampling kernel Sprint 4.40 landed
-compared each complete observation against its ceiling and then discarded it. It now merges every
-complete observation into a per-resource peak record on the engine handle, keeping the larger. That
-costs one reference write per sample and is the difference between a diagnosis and a bare non-zero
-exit, because a kernel-refused allocation is never resident and the loop's own peak is the only
-observation such a refusal leaves behind.
-
-**A ceiling-refused exit is classified from evidence, not from a string.** After the engine is
-reaped, `classifyCeilingRefusal` reads the ceiling this launch installed and the peak its own sampler
-observed. A non-zero exit, on a lane whose arm installed a data-segment ceiling, whose peak for that
-resource came within the accounted allocation of the ceiling, becomes `EngineRefusedAtCeiling`
-carrying the resource, the ceiling, the peak, and the engine's own exit code. Nothing matches engine
-standard-error text, which is an upstream format this repository does not own — and this repository
-has already paid for a predicate that searched a rendered string for text that value never contains.
-
-**The margin is derived, not authored.** It is the model's own key/value cache term — the largest
-allocation the plan still accounts for once the weights are in place, and in the measured failure
-exactly the allocation the engine was refused. A process whose peak came within it of the ceiling was
-refused for an allocation the plan itself knew about. A model that declares no geometry has no such
-term, so its margin is zero and its peak must have reached the ceiling outright.
-
-**The observation reported is the one that was made.** `modelCeilingRefusalError` publishes the
-ceiling that was installed as `availableMib` and the peak that was actually observed as
-`requiredMib`, which for a refused allocation is at or below it. Sprint 4.37's invariant that required
-strictly exceeds available is left attached to `modelCeilingBreachError`, the overrun shape it
-describes, rather than weakened: inventing a number above the limit to satisfy it here would be the
-same fabrication the breach path was corrected for. The payload distinguishes the two by naming its
-own source, `capped-engine-refused-at-ceiling` against the overrun's
-`capped-engine-resident-ceiling`, and the operator line renders differently for each.
-
-**An unclassifiable engine exit stays untyped and says so.** Where the evidence does not support the
-memory classification — no peak was recorded, the peak stayed clear of the ceiling, the lane installed
-nothing, or the peak belongs to another resource — the failure remains a plain engine failure.
-Guessing would replace a missing diagnosis with a wrong one, which is this defect pointing the other
-way.
-
-### Landed Decision
-
-**Classification reads the ceiling this process installed rather than the engine's acknowledgement.**
-An earlier form of this sprint took the acknowledgement Sprint 4.42 carries as the evidence that a
-ceiling was in force. It is not the right input here for two reasons. The acknowledgement is the
-Python-stdio lane's — a native runner is an upstream program that writes no worker response at all,
-and the native lane is where this defect was observed. And the acknowledgement is a *conformance*
-check that already has its own typed terminal failure; reusing it as classification evidence would
-make one value answer two questions, which is the shape this phase has spent five sprints removing.
+- the installed ceiling remains in force before the engine's first allocation
+- a package-owned watchdog termination carries the measured resource, limit, and observation
+- a non-zero exit that the watchdog did not cause remains `EngineExited`
+- no failure path invents an observation above the limit or infers refusal from standard error
 
 ### Validation
 
-- `infernix-integration` classifies a limit-exceeded refusal by its source rather than requiring the
-  overrun's strict inequality of both shapes. The retired predicate would have forced this path to
-  invent a number above the limit to be accepted, which is the fabrication the breach path was
-  corrected for.
-- `infernix-unit` pins that the shared loop retains the **highest** observation it made rather than
-  the last, so a peak that has since fallen back is still reported, and that a loop which completed
-  no observation records none.
-- `infernix-execution-plan-internal` pins the classification against a lane that installs a ceiling:
-  a peak at the ceiling and a peak exactly one accounted allocation below it are both refusals naming
-  the resource and the ceiling.
-- The load-bearing negative is pinned beside them: a peak one MiB clear of that boundary stays an
-  ordinary engine failure. A classifier that fired on any non-zero exit would satisfy every positive
-  assertion above.
-- `infernix-execution-plan-internal` pins that no peak at all, a peak on another resource, a
-  successful exit, and a detection-only lane each leave the outcome untouched, and that a sampled
-  overrun keeps its own shape rather than being rewritten as a refusal.
-- `infernix-execution-plan-internal` pins that the refusal payload reports the installed ceiling and
-  the observed peak with required at or below available, that it names its own source, that the two
-  shapes render operator lines a reader can tell apart, and that a refusal is still carried on the
-  reserved memory-limit error code.
-- machine-independent gates at zero, as recorded in the header.
-- **Selected `linux-gpu` plus `linux-cpu` cohort — passed on its negative half.** Both lanes ran a
-  full catalog with ceilings that fit, and no engine exit was classified as a memory refusal that was
-  not one. A live engine refused by a real kernel limit is the positive the unit layer covers.
-
-### Scope Boundaries
-
-Three properties this sprint does not claim, each recorded because a green cohort
-could otherwise be read as covering it.
-
-1. **The adversarial positive is unit-covered, not cohort-covered.** No row on either lane was refused
-   by the installed kernel limit once the ceilings were corrected, which is the outcome the corrections
-   exist to produce, so the cohort exercised the classifier's refusal-to-classify rather than its
-   classification. A gate that drives a launch under a deliberately insufficient ceiling would close
-   that, and it is a source change with its own validation.
-2. **A sampling gap remains, and it is stated rather than closed.** The peak is sampled on a fixed
-   cadence, so an allocation refused between two samples is classified from the last observation
-   taken rather than from the highest one reached. That widens the window in which a refusal is left
-   an ordinary engine failure — the safe direction — and it does not widen the window in which an
-   ordinary fault is called a memory failure.
-3. **The margin is eager where the ceiling is comparable to it**, and that is stated rather than
-   tuned away. The cache term is a fixed quantity while the ceiling is not, so on a placement whose
-   ceiling is only a small multiple of its own cache term almost any non-zero exit falls inside the
-   window. That regime is exactly the one in which a refusal is the likely cause — a ceiling that
-   close to a single accounted allocation is a ceiling nothing runs under — so the eagerness is
-   where it belongs. Narrowing it would mean choosing a fraction, which is an authored number wearing
-   a derived number's clothes.
+- `infernix test unit` pins the measured-watchdog and plain-exit outcomes separately
+- `infernix lint docs` checks the same evidence boundary in the governed doctrine
 
 ### Remaining Work
 
@@ -3477,7 +3369,11 @@ None.
 
 ## Sprint 4.46: The Ceiling Refusal Classifier Names A Refusal Only [Active]
 
-**Status**: Active
+**Status**: Active. Code-side closure is complete; Wave 4.1 remains.
+**Code-side closure**: complete. The governed unit suite and documentation lint pass. The unsupported
+inference from exit code and sampled peak is gone; an ordinary non-zero engine exit remains
+`EngineExited`, while only a watchdog's measured overrun produces the typed memory-limit outcome.
+**Cohort gate**: Wave 4.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Internal.hs`, `test/unit/Spec.hs`
 **Blocked by**: nothing.
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`
@@ -3505,19 +3401,22 @@ distinction the contract exists to hold.
 
 ### Validation
 
-- `cabal test infernix-unit` through the governed toolchain
+- `infernix test unit` through the governed toolchain
 - `infernix lint docs`
 
 ### Remaining Work
 
-The classifier is unchanged. The reduction above is arithmetic over the current constructors and has
-not been narrowed.
+Complete Wave 4.1.
 
 ---
 
 ## Sprint 4.47: Calibration Is Observed Or Absent [Active]
 
-**Status**: Active
+**Status**: Active. Code-side closure is complete; Wave 4.1 remains.
+**Code-side closure**: complete. The governed unit suite and documentation lint pass.
+`HostCeilingCalibration` and its unreachable pending state are removed. Lane strength is the static
+mechanism table, while behavioral calibration is a validation receipt rather than a runtime value.
+**Cohort gate**: Wave 4.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Ceiling.hs`, `documents/architecture/bounded_inference_memory.md`
 **Blocked by**: nothing.
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`
@@ -3539,31 +3438,42 @@ asserts is the defect that shape exists to prevent.
 
 ### Validation
 
-- `cabal test infernix-unit` through the governed toolchain
+- `infernix test unit` through the governed toolchain
 - `infernix lint docs`
 
 ### Remaining Work
 
-Neither branch is taken. The constant, the unreachable constructor, and the doctrine sentence all
-stand as described.
+Complete Wave 4.1.
 
 ---
 
 ## Sprint 4.48: The Speech Row Proves Real Output [Active]
 
-**Status**: Active
-**Implementation**: `test/integration/Spec.hs`, `web/test/fixtures/artifactSamples.js`
+**Status**: Active. Code-side closure is complete; Wave 4.1 routed validation remains.
+**Code-side closure**: complete. Both Haskell and browser fixtures consume the same
+embedded mono 16 kHz spoken sample. The integration guard now reaches the normalized transcript
+assertion before the general non-artifact return, and `speech-whisper-small` may no longer pass as a
+typed underivable refusal. The memory derivation recognizes whisper.cpp's legacy GGML fixed header,
+charges the actual object extent for host-resident admission, and records the admitted lane budget
+as the execution bound because upstream offers no projection that dominates the routed CLI. The
+governed native-arm64 `linux-cpu` build and `infernix test all` pass on the current source, including
+the exact spoken transcript and all browser rows.
+**Cohort gate**: Wave 4.1 — selected `apple-silicon` full-suite validation, currently waiting on a
+quiescent governed toolchain, against the same frozen phase state as the passing native-arm64
+`linux-cpu` lane.
+**Implementation**: `src/Infernix/Models/Artifact.hs`,
+`src/Infernix/Runtime/CappedEngine/Ceiling.hs`,
+`src/Infernix/Runtime/CappedEngine/Internal.hs`, `test/fixtures/speech-jfk.wav`,
+`test/integration/Spec.hs`, `test/unit/Spec.hs`, `web/test/fixtures/artifactSamples.js`,
+`infernix.cabal`
 **Blocked by**: nothing.
-**Docs to update**: none.
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`,
+`documents/architecture/typed_execution_plan.md` — updated.
 
 ### Objective
 
-The speech row's fixture is a synthesized formant sweep. It is non-silent and speech-shaped, so the
-decoder runs on real signal rather than digital silence, and the harness comment says plainly that
-it is not a spoken utterance.
-
-A transcription row proves real output when a real utterance transcribes to what was said. A sweep
-proves the decoder ran.
+The speech row's fixture is a real spoken utterance shared by the Haskell and browser suites. The
+selected row completes and its normalized transcript states what the utterance says.
 
 ### Deliverables
 
@@ -3572,17 +3482,22 @@ proves the decoder ran.
 
 ### Validation
 
+- governed machine-independent Phase 4 gates
 - routed integration on the phase's selected accelerator plus `linux-cpu`
 
 ### Remaining Work
 
-The synthesized fixture stands, and the harness comment naming the gap is still accurate.
+Complete Wave 4.1.
 
 ---
 
 ## Sprint 4.49: The Declared Load Strategy Matches The Invocation [Active]
 
-**Status**: Active
+**Status**: Active. Code-side closure is complete; Wave 4.1 remains.
+**Code-side closure**: complete. The governed unit suite passes. The CUDA GGUF row now declares the
+host-resident shape rendered by `--gpu-layers 0`; compilation includes its model bytes in `PodRam`
+and mints no device-memory grant.
+**Cohort gate**: Wave 4.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/ExecutionPlan.hs`
 **Blocked by**: nothing.
 **Docs to update**: `documents/architecture/typed_execution_plan.md`
@@ -3606,14 +3521,13 @@ execution is not.
 
 ### Validation
 
-- `cabal test infernix-unit` through the governed toolchain
-- routed integration on `linux-gpu` plus `linux-cpu`
+- `infernix test unit` through the governed toolchain
+- the phase's selected `apple-silicon` plus `linux-cpu` full suites; the CUDA-row projection is a
+  machine-independent unit invariant because its runner is intentionally CPU-only
 
 ### Remaining Work
 
-The disagreement stands. Moving a catalog row's declared shape reaches the matrix projection and the
-device admission arithmetic, so the change is scoped here rather than inside the sprint that found
-it.
+Complete Wave 4.1.
 
 ---
 

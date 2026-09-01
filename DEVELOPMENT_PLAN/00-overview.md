@@ -46,15 +46,28 @@ surface the repository no longer has.
 
 ## Current Repo Assessment
 
-Phases 0 through 9 are `Done`. Phase 4 Sprint 4.45 closes its stable Apple project-environment,
+Phases 0, 1, 2, 3, 5 and 7 are `Done`; Phases 4, 6, 8 and 9 are `Active`. Phase 4 Sprint 4.45 closes its stable Apple project-environment,
 bounded-observer, Pulsar broker-envelope, typed generation-shape, and artifact recipe-identity work
 against the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full
-suites. Phase 4's completed implementation owns the Bounded Engine Launch host half: Apple declares
-detection-only, calibrated `linux-cpu` declares prevention, and a prevention-required production
-readiness contract consumes the declaration and refuses weaker strength. Phase 6's device-side
-correction, Linux GPU host calibration, and residual safety and recovery implementation pass on the
-selected current-source `linux-gpu` plus paired current-source native-amd64 `linux-cpu` full suites.
-A phase's status
+suites. Phase 4 owns the Bounded Engine Launch host half: Apple declares detection-only, the static
+`linux-cpu` mechanism table declares prevention, and a prevention-required production readiness
+contract consumes the declaration and refuses weaker strength. Its routed-speech correction is
+code-side closed: legacy Whisper GGML admission derives from the artifact extent, the selected row
+completes its reachable transcript assertion, and no-projection execution uses the admitted lane
+budget with distinct provenance. The paired current-source native-arm64 `linux-cpu` build and full
+suite pass; Wave 4.1 awaits the selected `apple-silicon` full suite. Phase 6's device-side
+correction, Linux GPU host calibration, and residual safety and recovery implementation are
+retained, and Sprint 6.54's fixed observer, samplers, probes, and watchdog seams compile as ordinary
+runtime-selected values in the governed Apple build and native-arm64 `linux-cpu` build plus unit
+suite. Wave 6.1 retains the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite
+sign-off against one frozen Phase 6 state. Phase 8's decoded role-contract split is code-side
+closed: shared wire facts project into separate routing, launch, publication, and presentation
+views, and routed `linux-cpu` integration proves the browser view cannot expose sibling-role
+authority. Wave 8.1 retains the selected current-source `linux-gpu` plus paired `linux-cpu`
+full-suite sign-off. Phase 9's admin dimension, cluster overview, and personal dashboard render from
+application state through one compiled path, and its current-source native-arm64 `linux-cpu` build,
+unit suite, standalone gates, and routed browser suite pass. Wave 9.1 retains the selected
+current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off. A phase's status
 describes only the scope it owns, so an earlier phase gaining work does not revert a later one, and
 every phase remains completable using only equal-or-lower-numbered phases.
 
@@ -63,7 +76,8 @@ device memory remains admission, arena sizing, and detection because no supporte
 bounds it. Sprint 6.53 closes the residual process-site lint, recovery authority, deterministic
 dual-resource refusal, config-independent reclaim, and cross-container activity-lifetime contract.
 
-[cohort-validation-waves.md](cohort-validation-waves.md) holds no open cohort gate, while
+[cohort-validation-waves.md](cohort-validation-waves.md) holds Phase 4 Wave 4.1, Phase 6 Wave 6.1,
+Phase 8 Wave 8.1, and Phase 9 Wave 9.1, while
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) inventories only surfaces that
 still require removal. [README.md](README.md) holds the plan's single phase-status table.
 

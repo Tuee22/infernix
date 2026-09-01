@@ -3,10 +3,13 @@
 -- | Phase 4 Sprint 4.39 — a model's memory requirement, computed from the
 -- model's own bytes.
 --
--- Two terms, neither of them authored. The weight term is the sum over the
--- checkpoint's tensor table, read from a bounded prefix by
--- "Infernix.Models.Artifact". The cache term is a closed function of the model's
--- declared geometry and the execution shape the engine will actually run under:
+-- Two terms, neither of them authored. For self-describing tensor-table
+-- checkpoints, the weight term is the sum over that table. For legacy
+-- interleaved GGML, where tensor records cannot be read from a bounded prefix,
+-- the conservative weight term is the artifact's own object extent. Both are
+-- read by "Infernix.Models.Artifact". The cache term is a closed function of the
+-- model's declared geometry and the execution shape the engine will actually
+-- run under:
 --
 -- > 2 × layers × keyValueHeads × headWidth × contextLength × elementWidth
 --

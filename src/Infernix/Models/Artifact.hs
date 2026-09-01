@@ -10,11 +10,14 @@
 -- streamed load has to hold at once — a different quantity from the total, which
 -- is why both are reported.
 --
--- Two formats are read: safetensors and GGUF. They are the two whose engines
--- load a tensor checkpoint directly. A payload in any other family yields no
--- header, which is a refusal rather than a fallback: the moment a derivation
--- fails is the moment the artifact is known not to describe itself, and a
--- constant consulted exactly then is a code path nothing validates.
+-- Three formats are read: safetensors, GGUF, and whisper.cpp's legacy GGML
+-- container. Safetensors and GGUF put a complete tensor table in a bounded
+-- prefix. Legacy Whisper interleaves tensor records with tensor payloads, so
+-- its fixed header can establish the family and execution geometry but not a
+-- prefix-indexed tensor sum. For that host-resident format the actual object
+-- extent is the conservative weight charge; it is still a fact of the
+-- artifact, not a family constant or a fallback. A payload in any other family
+-- yields no header, which is a refusal rather than an authored substitute.
 module Infernix.Models.Artifact
   ( ArtifactHeader (..),
     ArtifactHeaderError (..),
@@ -184,6 +187,7 @@ readArtifactHeaderWithSize path fileBytes = do
     Left ioError' -> pure (Left (ArtifactUnreadable (Text.pack (show ioError'))))
     Right leading
       | leading == ggufMagic -> readGgufHeaderBytes path fileBytes
+      | leading == whisperGgmlMagic -> readWhisperGgmlHeaderBytes path fileBytes
       | otherwise -> readSafetensorsHeaderBytes path fileBytes
 
 -- | How many leading bytes a machine fetches when it derives a requirement from
@@ -197,6 +201,115 @@ ggufMagic = "GGUF"
 
 ggufMagicLength :: Int
 ggufMagicLength = ByteString.length ggufMagic
+
+-- | whisper.cpp's pre-GGUF model magic is the little-endian encoding of
+-- @0x67676d6c@. The bytes therefore spell @lmgg@ on disk. Selecting from the
+-- bytes rather than the catalog label prevents an authored family string from
+-- choosing a more permissive reader.
+whisperGgmlMagic :: ByteString
+whisperGgmlMagic = "lmgg"
+
+-- | The legacy Whisper fixed header is the magic followed by eleven signed
+-- little-endian 32-bit values: vocabulary size, five audio dimensions, four
+-- text dimensions, mel count, and file type. Upstream reads these fields before
+-- its filter, vocabulary, and interleaved tensor records.
+whisperGgmlHeaderBytes :: Int
+whisperGgmlHeaderBytes = 12 * 4
+
+readWhisperGgmlHeaderBytes ::
+  FilePath ->
+  Integer ->
+  IO (Either ArtifactHeaderError ArtifactHeader)
+readWhisperGgmlHeaderBytes path fileBytes = do
+  prefixRead <- readBoundedPrefix path whisperGgmlHeaderBytes
+  pure (prefixRead >>= parseWhisperGgmlHeader fileBytes)
+
+parseWhisperGgmlHeader :: Integer -> ByteString -> Either ArtifactHeaderError ArtifactHeader
+parseWhisperGgmlHeader fileBytes prefix = do
+  let fields =
+        [ decodeLittleEndian (sliceAt prefix offset 4)
+        | offset <- [4, 8 .. whisperGgmlHeaderBytes - 4]
+        ]
+      namedDimensions =
+        zip
+          [ "n_vocab",
+            "n_audio_ctx",
+            "n_audio_state",
+            "n_audio_head",
+            "n_audio_layer",
+            "n_text_ctx",
+            "n_text_state",
+            "n_text_head",
+            "n_text_layer",
+            "n_mels"
+          ]
+          (take 10 fields)
+  case fields of
+    [ _,
+      _,
+      nAudioState,
+      nAudioHead,
+      _,
+      _,
+      nTextState,
+      nTextHead,
+      _,
+      _,
+      fileType
+      ] -> do
+        mapM_ requirePositiveInt32 namedDimensions
+        requireHeadWidth "audio" nAudioState nAudioHead
+        requireHeadWidth "text" nTextState nTextHead
+        if fileType > maximumSignedInt32
+          then Left (ArtifactHeaderMalformed "the Whisper GGML file type is negative")
+          else
+            if fileBytes <= toInteger whisperGgmlHeaderBytes
+              then
+                Left
+                  ( ArtifactExtentMismatch
+                      (toInteger whisperGgmlHeaderBytes + 1)
+                      fileBytes
+                  )
+              else
+                Right
+                  ArtifactHeader
+                    { artifactHeaderTensors = [],
+                      -- Legacy GGML has no prefix-indexed tensor table: each
+                      -- record is followed immediately by its payload. Charging
+                      -- the complete observed object extent is conservative and
+                      -- remains derived from the artifact's own bytes.
+                      artifactHeaderWeightBytes = fileBytes,
+                      artifactHeaderLargestTensorBytes = fileBytes,
+                      artifactHeaderPrefixBytes = toInteger (ByteString.length prefix),
+                      artifactHeaderPrefixDigest = prefixDigest prefix,
+                      artifactHeaderFileBytes = fileBytes
+                    }
+    _ -> Left (ArtifactHeaderMalformed "the Whisper GGML fixed header is incomplete")
+  where
+    requirePositiveInt32 (fieldName, value)
+      | value > 0 && value <= maximumSignedInt32 = Right ()
+      | otherwise =
+          Left
+            ( ArtifactHeaderMalformed
+                ( "the Whisper GGML "
+                    <> fieldName
+                    <> " field is not a positive signed 32-bit value"
+                )
+            )
+
+    requireHeadWidth label stateWidth headCount
+      | stateWidth `mod` headCount == 0 = Right ()
+      | otherwise =
+          Left
+            ( ArtifactHeaderMalformed
+                ( "the Whisper GGML "
+                    <> label
+                    <> " state width is not divisible by its head count"
+                )
+            )
+
+maximumSignedInt32 :: Integer
+maximumSignedInt32 = 2147483647
 
 -- | Read a bounded prefix of a file, never requesting more than the budget.
 readBoundedPrefix :: FilePath -> Int -> IO (Either ArtifactHeaderError ByteString)

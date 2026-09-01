@@ -18,7 +18,7 @@ where
 
 import Control.Exception (SomeException, displayException, try)
 import Data.ByteString.Lazy qualified as Lazy
-import Data.Char (isAlphaNum, toLower)
+import Data.Char (toLower)
 import Data.List (intercalate)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -29,8 +29,6 @@ import Dhall.Core qualified as DhallCore
 import GHC.Generics (Generic)
 import Infernix.DhallSchema.Enums (dhallEnumInterpretOptions, dhallEnumUnionType, dhallEnumValue)
 import Infernix.DhallSchema.Reflection (renderDecoderExpected)
-import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
-import Infernix.EngineRouting (requestTopicsForMode, resultTopicForMode)
 import Infernix.ExecutionPlan (CompiledRuntimePlan, ConfigErrors, compileRuntimePlan)
 import Infernix.ExecutionPlan.Internal (RawRuntimeConfig (..))
 import Infernix.Types
@@ -518,17 +516,9 @@ lowerInitial value =
 demoConfigFromDhall :: DhallDemoConfig -> Either String DemoConfig
 demoConfigFromDhall rawConfig = do
   let runtimeModeValue = runtimeModeFromDhall (dhallConfigRuntimeMode rawConfig)
-      derivedRequestTopics = requestTopicsForMode runtimeModeValue
-      derivedResultTopic = resultTopicForMode runtimeModeValue
   decodedPools <- traverse (enginePoolFromDhall runtimeModeValue) (dhallEnginePools rawConfig)
-  let enginePoolValues = map fst decodedPools
-      modelValues = modelsFromPools decodedPools
   memoryBudgetValue <-
     inferenceMemoryBudgetFromDhall runtimeModeValue (dhallInferenceMemoryBudget rawConfig)
-  let engineMemberValues = deriveEngineMembers runtimeModeValue enginePoolValues
-      engineDaemonValues =
-        deriveEngineDaemonConfigs runtimeModeValue enginePoolValues engineMemberValues derivedResultTopic
-      engineValues = deriveEngineBindings runtimeModeValue modelValues
   pure
     DemoConfig
       { configRuntimeMode = runtimeModeValue,
@@ -536,68 +526,19 @@ demoConfigFromDhall rawConfig = do
         generatedPath = Text.unpack (dhallGeneratedPath rawConfig),
         mountedPath = Text.unpack (dhallMountedPath rawConfig),
         demoUiEnabled = dhallDemoUi rawConfig,
-        coordinatorDaemon =
-          clusterDaemonConfig Coordinator derivedRequestTopics derivedResultTopic,
-        webappDaemon =
-          clusterDaemonConfig Webapp derivedRequestTopics derivedResultTopic,
-        engineDaemons = engineDaemonValues,
-        enginePools = enginePoolValues,
-        engineMembers = engineMemberValues,
-        requestTopics = derivedRequestTopics,
-        resultTopic = derivedResultTopic,
+        configPoolCatalogs =
+          [ PoolCatalog
+              { poolCatalogId = enginePoolId pool,
+                poolCatalogMemberIds = enginePoolMemberIds pool,
+                poolCatalogSubscriptionType = enginePoolSubscriptionType pool,
+                poolCatalogModels = poolModels
+              }
+          | (pool, poolModels) <- decodedPools
+          ],
         modelsBucket = dhallModelsBucket rawConfig,
         modelBootstrapTopic = dhallModelBootstrapTopic rawConfig,
-        engines = engineValues,
-        models = modelValues,
         inferenceMemoryBudget = memoryBudgetValue
       }
-
--- | The catalog a pool graph implies, in pool order.
---
--- A model belongs to exactly one pool, and the wire now says so structurally:
--- there is no second list for a pool to disagree with. What the nested shape can
--- still express is one model id written under two pools, and that is left to the
--- plan compiler, which already reports it against both the model and the pool by
--- name.
-modelsFromPools :: [(EnginePool, [ModelDescriptor])] -> [ModelDescriptor]
-modelsFromPools = concatMap snd
-
--- | The engine members a pool graph implies. A member exists because some pool
--- names it, and the pools it serves are the pools that name it, so the two
--- directions of the link are one fact rather than two that must agree.
-deriveEngineMembers :: RuntimeMode -> [EnginePool] -> [EngineMember]
-deriveEngineMembers runtimeModeValue pools =
-  [ EngineMember
-      { engineMemberId = memberIdValue,
-        engineMemberRuntimeMode = runtimeModeValue,
-        engineMemberLocation = engineMemberLocationForMode runtimeModeValue,
-        engineMemberPoolIds =
-          [enginePoolId pool | pool <- pools, memberIdValue `elem` enginePoolMemberIds pool]
-      }
-  | memberIdValue <- nubOn id (concatMap enginePoolMemberIds pools)
-  ]
-
--- | The engine bindings a model set implies. A selected engine with no canonical
--- binding produces no entry, so the compiler still reports it as
--- @UnknownSelectedEngine@ against the model that named it — which is the only
--- fact a generated engine list could ever have added.
-deriveEngineBindings :: RuntimeMode -> [ModelDescriptor] -> [EngineBinding]
-deriveEngineBindings runtimeModeValue modelValues =
-  nubOn
-    engineBindingName
-    [ binding
-    | model <- modelValues,
-      Just binding <-
-        [canonicalEngineBindingForSelectedEngine runtimeModeValue (selectedEngine model)]
-    ]
-
-nubOn :: (Eq key) => (value -> key) -> [value] -> [value]
-nubOn keyOf = go []
-  where
-    go _ [] = []
-    go seen (value : rest)
-      | keyOf value `elem` seen = go seen rest
-      | otherwise = value : go (keyOf value : seen) rest
 
 inferenceMemoryBudgetFromDhall ::
   RuntimeMode ->
@@ -655,67 +596,6 @@ podMemoryLimitFromDhall fieldPath limitResource sourceValue substrateBudget = do
             podMemoryLimitSource = sourceValue,
             podMemoryLimitMib = limitMib
           }
-
-deriveEngineDaemonConfigs :: RuntimeMode -> [EnginePool] -> [EngineMember] -> Text -> [DaemonConfig]
-deriveEngineDaemonConfigs runtimeMode pools members resultTopicValue =
-  map engineDaemonConfigForMember members
-  where
-    engineDaemonConfigForMember member =
-      DaemonConfig
-        { daemonConfigRole = Engine,
-          daemonConfigLocation = engineMemberLocation member,
-          daemonConfigMemberId = Just (engineMemberId member),
-          daemonConfigRequestTopics = derivedEngineMemberRequestTopics runtimeMode pools member,
-          daemonConfigResultTopic = resultTopicValue,
-          daemonConfigPulsarConnectionMode =
-            if runtimeMode == AppleSilicon
-              then PublicationEdgeAutoDiscovery
-              else ConfiguredTransport,
-          daemonConfigConsumerSubscriptionType = Just ConsumerShared
-        }
-
-derivedEngineMemberRequestTopics :: RuntimeMode -> [EnginePool] -> EngineMember -> [Text]
-derivedEngineMemberRequestTopics runtimeMode pools member =
-  [ derivedEnginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue
-  | pool <- pools,
-    enginePoolId pool `elem` engineMemberPoolIds member,
-    engineMemberId member `elem` enginePoolMemberIds pool,
-    modelIdValue <- enginePoolModelIds pool
-  ]
-
-derivedEnginePoolTopicForMode :: RuntimeMode -> Text -> Text -> Text
-derivedEnginePoolTopicForMode runtimeMode poolId modelIdValue =
-  "persistent://infernix/demo/inference.batch."
-    <> runtimeModeId runtimeMode
-    <> ".pool."
-    <> topicSegment poolId
-    <> ".model."
-    <> topicSegment modelIdValue
-
-topicSegment :: Text -> Text
-topicSegment =
-  Text.map replaceInvalid
-  where
-    replaceInvalid character
-      | isAlphaNum character || character == '-' || character == '_' || character == '.' = character
-      | otherwise = '-'
-
--- | The two in-cluster daemons. Both run in a pod on every supported substrate,
--- both reach Pulsar over the configured transport, both consume the coordinator
--- request topic and publish the shared result topic, and neither has ever
--- carried a member id — so Phase 8 Sprint 8.11 derives them entirely instead of
--- carrying two records the generator could only fill in one way.
-clusterDaemonConfig :: DaemonRole -> [Text] -> Text -> DaemonConfig
-clusterDaemonConfig roleValue derivedRequestTopics derivedResultTopic =
-  DaemonConfig
-    { daemonConfigRole = roleValue,
-      daemonConfigLocation = clusterDaemonLocation,
-      daemonConfigMemberId = Nothing,
-      daemonConfigRequestTopics = derivedRequestTopics,
-      daemonConfigResultTopic = derivedResultTopic,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport,
-      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-    }
 
 enginePoolFromDhall :: RuntimeMode -> DhallEnginePool -> Either String (EnginePool, [ModelDescriptor])
 enginePoolFromDhall runtimeModeValue rawPool = do
@@ -828,7 +708,7 @@ renderSubstrateConfig demoConfig =
       ", mountedPath = " <> dhallFilePath (mountedPath demoConfig),
       ", demo_ui = " <> dhallBool (demoUiEnabled demoConfig),
       ", enginePools = "
-        <> dhallList enginePoolType (renderEnginePool (models demoConfig)) (enginePools demoConfig),
+        <> dhallList enginePoolType renderPoolCatalog (configPoolCatalogs demoConfig),
       ", models_bucket = " <> dhallText (modelsBucket demoConfig),
       ", model_bootstrap_topic = " <> dhallText (modelBootstrapTopic demoConfig),
       ", inferenceMemoryBudget = " <> renderInferenceMemoryBudget (inferenceMemoryBudget demoConfig),
@@ -882,25 +762,20 @@ renderPodMemoryLimit podLimit =
     <> dhallNatural (podMemoryLimitMib podLimit)
     <> " }"
 
--- | Render one pool together with the models it owns. The catalog is passed in
--- rather than read from the pool, because the pool holds model /ids/ in the
--- domain record and the wire holds the descriptors themselves; a model id the
--- catalog does not define is dropped here and reported by the plan compiler
--- against the pool that named it.
-renderEnginePool :: [ModelDescriptor] -> EnginePool -> String
-renderEnginePool catalog pool =
+-- | Render one pool directly from the facts retained from its wire record.
+-- Model ids are never stored beside the descriptors: the executable
+-- 'EnginePool' projection derives them after decode.
+renderPoolCatalog :: PoolCatalog -> String
+renderPoolCatalog poolCatalog =
   "{ id = "
-    <> dhallText (enginePoolId pool)
+    <> dhallText (poolCatalogId poolCatalog)
     <> ", members = "
-    <> dhallList "Text" dhallText (enginePoolMemberIds pool)
+    <> dhallList "Text" dhallText (poolCatalogMemberIds poolCatalog)
     <> ", subscription = "
-    <> renderConsumerSubscription (enginePoolSubscriptionType pool)
+    <> renderConsumerSubscription (poolCatalogSubscriptionType poolCatalog)
     <> ", models = "
-    <> dhallList modelDescriptorType renderModelDescriptor poolModels
+    <> dhallList modelDescriptorType renderModelDescriptor (poolCatalogModels poolCatalog)
     <> " }"
-  where
-    poolModels =
-      [model | model <- catalog, modelId model `elem` enginePoolModelIds pool]
 
 renderModelDescriptor :: ModelDescriptor -> String
 renderModelDescriptor model =

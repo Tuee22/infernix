@@ -106,7 +106,7 @@ existence and nothing to check in.
 
 | Config | Haskell owner | Created by | Consumed by |
 |---|---|---|---|
-| **system contract `infernix.dhall`** (substrate mode; the pool graph, each pool carrying the model descriptors it owns) — byte-identical on every machine in the fleet | `Infernix.Substrate` / `Infernix.Models` encoders; defaults in `Infernix.ProjectInit` | `infernix init` (operator) or the test harness (per run) | all service roles preflight through `decodeCompiledRuntimePlanFile`; hidden presentation/generation consumers may project `DemoConfig` |
+| **system contract `infernix.dhall`** (substrate mode; the pool graph, each pool carrying the model descriptors it owns) — byte-identical on every machine in the fleet | `Infernix.Substrate` / `Infernix.Models` encoders; defaults in `Infernix.ProjectInit` | `infernix init` (operator) or the test harness (per run) | routing and engine launch compile an opaque runtime plan; publication and presentation decode directly into their narrower views |
 | **machine contract `infernix-host.dhall`** (tool paths, host context, filesystem, command policies, and the `machine` block: role, member identities, model-cache quota, and the pinned system-contract digest) — per machine | `Infernix.HostConfig` | `infernix init` | host CLI tool resolution and every role's own identity, capacity, and served-model set |
 | **cluster config `cluster.dhall`** (in-cluster wiring) | `Infernix.ClusterConfig` (`defaultClusterConfig`) | the binary at `cluster up`, injected into Helm as an `nindent`'d string | pods via `decodeClusterConfigFile` |
 | **secrets `InfernixSecrets.dhall`** (paths to secret files, never values) | `Infernix.SecretsConfig` | the binary (host) / `cluster up` (cluster), injected into Helm as a string | secret-path resolution |
@@ -141,9 +141,31 @@ pinned contract that name one of its members, and a machine whose members no poo
 rather than started with an empty subscription set.
 
 A model belongs to exactly one pool, and the wire says so structurally: a pool carries its own model
-descriptors, so there is no second list for it to disagree with. Five disagreement classes — a pool naming a model the catalog does not define, a pool naming a
-member that does not exist, a member serving no pool, and a one-sided pool/member link in either
-direction — have no representation to write at all.
+descriptors, so there is no second list for it to disagree with. Five disagreement classes — a pool
+naming a model the catalog does not define, a pool naming a member that does not exist, a member
+serving no pool, and a one-sided pool/member link in either direction — have no representation to
+write at all.
+
+### Decode into facts, then project authority
+
+The in-memory system-contract value has the same shape discipline as the wire. `DemoConfig` retains
+only top-level wire facts and `PoolCatalog` retains a pool id, its member ids, its subscription, and
+the model descriptors nested beneath that pool. It does not store a second model-id list. Executable
+`EnginePool` records, member records, topics, daemon metadata, and engine bindings are projections;
+none is a field that can disagree with the facts from which it is derived.
+
+The projection boundary is also the consumer boundary:
+
+- routing receives the nominal routing plan compiled from the system contract;
+- engine launch receives an `EngineExecutionPlan` only after live enforcement refinement;
+- cluster publication receives `PublicationConfig`, containing only deployment and wait-set facts;
+- the webapp and `/api/demo-config` receive `PresentationConfig`, containing only runtime mode, the
+  demo-UI choice, and model descriptors. The public JSON cannot represent topics, daemon metadata,
+  pool/member identity, adapter launch metadata, filesystem paths, or memory admission.
+
+That split is an authority property, not merely a smaller JSON encoding: a presentation or
+publication function cannot inspect the raw decoded record because its type does not receive one,
+and the web-generated contract publishes no engine-binding or topic constants.
 
 The pool graph is a `List` of pools keyed by an `id` field rather than a Dhall record keyed by pool
 name, and the reason is worth stating rather than leaving to inference: pool ids are derived from
@@ -402,8 +424,9 @@ mounts two volumes and carries **no `env:` block**:
 
 Each coordinator, engine, and webapp role pod additionally mounts
 `ConfigMap/infernix-demo-config` (the binary-rendered runtime `infernix.dhall`, with the real model
-set) **over** the image-baked config path. Service startup compiles that Dhall before role-specific
-work begins, reads secret files by absolute path, and never consults `env`.
+set) **over** the image-baked config path. Coordinator and engine startup compile that Dhall before
+routing or launch; presentation decodes its narrower view, and cluster publication decodes its own
+view. Every role reads secret files by absolute path and never consults `env`.
 
 ## Third-party-upstream exceptions
 

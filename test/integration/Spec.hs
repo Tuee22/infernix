@@ -192,7 +192,7 @@ exerciseRuntimeMode paths runtimeMode = do
       homeResponse <- httpGet (baseUrl <> "/")
       publicationResponse <- httpGet (baseUrl <> "/api/publication")
       demoConfigResponse <- waitForRoutedDemoConfig paths state
-      routedDemoConfig <- requireJsonDemoConfig demoConfigResponse
+      routedPresentation <- requireJsonPresentationConfig demoConfigResponse
       modelsResponse <- httpGet (baseUrl <> "/api/models")
       (registryApiStatus, _) <- httpGetWithStatus (baseUrl <> "/registry/_catalog")
       (pulsarAdminStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/admin/admin/v2/clusters")
@@ -212,22 +212,30 @@ exerciseRuntimeMode paths runtimeMode = do
       assertHostBatchPublication runtimeMode publicationResponse
       assert ("\"demo_ui\":true" `isInfixOf` compact demoConfigResponse) "demo config reports the enabled demo UI flag"
       assert
-        (daemonConfigRole (coordinatorDaemon routedDemoConfig) == Coordinator)
-        "cluster-mounted system contract derives the coordinator daemon"
+        ( presentationRuntimeMode routedPresentation == runtimeMode
+            && map (Text.unpack . modelId) (presentationModels routedPresentation) == activeModelIds
+        )
+        "the routed presentation view carries only the active runtime and its model catalog"
       assertRoutedDaemonSplit runtimeMode compiledPlan
       assert
-        ( ("\"request_topics\":[\"persistent://infernix/demo/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
-            `isInfixOf` compact demoConfigResponse
+        ( not
+            ( any
+                (`isInfixOf` demoConfigResponse)
+                [ "request_topics",
+                  "result_topic",
+                  "engines",
+                  "adapterEntrypoint",
+                  "projectDirectory",
+                  "enginePools",
+                  "engineMembers",
+                  "engineDaemons",
+                  "inferenceMemoryBudget",
+                  "generatedPath",
+                  "mountedPath"
+                ]
+            )
         )
-        "demo config reports the active request topic"
-      assert
-        ( ("\"result_topic\":\"persistent://infernix/demo/inference.result." <> showRuntimeMode runtimeMode <> "\"")
-            `isInfixOf` compact demoConfigResponse
-        )
-        "demo config reports the active result topic"
-      assert ("\"engines\":[" `isInfixOf` compact demoConfigResponse) "demo config reports engine bindings"
-      assert ("\"adapterEntrypoint\":\"" `isInfixOf` compact demoConfigResponse) "demo config publishes adapter entrypoints"
-      assert ("\"projectDirectory\":\"python\"" `isInfixOf` compact demoConfigResponse) "demo config publishes the shared Python project directory"
+        "the routed presentation view cannot publish routing, launch, publication, or admission metadata"
       assert ("\"modelId\"" `isInfixOf` modelsResponse) "model listing returns JSON models"
       assert
         (all (\modelIdValue -> ("\"modelId\":\"" <> modelIdValue <> "\"") `isInfixOf` compact modelsResponse) activeModelIds)
@@ -415,6 +423,13 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
       -- the engine's published result to the shape a refusal must have. The
       -- retired form predicted an exact payload from a declared budget, which is
       -- only possible while the requirement is a constant this process can read.
+      when (modelIdValue == requiredSpeechCohortModelId) $
+        assert
+          (status resultValue == "completed")
+          ( "the selected speech cohort row must produce routed spoken-utterance output for "
+              <> modelIdValue
+              <> failurePayloadSuffix (payload resultValue)
+          )
       case status resultValue of
         "failed" -> do
           -- Name the model and show the payload. A bare label says only that
@@ -487,6 +502,20 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
 -- artifact's internal shape (that is the engine's realness contract).
 assertResultObjectRefFetchable :: Paths -> ClusterState -> ResultFamily -> String -> Maybe (Text.Text, Text.Text) -> ResultPayload -> IO ()
 assertResultObjectRefFetchable paths state resultFamily modelIdValue expectedOwnership payloadValue
+  | resultFamily == SpeechTranscription =
+      case inlineOutput payloadValue of
+        Just text ->
+          assert
+            ( expectedSpeechTranscript `Text.isInfixOf` normalizeSpeechTranscript text
+                && isNothing (objectRef payloadValue)
+            )
+            ( "speech transcription for "
+                <> modelIdValue
+                <> " does not match the spoken fixture: "
+                <> Text.unpack text
+            )
+        Nothing ->
+          fail ("speech transcription must return inline output for " <> modelIdValue)
   | not (resultFamilyIsArtifact resultFamily) = pure ()
   | otherwise =
       case objectRef payloadValue of
@@ -854,46 +883,13 @@ sanitizeFileToken =
       | character `elem` (['A' .. 'Z'] <> ['a' .. 'z'] <> ['0' .. '9'] <> ".-_") = character
       | otherwise = '-'
 
--- | Phase 4 Sprint 4.23 — a non-silent, speech-like mono 16 kHz fixture.
--- We synthesize a voiced source (a glottal-pulse-like sawtooth at a falling
--- pitch) shaped by a pair of formant resonances that glide across the
--- utterance, plus a light noise burst, so the decoder runs on real signal
--- rather than digital silence. This is intelligible-shaped, not genuinely
--- spoken; a real human utterance should be sourced for the cohort gate.
+-- | Phase 4 Sprint 4.48 — a genuinely spoken mono 16 kHz fixture. This is the
+-- whisper.cpp JFK sample (SHA-256
+-- 59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e),
+-- embedded so the routed suite exercises byte-identical speech on every lane.
+-- Source: https://github.com/ggml-org/whisper.cpp/blob/master/samples/jfk.wav
 speechWavBytes :: ByteString.ByteString
-speechWavBytes =
-  encodePcm16Wav 16000 1 samples
-  where
-    sampleRate = 16000 :: Int
-    durationSeconds = 1.6 :: Double
-    sampleCount = round (durationSeconds * fromIntegral sampleRate) :: Int
-    samples =
-      [ amplitudeAt index | index <- [0 .. sampleCount - 1]
-      ]
-    amplitudeAt index =
-      let t = fromIntegral index / fromIntegral sampleRate :: Double
-          progress = t / durationSeconds
-          -- Falling fundamental from 150 Hz to 95 Hz (a spoken-like contour).
-          f0 = 150 - 55 * progress
-          -- Sawtooth glottal source from summed harmonics.
-          source =
-            sum
-              [ (1 / fromIntegral harmonic)
-                  * sin (2 * pi * f0 * fromIntegral harmonic * t)
-              | harmonic <- [1 .. 12 :: Int]
-              ]
-          -- Two formants gliding across the utterance (vowel-like timbre).
-          formant1 = 500 + 300 * progress
-          formant2 = 1500 + 700 * progress
-          shaped =
-            source
-              * (0.6 + 0.4 * sin (2 * pi * formant1 * t))
-              + 0.3 * source * sin (2 * pi * formant2 * t)
-          -- Light aspiration noise from a cheap deterministic LCG.
-          noise = deterministicNoise index * 0.08
-          -- Soft fade in/out so we do not clip the WAV boundaries.
-          envelope = min 1 (min (progress * 8) ((1 - progress) * 8))
-       in clampToInt16 (0.5 * envelope * (shaped + noise))
+speechWavBytes = $(embedFile "test/fixtures/speech-jfk.wav")
 
 -- | Phase 4 Sprint 4.23 — a real music-like mixture for source separation:
 -- a sustained major triad (vocal/harmony stand-in), a low bass tone, and a
@@ -954,13 +950,6 @@ instrumentArpeggioWavBytes =
           -- Percussive attack, sustained body, gentle release.
           envelope = min 1 (progress * 12) * exp (negate progress * 1.5)
        in clampToInt16 (0.5 * envelope * tone)
-
--- | Deterministic [-1, 1) pseudo-noise from a 32-bit LCG seeded by the sample
--- index, so the fixture stays byte-identical across runs and substrates.
-deterministicNoise :: Int -> Double
-deterministicNoise index =
-  let seeded = (1103515245 * (fromIntegral index + 12345) + 12345) `mod` 2147483648 :: Integer
-   in fromIntegral seeded / 1073741824 - 1
 
 -- | Clamp a normalized [-1, 1] amplitude into a signed 16-bit PCM sample.
 clampToInt16 :: Double -> Int
@@ -1154,6 +1143,28 @@ assertResultFamilyContract resultFamily modelIdValue payloadValue
   where
     familyLabel = Text.unpack (resultFamilyId resultFamily)
 
+expectedSpeechTranscript :: Text.Text
+expectedSpeechTranscript =
+  "ask not what your country can do for you ask what you can do for your country"
+
+-- | Wave 4.1's selected spoken-utterance proof. Other speech families may
+-- still publish a typed underivable-requirement refusal until their checkpoint
+-- readers land; this row may not, because it is the routed real-output receipt
+-- that closes the phase's speech sprint.
+requiredSpeechCohortModelId :: String
+requiredSpeechCohortModelId = "speech-whisper-small"
+
+normalizeSpeechTranscript :: Text.Text -> Text.Text
+normalizeSpeechTranscript =
+  Text.unwords
+    . Text.words
+    . Text.map
+      ( \character ->
+          if character `elem` (['A' .. 'Z'] <> ['a' .. 'z'])
+            then toLowerAscii character
+            else ' '
+      )
+
 expectedArtifactSuffixes :: ResultFamily -> [Text.Text]
 expectedArtifactSuffixes resultFamily =
   case resultFamily of
@@ -1182,13 +1193,13 @@ assertHostBatchStatus runtimeMode statusOutput =
 assertRoutedDaemonSplit :: RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> IO ()
 assertRoutedDaemonSplit runtimeMode compiledPlan = do
   let coordinator = ExecutionPlan.compiledPlanCoordinatorDaemon compiledPlan
-      engineDaemons = ExecutionPlan.compiledPlanEngineDaemons compiledPlan
+      compiledEngineDaemons = ExecutionPlan.compiledPlanEngineDaemons compiledPlan
       engineRoutes =
         concatMap
           (NonEmpty.toList . ExecutionPlan.compiledPlacementRoutes)
           (ExecutionPlan.compiledRuntimePlanPlacements compiledPlan)
       expectedEngineRequestTopics = map ExecutionPlan.engineRouteTopic engineRoutes
-      actualEngineRequestTopics = concatMap ExecutionPlan.compiledDaemonRequestTopics engineDaemons
+      actualEngineRequestTopics = concatMap ExecutionPlan.compiledDaemonRequestTopics compiledEngineDaemons
   assert
     (ExecutionPlan.compiledPlanRuntimeMode compiledPlan == runtimeMode)
     "compiled plan reports the exercised runtime mode"
@@ -1197,7 +1208,7 @@ assertRoutedDaemonSplit runtimeMode compiledPlan = do
     (ExecutionPlan.compiledDaemonRequestTopics coordinator == ExecutionPlan.compiledPlanRequestTopics compiledPlan)
     "coordinator consumes the substrate request topic"
   assert
-    (not (null engineDaemons))
+    (not (null compiledEngineDaemons))
     ("compiled plan omits engine metadata for " <> showRuntimeMode runtimeMode)
   mapM_
     ( \engineDaemon ->
@@ -1205,7 +1216,7 @@ assertRoutedDaemonSplit runtimeMode compiledPlan = do
           (ExecutionPlan.compiledDaemonRole engineDaemon == Engine)
           "compiled plan reports engine metadata"
     )
-    engineDaemons
+    compiledEngineDaemons
   assert
     (not (null expectedEngineRequestTopics))
     "compiled placements have validated engine routes to consume"
@@ -2303,11 +2314,11 @@ parseCurlBodyAndStatus payload =
         _ -> Nothing
     [] -> Nothing
 
-requireJsonDemoConfig :: String -> IO DemoConfig
-requireJsonDemoConfig payload =
+requireJsonPresentationConfig :: String -> IO PresentationConfig
+requireJsonPresentationConfig payload =
   case Aeson.decode (LazyByteStringChar8.pack payload) of
-    Just demoConfig -> pure demoConfig
-    Nothing -> fail "unable to decode routed demo config JSON"
+    Just presentation -> pure presentation
+    Nothing -> fail "unable to decode routed presentation config JSON"
 
 requireCompiledRuntimePlanFile :: FilePath -> IO ExecutionPlan.CompiledRuntimePlan
 requireCompiledRuntimePlanFile configPath = do
@@ -2373,18 +2384,10 @@ testRootPath suiteName = do
 -- establishes is false. An underivable requirement names the artifact family
 -- whose reader is absent and the reason, and carries no quantity at all, because
 -- the quantity is exactly what could not be established.
--- | Phase 4 Sprint 4.44 — a limit-exceeded refusal has two shapes and the
--- predicate has to know which one it is looking at.
---
--- A /sampled overrun/ reports an observation strictly above the ceiling it
--- breached, and the retired form of this predicate required that of every
--- payload. A /kernel refusal at the boundary/ cannot: the allocation was refused
--- so the memory never became resident, and the payload reports the ceiling that
--- was installed beside the peak that was actually observed, which is at or below
--- it. Requiring the overrun's inequality of both shapes would force the refusal
--- path to invent a number above the limit, which is the fabrication the breach
--- path was corrected for. The source is what distinguishes them, so it is read
--- rather than merely required to be non-empty.
+-- A measured overrun reports an observation strictly above the ceiling it
+-- breached. A plain non-zero engine exit is not a memory outcome: the parent has
+-- no evidence that distinguishes a kernel-refused allocation from an ordinary
+-- fault after the same weights became resident.
 typedRefusalIsWellFormed :: Maybe InferenceError -> Bool
 typedRefusalIsWellFormed maybeError =
   case maybeError of
@@ -2394,10 +2397,7 @@ typedRefusalIsWellFormed maybeError =
         { inferenceErrorRequiredMib = requiredMib,
           inferenceErrorAvailableMib = availableMib,
           inferenceErrorSource = sourceValue
-        }
-        | sourceValue == cappedEngineRefusedAtCeilingSource ->
-            requiredMib <= availableMib && availableMib > 0
-        | otherwise -> requiredMib > availableMib && not (Text.null sourceValue)
+        } -> requiredMib > availableMib && not (Text.null sourceValue)
     Just
       ModelRequirementUnderivable
         { inferenceErrorArtifactType = artifactTypeValue,

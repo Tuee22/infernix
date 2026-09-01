@@ -852,7 +852,7 @@ matrixRows =
       "Prompt"
       (Just (ModeBinding "llama.cpp (Metal)" False))
       (Just (ModeBinding "llama.cpp" False))
-      (Just (ModeBinding "llama.cpp" True)),
+      (Just (ModeBinding "llama.cpp" False)),
     mkRow
       "llm-mlx-qwen15"
       "llm-qwen15-mlx"

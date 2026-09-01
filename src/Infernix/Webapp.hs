@@ -12,19 +12,19 @@ import Infernix.ClusterConfig (ClusterConfig)
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths, publicationStatePath)
 import Infernix.Demo.Api (DemoApiOptions (..), DemoBridgeMode (..), runDemoApiServer)
-import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
-import Infernix.Types (RuntimeMode, configRuntimeMode, runtimeModeId)
+import Infernix.DemoConfig.Internal (decodePresentationConfigFile)
+import Infernix.Types (RuntimeMode, presentationRuntimeMode, runtimeModeId)
 
 runWebappRole :: Paths -> RuntimeMode -> Maybe ClusterConfig -> FilePath -> IO ()
 runWebappRole paths runtimeMode maybeClusterConfig selectedDhallPath = do
-  demoConfig <- decodeDemoConfigFile selectedDhallPath
-  when (configRuntimeMode demoConfig /= runtimeMode) $
+  demoConfig <- decodePresentationConfigFile selectedDhallPath
+  when (presentationRuntimeMode demoConfig /= runtimeMode) $
     ioError
       ( userError
           ( "webapp runtime "
               <> Text.unpack (runtimeModeId runtimeMode)
               <> " does not match demo config runtime "
-              <> Text.unpack (runtimeModeId (configRuntimeMode demoConfig))
+              <> Text.unpack (runtimeModeId (presentationRuntimeMode demoConfig))
           )
       )
   let demoBackend = Cluster.clusterDemoBackend <$> maybeClusterConfig

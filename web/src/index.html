@@ -872,19 +872,9 @@
           justify-content: center;
         }
       }
-      /* Phase 9: cluster-wide surfaces are admin-only. The operator consoles
-         (Registry, Pulsar Admin), the five infrastructure/topology summary cells
-         (.summary-item.cluster-summary), and the cluster monitoring panel
-         (#admin-panel) are hidden for every non-admin (and pre-login, where
-         .app-shell is already hidden); they appear only once the admin-detection
-         script marks <html> with .infernix-admin. The per-user personal
-         dashboard, the Catalog and Connection cells stay visible to every
-         authenticated user. The edge SecurityPolicy + backend admin gate are the
-         real gates — this CSS only hides links so non-admins never see
-         cluster-wide surfaces. */
-      html:not(.infernix-admin) .operator-ribbon,
-      html:not(.infernix-admin) .summary-item.cluster-summary,
-      html:not(.infernix-admin) #admin-panel {
+      /* Application state owns presentation visibility. Authorization remains
+         enforced by the edge SecurityPolicy and backend role checks. */
+      [hidden] {
         display: none !important;
       }
       /* Phase 9 Sprints 9.5/9.6: the admin monitoring panel and the per-user
@@ -976,7 +966,7 @@
             <a id="route-artifacts" class="app-tab" href="/artifacts">Artifacts</a>
             <a id="route-files" class="app-tab" href="/files">Files</a>
           </nav>
-          <nav class="operator-ribbon" aria-label="Operator consoles">
+          <nav id="operator-ribbon" class="operator-ribbon" aria-label="Operator consoles" hidden>
             <a class="operator-link" data-operator-route="/registry" href="/registry/_catalog" target="_blank" rel="noreferrer">Registry</a>
             <a class="operator-link" data-operator-route="/pulsar/admin" href="/pulsar/admin/admin/v2/clusters" target="_blank" rel="noreferrer">Pulsar Admin</a>
           </nav>
@@ -985,23 +975,23 @@
                non-admins. Catalog (models available) and Connection (the user's
                own auth state) stay visible to every authenticated user. -->
           <div class="summary-grid">
-            <div class="summary-item cluster-summary">
+            <div id="runtime-summary" class="summary-item cluster-summary" hidden>
               <span class="summary-label">Runtime</span>
               <strong id="runtime-mode" class="summary-value">loading</strong>
             </div>
-            <div class="summary-item cluster-summary">
+            <div id="control-plane-summary" class="summary-item cluster-summary" hidden>
               <span class="summary-label">Control Plane</span>
               <strong id="control-plane-context" class="summary-value">loading</strong>
             </div>
-            <div class="summary-item cluster-summary">
+            <div id="daemon-summary" class="summary-item cluster-summary" hidden>
               <span class="summary-label">Daemon</span>
               <strong id="daemon-location" class="summary-value">loading</strong>
             </div>
-            <div class="summary-item cluster-summary">
+            <div id="dispatch-summary" class="summary-item cluster-summary" hidden>
               <span class="summary-label">Dispatch</span>
               <strong id="inference-dispatch-mode" class="summary-value">loading</strong>
             </div>
-            <div class="summary-item cluster-summary">
+            <div id="edge-summary" class="summary-item cluster-summary" hidden>
               <span class="summary-label">Edge</span>
               <strong id="edge-port" class="summary-value">loading</strong>
             </div>
@@ -1038,7 +1028,7 @@
                /api/admin/overview endpoint (real substrate / dispatch / catalog /
                engine-pool / model-cache / all-user aggregates). The edge
                SecurityPolicy + backend admin gate are the real gates. -->
-          <section id="admin-panel" class="dashboard-panel admin-panel" aria-label="Cluster-wide monitoring">
+          <section id="admin-panel" class="dashboard-panel admin-panel" aria-label="Cluster-wide monitoring" hidden>
             <div class="dashboard-panel-head">
               <h2>Cluster monitoring</h2>
               <span id="admin-panel-status" class="dashboard-status">loading…</span>
@@ -1070,153 +1060,5 @@
       </main>
     </div>
     <script type="module" src="./app.js"></script>
-    <script>
-      // Phase 9 admin gating (cosmetic; the edge SecurityPolicy is the real
-      // gate). Decode the operator cookie's JWT and mark <html> with
-      // .infernix-admin when it carries the infernix-admin realm role, so the
-      // operator ribbon (Registry, Pulsar Admin) is shown only to admins. This
-      // reads the same infernix_operator_token cookie the edge validates; the
-      // cookie is written asynchronously after login and cleared on logout, so
-      // re-check on an interval and on focus/visibility. <html> is used (not
-      // <body>) because the app rewrites the body class on every render.
-      (function () {
-        var ADMIN_ROLE = "infernix-admin";
-        var COOKIE = "infernix_operator_token";
-        function readCookie(name) {
-          return (
-            document.cookie
-              .split(";")
-              .map(function (part) { return part.trim(); })
-              .filter(function (part) { return part.indexOf(name + "=") === 0; })
-              .map(function (part) { return part.slice(name.length + 1); })[0] || ""
-          );
-        }
-        function base64UrlDecode(segment) {
-          var padded = segment.replace(/-/g, "+").replace(/_/g, "/");
-          while (padded.length % 4) padded += "=";
-          try { return atob(padded); } catch (error) { return ""; }
-        }
-        function tokenHasAdminRole(token) {
-          if (!token) return false;
-          var parts = token.split(".");
-          if (parts.length < 2) return false;
-          try {
-            var payload = JSON.parse(base64UrlDecode(parts[1]));
-            var access = payload.realm_access || {};
-            var roles = access.roles || [];
-            return Array.isArray(roles) && roles.indexOf(ADMIN_ROLE) !== -1;
-          } catch (error) {
-            return false;
-          }
-        }
-        function apply() {
-          document.documentElement.classList.toggle(
-            "infernix-admin",
-            tokenHasAdminRole(readCookie(COOKIE))
-          );
-        }
-        apply();
-        setInterval(apply, 1000);
-        document.addEventListener("visibilitychange", apply);
-        window.addEventListener("focus", apply);
-      })();
-    </script>
-    <script>
-      // Phase 9 Sprints 9.5/9.6 dashboard data (real endpoints; the edge
-      // SecurityPolicy + backend admin gate are the real access gates). The
-      // per-user personal dashboard reads /api/objects/list (scoped server-side
-      // to the caller's users/<sub>/ prefix). The admin monitoring panel reads
-      // the admin-gated /api/admin/overview. Both authenticate with the same
-      // access token the app stores after login (the infernix_operator_token
-      // cookie, falling back to window.__infernixAccessToken).
-      (function () {
-        var COOKIE = "infernix_operator_token";
-        function readCookie(name) {
-          return (
-            document.cookie
-              .split(";")
-              .map(function (part) { return part.trim(); })
-              .filter(function (part) { return part.indexOf(name + "=") === 0; })
-              .map(function (part) { return part.slice(name.length + 1); })[0] || ""
-          );
-        }
-        function authHeaders() {
-          var token = readCookie(COOKIE) || window.__infernixAccessToken || "";
-          return token ? { Authorization: "Bearer " + token } : null;
-        }
-        function signedIn() {
-          return document.body.classList.contains("auth-signed-in");
-        }
-        function isAdmin() {
-          return document.documentElement.classList.contains("infernix-admin");
-        }
-        function setText(id, value) {
-          var el = document.getElementById(id);
-          if (el) el.textContent = value;
-        }
-        function fmt(n) {
-          return n === null || n === undefined ? "–" : String(n);
-        }
-        function refreshPersonalDashboard() {
-          var headers = authHeaders();
-          if (!signedIn() || !headers) return;
-          setText("personal-dashboard-status", "refreshing…");
-          fetch("/api/objects/list", { headers: headers })
-            .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
-            .then(function (objects) {
-              var list = Array.isArray(objects) ? objects : [];
-              setText("personal-object-count", String(list.length));
-              var ul = document.getElementById("personal-object-list");
-              if (ul) {
-                ul.innerHTML = "";
-                list.slice(0, 20).forEach(function (obj) {
-                  var li = document.createElement("li");
-                  var key = (obj && obj.objectKey) || "";
-                  li.textContent = key.split("/").slice(-1)[0] || key;
-                  ul.appendChild(li);
-                });
-              }
-              setText("personal-dashboard-status", "up to date");
-            })
-            .catch(function (status) {
-              setText("personal-dashboard-status", "unavailable (" + status + ")");
-            });
-        }
-        function refreshAdminPanel() {
-          var headers = authHeaders();
-          if (!signedIn() || !isAdmin() || !headers) return;
-          setText("admin-panel-status", "refreshing…");
-          fetch("/api/admin/overview", { headers: headers })
-            .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
-            .then(function (o) {
-              setText("admin-substrate", o.substrate || o.runtimeMode || "–");
-              setText("admin-dispatch", o.dispatchMode || "–");
-              setText("admin-catalog-count", fmt(o.catalogModelCount));
-              setText("admin-engine-count", fmt(o.engineBindingCount));
-              setText("admin-pool-count", fmt(o.enginePoolCount));
-              setText("admin-member-count", fmt(o.engineMemberCount));
-              setText("admin-cache-count", fmt(o.modelCacheEntryCount));
-              setText(
-                "admin-user-count",
-                o.usersWithObjects === null || o.usersWithObjects === undefined
-                  ? "n/a"
-                  : String(o.usersWithObjects)
-              );
-              setText("admin-panel-status", "up to date");
-            })
-            .catch(function (status) {
-              setText("admin-panel-status", "unavailable (" + status + ")");
-            });
-        }
-        function refreshAll() {
-          refreshPersonalDashboard();
-          refreshAdminPanel();
-        }
-        refreshAll();
-        setInterval(refreshAll, 15000);
-        document.addEventListener("visibilitychange", refreshAll);
-        window.addEventListener("focus", refreshAll);
-      })();
-    </script>
   </body>
 </html>
