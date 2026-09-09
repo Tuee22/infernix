@@ -117,6 +117,14 @@ RUN set -eu; \
     test "$(/opt/infernix/proto-tools/protoc --version)" = "libprotoc ${PROTOC_VERSION}"; \
     rm -rf "${protoc_tmp}"
 
+# Configure the authenticated upstream repository before GHCup's initial index
+# update, so the clean image uses the same HTTPS origin as later Cabal work.
+RUN mkdir -p /root/.cabal \
+    && printf '%s\n' \
+      'repository hackage.haskell.org' \
+      '  url: https://hackage.haskell.org/' \
+      '  secure: True' > /root/.cabal/config
+
 RUN curl https://get-ghcup.haskell.org -sSf | sh \
     && ghcup install ghc ${GHC_VERSION} \
     && ghcup set ghc ${GHC_VERSION} \
@@ -181,7 +189,7 @@ COPY python/pyproject.toml /workspace/python/pyproject.toml
 # linked `-rtsopts=ignore -with-rtsopts=-M1024M`: that is the one binary this
 # image later runs *with* GHCRTS set, so it must be built to admit it.
 RUN mkdir -p /workspace/.build /workspace/tools/generated_proto \
-    && cabal +RTS -M1024M -RTS update \
+    && cabal +RTS -M1024M -RTS update --verbose=2 \
     && cabal +RTS -M1024M -RTS \
          build all --only-dependencies \
          --jobs=1 \

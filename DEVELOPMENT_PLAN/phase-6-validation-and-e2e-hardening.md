@@ -4,6 +4,11 @@
 observer requests, specifications, samplers, probes, and watchdog seams are ordinary Haskell values
 selected by the runtime host lane, so every arm reaches `-Wall -Werror` on every build. Wave 6.1
 retains the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite cohort gate.
+The entry-document cleanup is code-side closed. The governed Apple and current-source native-arm64
+`linux-cpu` builds, aggregate lint, all six Haskell unit components, and 86 web tests pass;
+standalone documentation gates pass. The CPU full suite is incomplete after a user-requested stop
+during live integration, with no browser result. Wave 6.1 requires a complete CPU rerun and native
+CUDA host access for the selected accelerator full suite.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -112,6 +117,16 @@ retains the selected current-source `linux-gpu` plus paired `linux-cpu` full-sui
 > enforcement construction.
 
 Phase 6 is `Active`: Sprints 6.1 through 6.53 are complete and Sprint 6.54 is code-side closed.
+The entry documents require the sole rule list in `documents/development/assistant_workflow.md`.
+Their duplicate lists and divergence check are removed. The Haskell-style membership test compares
+Section Q with named checks reachable from `scanPlanViolations` and `runDocsLint`, including
+references through local helpers and imported check names. Its negative fixtures reject added,
+removed, or renamed checks while excluding comments, literals, unused definitions, and private
+implementation helpers. The governed Apple and current-source native-arm64 `linux-cpu` builds,
+aggregate lint, all six Haskell unit suites, and 86 web tests pass. Documentation lint, plan lint,
+file lint, and generated-document check pass. The CPU full suite has no completed integration or
+browser result because validation is stopped at the user's request. Its test cluster is absent;
+the interrupted command exits non-zero and supplies no full-suite attestation.
 The unified observer module family passes the governed Apple build and the native-arm64
 `linux-cpu` build plus unit suite. Wave 6.1 retains the selected current-source `linux-gpu` plus
 paired `linux-cpu` full-suite sign-off against one frozen Phase 6 state. The host and device columns
@@ -2377,8 +2392,10 @@ None.
 ## Remaining Work
 
 Wave 6.1 must record the selected current-source `linux-gpu` plus paired `linux-cpu` full suites
-against one frozen Phase 6 state. Sprint 6.54's implementation and machine-independent validation
-are closed.
+against one frozen Phase 6 state. Sprint 6.54 and the entry-document cleanup are code-side closed.
+The CPU build, aggregate lint, and unit gates pass, but the interrupted full suite requires a
+complete rerun. The selected accelerator gate has a validation-only hardware blocker: access to a
+native CUDA host. Later open phases remain queued until this phase validates in numerical order.
 
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Done]
 

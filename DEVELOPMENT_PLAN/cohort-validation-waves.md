@@ -26,11 +26,17 @@
 
 | Wave | Phase | Chosen accelerator | Paired lane | Gate | State |
 |------|-------|--------------------|-------------|------|-------|
-| 1.1 | 1 | `apple-silicon` | native-arm64 `linux-cpu` | current-source `infernix test all` on both lanes after stable Darwin Poetry framework resolution | Stage 2 validation-only: code-side closure and standalone gates pass; the existing Colima daemon exposes a 1952 MiB toolchain budget, below the governed 6144 MiB claimant minimum, so both full suites remain capacity-refused |
-| 4.1 | 4 | `apple-silicon` | native-arm64 `linux-cpu` | current-source `infernix test all` on both lanes, including routed spoken-utterance output | Stage 2 validation-only: both full suites remain; the selected Apple run and paired launcher build fail closed at the existing Colima daemon's 1952 MiB toolchain budget, below the governed 6144 MiB claimant minimum |
-| 6.1 | 6 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the unified fixed-observer correction | Stage 2 validation-only: code-side closure passes the governed Apple build and native-arm64 `linux-cpu` build plus unit suite; selected `linux-gpu` and paired full-suite sign-off remain |
+| 6.1 | 6 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the fixed-observer correction and entry-document cleanup | Stage 2 validation-only: Apple and current-source native-arm64 CPU build, aggregate lint, all six Haskell unit components, and 86 web tests pass; standalone documentation gates pass. CPU full suite: INCOMPLETE, user-requested interruption during live integration, exit 1, no browser result, test cluster absent. A complete CPU rerun remains; selected `linux-gpu` sign-off requires access to a native CUDA host |
 | 8.1 | 8 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the decoded role-contract split | Stage 2 validation-only: code-side closure passes the governed Apple build, native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed `linux-cpu` integration; selected `linux-gpu` and paired full-suite sign-off remain |
 | 9.1 | 9 | `linux-gpu` | `linux-cpu` | current-source `infernix test all` on both lanes after the application-owned admin-rendering correction | Stage 2 validation-only: code-side closure passes the native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed `linux-cpu` browser suite; selected `linux-gpu` and paired full-suite sign-off remain |
+
+Wave 6.1's current code identity is base commit `0db34b0ee1ff47cc6868b1d59327179e66c47221`
+plus uncommitted code-patch SHA-256
+`5364ba70092a95335e1675c53fca6eea5ad144a0e905a2885c6f46f03ddff8f7` over
+`docker/Dockerfile`, `src/Infernix/Engines/Provisioning.hs`, `src/Infernix/Lint/Docs.hs`,
+`test/unit/Spec.hs`, and `test/haskell-style/Spec.hs`. Its native-arm64 CPU image is
+`sha256:eaba04e0865efd85d5203fe033bf2f3401505493218b4770a5cea2b1c8328577`.
+This identifies partial validation and is not a closed-phase attestation.
 
 ## Recorded Attestations
 
@@ -44,6 +50,8 @@ commit, or an outcome — the account of how a run went belongs to nothing in th
 | Phase | Accelerator | Gate | Commit | Outcome |
 |-------|-------------|------|--------|---------|
 | — | — | — | — | No attestation is recorded. Phases 1-9 closed before this table existed and are not re-validated; their evidence is the git history of the sprints that closed them. |
+| 1 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `0db34b0ee1ff47cc6868b1d59327179e66c47221` + uncommitted code-patch SHA-256 `e17b0176723d0c7c0876ec9dee86c9c3fcf610a5d0d6200565724dd73713f1c4` | PASS; exit 0 and 16/16 browser tests per lane |
+| 4 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `0db34b0ee1ff47cc6868b1d59327179e66c47221` + uncommitted code-patch SHA-256 `e17b0176723d0c7c0876ec9dee86c9c3fcf610a5d0d6200565724dd73713f1c4` | PASS; exit 0 and 16/16 browser tests per lane |
 
 ## Cadence Rule
 
@@ -79,12 +87,12 @@ available cohort during the active wave and record only the phase's chosen accel
 | Phase | Current cohort disposition |
 |-------|----------------------------|
 | 0 | No accelerator cohort; machine-independent throughout, and it blocks no accelerator phase |
-| 1 | Wave 1.1 Stage 2: stable Darwin Poetry framework resolution and standalone gates are code-side closed; selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full-suite sign-off remains capacity-refused by the existing Colima daemon's 1952 MiB toolchain budget |
+| 1 | Closed on `apple-silicon` plus native-arm64 `linux-cpu`; see Recorded Attestations |
 | 2 | No open disposition |
 | 3 | No open disposition |
-| 4 | Wave 4.1 Stage 2: code-side closure passes; selected `apple-silicon` and paired native-arm64 `linux-cpu` full-suite sign-off remains capacity-refused by the existing Colima daemon's 1952 MiB toolchain budget |
+| 4 | Closed on `apple-silicon` plus native-arm64 `linux-cpu`; see Recorded Attestations |
 | 5 | No open disposition |
-| 6 | Wave 6.1 Stage 2: code-side closure passes the governed Apple build and native-arm64 `linux-cpu` build plus unit suite; selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off remains |
+| 6 | Wave 6.1 Stage 2: fixed-observer and entry-document cleanup code-side gates pass on Apple and native-arm64 CPU; the interrupted CPU full suite requires a complete rerun, and selected `linux-gpu` validation requires native CUDA host access |
 | 7 | No open disposition |
 | 8 | Wave 8.1 Stage 2: code-side closure passes the governed Apple build, native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed `linux-cpu` integration; selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off remains |
 | 9 | Wave 9.1 Stage 2: code-side closure passes the native-arm64 `linux-cpu` build and unit suite, standalone gates, and routed browser suite; selected current-source `linux-gpu` plus paired `linux-cpu` full-suite sign-off remains |

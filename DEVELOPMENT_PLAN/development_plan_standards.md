@@ -846,7 +846,7 @@ nested helper can be retired without the count moving.
 
 `Infernix.Lint.Docs`, invoked from `runDocsLint`:
 
-`governedSuiteFileTypeViolations`, `mirrorRuleDivergenceViolations`, `validateGovernedDocumentMetadata`,
+`governedSuiteFileTypeViolations`, `validateGovernedDocumentMetadata`,
 `validateRootDocMetadata`, `validateGeneratedSection`, `validateDhallSchemaDrift`,
 `validateForbiddenPhrases`, `validateProhibitedStatusSection`, `validateRetiredDoctrineClaims`,
 `validateForbiddenConfigurationOverrideReferences`, `validateDocumentStructure`,
@@ -858,9 +858,11 @@ nested helper can be retired without the count moving.
 how the prose reads, and a newly reachable unsafe construct is a reason for a new rule there. The
 bound applies to mechanical checks whose input is Markdown.
 
-Nothing mechanical holds the invoked set equal to this enumeration: the list and the dispatch are
-two texts, and keeping them equal is a review obligation. A test is not a member of the set, so
-enforcement may strengthen through tests without spending a trade.
+The Haskell-style test compares this enumeration with named checks reachable from each dispatch,
+following local helper references and ignoring comments and literals. It rejects missing, added,
+and duplicated names. A test is not a member of the set, so enforcement may strengthen through tests
+without spending a trade. The test establishes membership, not the meaning or completeness of a
+check's implementation.
 
 
 A `Done` cites the attestation row its accelerator evidence produced. No scan decides this: a scan

@@ -165,7 +165,7 @@ status exception.
 - `AGENTS.md` and `CLAUDE.md` are governed entry documents and must stay aligned with workflow
   guidance when repository-level rules change.
 - `documents/development/assistant_workflow.md` is the canonical repository-level assistant
-  workflow document; `AGENTS.md` and `CLAUDE.md` summarize and link to it.
+  workflow document and sole rule list; `AGENTS.md` and `CLAUDE.md` require readers to follow it.
 - supporting-reference docs may narrow or operationalize a topic already owned elsewhere, but they
   point back to the canonical owner instead of presenting a second authoritative home.
 
@@ -241,10 +241,9 @@ status exception.
   `documents/architecture/bounded_host_memory.md`, `documents/architecture/bounded_inference_memory.md`,
   `documents/development/local_dev.md`, `documents/development/testing_strategy.md`,
   `documents/engineering/build_artifacts.md`, `documents/engineering/testing.md`,
-  `documents/engineering/host_tools_manifest.md`, the three-way `README.md` / `AGENTS.md` /
-  `CLAUDE.md`
-  mirror with `documents/development/assistant_workflow.md`, and the relevant phase document in the
-  same change
+  `documents/engineering/host_tools_manifest.md`, `documents/development/assistant_workflow.md`, and
+  the relevant phase document in the same change; review the workflow links in `README.md`,
+  `AGENTS.md`, and `CLAUDE.md` together
 - when the inference-memory-safety contract changes, update
   `documents/architecture/bounded_inference_memory.md`,
   `documents/architecture/bounded_host_memory.md`,
@@ -252,8 +251,9 @@ status exception.
   `documents/architecture/runtime_modes.md`, `documents/architecture/daemon_topology.md`,
   `documents/architecture/model_catalog.md`,
   `documents/operations/apple_silicon_runbook.md`, the `documents/architecture/realness_contract.md`
-  admission cross-reference, the three-way `README.md` / `AGENTS.md` / `CLAUDE.md` mirror with
-  `documents/development/assistant_workflow.md`, and the relevant phase document in the same change.
+  admission cross-reference, `documents/development/assistant_workflow.md`, and the relevant phase
+  document in the same change; review the workflow links in `README.md`, `AGENTS.md`, and
+  `CLAUDE.md` together.
   The trigger is named by what changes, not by which types currently express it: how a model's
   requirement is established, which physical resources it is admitted against, the mechanism that
   bounds a launched engine, where that mechanism is installed relative to the engine's first

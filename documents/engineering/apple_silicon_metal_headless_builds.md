@@ -74,6 +74,13 @@ No repository-owned native bridge is permitted. Direct FFI, inline native source
 source, direct compiler scripts, and relocation into another implementation language are not
 alternative implementations of this lane.
 
+Poetry's sealed Python home is derived from the bounded `pyvenv.cfg` descriptor's `home` field.
+That path may resolve directly to a fixed framework's `bin` directory or name a Homebrew formula's
+ordinary `bin` directory. In the latter shape, the descriptor's numeric release selects the
+versioned interpreter beneath `home`; its bounded executable identity must resolve into the matching
+framework version and remain stable on reobservation. The informational `executable` field may name
+a retired provisioning snapshot and is never used as live filesystem authority.
+
 ## Prerequisites
 
 | Prerequisite | Required for | Verification |

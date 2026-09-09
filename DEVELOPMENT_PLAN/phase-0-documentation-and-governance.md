@@ -1413,44 +1413,27 @@ None.
 ## Sprint 0.31: Assistant-Workflow Guarantee Precision [Done]
 
 **Status**: Done
-**Implementation**: `documents/development/assistant_workflow.md`, `src/Infernix/Lint/Docs.hs`, `test/haskell-style/Spec.hs`
+**Implementation**: `documents/development/assistant_workflow.md`
 **Docs to update**: `documents/development/assistant_workflow.md`
 
 ### Objective
 
-Two rules in the canonical list claimed a stronger mechanism than the one that exists, and in both
-cases the entry-document mirrors already carried the precise statement — the canonical list was the
-weaker text. That inversion is the reason to fix it here rather than anywhere else: a mirror is
-supposed to be a faithful subset of the canonical list, so a mirror that is *more* accurate means
-the canonical is the copy a careful reader would be misled by.
-
-The cluster-ownership rule said tearing down an `OperatorOwned` cluster "does not typecheck". The
-type index decides the lease, not who owns a live cluster; ownership of a running cluster is a
-fail-closed evidence check under the held lease, so the refusal is a checked one rather than GHC's.
-The memory-safety rule said the capped-engine kernel OS-bounds resident memory and that observers
-enforce ceilings, without the per-lane qualification the doctrine carries everywhere else, and
-without the statement that no kernel mechanism bounds device memory on any lane.
-
-Triage verdict **T1** for both: the doctrine documents already state the precise mechanism, so the
-rule list yields to them.
+The canonical rule list states the mechanisms the implementation provides. The cluster-ownership
+index establishes the held lease; ownership of a running cluster is a fail-closed evidence check
+under that lease. The memory-safety rule distinguishes the three enforcement layers, names each
+lane's strength, and states that no kernel mechanism bounds device memory on any lane.
 
 ### Deliverables
 
 - the cluster-ownership rule states what the index decides and what remains a checked refusal
 - the memory-safety rule states the three enforcement layers, that a lane declares the strength it
   has, and that no kernel mechanism bounds device memory on any lane
-- `mirrorRuleDivergenceViolations` rejects a `## Non-Negotiable Rules` section present in one entry
-  document and absent or altered in the other. The divergence is only ever observed by the reader
-  who loads the stale copy, which is why it needs a gate rather than a review habit
-- the check states what it does not decide: the mirrors paraphrase, so no textual comparison can
-  settle whether either is a faithful subset of the canonical list
 
 ### Validation
 
 - `./.build/infernix lint docs`
 - `./.build/infernix docs check`
-- `./.build/infernix test lint` — the negative fixture asserts the check rejects both a rule added
-  to one mirror and a rule altered in one mirror, and admits two identical sections
+- `./.build/infernix test lint`
 
 ### Remaining Work
 
@@ -1491,9 +1474,8 @@ either answer.
   new check is added only by retiring a named member. `Infernix.Lint.HaskellStyle` is outside the
   set: its rules bound what the code may do, and a newly reachable unsafe construct is a reason for
   a new rule there
-- the enumeration states what holds it true — a review obligation, not a mechanism — because a list
-  and the dispatch it describes are two texts, and claiming a gate that does not exist is the defect
-  this phase spent three sprints removing from other documents
+- the enumeration states the evidence that checks membership and the semantic review obligations
+  that remain outside that check
 
 ### Validation
 
@@ -1568,8 +1550,8 @@ closed sprints, and no way to tell the two apart.
 
 ### Deliverables
 
-- Phases 4, 6, 8 and 9 return to `Active`, each header naming the sprints that carry its verified
-  defects and each phase carrying a `Remaining Work` body that lists them
+- each phase header names the sprints carrying verified open work, and its `Remaining Work` body
+  agrees with its declared status
 - every blocker field naming a closed sprint states `nothing` with the satisfied dependency in
   prose, and the four fields that ran two bold keys together on one line are separated
 - the sections and sentences that asserted open work beneath a closed header are deleted, including

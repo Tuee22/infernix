@@ -1,9 +1,10 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active. Sprints 4.1 through 4.45 are `Done`. Sprints 4.46 through 4.49 are code-side
-closed. Wave 4.1 retains the selected `apple-silicon` plus paired current-source native-arm64
-`linux-cpu` full suites; both are capacity-refused by the existing Colima daemon as recorded in
-[cohort-validation-waves.md](cohort-validation-waves.md).
+**Status**: Done. All 49 sprints are implemented and validated. The selected `apple-silicon`
+and paired native-arm64 `linux-cpu` full suites each pass with exit 0, complete live integration,
+and 16/16 browser tests. The Phase 4 row in
+[Recorded Attestations](cohort-validation-waves.md#recorded-attestations) binds both results to the
+tested working-tree patch.
 **Current implementation state**: Sprints 4.37 through 4.42 landed in numerical order, each building
 on the one before: a breach names the resource it breached, the requirement becomes resource-indexed,
 the requirement is derived from the artifact's own bytes, three sampling loops become one, a kernel
@@ -33,12 +34,14 @@ phase for that prerequisite.
 
 ## Phase Status
 
-Code-side closure is complete. The reader recognizes and validates the legacy Whisper GGML fixed
-header, derives its resident charge from the actual object extent, and keeps artifact admission
-distinct from the lane-budget execution bound required when no trustworthy projection exists. The
-selected speech row is explicitly required to complete, and the normalized JFK transcript assertion
-is reachable. Phase 4 remains `Active` until Wave 4.1 records the selected `apple-silicon` plus paired
-native-arm64 `linux-cpu` full suites against one frozen phase state.
+All sprints are Done. The reader recognizes and validates the legacy Whisper GGML fixed header,
+derives its resident charge from the actual object extent, and keeps artifact admission distinct
+from the lane-budget execution bound required when no trustworthy projection exists. The selected
+speech row completes with the expected normalized JFK transcript in both routed integration suites;
+both complete browser matrices pass. Unit coverage verifies ordinary engine exits, the static
+mechanism declaration, Whisper artifact extent, lane-budget provenance, and the host-resident CUDA
+GGUF projection. The Phase 4 [attestation](cohort-validation-waves.md#recorded-attestations) records
+the same frozen implementation exercised by both full suites.
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python adapter boundary, the
 Pulsar-driven request and result contract, the explicit engine-runner dispatch, the mounted
@@ -1623,16 +1626,7 @@ None.
 
 ## Remaining Work
 
-Sprints 4.46 through 4.49 are code-side closed. The remaining residual is Wave 4.1's selected
-current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full suites against one frozen
-phase state, including the routed spoken-utterance assertion.
-
-Sprints 4.1 through 4.45 are closed. The last four of those — Sprint 4.31's
-claimable-pool/toolchain-occupant correction, Sprint 4.32's verified Apple and Linux CPU execution
-enforcers, Sprint 4.34's Apple cohort, and Sprint 4.35's native runner front-end correction — closed
-together on one frozen source state validated on `apple-silicon` plus `linux-cpu`. The broker-side
-member claim is a fleet-wide broker property rather than a machine-local one, and is not a residual
-here.
+None.
 
 ---
 
@@ -3365,13 +3359,13 @@ the capability or identity boundary structurally.
 
 None.
 
-## Sprint 4.46: The Ceiling Refusal Classifier Names A Refusal Only [Active]
+## Sprint 4.46: The Ceiling Refusal Classifier Names A Refusal Only [Done]
 
-**Status**: Active. Code-side closure is complete; Wave 4.1 remains.
+**Status**: Done — the Phase 4 [attestation](cohort-validation-waves.md#recorded-attestations) records both full-suite passes.
 **Code-side closure**: complete. The governed unit suite and documentation lint pass. The unsupported
 inference from exit code and sampled peak is gone; an ordinary non-zero engine exit remains
 `EngineExited`, while only a watchdog's measured overrun produces the typed memory-limit outcome.
-**Cohort gate**: Wave 4.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
+**Cohort gate**: passed — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Internal.hs`, `test/unit/Spec.hs`
 **Blocked by**: nothing.
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`
@@ -3404,17 +3398,17 @@ distinction the contract exists to hold.
 
 ### Remaining Work
 
-Complete Wave 4.1.
+None.
 
 ---
 
-## Sprint 4.47: Calibration Is Observed Or Absent [Active]
+## Sprint 4.47: Calibration Is Observed Or Absent [Done]
 
-**Status**: Active. Code-side closure is complete; Wave 4.1 remains.
+**Status**: Done — the Phase 4 [attestation](cohort-validation-waves.md#recorded-attestations) records both full-suite passes.
 **Code-side closure**: complete. The governed unit suite and documentation lint pass.
 `HostCeilingCalibration` and its unreachable pending state are removed. Lane strength is the static
 mechanism table, while behavioral calibration is a validation receipt rather than a runtime value.
-**Cohort gate**: Wave 4.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
+**Cohort gate**: passed — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
 **Implementation**: `src/Infernix/Runtime/CappedEngine/Ceiling.hs`, `documents/architecture/bounded_inference_memory.md`
 **Blocked by**: nothing.
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`
@@ -3441,20 +3435,20 @@ asserts is the defect that shape exists to prevent.
 
 ### Remaining Work
 
-Complete Wave 4.1.
+None.
 
 ---
 
-## Sprint 4.48: The Speech Row Proves Real Output [Active]
+## Sprint 4.48: The Speech Row Proves Real Output [Done]
 
-**Status**: Active. Code-side closure is complete; Wave 4.1 routed validation remains.
+**Status**: Done — the Phase 4 [attestation](cohort-validation-waves.md#recorded-attestations) records both full-suite passes.
 **Code-side closure**: complete. Both Haskell and browser fixtures consume the same
 embedded mono 16 kHz spoken sample. The integration guard now reaches the normalized transcript
 assertion before the general non-artifact return, and `speech-whisper-small` may no longer pass as a
 typed underivable refusal. The memory derivation recognizes whisper.cpp's legacy GGML fixed header,
 charges the actual object extent for host-resident admission, and records the admitted lane budget
 as the execution bound because upstream offers no projection that dominates the routed CLI.
-**Cohort gate**: Wave 4.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full-suite
+**Cohort gate**: passed — selected `apple-silicon` plus native-arm64 `linux-cpu` full-suite
 validation against one frozen phase state.
 **Implementation**: `src/Infernix/Models/Artifact.hs`,
 `src/Infernix/Runtime/CappedEngine/Ceiling.hs`,
@@ -3482,17 +3476,17 @@ selected row completes and its normalized transcript states what the utterance s
 
 ### Remaining Work
 
-Complete Wave 4.1.
+None.
 
 ---
 
-## Sprint 4.49: The Declared Load Strategy Matches The Invocation [Active]
+## Sprint 4.49: The Declared Load Strategy Matches The Invocation [Done]
 
-**Status**: Active. Code-side closure is complete; Wave 4.1 remains.
+**Status**: Done — the Phase 4 [attestation](cohort-validation-waves.md#recorded-attestations) records both full-suite passes.
 **Code-side closure**: complete. The governed unit suite passes. The CUDA GGUF row now declares the
 host-resident shape rendered by `--gpu-layers 0`; compilation includes its model bytes in `PodRam`
 and mints no device-memory grant.
-**Cohort gate**: Wave 4.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
+**Cohort gate**: passed — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/ExecutionPlan.hs`
 **Blocked by**: nothing.
 **Docs to update**: `documents/architecture/typed_execution_plan.md`
@@ -3522,7 +3516,7 @@ execution is not.
 
 ### Remaining Work
 
-Complete Wave 4.1.
+None.
 
 ---
 

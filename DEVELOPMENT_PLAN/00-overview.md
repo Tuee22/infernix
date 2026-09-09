@@ -46,24 +46,32 @@ surface the repository no longer has.
 
 ## Current Repo Assessment
 
-Phases 0, 2, 3, 5 and 7 are `Done`; Phases 1, 4, 6, 8 and 9 are `Active`. Phase 1 Sprint 1.41 is
-code-side closed: Darwin Poetry sealing canonicalizes the stable `pyvenv.cfg` home to one fixed
-framework version and Wave 1.1 retains the selected `apple-silicon` plus paired native-arm64
-`linux-cpu` full-suite sign-off. Phase 4 Sprint 4.45 closes its stable Apple project-environment,
+Phases 0, 1, 2, 3, 4, 5 and 7 are `Done`; Phases 6, 8 and 9 are `Active`. Phase 1's Darwin
+Poetry sealing resolves the stable `pyvenv.cfg` home to one fixed framework version, including
+Homebrew formula directories, and the clean launcher initializes Hackage over HTTPS. The selected
+`apple-silicon` and paired native-arm64 `linux-cpu` full suites each pass with 16/16 browser tests
+and exit 0, recorded by the Phase 1 [attestation](cohort-validation-waves.md#recorded-attestations).
+Phase 4 Sprint 4.45 closes its stable Apple project-environment,
 bounded-observer, Pulsar broker-envelope, typed generation-shape, and artifact recipe-identity work
 against the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full
 suites. Phase 4 owns the Bounded Engine Launch host half: Apple declares detection-only, the static
 `linux-cpu` mechanism table declares prevention, and a prevention-required production readiness
 contract consumes the declaration and refuses weaker strength. Its routed-speech correction is
-code-side closed: legacy Whisper GGML admission derives from the artifact extent, the selected row
-completes its reachable transcript assertion, and no-projection execution uses the admitted lane
-budget with distinct provenance. Wave 4.1 retains the selected `apple-silicon` plus paired
-native-arm64 `linux-cpu` full suites. Phase 6's device-side
+closed: legacy Whisper GGML admission derives from the artifact extent, the selected row completes
+the required transcript assertion on both lanes, and no-projection execution uses the admitted lane
+budget with distinct provenance. The selected `apple-silicon` and paired native-arm64 `linux-cpu`
+full suites pass against the source recorded in the Phase 4
+[attestation](cohort-validation-waves.md#recorded-attestations). Phase 6's device-side
 correction, Linux GPU host calibration, and residual safety and recovery implementation are
 retained, and Sprint 6.54's fixed observer, samplers, probes, and watchdog seams compile as ordinary
 runtime-selected values in the governed Apple build and native-arm64 `linux-cpu` build plus unit
-suite. Wave 6.1 retains the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite
-sign-off against one frozen Phase 6 state. Phase 8's decoded role-contract split is code-side
+suite. The entry-document cleanup is code-side closed: one canonical rule list replaces the entry
+copies and their divergence check, while the Haskell-style test checks Section Q's frozen membership.
+The governed Apple and current-source native-arm64 `linux-cpu` builds, aggregate lint, all six
+Haskell unit components, and 86 web tests pass; standalone documentation gates pass. The CPU full
+suite is incomplete after a user-requested stop during live integration, with no browser result.
+Wave 6.1 requires a complete CPU rerun and native CUDA host access for the selected `linux-gpu`
+sign-off. Phase 8's decoded role-contract split is code-side
 closed: shared wire facts project into separate routing, launch, publication, and presentation
 views, and routed `linux-cpu` integration proves the browser view cannot expose sibling-role
 authority. Wave 8.1 retains the selected current-source `linux-gpu` plus paired `linux-cpu`
@@ -79,8 +87,8 @@ device memory remains admission, arena sizing, and detection because no supporte
 bounds it. Sprint 6.53 closes the residual process-site lint, recovery authority, deterministic
 dual-resource refusal, config-independent reclaim, and cross-container activity-lifetime contract.
 
-[cohort-validation-waves.md](cohort-validation-waves.md) holds Phase 1 Wave 1.1, Phase 4 Wave 4.1,
-Phase 6 Wave 6.1, Phase 8 Wave 8.1, and Phase 9 Wave 9.1, while
+[cohort-validation-waves.md](cohort-validation-waves.md) holds Phase 6 Wave 6.1,
+Phase 8 Wave 8.1, and Phase 9 Wave 9.1, while
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) inventories only surfaces that
 still require removal. [README.md](README.md) holds the plan's single phase-status table.
 

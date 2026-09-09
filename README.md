@@ -1128,6 +1128,8 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 ## Contributing
 
 Contributions should keep implementation, tests, and docs aligned in the same change.
+Follow the [canonical assistant workflow](documents/development/assistant_workflow.md), including
+its [Non-Negotiable Rules](documents/development/assistant_workflow.md#non-negotiable-rules).
 
 - use `documents/` for architecture, operator, and development guidance
 - use `DEVELOPMENT_PLAN/` for phase ordering, scope, and closure criteria

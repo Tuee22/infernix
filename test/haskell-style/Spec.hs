@@ -1,11 +1,12 @@
 module Main (main) where
 
 import Control.Exception (SomeException, bracket, displayException, try)
-import Control.Monad (unless, when)
+import Control.Monad (forM_, unless, when)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString.Char8
-import Data.Char (isSpace)
-import Data.List (isInfixOf, isPrefixOf, sort)
+import Data.Char (isAlphaNum, isLower, isSpace)
+import Data.List (isInfixOf, isPrefixOf, isSuffixOf, nub, sort)
+import Data.Maybe (isJust)
 import Data.Text.IO.Utf8 qualified as Text.Utf8
 import GHC.RTS.Flags qualified as RTSFlags
 import Infernix.BuildMemory
@@ -16,7 +17,6 @@ import Infernix.BuildMemory
 import Infernix.Config (Paths (..), discoverPathsWithHostManifest)
 import Infernix.Lint.Docs
   ( governedSuiteFileTypeViolations,
-    mirrorRuleDivergenceViolations,
     prohibitedStatusMarkerForTest,
     prohibitedStatusSectionForTest,
     retiredDoctrineViolationsForTest,
@@ -55,7 +55,7 @@ main :: IO ()
 main = do
   assertRetiredDoctrineBoundary
   assertGovernedSuiteFileTypes
-  assertMirrorRuleAgreement
+  assertFrozenGovernanceMembership
   assertAppleArtifactProvisioningBoundary
   assertAppleClosureFixtureOwnership
   assertAppleMaterializationTransactionOwnership
@@ -93,44 +93,150 @@ assertGovernedSuiteFileTypes =
     )
     (ioError (userError "governed-suite file-type check does not reject a non-Markdown file under documents/"))
 
--- | The two entry-document mirrors agree.
---
--- The negative half uses the shape the divergence actually takes: one mirror
--- gains a rule, which reads as absent to whoever loads the other.
-assertMirrorRuleAgreement :: IO ()
-assertMirrorRuleAgreement =
+-- | Section Q names exactly the checks reached by each lint entrypoint.
+-- This source-level regression follows local dispatch helpers, stopping at a
+-- named check boundary; implementation helpers inside a check are not members.
+assertFrozenGovernanceMembership :: IO ()
+assertFrozenGovernanceMembership = do
+  paths <- discoverPathsWithHostManifest Nothing
+  standards <- readFile (repoRoot paths </> "DEVELOPMENT_PLAN/development_plan_standards.md")
+  forM_ [("Plan", "scanPlanViolations"), ("Docs", "runDocsLint")] $ \(component, entrypoint) -> do
+    source <- readFile (repoRoot paths </> "src/Infernix/Lint" </> component <> ".hs")
+    let declared = documentedGovernanceChecks ("Infernix.Lint." <> component) standards
+        dispatched = governanceDispatchChecks entrypoint source
+    unless
+      ( not (null declared)
+          && length declared == length (nub declared)
+          && sort declared == dispatched
+      )
+      ( fail
+          ( "Section Q governance membership differs for "
+              <> component
+              <> ": declared "
+              <> show declared
+              <> "; dispatched "
+              <> show dispatched
+          )
+      )
+  let expected = ["firstViolations", "validateSecond"]
+      dispatched expression = governanceDispatchChecks "dispatch" (fixture expression)
   unless
-    ( null (mirrorRuleDivergenceViolations mirrorFixture mirrorFixture)
-        && not (null (mirrorRuleDivergenceViolations mirrorFixture divergentMirrorFixture))
-        && not (null (mirrorRuleDivergenceViolations mirrorFixture alteredMirrorFixture))
+    ( dispatched "firstViolations >> validateSecond" == expected
+        && dispatched "firstViolations" /= expected
+        && dispatched "firstViolations >> validateSecond >> validateAdded" /= expected
+        && dispatched "firstViolations >> validateRenamed" /= expected
+        && dispatched "firstViolations >> validateSecond >> validateImported" /= expected
     )
-    (ioError (userError "mirror-rule check does not reject a rule present or altered in only one entry document"))
+    (fail "governance membership must detect additions, removals, and renames through dispatch helpers")
   where
-    mirrorFixture =
+    fixture expression =
       unlines
-        [ "# AGENTS.md",
-          "## Non-Negotiable Rules",
-          "- never run `git add`",
-          "- zero version-controlled `.dhall`",
-          "## Scope"
+        [ "dispatch :: IO ()",
+          "dispatch = wrapper",
+          "wrapper :: IO ()",
+          "wrapper = " <> expression,
+          "  -- validateCommentOnly",
+          "  {- validateBlockOnly {- nestedViolations -} -}",
+          "  >> putStrLn \"validateLiteralOnly\"",
+          "firstViolations :: IO ()",
+          "firstViolations = validatePrivateImplementation",
+          "validateSecond :: IO ()",
+          "validateSecond = pure ()",
+          "validateAdded :: IO ()",
+          "validateAdded = pure ()",
+          "validateRenamed :: IO ()",
+          "validateRenamed = pure ()",
+          "validateUnused :: IO ()",
+          "validateUnused = pure ()"
         ]
-    divergentMirrorFixture =
-      unlines
-        [ "# CLAUDE.md",
-          "## Non-Negotiable Rules",
-          "- never run `git add`",
-          "- zero version-controlled `.dhall`",
-          "- no repo-owned native implementation source",
-          "## Scope"
-        ]
-    alteredMirrorFixture =
-      unlines
-        [ "# CLAUDE.md",
-          "## Non-Negotiable Rules",
-          "- never run `git add`",
-          "- some version-controlled `.dhall` is permitted",
-          "## Scope"
-        ]
+
+documentedGovernanceChecks :: String -> String -> [String]
+documentedGovernanceChecks moduleName standards =
+  filter isGovernanceCheckName (codeSpans (unlines section))
+  where
+    section =
+      takeWhile
+        (not . isPrefixOf "`Infernix.Lint.")
+        (drop 1 (dropWhile (not . isPrefixOf ("`" <> moduleName <> "`")) (lines standards)))
+    codeSpans value =
+      case dropWhile (/= '`') value of
+        '`' : rest ->
+          case break (== '`') rest of
+            (name, '`' : remaining) -> name : codeSpans remaining
+            _ -> []
+        _ -> []
+
+isGovernanceCheckName :: String -> Bool
+isGovernanceCheckName name =
+  "validate" `isPrefixOf` name || "Violations" `isSuffixOf` name
+
+governanceDispatchChecks :: String -> String -> [String]
+governanceDispatchChecks entrypoint source =
+  sort (nub (reachable [] [entrypoint]))
+  where
+    definitions = functionBodies (lines (maskGovernanceNonCode source))
+    reachable _seen [] = []
+    reachable seen (name : rest)
+      | name `elem` seen = reachable seen rest
+      | name /= entrypoint && isGovernanceCheckName name =
+          name : reachable (name : seen) rest
+      | otherwise =
+          case lookup name definitions of
+            Nothing -> reachable (name : seen) rest
+            Just body ->
+              reachable
+                (name : seen)
+                (filter isReachableReference (identifiers body) <> rest)
+    isReachableReference name =
+      isGovernanceCheckName name || name `elem` map fst definitions
+    functionBodies [] = []
+    functionBodies (line : remaining) =
+      case signatureName line of
+        Nothing -> functionBodies remaining
+        Just name ->
+          let (body, rest) = break (isJust . signatureName) remaining
+           in (name, unlines body) : functionBodies rest
+    signatureName line =
+      case span identifierCharacter line of
+        (name@(first : _), rest)
+          | isLower first && "::" `isPrefixOf` dropWhile isSpace rest -> Just name
+        _ -> Nothing
+    identifiers = words . map (\character -> if identifierCharacter character then character else ' ')
+    identifierCharacter character =
+      isAlphaNum character || character == '_' || character == '\''
+
+-- Preserve line starts while removing comment and literal contents. Apostrophes
+-- in identifiers survive because only a complete character literal is masked.
+maskGovernanceNonCode :: String -> String
+maskGovernanceNonCode [] = []
+maskGovernanceNonCode ('-' : '-' : rest) =
+  let (comment, remaining) = break (== '\n') rest
+   in "  " <> map blank comment <> maskGovernanceNonCode remaining
+maskGovernanceNonCode ('{' : '-' : rest) = "  " <> blockComment (1 :: Int) rest
+  where
+    blockComment _depth [] = []
+    blockComment depth ('{' : '-' : remaining) = "  " <> blockComment (depth + 1) remaining
+    blockComment depth ('-' : '}' : remaining)
+      | depth == 1 = "  " <> maskGovernanceNonCode remaining
+      | otherwise = "  " <> blockComment (depth - 1) remaining
+    blockComment depth (character : remaining) = blank character : blockComment depth remaining
+maskGovernanceNonCode source@('"' : rest) =
+  case reads source :: [(String, String)] of
+    (_, remaining) : _ -> maskConsumed source remaining
+    [] -> ' ' : maskGovernanceNonCode rest
+maskGovernanceNonCode source@('\'' : rest) =
+  case reads source :: [(Char, String)] of
+    (_, remaining) : _ -> maskConsumed source remaining
+    [] -> '\'' : maskGovernanceNonCode rest
+maskGovernanceNonCode (character : rest) = character : maskGovernanceNonCode rest
+
+maskConsumed :: String -> String -> String
+maskConsumed source remaining =
+  map blank (take (length source - length remaining) source) <> maskGovernanceNonCode remaining
+
+blank :: Char -> Char
+blank '\n' = '\n'
+blank _ = ' '
 
 assertRetiredDoctrineBoundary :: IO ()
 assertRetiredDoctrineBoundary = do

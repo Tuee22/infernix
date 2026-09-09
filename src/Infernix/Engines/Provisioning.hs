@@ -1809,23 +1809,57 @@ resolveDarwinPoetryFrameworkHomeFromPyvenv contents =
       result <-
         try @IOException $ do
           canonicalBin <- Directory.canonicalizePath sourceHome
-          let frameworkHome = takeDirectory canonicalBin
-          unless
-            ( normalise canonicalBin
-                == normalise (frameworkHome </> "bin")
-                && validDarwinPythonFrameworkHome frameworkHome
-            )
-            ( ioError
-                ( userError
-                    "Poetry pyvenv.cfg home does not resolve inside a fixed Darwin Python.framework version"
-                )
-            )
+          let directFrameworkHome = takeDirectory canonicalBin
+          frameworkHome <-
+            if normalise canonicalBin
+              == normalise (directFrameworkHome </> "bin")
+              && validDarwinPythonFrameworkHome directFrameworkHome
+              then pure directFrameworkHome
+              else resolveDarwinPoetryHomeExecutable sourceHome contents
           finalCanonicalBin <- Directory.canonicalizePath sourceHome
           unless
             (normalise finalCanonicalBin == normalise canonicalBin)
             (ioError (userError "Poetry pyvenv.cfg home changed during resolution"))
           pure frameworkHome
       pure (displayCaughtProvisioningFailure result)
+
+resolveDarwinPoetryHomeExecutable :: FilePath -> Text -> IO FilePath
+resolveDarwinPoetryHomeExecutable sourceHome contents = do
+  version <-
+    either (ioError . userError) pure (darwinPoetryPythonVersionFromPyvenv contents)
+  let executablePath = sourceHome </> ("python" <> version)
+  identity <- resolveExactExecutableIdentity executablePath
+  frameworkHome <-
+    either (ioError . userError) pure (resolvedPythonFrameworkHome identity)
+  unless
+    ( executableIdentityHasExecuteBit identity
+        && takeFileName frameworkHome == version
+    )
+    (ioError (userError "Poetry home interpreter does not match its fixed framework version"))
+  finalIdentity <- resolveExactExecutableIdentity executablePath
+  unless
+    (resolvedExecutableIdentityMatches identity finalIdentity)
+    (ioError (userError "Poetry home interpreter changed during framework resolution"))
+  pure frameworkHome
+
+darwinPoetryPythonVersionFromPyvenv :: Text -> Either String String
+darwinPoetryPythonVersionFromPyvenv contents = do
+  version <-
+    requireSinglePyvenvValue
+      "version"
+      [ Text.unpack value
+      | line <- Text.lines contents,
+        Just value <- [Text.stripPrefix "version = " line]
+      ]
+  case Text.splitOn "." (Text.pack version) of
+    ["3", minor, patch]
+      | all validVersionComponent [minor, patch] ->
+          Right ("3." <> Text.unpack minor)
+    _ -> Left "Poetry pyvenv.cfg must name a numeric Python 3 release version"
+  where
+    validVersionComponent component =
+      not (Text.null component)
+        && Text.all (\character -> isAscii character && isDigit character) component
 
 resolveDarwinPoetryFrameworkHomeFromPyvenvForTest ::
   Text ->

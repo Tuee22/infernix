@@ -19,9 +19,7 @@ the row is deleted, not moved: per Section D of
 [development_plan_standards.md](development_plan_standards.md) the plan carries no history, and a
 surface that no longer exists is not something a reader of this plan needs told about.
 
-| Location | Why it is slated for removal | Owning phase or sprint |
-|----------|------------------------------|------------------------|
-| The duplicated `## Non-Negotiable Rules` section carried by both `CLAUDE.md` and `AGENTS.md`, the `mirrorRuleDivergenceViolations` check in `src/Infernix/Lint/Docs.hs` that holds the two copies equal, and the absent assertion over Section Q's frozen mechanical set. | One rules section stated once removes the divergence the check exists to catch, and retires the check with it. Section Q enumerates the mechanical governance set by name but nothing holds the enumeration equal to the dispatch, so the list can go stale silently. Recorded rather than scheduled: the entry documents are the surface a reader loads first, and a change to them is worth making deliberately rather than as a governance sprint. | Phase 6 |
+No pending removals.
 
 ## Cross-References
 

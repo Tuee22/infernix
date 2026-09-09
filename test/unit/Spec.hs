@@ -20362,12 +20362,14 @@ assertHostConfig repoRootPath testRoot = do
           )
     )
     "Darwin Poetry closure resolution derives one fixed framework-version root from a standard pyvenv.cfg"
-  let poetryFrameworkRoot =
+  let poetryFormulaRoot =
         testRoot
           </> "poetry-framework-resolution"
           </> "Cellar"
           </> "python@3.12"
           </> "3.12.13_2"
+      poetryFrameworkRoot =
+        poetryFormulaRoot
           </> "Frameworks"
           </> "Python.framework"
           </> "Versions"
@@ -20402,6 +20404,56 @@ assertHostConfig repoRootPath testRoot = do
   assert
     (resolvedPoetryFramework == Right poetryFrameworkRoot)
     "Darwin Poetry closure resolution follows the stable pyvenv home to its exact fixed framework root"
+  let poetryFormulaBin = poetryFormulaRoot </> "bin"
+      poetryFormulaLink =
+        testRoot </> "poetry-framework-resolution" </> "opt" </> "python-formula"
+      poetryFormulaDescriptor versionFields =
+        Text.pack
+          ( "home = "
+              <> (poetryFormulaLink </> "bin")
+              <> "\nexecutable = /retired/command-executable-snapshot/python3.12\n"
+          )
+          <> versionFields
+  createDirectoryIfMissing True poetryFormulaBin
+  createSymbolicLink poetryFormulaRoot poetryFormulaLink
+  createSymbolicLink
+    "../Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+    (poetryFormulaBin </> "python3.12")
+  resolvedPoetryFormulaFramework <-
+    Provisioning.resolveDarwinPoetryFrameworkHomeFromPyvenvForTest
+      (poetryFormulaDescriptor "version = 3.12.13\n")
+  assert
+    (resolvedPoetryFormulaFramework == Right poetryFrameworkRoot)
+    "Darwin Poetry closure resolves the versioned interpreter inside a Homebrew formula bin directory"
+  invalidPoetryVersions <-
+    mapM
+      ( Provisioning.resolveDarwinPoetryFrameworkHomeFromPyvenvForTest
+          . poetryFormulaDescriptor
+      )
+      [ "",
+        "version = 3.12.13\nversion = 3.13.1\n",
+        "version = 3.12/../13\n",
+        "version = 3.12.13rc1\n",
+        "version = 3.99.1\n"
+      ]
+  assert
+    (all isLeft invalidPoetryVersions)
+    "Darwin Poetry home resolution refuses missing, ambiguous, malformed, and unavailable release interpreters"
+  createSymbolicLink poetryFrameworkExecutable (poetryFormulaBin </> "python3.13")
+  mismatchedPoetryFramework <-
+    Provisioning.resolveDarwinPoetryFrameworkHomeFromPyvenvForTest
+      (poetryFormulaDescriptor "version = 3.13.1\n")
+  assert
+    (isLeft mismatchedPoetryFramework)
+    "Darwin Poetry home resolution refuses an interpreter from a different framework version"
+  setFileMode poetryFrameworkExecutable 0o600
+  nonExecutablePoetryFramework <-
+    Provisioning.resolveDarwinPoetryFrameworkHomeFromPyvenvForTest
+      (poetryFormulaDescriptor "version = 3.12.13\n")
+  assert
+    (isLeft nonExecutablePoetryFramework)
+    "Darwin Poetry home resolution requires an executable interpreter"
+  setFileMode poetryFrameworkExecutable 0o700
   -- Phase 1 Sprint 1.14 — the allowlisted Apple headless artifact
   -- plan uses runtime adapter ids and typed manifests, not a Tart VM.
   assert

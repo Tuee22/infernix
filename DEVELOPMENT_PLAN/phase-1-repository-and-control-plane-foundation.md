@@ -1,8 +1,10 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active — Sprint 1.41 is code-side closed and Wave 1.1 retains the selected
-`apple-silicon` plus native-arm64 `linux-cpu` full-suite sign-off for stable Darwin Poetry framework
-resolution. The prior 40 sprints retain their validation receipts. The exact Apple full suite
+**Status**: Done — all 43 sprints are implemented and validated. The selected `apple-silicon`
+and paired native-arm64 `linux-cpu` full suites each pass with exit 0 and 16/16 browser tests.
+The Phase 1 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations)
+binds both results to the tested working-tree patch.
+The prior 40 sprints retain their validation receipts. The exact Apple full suite
 rebuilt source fingerprint `bf22a3ad…` as runtime image
 `sha256:189d25e6b24e7699c87dff3e0c194e1bcd3b96a42b158e2b895dd3ca2a7e2400` and exited 0. The paired
 Linux launcher was then rebuilt from the current worktree as
@@ -24,8 +26,13 @@ Superseded surfaces are listed in
 
 ## Phase Status
 
-Sprints 1.1 through 1.40 are Done. Sprint 1.41 is Active with code-side closure complete and Wave
-1.1 retaining its selected `apple-silicon` plus native-arm64 `linux-cpu` full-suite sign-off.
+Sprints 1.1 through 1.43 are Done. The governed Apple build, all seven native-artifact
+materializations, and both selected full suites pass. Each full suite includes aggregate lint,
+all six Haskell unit components, 86 web unit tests, live integration, and 16 browser tests.
+Both harnesses complete teardown and exit 0. Current full-suite image identities are
+`sha256:e9d21c97b45ba02095162830c7a16efc4e40428bd6bc402c81656dea31ce08b4` for the Apple control plane
+and `sha256:573b3b4645be63293a627a85851f7e16b34296c4b6787bef817fe4747d2a14b7` for native-arm64 Linux.
+The Phase 1 [attestation](cohort-validation-waves.md#recorded-attestations) records their source identity.
 The closed foundation work establishes the current repository scaffold, the one-binary role
 topology, the typed runtime-config contract, the baked Linux launcher image, the governed
 root-document posture, host-manifest materialization, and the native-only Apple Docker boundary.
@@ -2766,12 +2773,12 @@ None.
 
 ---
 
-## Sprint 1.41: Poetry Sealing Trusts the Stable Framework Home [Active]
+## Sprint 1.41: Poetry Sealing Trusts the Stable Framework Home [Done]
 
-**Status**: Active. Code-side closure is complete; Wave 1.1 remains.
+**Status**: Done — the Phase 1 [attestation](cohort-validation-waves.md#recorded-attestations) records both full-suite passes.
 **Code-side closure**: complete. The governed Apple build, aggregate lint, compile-fail capability
 fixtures, Haskell unit suites, and PureScript unit suite pass.
-**Cohort gate**: Wave 1.1 — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
+**Cohort gate**: passed — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
 **Implementation**: `src/Infernix/Engines/Provisioning.hs`, `test/unit/Spec.hs`
 **Blocked by**: nothing.
 **Docs to update**: none.
@@ -2802,7 +2809,88 @@ filesystem authority. Poetry sealing canonicalizes `home`, proves that it resolv
 
 ### Remaining Work
 
-Complete Wave 1.1.
+None.
+
+---
+
+## Sprint 1.42: The Clean Launcher Initializes Hackage Over HTTPS [Done]
+
+**Status**: Done — the Phase 1 [attestation](cohort-validation-waves.md#recorded-attestations) records both full-suite passes.
+**Code-side closure**: complete. The current-source native-arm64 Linux launcher build, governed
+Apple build, aggregate lint, all six Haskell unit components, and 86 web unit tests pass.
+**Cohort gate**: passed — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
+**Implementation**: `docker/Dockerfile`
+**Blocked by**: nothing.
+**Docs to update**: `documents/engineering/dependency_management.md`
+
+### Objective
+
+The Linux launcher's first Cabal index update and subsequent dependency operations consume one
+image-owned HTTPS Hackage repository configuration with signed-metadata verification enabled.
+
+### Deliverables
+
+- write the upstream Cabal repository configuration before GHCup's automatic index update
+- retain Hackage's trusted root keys and signed-metadata verification
+- retain the pinned GHC and Cabal toolchain and the governed compiler-memory account
+- keep failure visible when the authenticated repository cannot supply a valid index
+
+### Validation
+
+- `./bootstrap/apple-silicon.sh build`
+- `./bootstrap/linux-cpu.sh build`
+- `./.build/infernix test all`
+- `./bootstrap/linux-cpu.sh test`
+- standalone file, docs, chart, proto, and plan lints plus `docs check`
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 1.43: Poetry Resolves The Interpreter Beneath Its Home [Done]
+
+**Status**: Done — the Phase 1 [attestation](cohort-validation-waves.md#recorded-attestations) records both full-suite passes.
+**Code-side closure**: complete. The governed Apple rebuild, aggregate lint, all six Haskell unit
+components, and 86 web unit tests pass. Capability fixtures include 7 positive and 96 negative
+cases; the main unit suite includes the Homebrew filesystem regressions. The current-source
+native-arm64 Linux launcher build also passes.
+**Cohort gate**: passed — selected `apple-silicon` plus native-arm64 `linux-cpu` full suites.
+**Implementation**: `src/Infernix/Engines/Provisioning.hs`, `test/unit/Spec.hs`
+**Blocked by**: nothing.
+**Docs to update**: `documents/engineering/apple_silicon_metal_headless_builds.md`
+
+### Objective
+
+A standard Homebrew venv may name the formula's ordinary `bin` directory in `pyvenv.cfg`, with
+its versioned interpreter symlink pointing into the framework. That stable `home` remains the
+resolution authority; the descriptor's informational `executable` field grants no filesystem
+authority.
+
+### Deliverables
+
+- accept direct framework homes and stable Homebrew formula homes
+- derive one interpreter basename from the descriptor's unambiguous numeric Python release
+- resolve that home-relative interpreter through the bounded executable-identity reader, require
+  an execute bit and the matching framework version, and recheck identity before returning
+- reject malformed or duplicate versions, missing interpreters, version mismatches, and changed
+  interpreter identities
+- cover the Homebrew directory-plus-interpreter-symlink layout with a nonexistent informational
+  snapshot executable and negative filesystem fixtures
+
+### Validation
+
+- `./bootstrap/apple-silicon.sh build`
+- `./.build/infernix test lint`
+- `./.build/infernix test unit`
+- `./.build/infernix test all`
+- current-source `./bootstrap/linux-cpu.sh build` and `./bootstrap/linux-cpu.sh test`
+- standalone file, docs, chart, proto, and plan lints plus `docs check`
+
+### Remaining Work
+
+None.
 
 ## Documentation Requirements
 

@@ -9,11 +9,10 @@
 ## Scope
 
 This document is the canonical home for assistant-facing repository workflow rules, including the
-full Non-Negotiable Rules list below. `AGENTS.md` and `CLAUDE.md` stay as governed entry documents:
-they carry an inline operational mirror of that list (they are auto-loaded by assistant tooling) and
-link here, rather than carrying parallel long-form workflow narrative. When a rule changes, update
-this list and the two entry-doc mirrors in the same change, and keep the mirrors a faithful subset of
-this canonical list.
+full Non-Negotiable Rules list below. `AGENTS.md` and `CLAUDE.md` are governed entry documents
+that require readers to follow this list. Rules are stated here once. When repository workflow
+guidance changes, review `README.md`, `AGENTS.md`, and `CLAUDE.md` together and keep their links
+aligned with this canonical authority.
 
 ## Non-Negotiable Rules
 

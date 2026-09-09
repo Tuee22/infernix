@@ -66,6 +66,11 @@ not to broaden the wildcard further.
 
 ## Hackage Index Pin
 
+The Linux launcher writes its upstream Cabal repository configuration before GHCup's first index
+update. Both update paths select `https://hackage.haskell.org/` as their primary origin, with
+Hackage's standard trusted root keys and signed-metadata verification enabled. An unavailable or invalid
+index fails the image build; verification is never disabled to continue provisioning.
+
 `cabal.project` does not pin an `index-state`. Reproducibility comes from the explicit version
 bounds in `infernix.cabal`, the wildcard `allow-newer` entries for the GHC-bound axes above, and
 the targeted package-specific relaxations already recorded in `cabal.project`. Operators who need
