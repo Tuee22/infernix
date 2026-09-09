@@ -1,10 +1,9 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Active. Sprints 8.1 through 8.13 are `Done`. Sprint 8.14 is code-side closed: the
-generated system and machine contracts name every engine member, bind each machine to the
-system-contract digest, drive eager model staging before routed readiness, and decode into
-role-specific routing, launch, publication, and presentation views. Wave 8.1 retains the selected
-`linux-gpu` plus paired `linux-cpu` full-suite sign-off.
+**Status**: Done. All 14 sprints are implemented and validated. The generated contracts, eager
+model staging, and role-specific decoded views pass the selected current-source `linux-gpu` plus
+paired native-amd64 `linux-cpu` full suites against the source recorded in the Phase 8
+[attestation](cohort-validation-waves.md#recorded-attestations).
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
@@ -1101,18 +1100,14 @@ None.
 
 ---
 
-## Sprint 8.14: The Decoded Contract Is Split By Role [Active]
+## Sprint 8.14: The Decoded Contract Is Split By Role [Done]
 
-**Status**: Active
-**Code-side closure**: Complete — governed Apple build, native-arm64 `linux-cpu` build and unit
-suite, standalone lint/docs gates, and routed `linux-cpu` integration pass.
-**Cohort gate**: Wave 8.1 — selected current-source `linux-gpu` plus paired `linux-cpu`
-`infernix test all` remain.
+**Status**: Done
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig/Internal.hs`,
 `src/Infernix/Substrate/Internal.hs`, `src/Infernix/ExecutionPlan.hs`,
 `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`,
 `src/Infernix/Webapp.hs`, `src/Infernix/Web/Contracts.hs`, `web/test/Main.purs`,
-`test/unit/Spec.hs`, `test/integration/Spec.hs`
+`web/playwright/inference.spec.js`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`
 
 ### Objective
@@ -1141,18 +1136,19 @@ role's authority.
   `infernix docs check`
 - routed `linux-cpu` integration, including the narrow presentation contract, real inference,
   retained PostgreSQL rebinding, and the `demo_ui=false` branch
-- cohort: Wave 8.1 selected `linux-gpu` plus paired `linux-cpu` full suites
+- full current-source `infernix test all` on selected `linux-gpu` plus paired native-amd64
+  `linux-cpu`, including 16/16 routed browser tests and the narrow presentation-boundary capacity
+  refusal; see the Phase 8 [attestation](cohort-validation-waves.md#recorded-attestations)
 
 ### Remaining Work
 
-Wave 8.1 records the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite gate.
+None.
 
 ---
 
 ## Remaining Work
 
-Wave 8.1 records the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite gate for
-Sprint 8.14. No code-side work remains.
+None.
 
 ## Documentation Requirements
 

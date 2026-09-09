@@ -1,10 +1,9 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Active. Sprints 9.1 through 9.10 are `Done`, and Sprint 9.11 is code-side complete: the
-admin dimension, cluster overview, and personal dashboard render from application state while the
-HTML shell remains static. The current-source native-arm64 `linux-cpu` build, governed unit suite,
-and routed browser suite pass. Wave 9.1 retains the selected current-source `linux-gpu` plus paired
-`linux-cpu` full-suite sign-off.
+**Status**: Done. All 11 sprints are implemented and validated. The application-owned admin
+dimension, cluster overview, personal dashboard, and static HTML shell pass the selected
+current-source `linux-gpu` plus paired native-amd64 `linux-cpu` full suites against the source
+recorded in the Phase 9 [attestation](cohort-validation-waves.md#recorded-attestations).
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
 
@@ -29,12 +28,12 @@ credentials are hardcoded (demo app). Enforcement is at two points: the Envoy **
 host-worker **data plane** (MinIO NodePort 30011, Pulsar-proxy NodePort 30080) is loopback-only and
 trust-boundary-internal — it never transits the admin-gated edge.
 
-All eleven sprints are code-side complete and the machine-independent gate set is clean through the
-governed native-arm64 `linux-cpu` build and `infernix test unit`, including the admin-claim, STS
-scoped-credential / session-token, generated-Kind-config loopback, and compiled PureScript
-application-state assertions. The standalone files, docs, chart, and protobuf lints plus the docs
-check pass. The HTML shell contains only static markup and the compiled application module; admin
-role decoding and both dashboard transports live in the PureScript application boundary.
+All eleven sprints are complete. The selected current-source `linux-gpu` plus paired native-amd64
+`linux-cpu` full suites cover the admin-claim, STS scoped-credential/session-token,
+generated-Kind-config loopback, compiled PureScript application-state, routed browser, and catalog
+assertions. The standalone files, docs, chart, and protobuf lints plus the docs check pass. The HTML
+shell contains only static markup and the compiled application module; admin role decoding and both
+dashboard transports live in the PureScript application boundary.
 
 
 - **Unauthenticated** `GET /api/admin/overview`, `GET /api/cache`, `POST /api/cache/evict`, `/registry`,
@@ -61,8 +60,8 @@ role decoding and both dashboard transports live in the PureScript application b
   SPA carrying the application-owned admin panel and personal dashboard.
 
 Sprint 9.9 owns the logout/session-switching contract and its routed authentication-lifecycle
-coverage. Wave 9.1 owns the current-source selected `linux-gpu` plus paired `linux-cpu` full-suite
-closure for the phase.
+coverage. The Phase 9 attestation records the current-source selected `linux-gpu` plus paired
+native-amd64 `linux-cpu` full-suite closure.
 
 ## Remaining Work — UAT auth residual [Done]
 
@@ -350,13 +349,9 @@ results-side realness contract to state transitions. See the doctrine at
 
 None.
 
-## Sprint 9.11: The Admin Gate Renders From Application State [Active]
+## Sprint 9.11: The Admin Gate Renders From Application State [Done]
 
-**Status**: Active
-**Code-side closure**: Complete — the governed native-arm64 `linux-cpu` build and unit suite plus
-the routed `linux-cpu` browser suite pass.
-**Cohort gate**: Wave 9.1 — selected current-source `linux-gpu` plus paired `linux-cpu`
-`infernix test all` remain.
+**Status**: Done
 **Implementation**: `web/src/Main.purs`, `web/src/index.html`, `web/src/Infernix/Web/Auth.purs`,
 `web/src/Infernix/Web/Auth.js`, `web/src/Infernix/Web/Browser.purs`,
 `web/src/Infernix/Web/Browser.js`, `web/src/Infernix/Web/DashboardTransport.purs`,
@@ -387,12 +382,13 @@ server-side per-user scoping boundaries.
 - routed native-arm64 `linux-cpu` `infernix test e2e`: 16/16 browser tests, including admin,
   non-admin, personal-dashboard isolation, authentication lifecycle, and every catalog model
 - `infernix lint files|docs|chart|proto`, `infernix docs check`, and `infernix lint plan`
-- cohort: Wave 9.1 selected `linux-gpu` plus paired `linux-cpu` full suites
+- full current-source `infernix test all` on selected `linux-gpu` plus paired native-amd64
+  `linux-cpu`, including 16/16 routed browser tests for the admin, non-admin, dashboard, auth, and
+  catalog paths; see the Phase 9 [attestation](cohort-validation-waves.md#recorded-attestations)
 
 ### Remaining Work
 
-Validation-only: Wave 9.1 retains selected current-source `linux-gpu` plus paired `linux-cpu`
-`infernix test all` against one frozen Phase 9 state.
+None.
 
 ---
 

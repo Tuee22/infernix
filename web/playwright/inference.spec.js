@@ -1512,7 +1512,7 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
     expect(JSON.stringify(terminalResult.frame)).toContain("ConversationStateAppendMessage");
 
     if (terminalResult.status === "failed") {
-      expectTypedInferenceRefusal(terminalResult.result.inferenceResultError, model, demoConfig);
+      expectTypedInferenceRefusal(terminalResult.result.inferenceResultError, model);
       await expect(
         page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
         `context ${contextId} should remain selected before rendering ${modelId}'s capacity result`,
@@ -1598,36 +1598,6 @@ function expectedResultRenderKind(model) {
 // the descriptive PodMemoryLimit. (The pre-4.31 flat { kind: "enforced",
 // availableMib } shape is gone.)
 //
-// Phase 8 Sprint 8.9: the alternative is now a KEY, not a string under a shared
-// `kind` key, matching `ToJSON InferenceMemoryBudget`. The dual-enforced arm is
-// also read for the first time — it has existed since Sprint 6.44, and until now
-// this function returned null for it, which silently skipped the whole
-// over-budget assertion on every `linux-gpu` run.
-function podLimitAdmission(podLimit) {
-  if (!podLimit) return null;
-  return {
-    availableMib: Number(podLimit.limitMib),
-    resource: podLimit.resource,
-    source: podLimit.source,
-  };
-}
-
-function inferenceMemoryBudgetEnforcedResources(budget) {
-  if (!budget) return [];
-  if (budget.hostEnforced) return ["unified-host-ram"];
-  if (budget.substrateEnforced) {
-    const admission = podLimitAdmission(budget.substrateEnforced.podLimit);
-    return admission ? [admission.resource] : [];
-  }
-  if (budget.dualEnforced) {
-    return [
-      podLimitAdmission(budget.dualEnforced.podLimit)?.resource,
-      podLimitAdmission(budget.dualEnforced.vramLimit)?.resource,
-    ].filter(Boolean);
-  }
-  return [];
-}
-
 // Phase 4 Sprint 4.39: the browser states no prediction.
 //
 // A model's memory requirement is derived from that model's own artifact on the
@@ -1636,7 +1606,11 @@ function inferenceMemoryBudgetEnforcedResources(budget) {
 // budget and asserted an exact payload; that constant is gone. What survives is
 // stronger where it can be: a refusal the engine publishes must name its own
 // cause, and this asserts exactly that.
-function expectTypedInferenceRefusal(error, model, demoConfig) {
+// Phase 8 Sprint 8.14 also removes admission metadata from the presentation
+// contract. The refusal remains a closed generated type and must prove its own
+// resource and source; browser validation must not recover launch authority by
+// comparing it with a retired broad demo-config field.
+function expectTypedInferenceRefusal(error, model) {
   expect(error).toBeTruthy();
   if (error.tag === "ModelRequirementUnderivable") {
     expect(error.modelRequirementUnderivableModelId).toBe(model.modelId);
@@ -1644,6 +1618,7 @@ function expectTypedInferenceRefusal(error, model, demoConfig) {
     expect(String(error.modelRequirementUnderivableReason || "")).not.toBe("");
     return;
   }
+  expect(error.tag).toBe("ModelMemoryLimitExceeded");
   expect(error.modelMemoryLimitExceededModelId).toBe(model.modelId);
   const requiredMib = Number(error.modelMemoryLimitExceededRequiredMib);
   const availableMib = Number(error.modelMemoryLimitExceededAvailableMib);
@@ -1652,7 +1627,7 @@ function expectTypedInferenceRefusal(error, model, demoConfig) {
   // Required equal to available is the one proposition a limit-exceeded refusal
   // establishes is false; the retired payload reported exactly that pair.
   expect(requiredMib).toBeGreaterThan(availableMib);
-  expect(inferenceMemoryBudgetEnforcedResources(demoConfig?.inferenceMemoryBudget)).toContain(
+  expect(["unified-host-ram", "pod-ram", "gpu-vram"]).toContain(
     error.modelMemoryLimitExceededResource,
   );
   expect(String(error.modelMemoryLimitExceededSource || "")).not.toBe("");

@@ -1,14 +1,8 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Active. Sprints 6.1 through 6.53 are `Done`. Sprint 6.54 is code-side closed: fixed
-observer requests, specifications, samplers, probes, and watchdog seams are ordinary Haskell values
-selected by the runtime host lane, so every arm reaches `-Wall -Werror` on every build. Wave 6.1
-retains the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite cohort gate.
-The entry-document cleanup is code-side closed. The governed Apple and current-source native-arm64
-`linux-cpu` builds, aggregate lint, all six Haskell unit components, and 86 web tests pass;
-standalone documentation gates pass. The CPU full suite is incomplete after a user-requested stop
-during live integration, with no browser result. Wave 6.1 requires a complete CPU rerun and native
-CUDA host access for the selected accelerator full suite.
+**Status**: Done. All 54 sprints are implemented and validated. The selected current-source
+`linux-gpu` plus paired native-amd64 `linux-cpu` full suites pass against the source recorded in the
+Phase 6 [attestation](cohort-validation-waves.md#recorded-attestations).
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -34,8 +28,8 @@ CUDA host access for the selected accelerator full suite.
 > half. The doctrine and governance landed in Phase 0 Sprint 0.16. The earlier cohort closed only the typed
 > owner/mutation-position/config scope; a later execution audit found that
 > `runClusterOwnedValidation` released the lifecycle lease between owner authorization and its
-> eventual teardown, so Sprint 6.43 stays open until owner-specific teardown is enforced under the
-> lifecycle lock and the Phase 6 behavioral cohort is rerun. Canonical doctrine:
+> eventual teardown, so Sprint 6.43 enforces owner-specific teardown under the lifecycle lock and
+> validates it in the Phase 6 behavioral cohort. Canonical doctrine:
 > [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
 
 > **Memory-safety by construction.** The doctrine (Phase 0 Sprint 0.15) makes an over-budget
@@ -116,23 +110,17 @@ CUDA host access for the selected accelerator full suite.
 > daemon session. That evidence predates and does not close the current Sprint 6.44 dual RAM/VRAM
 > enforcement construction.
 
-Phase 6 is `Active`: Sprints 6.1 through 6.53 are complete and Sprint 6.54 is code-side closed.
+Phase 6 is `Done`: all 54 sprints are complete.
 The entry documents require the sole rule list in `documents/development/assistant_workflow.md`.
 Their duplicate lists and divergence check are removed. The Haskell-style membership test compares
 Section Q with named checks reachable from `scanPlanViolations` and `runDocsLint`, including
 references through local helpers and imported check names. Its negative fixtures reject added,
 removed, or renamed checks while excluding comments, literals, unused definitions, and private
-implementation helpers. The governed Apple and current-source native-arm64 `linux-cpu` builds,
-aggregate lint, all six Haskell unit suites, and 86 web tests pass. Documentation lint, plan lint,
-file lint, and generated-document check pass. The CPU full suite has no completed integration or
-browser result because validation is stopped at the user's request. Its test cluster is absent;
-the interrupted command exits non-zero and supplies no full-suite attestation.
-The unified observer module family passes the governed Apple build and the native-arm64
-`linux-cpu` build plus unit suite. Wave 6.1 retains the selected current-source `linux-gpu` plus
-paired `linux-cpu` full-suite sign-off against one frozen Phase 6 state. The host and device columns
-retain their distinct calibrated strengths: Linux GPU pod RAM declares prevention, while NVIDIA
-device memory declares admission, arena sizing, and detection because no supported kernel mechanism
-bounds it.
+implementation helpers. The unified observer module family and the full repository validation
+surface pass on the selected current-source `linux-gpu` plus paired native-amd64 `linux-cpu`, as
+recorded in the Phase 6 attestation. The host and device columns retain their distinct calibrated
+strengths: Linux GPU pod RAM declares prevention, while NVIDIA device memory declares admission,
+arena sizing, and detection because no supported kernel mechanism bounds it.
 
 The inference-coverage sprints were upgraded from the metadata-echo assertion to the per-family
 result contract plus cohort hardware proof: the reopened Sprints 6.2, 6.3, and 6.6 assert the
@@ -2391,11 +2379,7 @@ None.
 
 ## Remaining Work
 
-Wave 6.1 must record the selected current-source `linux-gpu` plus paired `linux-cpu` full suites
-against one frozen Phase 6 state. Sprint 6.54 and the entry-document cleanup are code-side closed.
-The CPU build, aggregate lint, and unit gates pass, but the interrupted full suite requires a
-complete rerun. The selected accelerator gate has a validation-only hardware blocker: access to a
-native CUDA host. Later open phases remain queued until this phase validates in numerical order.
+None.
 
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Done]
 
@@ -3758,14 +3742,9 @@ None.
 
 ---
 
-## Sprint 6.54: The Fixed Observer Compiles On Every Lane [Active]
+## Sprint 6.54: The Fixed Observer Compiles On Every Lane [Done]
 
-**Status**: Active
-**Code-side closure**: Complete. The governed Apple build and native-arm64 `linux-cpu` build plus
-unit suite compile the unified observer, sampler, probe, and watchdog vocabulary under
-`-Wall -Werror`; the focused fixed-observer and execution-plan tests pass.
-**Cohort gate**: Wave 6.1 — selected current-source `linux-gpu` plus paired `linux-cpu` full suites
-against one frozen Phase 6 state.
+**Status**: Done
 **Implementation**: `src/Infernix/Runtime/CappedEngine/FixedObserver.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`
 **Blocked by**: nothing.
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`
@@ -3789,11 +3768,12 @@ unused-binding exemption.
 
 - `cabal build all` and `cabal test infernix-unit` through the governed toolchain, on `linux-cpu`
 - the same build on the phase's selected accelerator
+- full current-source `infernix test all` on selected `linux-gpu` plus paired native-amd64
+  `linux-cpu`; see the Phase 6 [attestation](cohort-validation-waves.md#recorded-attestations)
 
 ### Remaining Work
 
-Wave 6.1 must supply the selected current-source `linux-gpu` plus paired `linux-cpu` full-suite
-sign-off against one frozen Phase 6 state.
+None.
 
 ---
 
