@@ -14,8 +14,8 @@
 - `docker compose --project-name <lane> --file compose.yaml ... run --rm infernix infernix ...`
   is the supported Linux control-plane launcher shape for both `linux-cpu` and `linux-gpu`; the
   GPU lane uses the same single `compose.yaml` with an explicit one-shot `LAUNCHER_IMAGE`
-  selector to choose the CUDA snapshot. Bootstrap scripts invoke that same shape after building
-  the required launcher image.
+  selector to choose the CUDA snapshot. Run the bootstrap's explicit `build` command first; Compose
+  itself has no build definition.
 - Routed Playwright execution on Linux runs inside the same substrate image with
   `npm --prefix web exec -- playwright test`.
 - Buildx support is part of the supported Docker toolchain. Host bootstraps install the Docker
@@ -49,6 +49,24 @@ container temp directory, and the durable operator-facing kubeconfig is publishe
 and the Linux substrate image installs Ubuntu's `docker-buildx` package so nested Docker image
 operations have a buildx-capable CLI when needed.
 
+## Source and Image Identity
+
+A launcher validation run binds its expected source to the immutable image it executes. The source
+inventory includes tracked files and relevant untracked build inputs, plus build recipes and
+dependency locks. A dirty worktree is admissible only with a retained reconstructable snapshot or
+base commit plus patch and untracked payloads. Its digest alone is not the source.
+
+A mutable `:local` tag and an image-internal filename inventory are not freshness evidence.
+A mismatch or unavailable image refuses validation and names the supported rebuild step; no
+receipt may claim host edits were tested merely because an older baked binary exited zero.
+The binary-owned validation boundary records source and image identities alongside actual check
+execution. The bootstrap owns only prerequisite/build/launcher handoff, not another test runner.
+See [testing doctrine](testing.md#execution-evidence-and-trust-boundary).
+
+The outer launcher does not require NVIDIA runtime access. Required device assertions execute in
+an explicitly device-equipped context owned by the binary and report that context in their
+receipt; an ordinary launcher without GPU access cannot silently discharge them.
+
 ## Host Prerequisite Boundary
 
 - on Apple Silicon, Docker-backed work requires the current Docker context to already target a
@@ -71,9 +89,11 @@ operations have a buildx-capable CLI when needed.
 
 ## Supported Usage
 
-- `docker build -f docker/Dockerfile --provenance=false ...` is the manual image refresh surface;
-  bootstrap scripts call that build before entering the launcher. Disabling BuildKit provenance
-  keeps repo-owned local images as plain single-platform images for registry publication.
+- `./bootstrap/linux-cpu.sh build` or `./bootstrap/linux-gpu.sh build` creates the corresponding
+  launcher before a clean-clone command or source-change validation. The bootstrap build uses
+  `docker build -f docker/Dockerfile --provenance=false ...`; ordinary Compose `run` reuses an
+  already-built image. Disabling BuildKit's attached provenance keeps publication compatible with
+  plain single-platform images; it does not remove the need for separate source/build evidence.
 - `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix
   infernix ...` is the direct Linux CPU outer control-plane entrypoint.
 - `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu
@@ -97,9 +117,6 @@ operations have a buildx-capable CLI when needed.
 - the shared substrate images bake a pruned `/opt/infernix/source-snapshot-files.txt` before later
   generated outputs are created so git-less image runs of `infernix lint files` validate the
   source snapshot rather than the mutated runtime tree; the manifest stays in the image overlay
-- mounted-source outer-container runs execute `git ls-files` with a scoped
-  `safe.directory=/workspace` override so `infernix lint files` works against the operator's
-  bind-mounted checkout without requiring global Git configuration inside the launcher
 - on the supported outer-container path, `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot selected by the launcher and publishes that image into
   the registry before final rollout instead of asking the shell bootstrap to build or push images

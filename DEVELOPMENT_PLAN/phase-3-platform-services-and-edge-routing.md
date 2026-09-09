@@ -1,14 +1,7 @@
 # Phase 3: Platform Services and Edge Routing
 
-**Status**: Done — Sprints 3.1 through 3.17 are implemented and validated. Sprint 3.17 owns the
-single-binary `registry:2` image repository, its route, and its anonymous publication contract.
-**Current state**: Sprint 3.16's current-source `linux-cpu` lifecycle cohort is complete.
-Single-node topology is enforced against the text that
-actually deploys: chart defaults of 1 are not sufficient, because a generated Helm overlay can
-reassert a replicated count, so the rule is pinned by a negative-tested unit guard on the generated
-overlay; see [Sprint 3.16](#sprint-316-single-node-platform-topology-done). The Bounded-Command
-Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-State-Transition Doctrine reopen
-(Sprint 3.14) are closed on the selected accelerator plus `linux-cpu`
+**Status**: Active — Sprints 3.18 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local single-instance image registry, MinIO, operator-managed
@@ -18,35 +11,11 @@ Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-State-Transition
 
 ## Phase Status
 
-> **Bounded-command application / bounded-HTTP — closed on the selected accelerator plus `linux-cpu`.**
-> Every publication docker/skopeo exec runs through `Infernix.Cluster.Subprocess.runBoundedCommand` under
-> a named `Timeout` budget, because the publish/verify site was the one place a bounded-command
-> kernel had shipped without being applied and an unbounded `docker pull` verify could hang
-> `publish-registry-images` indefinitely. Blob-servability is evidence-minted: the opaque
-> `BlobServable` witness comes from a real bounded pull, tag metadata is demoted to the
-> non-terminal `registryTagMetadataPresent` and `registryReady` to the weaker `registryApiReachable`,
-> so a retained-state push-skip against an unrehydrated MinIO backing is no longer a terminal
-> "done". See [Sprint 3.15](#sprint-315-blob-servable-evidence--bounded-publish-done).
+Sprints 3.1–3.17 retain their closed headings and only their established scope. Platform and route implementations exist, but a retained Phase 3 accelerator attestation is missing. Sprint 3.18 owns source-bound platform, routing, registry-publication, and retained-evidence verification.
 
-Phase 3 closes around the mandatory platform service set, the shared routed edge, and the
-Haskell-owned route registry implemented in this worktree. Sprints 3.1-3.12 are `Done` after Apple
-cohort validation in Waves A/A.2, CUDA Linux cohort validation on the selected accelerator plus
-`linux-cpu`, and native arm64 `linux-cpu` validation on the selected accelerator plus `linux-cpu`.
-Sprint 3.12 is validated on the native arm64 Docker daemon already selected on this Apple Silicon
-machine — Docker reports `server=linux/arm64` and the Linux runtime probe reports `aarch64` /
-`arm64` — so the Linux CPU outer-container suite runs without cross-architecture emulation,
-Docker-context switching, or VM creation. The Apple daemon-role model is implemented in Phase 6
-Sprint 6.25 and separates cluster daemon location from host inference executor location in
-publication metadata.
+The missing Phase 3 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
 
-Sprint 3.13 de-exposes the `/minio/s3` external gateway route so the `infernix-demo` webapp is the
-**sole** externally routed file-storage service: the browser reaches MinIO only through the webapp
-object-proxy (Phase 7 Sprint 7.25), never through a gateway route or a presigned MinIO URL. This
-realizes the
-[../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md).
-Sprint 3.16 closed on the 2026-08-16 current-source `linux-cpu` full lifecycle, which proved
-exactly one running engine pod and no `Pending` platform workload. The route-inventory prose below
-reflects the de-exposed surface (no `/minio/s3` route, no `presignPublicEndpoint`).
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R3 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Single-Instance Reconcile Surface
 
@@ -78,20 +47,7 @@ reflects the de-exposed surface (no `/minio/s3` route, no `presignPublicEndpoint
 
 ## Current Repo Assessment
 
-The supported cluster path runs the single-instance platform services and optional demo HTTP host
-on the Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`,
-exposes the active substrate through current `runtimeMode` fields, derives the route inventory
-from one Haskell-owned registry plus one data-driven HTTPRoute template, and reports
-`inferenceDispatchMode` beside the routed demo API upstream. The Apple publication contract
-distinguishes the always-present cluster daemon from the host inference executor: routed manual
-inference enters the clustered daemon path, Apple inference batches move through Pulsar to a
-same-binary host daemon, and Linux substrates keep inference inside the cluster daemon. Demo-off
-routing is supported through the explicit substrate-materialization helper with `--demo-ui false`.
-Direct `infernix-demo` execution is limited to the demo-owned HTTP surface when used intentionally
-outside the routed cluster path, so registry, MinIO, and Pulsar probes depend on the intended
-HTTPRoute mapping. Sprint 3.12 replaces the previous `LinuxCpu -> "amd64"` publication hardcode
-with typed host-architecture selection from `InfernixHost.dhall`, mapping native Linux amd64 to
-`amd64` and native Linux arm64 to `arm64` while keeping `linux-gpu` amd64-only.
+The supported deployment uses single-instance platform services, Haskell-owned routes, and a MinIO-backed registry. A reachable /v2 endpoint or populated tag list alone does not prove image blobs are retrievable. Validation must exercise a fresh independent destination and real published routes; no recovered receipt is assumed to exist.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -804,25 +760,6 @@ None.
 
 ---
 
-## Remaining Work
-
-None. Sprints 3.1-3.17 are `Done`.
-
-Apple cohort validation for earlier Phase 3 work closed in Waves A/A.2, CUDA Linux cohort
-validation closed on the selected accelerator plus `linux-cpu`, and native arm64 `linux-cpu`
-validation closed on the selected accelerator plus `linux-cpu`.
-
-[Sprint 3.14](#sprint-314-readiness-kernel-and-subprocess-env-seam-done),
-the Managed-State-Transition Doctrine reopen work, and
-[Sprint 3.15](#sprint-315-blob-servable-evidence--bounded-publish-done), the Bounded-Command
-Application & Bounded-HTTP reopen work that bounds the publish exec and mints `BlobServable`
-evidence, are both closed on the selected accelerator plus `linux-cpu` with apple-silicon plus
-linux-cpu full-suite `test all` clean.
-
-Sprint 3.16 closed on the current-source `linux-cpu` lifecycle receipt above.
-
----
-
 ## Sprint 3.16: Single-Node Platform Topology [Done]
 
 **Status**: Done — code-side closure and the current-source `linux-cpu` lifecycle cohort are complete.
@@ -948,38 +885,6 @@ in its own comment rather than implying wider coverage.
 
 - None.
 
-## Documentation Requirements
-
-**Engineering docs to create/update:**
-- `documents/engineering/edge_routing.md` - Envoy Gateway installation, single listener, route-registry ownership, and no-auth demo-cluster posture
-- `documents/engineering/object_storage.md` - repo-local object-store rules plus reserved MinIO path and routed access
-- `documents/engineering/k8s_storage.md` - manual PV doctrine and PostgreSQL claim binding
-- `documents/engineering/portability.md` - arm64-native Apple Silicon posture (Sprint 3.11)
-- `documents/engineering/docker_policy.md` - containerd `config_path` rendered into Kind config (Sprint 3.11)
-- `documents/tools/minio.md` - MinIO deployment, routed surfaces, and the upstream-multi-arch image inventory after the `bitnamilegacy/*` retirement (Sprint 3.11)
-- `documents/tools/postgresql.md` - Percona operator and Patroni deployment rules
-- `documents/tools/pulsar.md` - Pulsar deployment and routed surfaces
-- `documents/tools/registry.md` - the single-binary registry deployment, its routed `/v2` API surface, and the dynamic Kind hostPort behavior (Sprints 3.11, 3.17)
-- `documents/architecture/runtime_modes.md` - substrate-to-architecture mapping, including the
-- `documents/architecture/overview.md` - substrate-matched container architecture cross-link and
-  native Linux CPU architecture support
-- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) -
-  Managed State Transitions doctrine this phase now references for the Sprint 3.14 Readiness kernel
-  and typed subprocess-env seam
-- no monitoring engineering doc is created while monitoring remains unsupported; Monitoring is not
-  a supported first-class surface.
-
-**Product or reference docs to create/update:**
-- `documents/reference/web_portal_surface.md` - browser-visible route inventory and active-substrate catalog behavior
-- `documents/operations/apple_silicon_runbook.md` - Apple host-mode startup, host-inference bridge behavior, registry host-port conflict resolution, and the arm64-native posture (Sprint 3.11)
-- `documents/operations/cluster_bootstrap_runbook.md` - registry port selection language alongside `edge-port.json` (Sprint 3.11)
-
-**Cross-references to add:**
-- keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned
-  when route prefixes, publication fields, or daemon-location rules change
-
----
-
 ## Sprint 3.17: Single-Binary Registry, Route, and Anonymous Publication Contract [Done]
 
 **Status**: Done — the in-cluster image repository is the single-binary CNCF distribution registry
@@ -1037,3 +942,85 @@ serving anonymously over HTTP with one routed operator prefix.
 ### Remaining Work
 
 None.
+
+## Sprint 3.18: Source-Bound Platform, Route, and Publication Evidence [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Evidence audit and required regression verification pending.
+**Cohort gate**: Wave R3 — selected `linux-gpu` plus native `linux-cpu`.
+**Blocked by**: Sprint 2.18 code-side closure.
+**Implementation targets**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Routes.hs`, `chart/templates/httproutes.yaml`, `test/integration/Spec.hs`
+**Docs to update**: `documents/engineering/edge_routing.md`, `documents/tools/registry.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`, `documents/tools/postgresql.md`
+
+### Objective
+
+Close platform claims with retained observations of the deployed source-bound substrate.
+
+### Deliverables
+
+- Audit the selected pair's required platform and route assertions against the generated manifests
+  and publication values. Record which checks actually execute and what each establishes.
+- Preserve registry API readiness, tag metadata, and complete blob servability as separate facts.
+  Verification uses a fresh independent destination with no Docker content-cache reuse.
+- Recover the missing Phase 3 attestation and underlying results when verifiable; otherwise rerun
+  the complete chosen pair. No timestamp, phase label, or source digest alone proves execution.
+- State the single-instance topology and registry-backed publication directly; keep operator
+  routes subject to their authorization boundary, and expose no external MinIO route.
+
+### Validation
+
+- Reach every published route through the real Gateway and compare the inventory with the
+  Haskell-owned route registry and active configuration. Check demo-on and demo-off behavior.
+- Independently corrupt/remove a referenced registry blob in an isolated owned fixture while
+  retaining API/tag metadata; servability must fail. A fully retrievable image is the positive
+  control. Never mutate operator or unrelated registry data for this check.
+- Run governed build, lint/unit, focused docs/plan gates, then Wave R3 against one frozen source and
+  immutable image pair. Include fresh and retained platform state, storage binding, registry
+  publication/readback, and exact route/authorization outcomes.
+- Recovered historical evidence can close only assertions it demonstrably executed; missing and
+  newly strengthened assertions require new results.
+
+### Remaining Work
+
+Audit check coverage, implement any missing behavioral controls, and retain Wave R3 evidence.
+Accelerator scheduling is a validation-only residual after code-side closure.
+
+## Remaining Work
+
+Implement Sprints 3.18, pass their governed machine-independent gates, and retain Wave R3's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+
+## Documentation Requirements
+
+**Engineering docs to create/update:**
+- `documents/engineering/edge_routing.md` - Envoy Gateway installation, single listener, route-registry ownership, and JWT/admin authorization boundaries
+- `documents/engineering/object_storage.md` - webapp-mediated browser object access and trusted internal MinIO transport, with no public MinIO Gateway route
+- `documents/engineering/k8s_storage.md` - manual PV doctrine and PostgreSQL claim binding
+- `documents/engineering/portability.md` - arm64-native Apple Silicon posture (Sprint 3.11)
+- `documents/engineering/docker_policy.md` - containerd `config_path` rendered into Kind config (Sprint 3.11)
+- `documents/tools/minio.md` - MinIO deployment, internal data plane, webapp mediation, and native multi-architecture image inventory
+- `documents/tools/postgresql.md` - Percona operator and Patroni deployment rules
+- `documents/tools/pulsar.md` - Pulsar deployment and routed surfaces
+- `documents/tools/registry.md` - the single-binary registry deployment, its routed `/v2` API surface, and the dynamic Kind hostPort behavior (Sprints 3.11, 3.17)
+- `documents/architecture/runtime_modes.md` - substrate-to-architecture mapping and role placement
+- `documents/architecture/overview.md` - substrate-matched container architecture cross-link and
+  native Linux CPU architecture support
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) -
+  Managed State Transitions doctrine this phase now references for the Sprint 3.14 Readiness kernel
+  and typed subprocess-env seam
+- no monitoring engineering doc is created while monitoring remains unsupported; Monitoring is not
+  a supported first-class surface.
+
+**Product or reference docs to create/update:**
+- `documents/reference/web_portal_surface.md` - browser-visible route inventory and active-substrate catalog behavior
+- `documents/operations/apple_silicon_runbook.md` - Apple host-mode startup, host-inference bridge behavior, registry host-port conflict resolution, and the arm64-native posture (Sprint 3.11)
+- `documents/operations/cluster_bootstrap_runbook.md` - registry port selection language alongside `edge-port.json` (Sprint 3.11)
+
+**Cross-references to add:**
+- keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned
+  when route prefixes, publication fields, or daemon-location rules change
+
+**Remediation documentation obligations:**
+
+- Keep the contracts named by Sprints 3.18 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
+- Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.

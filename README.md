@@ -121,9 +121,10 @@ init`; commands fail fast with a "run init" reminder when it is absent.
 - dispatches to the real engine entrypoint selected by the active binding and publishes the typed
   per-family result surface — inline text for the LLM and speech families, and a typed
   `infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
-  music-transcription, image, video, audio-generation, and OMR artifact families. Realness is
-  guaranteed by construction — the engine code cannot return a fabricated result (any
-  missing-weights/load/engine failure raises → `failed`), enforced by the realness lint
+  music-transcription, image, video, audio-generation, and OMR artifact families. Missing weights,
+  load errors, and engine faults produce typed failure, not synthetic success. Static realness
+  checks are heuristics; behavioral and negative-control validation follows the
+  [realness contract](documents/architecture/realness_contract.md)
 - routes requests into validated engine-pool lanes while leaving engine-local batching and runtime
   memory policy to the selected engine member
 - stores large outputs in MinIO and returns references when appropriate
@@ -261,8 +262,8 @@ weights land in the `infernix-models` MinIO bucket via **eager coordinator stagi
 coordinator downloads every model listed in the mounted `infernix.dhall` (fail-fast if no config),
 and the `warm-model-cache` cluster-up phase blocks until all are staged, so no inference races a cold
 cache. Engine pods then stream weights from MinIO into an ephemeral `emptyDir` model cache with a
-hard `sizeLimit`; pod restart
-wipes the cache and the next request repopulates from MinIO. User uploads and engine-generated
+hard `sizeLimit`; pod replacement wipes the cache, while a container restart within the same pod
+retains it. Missing artifacts hydrate from MinIO. User uploads and engine-generated
 artifacts (images, audio, video) live in the demo-gated `infernix-demo-objects` bucket. Object access
 is webapp-mediated and per-user: the `infernix-demo` webapp is the single mediator
 for every browser artifact upload, download, and preview, deriving each object key server-side from
@@ -296,11 +297,17 @@ Use the substrate bootstrap that matches the host you actually want to run:
 ./bootstrap/apple-silicon.sh up
 
 # Ubuntu 24.04 CPU lane.
+./bootstrap/linux-cpu.sh build
 ./bootstrap/linux-cpu.sh up
 
 # Ubuntu 24.04 NVIDIA lane.
+./bootstrap/linux-gpu.sh build
 ./bootstrap/linux-gpu.sh up
 ```
+
+On Apple, start `./bootstrap/apple-silicon.sh run-daemon` in a second terminal after `up` and keep
+it running for inference. Stop that foreground process before teardown or harness validation; see
+the [Apple operator flow](documents/operations/apple_silicon_runbook.md#supported-flow).
 
 Each bootstrap entrypoint is designed to be safe to rerun. It probes the current host state,
 installs only the missing supported prerequisites for that substrate, verifies any same-process
@@ -600,6 +607,13 @@ this authority's own process tree; either observation failing is a refusal namin
 - `infernix test e2e`
 - `infernix test all`
 
+Validation evidence identifies the source snapshot and built artifact actually executed, the
+selected lane, and which required checks ran. An expected refusal is not successful inference;
+a skipped mandatory check is not a passing gate. See
+[the testing doctrine](documents/engineering/testing.md#execution-evidence-and-trust-boundary).
+Implementation status and open validation obligations live only in
+[DEVELOPMENT_PLAN](DEVELOPMENT_PLAN/README.md).
+
 ### Apple Silicon (host-native)
 
 Apple Silicon has no Dockerfile. The supported entrypoint is the repo-owned bootstrap:
@@ -608,8 +622,18 @@ Apple Silicon has no Dockerfile. The supported entrypoint is the repo-owned boot
 ./bootstrap/apple-silicon.sh build
 ./bootstrap/apple-silicon.sh up
 ./bootstrap/apple-silicon.sh status
-./bootstrap/apple-silicon.sh down
 ```
+
+After `up`, start the required host engine in a second terminal and keep it running during
+operator/demo inference:
+
+```bash
+./bootstrap/apple-silicon.sh run-daemon
+```
+
+`up` starts the cluster services and coordinator, not the Apple host engine. When finished, stop
+the foreground engine with Ctrl-C and run `./bootstrap/apple-silicon.sh down`. The harness starts
+and cleans up its own engine; that does not replace the manual operator step.
 
 The operator/demo cluster must be down before the harness workflow; `test` owns its own
 `HarnessOwned` cluster lifecycle and refuses a live `OperatorOwned` cluster:
@@ -625,9 +649,11 @@ Post-build operator/demo commands (rebuild again through the bootstrap, not bare
 ./.build/infernix init
 ./.build/infernix cluster up
 ./.build/infernix cluster status
-./.build/infernix cluster down
 ./.build/infernix cluster reclaim-slot
 ```
+
+For this direct path, run `./.build/infernix service --role engine` in the second terminal.
+Stop that process before `./.build/infernix cluster down` or any harness-owned validation.
 
 Post-build harness validation, after the operator cluster is down:
 
@@ -659,6 +685,7 @@ image source, and the Linux routed-E2E executor on native amd64 or native arm64 
 Supported bootstrap path:
 
 ```bash
+./bootstrap/linux-cpu.sh build
 ./bootstrap/linux-cpu.sh up
 ./bootstrap/linux-cpu.sh status
 ./bootstrap/linux-cpu.sh down
@@ -700,6 +727,7 @@ runtime path. CPU hosts keep using `infernix-linux-cpu:local`, so they do not ca
 Supported bootstrap path:
 
 ```bash
+./bootstrap/linux-gpu.sh build
 ./bootstrap/linux-gpu.sh up
 ./bootstrap/linux-gpu.sh status
 ./bootstrap/linux-gpu.sh down
@@ -909,7 +937,8 @@ this section is an orientation summary.
 - the union of configs generated for all supported substrates must cover every model or workload row
   in the comprehensive model, format, and engine matrix
 - each daemon reads its effective runtime config at startup; the coordinator eagerly stages every
-  model it lists into the model cache before serving. Changing model or member assignment is a
+  model it lists into MinIO before serving, and engines hydrate their derived local caches.
+  Changing model or member assignment is a
   regenerate-and-restart or rollout boundary; hot reload is outside the supported contract
 - the production inference surface is Pulsar subscription only and includes both the stateless
   coordinator role (`infernix-coordinator` Deployment) and engine pools (`infernix-engine` plus
@@ -1014,11 +1043,11 @@ contracts.
   the demo surface
 - validation asserts a per-family result contract for every active-substrate catalog row (LLM and
   speech inline text; source-separation, audio-to-MIDI, music-transcription, image, video,
-  audio-generation, and OMR object-reference artifacts) and fails closed on `status=failed`, with
-  typed inference errors classified separately from successful output payloads. Realness is
-  guaranteed by construction — the engine code is structurally incapable of returning a fabricated
-  result (the realness lint forbids it). Each validation receipt names the exact source fingerprint
-  and generated catalog it proves; a source or catalog mismatch invalidates the receipt. A row is
+  audio-generation, and OMR object-reference artifacts), with typed refusals and measured breaches
+  tested separately from required successful output. Unexpected failures fail the gate; an expected
+  refusal never counts as real inference. Static checks cannot prove arbitrary adapter realness.
+  Each validation receipt binds the reconstructable source snapshot, immutable build, generated
+  catalog, and actual required-check execution; a mismatch invalidates the receipt. A row is
   an explicit residual only when its achievability is uncertain; a row that is merely
   unbuilt stays declared-runnable and fails closed. One DRY
   substrate-aware integration suite traverses the README matrix and the union across the
@@ -1093,17 +1122,16 @@ ground and demo webapp provide the shared operator and demo substrate for this m
   output returns inline text or an `infernix-demo-objects` object reference, and which typed
   `InferenceError` variants are valid failure results, owned by
   [documents/architecture/model_catalog.md](documents/architecture/model_catalog.md). The integration
-  and Playwright suites assert the success surface and fail closed on `status=failed` while checking
+  and Playwright suites require real success in designated inference cases while separately checking
   typed errors such as `ModelMemoryLimitExceeded` by constructor and explicit MiB quantities rather
   than parsing human-readable text, and — under memory-safety by construction
   ([documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)) —
   the selected-accelerator full per-model real-inference lanes must complete with zero host
   out-of-memory kill, an over-capacity model surfacing that same typed rejection rather than a
-  `SIGKILL`. Realness is guaranteed by construction — the engine code cannot
-  fabricate a result (enforced by the realness lint), and a row is an explicit residual only when
-  its achievability is uncertain. The
-  union-coverage invariant ("every row real on at least one substrate") is mechanically checked under
-  `infernix lint docs`
+  `SIGKILL`. Input-sensitive output checks and controlled fake-output substitutions support the
+  realness claim; static lint alone does not. A row is an explicit residual only when its
+  achievability is uncertain. `infernix lint docs` checks declared matrix/catalog union coverage,
+  not whether every declared engine actually executed; that requires retained runtime evidence
 - Apple, CPU, and CUDA runtime lanes must be validated as first-class targets rather than narrowing
   the matrix to only the local Kind demo-ground launcher paths
 

@@ -27,8 +27,13 @@ staged. The `persistent://infernix/system/model.bootstrap.request` topic is exer
 on-demand fallback path when an engine hits an unexpectedly unstaged model.
 - End-to-end lifecycle validation requires `infernix test all` on the selected accelerator and
   `linux-cpu`, including the
-routed Playwright catalog matrix. Realness is enforced in the engine code by the realness lint:
-adapters and native runners return only real model output or fail.
+routed Playwright catalog matrix. Required successful-inference cases are distinct from expected
+typed refusals; the lint tripwires and behavioral negative controls complement fail-closed engine
+code as specified in [../architecture/realness_contract.md](../architecture/realness_contract.md).
+- Cache lifecycle tests hydrate actual verified artifacts from MinIO, execute a model using that
+  cache, evict only the selected idle generation, and rebuild and execute again. They compare the
+  artifact identities and measured counts, reject partial/corrupt payloads, and prove mutation
+  cannot race an engine using the generation. A marker directory alone cannot satisfy this gate.
 
 ## Rules
 
@@ -45,7 +50,8 @@ and materializes local roots under `./.data/engines/<adapterId>/` or Linux image
 Linux image-build helper writes metadata roots and binds direct image-owned llama.cpp, whisper.cpp,
 ONNX Runtime/Basic Pitch, CTranslate2/faster-whisper, and Audiveris targets to exact
 descriptor-derived executable and closure evidence. It does not generate command wrappers, and
-realness is enforced in the engine code by the realness lint.
+realness follows the implementation and behavioral contract in
+[../architecture/realness_contract.md](../architecture/realness_contract.md).
 - the Haskell worker layer (`src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`) stores cache manifests
 beside the cached weights
 at `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`.
@@ -130,11 +136,22 @@ kind, source reference, runtime versions, digest, optional MinIO object key, rec
 direct-target contract fingerprint, exact resolved provenance, and optional Linux image-target
 evidence. Executable paths and arguments are selected by a hidden catalog, never manifest text. The
 Linux native payload must pass both a strict smoke and routed full-suite real-output delivery
-through the service path. Realness is enforced in the engine code by the realness lint.
-- derived cache state is keyed by runtime mode and model identity and is always rebuildable.
-- the demo `/api/cache` surface operates on the manifest-backed contract exposed by the
-Haskell worker; the manifest reads the supported `minio://infernix-models/<modelId>/` durable source
-URI and the engine-runner metadata derived from the effective runtime-config `.dhall`.
+through the service path, including the behavioral realness checks above.
+- derived cache state identifies its owning engine machine, runtime mode, model, and verified
+artifact generation. A local manifest describes actual payload files and their verified identities;
+it is not the durable source and cannot make an empty directory a materialized model.
+- materialization and rebuild hydrate the complete selected artifact set from
+`minio://infernix-models/<modelId>/`, validate it in an owned candidate root, and publish readiness
+only after the real payload is complete. Failure preserves a valid prior generation or leaves an
+explicit unavailable state. Eviction and replacement hold the cache owner's mutation authority and
+cannot remove files an active engine is using; disk quota and inference-memory accounting remain
+separate.
+- CLI cache operations name the cache owner they actually reach. The demo `/api/cache` surface
+reports and mutates that same engine-owned state through its owning authority, not the webapp's
+private scratch directory. Responses identify owner and scope, distinguish verified bytes/files
+from unavailable observations, and never label one machine's local result as fleet-wide completion.
+The API rejects malformed requests before any cache effect, as specified in
+[../reference/api_surface.md](../reference/api_surface.md).
 - engine adapters write real per-family artifact outputs (stems, MIDI/MusicXML, image, video, audio) directly
 into MinIO `infernix-demo-objects` at the per-user prefix and the result message carries an
 `ObjectRef` (bucket + key); text outputs from the LLM and speech families always ride inline in the

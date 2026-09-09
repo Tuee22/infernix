@@ -24,6 +24,8 @@ Read first:
 Read and follow the complete
 [Non-Negotiable Rules](documents/development/assistant_workflow.md#non-negotiable-rules)
 in the canonical assistant workflow before making changes. That document is the sole rule list.
+Its [validation handoff requirements](documents/development/assistant_workflow.md#validation-before-handoff)
+cover source-bound evidence and reporting unavailable gates.
 
 ## Scope
 

@@ -1,8 +1,6 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Done. All 54 sprints are implemented and validated. The selected current-source
-`linux-gpu` plus paired native-amd64 `linux-cpu` full suites pass against the source recorded in the
-Phase 6 [attestation](cohort-validation-waves.md#recorded-attestations).
+**Status**: Active — Sprints 6.55 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -17,192 +15,16 @@ Phase 6 [attestation](cohort-validation-waves.md#recorded-attestations).
 > route-aware docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
-> **Cluster-ownership and mutation-position.** Because `ClusterState` had no owner and
-> `ClusterLifecycle` had no mutating position, a test-mutated cluster (a drained node, an over-scaled
-> deployment) read as a clean `steady-state`, and `runClusterOwnedValidation`'s unconditional
-> `clusterDown` over the shared operator cluster identity let even a clean run destroy an operator's
-> cluster. [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-done)
-> owns the harness half — the evidence-gated seizure (fail closed on an `OperatorOwned` cluster), the
-> chaos-mutation `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup
-> reconcile — and [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model
-> half. The doctrine and governance landed in Phase 0 Sprint 0.16. The earlier cohort closed only the typed
-> owner/mutation-position/config scope; a later execution audit found that
-> `runClusterOwnedValidation` released the lifecycle lease between owner authorization and its
-> eventual teardown, so Sprint 6.43 enforces owner-specific teardown under the lifecycle lock and
-> validates it in the Phase 6 behavioral cohort. Canonical doctrine:
-> [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
 
-> **Memory-safety by construction.** The doctrine (Phase 0 Sprint 0.15) makes an over-budget
-> inference engine a clean typed `ModelMemoryLimitExceeded` rather than a host OOM, gated by a
-> `MemoryGrant` and a capped-engine kernel (Phase 4 Sprints 4.30/4.31).
-> [Sprint 6.42](#sprint-642-unbounded-engine-spawn-capability-gating-lint-done) adds the
-> `unboundedEngineSpawnViolations` capability-gating lint to `src/Infernix/Lint/HaskellStyle.hs`: raw
-> `readCreateProcessWithExitCode` / `createProcess` engine spawn is a build error outside the Phase 4
-> Sprint 4.30 grant-gated capped-engine kernel, mirroring the `unboundedExecViolations` (Sprint 6.40)
-> per-rule exemption pattern. The rule is wired into `checkSourceReadability`, reuses the
-> bounded-command exemption set (`Infernix.Runtime.CappedEngine` is the sole legitimate engine-spawn
-> surface), and is negative-tested in the unit suite. Single-accelerator (apple-silicon) plus
-> `linux-cpu` behavioral sign-off is closed on the selected accelerator plus `linux-cpu`.
+Sprints 6.1–6.54 retain their closed headings and only their established scope. Required CUDA checks can skip successfully when tooling or fixtures are unavailable or readiness times out; timeout branches also discard live child handles. The outer launcher does not itself request GPU access, so its exit code alone cannot establish GPU behavioral sign-off.
 
-> **Bounded-command application and bounded HTTP — closed on the selected accelerator plus `linux-cpu`.**
-> A single-accelerator cohort run surfaced two flakes the Sprint 1.16/3.14/4.28 kernels shipped but
-> did not yet guard — a `docker pull` verify hang and a rate-limited upstream model download —
-> together with the missing enforcement that let raw unbounded exec and raw upstream HTTP reach those
-> sites. [Sprint 6.40](#sprint-640-unbounded-exechttp-capability-gating-lints-done) adds the
-> `unboundedExecViolations` and `unboundedHttpViolations` capability-gating lint rules (raw process
-> spawn and raw `withResponse` are build errors outside their bounded wrappers), and
-> [Sprint 6.41](#sprint-641-processmonitor-retirement--readiness-wait-kernel-migration-done) owns the
-> deferred hardening: migrating the hand-rolled readiness waits onto `awaitReadiness`, retiring
-> `src/Infernix/ProcessMonitor.hs`, and adding a `threadDelay`-outside-kernel lint gate. Both are
-> code-side closed and their single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort
-> sign-off is closed on the selected accelerator plus `linux-cpu`.
+The existing Phase 6 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-> **Fail-closed real-only validation.** The audit behind the Phase 4 realness reopen established that
-> this phase's suites once accepted fabricated results: `assertResultFamilyContract` checked
-> shape/extension only and never fetched an artifact, the per-row inputs were degenerate (silence
-> WAV, 1×1 PNG), the OMR row was fed `musicXmlBuffer()` instead of a score image, and
-> `validateServiceRuntimeLoop` / `assertCompletedResultPayload` asserted neither completion nor
-> shape. Sprint 6.33 owns the strengthened HA / chaos / service-loop assertions that fail closed on a
-> non-real or incomplete result. The machine-independent realness lint that mechanically forbids
-> fabrication is owned by Phase 0 (Sprint 0.12); the real per-family fixtures, the OMR input-type
-> fix, and the fail-closed per-row integration/e2e are owned by Phase 4 (Sprint 4.23); this phase
-> builds on both rather than re-owning them. Realness is guaranteed by the engine code; the tests
-> trust the result and fail loudly on `status=failed`. The Linux gate is
-> the `linux-gpu` + `linux-cpu` cohort, and the same DRY suite re-runs on
-> `apple-silicon` on the selected accelerator plus `linux-cpu`.
-
-> **Single-accelerator phasing.** Phase 6 follows the **single-accelerator-per-phase** rule (see
-> [README.md](README.md) → Common-Shape Reopen and
-> [development_plan_standards.md](development_plan_standards.md) §Q): each accelerator-bearing phase
-> validates **one** of `apple-silicon` or `linux-gpu` plus `linux-cpu`, never both, and
-> cross-accelerator coverage is a `linux-cpu`-only aggregation phase. The prior "two-axis /
-> batch-both-cohorts" framing is repurposed into the per-accelerator attestation ledgers in
-> [cohort-validation-waves.md](cohort-validation-waves.md), recorded in
-> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-
-> **Lint coverage and no-env closure.** Sprint 6.34 answers the audit finding that docs lint did not
-> include several authoritative docs or Phase 7 plan docs, and that pre-manifest / lint-owning code
-> carried env/PATH exceptions: `Setup.hs` read `PATH` / `INFERNIX_BUILD_ROOT` and called `setEnv`,
-> `bootstrap/common.sh` accepted inherited `BOOTSTRAP_*` command overrides,
-> `src/Infernix/Lint/HaskellStyle.hs` invoked bare `cabal`, and `web/scripts/install-purescript.mjs`
-> invoked bare `mktemp` / `tar`. The target doctrine is no env vars and no ambient `PATH`; Sprint
-> 6.34 closed its scope by confining Setup to a deterministic `PATH` shim, and Phase 1 Sprint 1.24
-> superseded that residual by deleting `Setup.hs`, the Custom build type, and the proto-lens setup
-> bootstrap, so no Setup environment exception remains. Bootstrap command constants no longer inherit
-> `BOOTSTRAP_*` or `PATH`, the PureScript compiler installer uses Node tar/gzip handling, and docs
-> lint covers the authoritative configuration/tool/realness docs plus Phase 7.
-
-> **MT3 catalog validation (closed).** Sprint 6.35 covers the catalog replacement that added
-> `music-mt3-infer` and `music-mr-mt3` to the generated substrate catalogs. The integration and
-> routed Playwright suites enumerate the active catalog, so the code-side coverage surface covers the
-> new rows. The post-replacement full-suite evidence closed under
-> proven on the selected accelerator plus `linux-cpu`: both
-> `linux-gpu` and `linux-cpu` full `infernix test all` pass with routed Playwright clean over the
-> expanded catalog, including the 27 GB `video-wan21-t2v` row after Phase 8 eager model-cache
-> staging.
-
-> **Resource-admission validation increment.** Sprint 6.38 validates the doctrine added by Phase 4
-> Sprint 4.27 and Phase 5 Sprint 5.11: one over-budget model does not fail daemon startup, Apple
-> zero/negative computed budgets remain enforced without hardcoded floors, Linux CPU uses the cluster
-> engine pod memory limit, Linux GPU uses GPU VRAM, and classifiers identify capacity failures by
-> `InferenceError.ModelMemoryLimitExceeded` plus explicit MiB fields. the selected accelerator's `linux-cpu` and
-> selected `linux-gpu` live integration/e2e evidence proves smaller models kept running in the same
-> daemon session. That evidence predates and does not close the current Sprint 6.44 dual RAM/VRAM
-> enforcement construction.
-
-Phase 6 is `Done`: all 54 sprints are complete.
-The entry documents require the sole rule list in `documents/development/assistant_workflow.md`.
-Their duplicate lists and divergence check are removed. The Haskell-style membership test compares
-Section Q with named checks reachable from `scanPlanViolations` and `runDocsLint`, including
-references through local helpers and imported check names. Its negative fixtures reject added,
-removed, or renamed checks while excluding comments, literals, unused definitions, and private
-implementation helpers. The unified observer module family and the full repository validation
-surface pass on the selected current-source `linux-gpu` plus paired native-amd64 `linux-cpu`, as
-recorded in the Phase 6 attestation. The host and device columns retain their distinct calibrated
-strengths: Linux GPU pod RAM declares prevention, while NVIDIA device memory declares admission,
-arena sizing, and detection because no supported kernel mechanism bounds it.
-
-The inference-coverage sprints were upgraded from the metadata-echo assertion to the per-family
-result contract plus cohort hardware proof: the reopened Sprints 6.2, 6.3, and 6.6 assert the
-typed per-family result surface for every active-substrate row, and the union across the three
-substrate catalogs covers every README matrix row as a mechanically checked invariant. The
-`ResultFamily` dispatch in the integration suite, the per-family Playwright assertions plus
-per-family web-UI artifact rendering, and the `allMatrixRowIds` coverage invariant are proven by
-the machine-independent gate set (`infernix test unit`, the integration-suite build, `infernix
-lint docs`, `infernix lint files`). The web unit suite (`spago`/Node 22) is exercised in the
-supported Linux container lane rather than on a bare host, because a host Node 18 cannot run it
-and Node 22 makes spago segfault there — an environmental toolchain limit. The real-engine
-integration and routed E2E assertions closed through the Stage 2 single-accelerator gate for
-`linux-gpu` plus `linux-cpu`, re-validated on the selected accelerator plus `linux-cpu`, never a
-per-sprint machine switch (see [development_plan_standards.md](development_plan_standards.md)
-Section Q). The CUDA Linux image strict-smokes the runtime-backed Linux native payload layer, and
-the CUDA Linux closure passed full `./bootstrap/linux-gpu.sh test` and full rebuilt-image
-`./bootstrap/linux-cpu.sh test`, including integration HA checks and routed Playwright per-model
-matrices.
-
-The supported test story is substrate-specific in code. Sprint 6.25 closes around the implemented
-split topology: cluster daemons always run, Apple cluster daemons own request-topic consumption and
-derived pool-topic handoff, Apple inference work moves through Pulsar to same-binary host daemons,
-and publication distinguishes cluster daemon location from inference executor location. Sprint 6.26
-closes the lifecycle-warning cleanup: warning classification is documented, buildx support inside the
-Linux substrate image is implemented, the PureScript compiler bypasses the npm installer, Spago's
-`glob@11` transitive dependency is overridden to `glob@13`, and Poetry installs through an
-image-local virtual environment. The Linux substrate suppresses npm update notices and leaves GHCup
-shell-profile adjustment disabled; the upstream GHCup no-update message is treated as an idempotent
-installer no-op, and the upstream PATH advice is accepted because the Dockerfile owns `PATH` and the
-pinned toolchain succeeds. CUDA Linux validation is closed on the selected accelerator plus `linux-cpu` on the native Linux/CUDA host.
-Sprint 6.27 closes the staged-substrate format cleanup: `infernix.dhall` is a typed Dhall record
-decoded in-process by the `dhall` Haskell library, the schema is reflected from the substrate decoder
-type, generated files no longer carry banner-prefixed JSON, and `cabal.project` records the supported
-wildcard `allow-newer` posture against the project `ghc-9.12.4` toolchain.
-
-The formatter-toolchain closure supersedes the historical Phase 6 bootstrap: root-package
-`infernix-haskell-style` links pinned Ormolu/HLint, while the genuinely separate package under
-`test/cabal-format/` links Cabal 3.16, and the closed aggregate lint command runs both in-process
-without a formatter subprocess. The Linux substrate image installs a single `ghc-9.12.4` toolchain.
-The supported Linux outer-container launcher keeps its build root and chart archive cache in the
-image overlay, hydrates MinIO through the supported direct tarball path instead of Docker Hub-backed
-OCI metadata, and repairs the known stale retained Pulsar or ZooKeeper epoch mismatch by resetting
-only the Pulsar claim roots and retrying once. Sprint 6.32 owns the engine-pool routing target: unit
-gates reject illegal pool graphs and service-consumer subscription states, Apple integration proves
-broker-native backpressure on `Shared` pools, `Exclusive` pinned routes, and production-shape
-coordinator presence when `demo_ui = false`, and Linux CPU and Linux GPU/CUDA validation prove the
-pool-routing and backpressure gates required on the selected accelerator plus `linux-cpu`.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R6 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
-The repository has lint, unit, integration, and Playwright entrypoints. The canonical testing,
-boundary, portability, storage, and Haskell-style docs are present, the baked Linux substrate
-image definition writes the source-snapshot manifest needed for git-less `infernix lint files`
-runs, the routed Playwright suite exhaustively exercises every demo-visible generated catalog
-entry for the active substrate, and the integration suite enumerates every generated
-active-substrate catalog entry while also carrying the registry, MinIO, Pulsar, and Patroni
-PostgreSQL recovery or lifecycle checks in code. The staged file, `cluster status`, publication
-JSON, and generated browser contracts still expose the active substrate through `runtimeMode`
-fields or lines. The worktree omits direct registry, MinIO, and Pulsar compatibility handlers from
-`src/Infernix/Demo/Api.hs`, tightens `test/integration/Spec.hs` to require the real routed
-upstream behavior, persists cluster state before later Linux rollout phases, owns active substrate
-preflight in the binary command, reuses a persistent Linux chart-archive cache, and performs the
-targeted Pulsar claim-root reset when the known retained ZooKeeper epoch-state corruption blocks
-bootstrap. The current lifecycle skips broad pre-registry support-image preloads on supported
-lanes, may hydrate and stream only the narrow registry warmup dependency set into Kind workers
-before Helm warmup, and follows the stricter registry-first boundary where only the storage the
-registry needs may pull upstream before the registry is responsive.
-
-Validation proof points are tracked by
-[cohort-validation-waves.md](cohort-validation-waves.md), and historical hardware evidence lives
-only in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). The Apple cohort gate
-is closed on the selected accelerator plus `linux-cpu`/A.1/A.2/A.3, and the CUDA Linux cohort gate is closed on the selected accelerator plus `linux-cpu`.
-
-The runtime-topology implementation deploys the `infernix-coordinator` role on Apple and reports
-`daemonLocation: cluster-pod` plus `inferenceExecutorLocation: control-plane-host` in publication
-metadata. Linux substrates deploy both `infernix-coordinator` and `infernix-engine`; Apple sets the
-cluster engine replica count to 0 because host engine daemons own Apple-native inference execution.
-Pool-routing metadata is now the supported publication/status surface, and the old Apple host batch
-topic metadata is absent from supported outputs. The supported routed and cluster
-validation path uses real Pulsar transport; the repo-local topic spool under
-`./.data/runtime/pulsar/` remains only for unit-level or intentionally endpoint-absent harness
-checks and is not accepted as routed Pulsar evidence.
+The lint, unit, integration, and browser entrypoints exist. Sprint 6.55 owns required-check accounting, actual CUDA execution in the supported engine workload, fixture cleanup, and source-bound results. Existing Phase 6 evidence is scope-limited and does not prove checks that were skipped or assertions that only accepted a refusal. Kernel prevention, sampled breach, engine failure, and missing result require distinct evidence.
 
 ## Validation Surface
 
@@ -279,9 +101,6 @@ contracts, and generated-catalog logic, and put the validation doctrine in canon
 - docs validation fails if canonical testing or boundary docs drift from the supported implementation
 
 ### Remaining Work
-
-None.
-
 ---
 
 ## Sprint 6.2: Extensive Integration Suites [Done]
@@ -394,7 +213,7 @@ None.
 
 **Status**: Done
 **Implementation**: `test/integration/Spec.hs`
-**Docs to update**: `documents/development/chaos_testing.md`, `documents/tools/registry.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
+**Docs to update**: `documents/tools/registry.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
 
@@ -512,7 +331,7 @@ None.
 
 **Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
-**Docs to update**: `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/postgresql.md`
+**Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/postgresql.md`
 
 ### Objective
 
@@ -797,7 +616,7 @@ That import is explicitly about repository governance and doctrine shape, not ab
 ### Validation
 
 - `infernix docs check` fails when the named doctrine docs lose their required
-  summary-or-current-status-or-validation structure or contradict their enforced metadata contract
+  summary-and-validation structure or contradict their enforced metadata contract
 - `infernix test lint` passes with the deeper doc structure and Haskell-guide references in place
 - `cabal test infernix-haskell-style` remains the implementation-aligned
   Haskell style gate described by the guide
@@ -980,13 +799,13 @@ consistently across the remaining governed engineering surfaces.
 
 - `documents/engineering/build_artifacts.md` adds the stronger broad-doctrine structure expected
   by `development_plan_standards.md`, including summary and validation sections and any explicit
-  current-status note required by its final scope
+  permanent scope limit required by its target contract
 - `documents/engineering/docker_policy.md` adds the stronger broad-doctrine structure expected by
   `development_plan_standards.md`, including summary and validation sections and any explicit
-  current-status note required by its final scope
+  permanent scope limit required by its target contract
 - `documents/engineering/edge_routing.md` adds the stronger broad-doctrine structure expected by
   `development_plan_standards.md`, including summary and validation sections and any explicit
-  current-status note required by its final scope
+  permanent scope limit required by its target contract
 - `src/Infernix/Lint/Docs.hs` extends its document-structure rules so `infernix docs check`
   enforces the required broad-doctrine sections for those remaining engineering docs
 - the plan and governed docs claim broader engineering-doc structure closure only with the
@@ -1011,7 +830,7 @@ None.
 
 **Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `web/test/run_playwright_matrix.mjs`, `docker/Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
-**Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/engineering/edge_routing.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
+**Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/engineering/edge_routing.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
 
@@ -1710,7 +1529,7 @@ None.
 
 **Status**: Done
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs` (substrate decoder type = reflected schema; no tracked `.dhall`), `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`
-**Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
+**Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 
 ### Objective
 
@@ -1749,9 +1568,11 @@ None.
 
 ## Sprint 6.33: Fail-Closed HA and Service-Loop Assertions [Done]
 
+**Scope boundary**: Sprint 6.55 owns executed-required-check accounting; expected refusals do not close mandatory real-output assertions.
+
 **Status**: Done
 **Implementation**: `test/integration/Spec.hs`
-**Docs to update**: `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
+**Docs to update**: `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 
 ### Objective
 
@@ -1908,7 +1729,7 @@ Apple, Linux CPU, and Linux GPU.
 **Implementation**: `test/integration/Spec.hs`,
 `web/playwright/inference.spec.js`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`,
-`documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`,
+`documents/development/demo_app_test_plan.md`,
 `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -1992,7 +1813,7 @@ repeated retained-data cluster-ups no longer fail on dirty Pulsar metadata.
 `src/Infernix/Lint/Docs.hs`, `src/Infernix/ProcessMonitor.hs`, and substrate-specific validation
 helpers that inspect generated runtime config and live daemon results.
 **Docs to update**: `README.md`, `documents/development/testing_strategy.md`,
-`documents/development/chaos_testing.md`, `documents/development/demo_app_test_plan.md`,
+`documents/development/demo_app_test_plan.md`,
 `documents/engineering/testing.md`, `documents/architecture/realness_contract.md`, and this plan.
 
 ### Objective
@@ -2251,6 +2072,8 @@ None.
 
 ## Sprint 6.43: Cluster-Ownership Harness Seizure and Crash-Safe Config [Done]
 
+**Scope boundary**: Sprint 2.18 verifies lifecycle consumers against the corrected domain authority; Sprint 6.55 owns mandatory-check accounting and fixture cleanup. This closure does not discharge those added criteria.
+
 **Status**: Done — its prerequisites are discharged and its own `apple-silicon` plus `linux-cpu`
 behavioral cohort passed against one frozen source identity, recorded in
 [cohort-validation-waves.md](cohort-validation-waves.md). Phases 1, 2, and 4 are closed, and the
@@ -2286,7 +2109,7 @@ selected accelerator plus `linux-cpu` and Phase 4 closed, and both are now close
 `test/unit/Spec.hs`
 
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
-`documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`,
+`documents/development/testing_strategy.md`,
 `documents/engineering/testing.md`, `documents/architecture/configuration_doctrine.md`,
 `documents/operations/cluster_bootstrap_runbook.md`, and this plan
 
@@ -2375,13 +2198,9 @@ path aborts every subsequent command without reconciling.
 
 None.
 
----
-
-## Remaining Work
-
-None.
-
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Done]
+
+**Scope boundary**: Optional successful CUDA skips cannot establish mandatory device behavior. Sprint 6.55 owns explicit GPU execution and fixture cleanup.
 
 **Status**: Done. The `linux-gpu` behavioral cohort closed it, on a host that met the requirement
 below. It requires a CUDA-capable Linux host whose driver satisfies the pinned CUDA
@@ -3380,6 +3199,8 @@ None.
 
 ## Sprint 6.51: Device Memory Is Admitted And Sized, Never Kernel-Bounded [Done]
 
+**Scope boundary**: The authored detection-only mechanism remains the contract; Sprint 6.55 establishes mandatory, non-skipping behavioral sign-off.
+
 **Status**: Done. This phase's selected accelerator is `linux-gpu` plus `linux-cpu`, so the device
 half of Bounded Engine Launch closes here. The host
 half is an already-landed constraint this sprint consumes rather than a prerequisite it waits on:
@@ -3777,6 +3598,68 @@ None.
 
 ---
 
+## Sprint 6.55: Mandatory CUDA Behavioral Gates and Complete Fixture Cleanup [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Device-fixture integration with the foundation runner and fixture cleanup pending; CUDA behavior requires its named hardware.
+**Cohort gate**: Wave R6 — selected `linux-gpu` plus native `linux-cpu`.
+**Blocked by**: Sprint 5.13 code-side closure.
+**Implementation targets**: `test/unit/Spec.hs`, `test/capped-engine-observer/Spec.hs`, `test/integration/Spec.hs`, `src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-engine.yaml`
+**Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/architecture/bounded_inference_memory.md`, `documents/architecture/realness_contract.md`, `documents/engineering/docker_policy.md`
+
+### Objective
+
+Require evidence that every mandatory accelerator check executed and that every started fixture
+completed its owned cleanup.
+
+### Deliverables
+
+- Separate optional machine-independent probes from mandatory accelerator sign-off. Missing GPU
+  access/tooling, allocation-fixture failure, readiness timeout, absent measurement, or a skipped
+  required check yields an unsuccessful accelerator gate with a named reason.
+- Run CUDA allocation, device observation, ceiling readback, and breach behavior inside the real
+  GPU-enabled engine workload through binary-owned orchestration. The ordinary outer control
+  plane remains a launcher; do not infer device access from its successful exit.
+- Retain child identity, process handle, pipe custody, and cleanup action on every fixture path,
+  including readiness failure. Terminate/reap owned children and close owned handles before
+  returning; cleanup failure is a failed result.
+- Consume Sprint 1.44's required-check runner and device-context handoff; this sprint owns the
+  CUDA fixture registrations, assertion-specific results, and cleanup controls, not a later
+  prerequisite for earlier phases' execution receipts. Record the required device checks
+  independently of dynamically discovered/executed results.
+  Missing, duplicate, skipped, mismatched-source, and inconclusive results cannot collapse to
+  aggregate success.
+- Preserve distinct outcomes for admission refusal with no launch, measured runtime breach,
+  unclassified engine failure, and absent terminal result. None substitutes for a required
+  successful real inference case. Report sampled device behavior without a kernel VRAM-bound claim.
+
+### Validation
+
+- The CPU lane covers result aggregation and cleanup through controlled child processes.
+  Independently omit a required result, mark it skipped, duplicate another result, mismatch its
+  source identity, hide tooling, and force readiness timeout; each rejects sign-off. A complete
+  successful inventory is the positive control.
+- Force timeout after a child starts but before readiness, then assert the owned child is terminal
+  and reaped and its pipes closed. Exercise success, exception and cancellation independently.
+- Wave R6 executes actual CUDA allocation/readback and a measured device-memory breach with
+  independent observation, clean typed failure, and a surviving daemon able to serve the next
+  request. Admission refusal does not count as this post-launch breach.
+- Run required real inference successes with adequate resources and retain per-row artifact and
+  assertion evidence inherited from Sprint 4.50. Missing model output, a forged plausible constant,
+  or a disabled engine invocation must fail its success gate.
+- Pass governed build, aggregate lint/unit, focused files/docs/chart/proto/plan checks, and the
+  selected accelerator plus CPU full suites against the same frozen source. Optional CPU probe
+  results explicitly remain outside CUDA sign-off.
+
+### Remaining Work
+
+Implement device-fixture result integration and cleanup, run real CUDA behavior, and retain Wave R6 evidence. Once the
+machine-independent implementation gates pass, pending hardware sign-off is validation-only.
+
+## Remaining Work
+
+Implement Sprints 6.55, pass their governed machine-independent gates, and retain Wave R6's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -3789,10 +3672,9 @@ None.
 - `documents/engineering/testing.md` - canonical testing doctrine, core principles, preflight expectations, unsupported paths, and per-layer validation obligations
 - `documents/development/testing_strategy.md` - operator workflow, matrix selection, and test-entrypoint details
 - `documents/development/haskell_style.md` - hard gates, review guidance, direct enforcement-model pointer, repo-hard-gate versus editor-only guidance split, and fail-fast rule
-- `documents/development/chaos_testing.md` - HA failure and recovery coverage
 - `documents/development/assistant_workflow.md` - canonical repository-level assistant workflow doctrine for governed root entry docs
 - `documents/engineering/implementation_boundaries.md` - ownership matrix, adapter-local versus shared-contract types, instance placement, and module-boundary rules
-- `documents/engineering/portability.md` - portable invariants versus substrate-specific detail, plus explicit current-status and validation sections where target direction still appears
+- `documents/engineering/portability.md` - portable invariants, permanent substrate limits, and validation boundaries; implementation status stays in this plan
 - `documents/engineering/storage_and_state.md` - owner or durability table, failure-mode rules, and cleanup contracts
 - `documents/architecture/runtime_modes.md` - daemon-role split, derived engine-pool handoff, and host-role `.dhall` fields
 - `documents/architecture/engine_pool_routing.md` - invalid-state validation, shared-pool
@@ -3804,7 +3686,7 @@ None.
 - `documents/operations/cluster_bootstrap_runbook.md` - lifecycle warning classification, test
   prerequisites, and cluster reuse rules
 - `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations and cold-start lifecycle timing doctrine
-- `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules
+- `documents/tools/postgresql.md` - PostgreSQL operator readiness and single-instance restart/restore rules
 - `documents/tools/pulsar.md` - request, batch, and result topic ownership for cluster and host daemons
 - `documents/engineering/docker_policy.md` - native Apple Docker boundary, minimal Linux host
   prerequisites, and buildx expectations for nested Compose builds
@@ -3823,15 +3705,15 @@ None.
 - `documents/reference/api_surface.md` - publication metadata that distinguishes cluster daemon and inference executor location
 
 **Cross-references to add:**
-- keep [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) aligned
-  when governed root-document metadata rules or canonical-home posture change
+- keep the frozen [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md)
+  unchanged; ongoing governance requirements live in the standards and owning follow-on work
 - keep [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
   aligned when command-registry ownership, shared workflow-helper closure, or CLI-reference
   derivation rules change
 - keep [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
   aligned when runtime-honesty wording or README-matrix interpretation changes
 - keep [phase-3-platform-services-and-edge-routing.md](phase-3-platform-services-and-edge-routing.md)
-  aligned when HA claims, route assumptions, or active-substrate validation rules change
+  aligned when route assumptions, single-instance recovery, or active-substrate validation rules change
 - keep [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md)
   aligned when lifecycle progress surfaces or long-running convergence doctrine changes
 - keep [system-components.md](system-components.md) aligned when testing-doctrine ownership,
@@ -3839,3 +3721,9 @@ None.
 - keep [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned when any pending
   route-doc, route-lint, assistant-doc, workflow-helper, testing-doc, runtime-language, or
   monitoring-surface or compatibility-shim cleanup item closes
+
+**Remediation documentation obligations:**
+
+- Keep the contracts named by Sprints 6.55 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
+- Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.

@@ -1,21 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done — all 43 sprints are implemented and validated. The selected `apple-silicon`
-and paired native-arm64 `linux-cpu` full suites each pass with exit 0 and 16/16 browser tests.
-The Phase 1 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations)
-binds both results to the tested working-tree patch.
-The prior 40 sprints retain their validation receipts. The exact Apple full suite
-rebuilt source fingerprint `bf22a3ad…` as runtime image
-`sha256:189d25e6b24e7699c87dff3e0c194e1bcd3b96a42b158e2b895dd3ca2a7e2400` and exited 0. The paired
-Linux launcher was then rebuilt from the current worktree as
-`sha256:4f46299ee0b45b9c3a5ecc2b7543d8174c5323e57ea6eac7b7355a5edcee155f`; its complete
-`./bootstrap/linux-cpu.sh test` exited 0 after aggregate lint, every Haskell and web unit gate,
-full live integration, and 16/16 routed Playwright cases including the twelve-model browser
-matrix. Both harnesses completed their config transaction once, tore Kind down, and left absent
-idle clusters with zero live nodes and pods and no backup file. Phase 0 is closed, so the
-corrected host-memory ledger this phase's build-memory sprints implement is settled doctrine.
-Superseded surfaces are listed in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+**Status**: Active — Sprints 1.44–1.46 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
@@ -26,100 +11,15 @@ Superseded surfaces are listed in
 
 ## Phase Status
 
-Sprints 1.1 through 1.43 are Done. The governed Apple build, all seven native-artifact
-materializations, and both selected full suites pass. Each full suite includes aggregate lint,
-all six Haskell unit components, 86 web unit tests, live integration, and 16 browser tests.
-Both harnesses complete teardown and exit 0. Current full-suite image identities are
-`sha256:e9d21c97b45ba02095162830c7a16efc4e40428bd6bc402c81656dea31ce08b4` for the Apple control plane
-and `sha256:573b3b4645be63293a627a85851f7e16b34296c4b6787bef817fe4747d2a14b7` for native-arm64 Linux.
-The Phase 1 [attestation](cohort-validation-waves.md#recorded-attestations) records their source identity.
-The closed foundation work establishes the current repository scaffold, the one-binary role
-topology, the typed runtime-config contract, the baked Linux launcher image, the governed
-root-document posture, host-manifest materialization, and the native-only Apple Docker boundary.
+Sprints 1.1–1.43 retain their closed headings and only their established scope. Launcher freshness, measured availability, and lease authority require implementation work. The Linux bootstrap enters an existing image without proving it contains the checkout; the Dockerfile hand-renders its host Dhall seed; unreadable cgroup usage can become optimistic availability; and the generic lease API does not establish the advertised closure-containment guarantee.
 
-Sprint 1.40 closed on 2026-08-28 after the governed Apple build, aggregate lint, complete Haskell and
-web unit gates, and every standalone repository lint passed. Sprint 1.38 is GREEN
-through the governed Apple build, the whole aggregate lint, the full unit suite, standalone `lint
-files|docs|chart|proto|plan`, `docs check`, repo-wide diff check, and the complete seven-artifact
-Apple materializer. The Darwin build-memory measurement, both specialized Darwin validators, the
-full current-source Apple suite, and the rebuilt source-matched `linux-cpu` cohort all passed. The
-chain this paragraph used to describe — the sealed run's `PYTHONHOME` naming Poetry's own
-environment (Sprint 1.27), then the JavaCPP cross-jar the loader-closure producer could not
-resolve (Sprint 1.28) — is closed. The routed `linux-cpu` image build completes end to end,
-emitting all five linux-native engine artifacts. The closing Apple cohort completed every
-executable catalog row or its exact typed capacity refusal, and the closing Linux cohort completed
-its supported rows or exact 4 GiB pod-memory refusal.
+The existing Phase 1 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-**No repo-owned native source.** Repository-owned native implementation is banned in every
-container, including native source embedded in Haskell string literals and compiled with Clang.
-Sprint 1.20 deletes that topology and uses upstream MLX GPU execution plus coremltools device
-observation, with every closed provisioning and installed-smoke operation supervised through the
-all-Haskell bounded self-exec kernel. A candidate is fully hydrated, relocated, authoritatively
-smoke-validated, assigned exact provenance and an actual payload-tree digest, and activated through
-the fsynced sibling transaction. Evidence recorded against the removed source-compiling bridge is
-historical only and is not reusable for this correction.
-
-**Bounded-HTTP download kernel.** [Sprint 1.17](#sprint-117-bounded-http-download-kernel-done) owns
-the total, typed `DownloadOutcome` ADT, the opaque `RetryAfterSeconds` newtype, the pure
-`classifyDownloadStatus`, and the descriptive `User-Agent` plus bounded `responseTimeout` on the
-upstream fetch. That is the substrate the Sprint 4.29 consumer fold and the Sprint 6.40
-`unboundedHttpViolations` lint build on. The managed-state-transition kernels (Sprint 1.16) and this
-bounded-HTTP application (Sprint 1.17) are closed on the selected accelerator plus `linux-cpu`.
-
-**Real Apple native engines.** Sprint 1.14 established the headless Apple Metal/Core ML
-materialization lane but populated it with deterministic validation-wrapper runners that loaded no
-model. Sprint 1.15 replaced those wrapper payloads with real Apple native engines (Core ML, MLX,
-llama.cpp/whisper.cpp Metal, CTranslate2, ONNX, Audiveris) on the existing runner contract; the
-scaffold, one-binary role topology, and host-manifest contracts from Sprints 1.1–1.14 stand
-unchanged. The removed validation wrappers are tracked in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-
-**Apple Docker boundary.** Sprint 1.12 removes the Colima-oriented Apple prerequisite path and
-validates the already selected Docker context plus daemon architecture before Docker-backed Apple
-work. The supported Apple path uses an already selected native arm64 Docker daemon, must not create
-or switch Docker contexts, must not create a Colima VM, and must not use cross-architecture
-emulation. The Linux CPU path supports native Linux amd64 and native Linux arm64 with no non-native
-compatibility lane. The supported Apple build contract keeps the host free of Xcode and moves
-Metal/Core ML materialization to typed engine-artifact manifests plus public upstream MLX/Core ML
-package APIs.
-
-**Configuration and launcher substrate.** Sprint 1.11 removes `INFERNIX_BUILD_ROOT`,
-`INFERNIX_DATA_ROOT`, the `INFERNIX_COMPOSE_SUBSTRATE` / `INFERNIX_COMPOSE_DEMO_UI` runtime
-fallbacks, `INFERNIX_BOOTSTRAP_YES`, the `bootstrap::prepend_path` helper, and the host-side
-`.build` / `chart/charts` bind mounts. The Linux launcher selects the GPU image through the same
-single `compose.yaml` service using a one-shot `LAUNCHER_IMAGE=infernix-linux-gpu:local` Compose
-selector and does not forward the host-repo override. It introduces the `HostConfig` decoder type
-(reflected schema; no tracked `.dhall`) as the Haskell record. The Linux bootstrap entrypoints use
-the `PATH=/usr/bin:/bin` + `BASH_SOURCE` + `/etc/passwd` + hardcoded absolute-path discovery
-convention, and the Linux launcher image bakes the Helm dependency archive cache at
-`/opt/infernix/chart/charts/` with `/workspace/chart/charts` linked to that image-local cache for
-Helm compatibility. The Apple cohort closed on the selected accelerator plus `linux-cpu` and the CUDA
-Linux cohort on the selected accelerator plus `linux-cpu`.
-
-**Tart removal.** Sprint 1.14 removed the Sprint 1.13 Tart implementation (`hostTart`, `AppleTart`,
-and Tart argument builders) from the host-tool schema and retargeted the retained
-`infernix internal materialize-metal-engines` command to typed engine-artifact manifest
-materialization. Sprint 1.14 stands only for its Tart-removal and manifest/install-root scope;
-every bridge/source/Clang-dependent claim it once carried is superseded by Sprint 1.20.
+Sprint 1.44 is ready to begin. Remediation code-side closure is incomplete. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R1 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
-The repo matches the supported Phase 1 ownership contract: the control plane has a
-Haskell command registry, the governed root docs point at canonical
-`documents/` topics with explicit metadata, and the Linux launcher uses a baked image snapshot.
-Lifecycle and validation commands
-validate the initialized repo-root `./infernix.dhall` through binary-owned preflight and fail fast
-naming `infernix init` when it is absent, while explicit internal helper invocations remain
-available for direct inspection.
-The Linux substrate Dockerfile also materializes a build-arg-selected copy inside the image
-overlay during image build, supported Compose runs keep the Linux build root in the image
-overlay rather than bind-mounting the host `./.build/` tree, and the Helm chart archive cache
-lives in the image overlay at `/opt/infernix/chart/charts/`. Sprint 1.12 removes the Colima tool
-field from the `HostConfig` decoder type and the matching Haskell records, removes `AppleColima`
-planning and profile start/stop/restart behavior from `src/Infernix/HostPrereqs.hs`, and adds
-unit-level Docker-boundary coverage for native arm64 versus non-native daemon architectures.
-The Sprint 1.13 Tart helper, `hostTart` field, and
-`AppleTart` prerequisite are no longer part of the current host-tool schema or prerequisite path.
+Existing command-registry, host-manifest, native-only bootstrap, and bounded-process implementations remain the baseline. Sprint 1.44 owns source/image binding, clean launcher creation, binary-generated seed configuration, and the explicit Apple host-engine workflow. Sprint 1.45 owns fail-closed availability; Sprint 1.46 owns domain authority and precise lifetime proofs. These are proposed implementation changes, not completed fixes.
 
 ## Substrate Foundation
 
@@ -201,6 +101,8 @@ None.
 
 ## Sprint 1.3: Dual Operator Execution Contexts [Done]
 
+**Scope boundary**: Launcher freshness and the explicit Apple host-engine operator sequence require Sprint 1.44; this closure does not prove either.
+
 **Status**: Done
 **Implementation**: `compose.yaml`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`
@@ -245,6 +147,8 @@ None.
 ---
 
 ## Sprint 1.4: Build Artifact Isolation and Web Build Generation Path [Done]
+
+**Scope boundary**: Source/image/bundle identity validation is strengthened by Sprint 1.44; a built artifact alone does not bind a test result to this checkout.
 
 **Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `web/`, `test/haskell-style/Spec.hs`, `test/integration/Spec.hs`
@@ -534,6 +438,8 @@ None.
 
 ## Sprint 1.11: Host Manifest Materialization [Done]
 
+**Scope boundary**: The handwritten Dockerfile host seed is outside this closure's proven generator boundary; Sprint 1.44 removes it.
+
 **Status**: Done
 **Implementation**: `src/Infernix/Substrate.hs` (extended), `src/Infernix/HostConfig.hs` (new; the `HostConfig` decoder type is the reflected schema — no tracked `.dhall`), `src/Infernix/HostTools.hs` (new helper module), `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Webapp.hs`, every `bootstrap/*.sh`, `compose.yaml`, `docker/Dockerfile`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`, `documents/engineering/portability.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
@@ -673,9 +579,9 @@ None.
 
 This sprint records the superseded implementation. It is no longer the supported Apple
 materialization target because Tart VM startup can depend on macOS Virtualization.framework
-host-key state and an unlocked user login keychain. Sprint 1.14 owns the replacement path and
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) records the completed removal of
-`hostTart`, `AppleTart`, and the Tart-backed `materialize-metal-engines` flow.
+host-key state and an unlocked user login keychain. Sprint 1.14 owns the replacement path.
+`hostTart`, `AppleTart`, and the Tart-backed flow are absent and therefore have no pending row in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ### Objective
 
@@ -780,6 +686,8 @@ None.
 ---
 
 ## Sprint 1.16: Evidence and Command Kernels [Done]
+
+**Scope boundary**: Generic rank-2 IO lease callbacks do not prove closure, existential, or child-thread containment; Sprint 1.46 owns the domain authority correction.
 
 **Status**: Done — the Managed-State-Transition Doctrine reopen kernels
 (`Infernix.Evidence.Readiness`, `Infernix.Evidence.Lease`, `Infernix.Cluster.Subprocess`) are
@@ -2172,6 +2080,8 @@ subscribed, and died with `out of memory` on the first routed result.
 
 ## Sprint 1.31: Measure The Same Availability On Both Lanes [Done]
 
+**Scope boundary**: Unreadable cgroup usage must not become observed availability; Sprint 1.45 owns that refusal path.
+
 **Status**: Done — the Darwin availability observation counts the same quantity the Linux lane reads
 from `MemAvailable`, and both lanes passed their closing cohort.
 **Implementation**: `src/Infernix/HostClaimants.hs`, `test/unit/Spec.hs`
@@ -2722,6 +2632,8 @@ yet eliminated:
 
 ## Sprint 1.40: Build-Memory and Capability Ledger Closure [Done]
 
+**Scope boundary**: The domain lease proof and cgroup observation defects are follow-on scope in Sprints 1.45–1.46, not discharged by this record.
+
 **Status**: Done — implemented and validated on 2026-08-28. The governed Apple build passed; the
 aggregate lint passed after rebuilding every declared source-distribution test component; the unit
 aggregate passed 7 positive and 94 negative compile-time capability fixtures, all Haskell suites,
@@ -2892,6 +2804,161 @@ authority.
 
 None.
 
+## Sprint 1.44: Bind Launcher Validation to Source and Binary-Generated Configuration [Planned]
+
+**Status**: Planned
+**Code-side closure**: Not implemented; source-binding, seed generation, bootstrap, and regression gates remain.
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Implementation targets**: `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `bootstrap/apple-silicon.sh`, `docker/Dockerfile`, `compose.yaml`, `src/Infernix/HostConfig.hs`, `src/Infernix/ProjectInit.hs`, `src/Infernix/Cluster.hs`, `test/unit/Spec.hs`
+**Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/architecture/configuration_doctrine.md`, `documents/operations/apple_silicon_runbook.md`
+
+### Objective
+
+Make a validation result identify and exercise the requested checkout, with a usable clean bootstrap
+and one binary-owned Dhall generation boundary.
+
+### Deliverables
+
+- Bind launcher reuse to a content digest of all implementation, tests, schemas, chart, build inputs,
+  and governed documentation inputs, including dirty and relevant untracked changes. Record the
+  inventory, digest algorithm/version, immutable image identity, binary identity, runtime lane,
+  configuration/catalog digest, check inventory, results, and skips in structured run evidence.
+- Establish the reusable validation runner before dependent phases: a closed required-check
+  inventory, explicit executed/skipped/not-applicable outcomes, retained artifact consistency, and
+  failure on a skipped or absent mandatory assertion. Carry the expected checkout identity from
+  a trusted build/launcher handoff independently of the image's self-reported snapshot; neither
+  mutable tags nor an image hashing itself can define the requested source.
+- Give the binary ownership of typed suite-context selection, including dispatch to an explicitly
+  device-capable validation context when the selected lane requires one. Keep the ordinary outer
+  launcher free of a direct NVIDIA requirement. Machine-independent tests cover context selection
+  and missing-context refusal; this does not claim device execution on the Apple sign-off lane.
+- Rebuild a missing or mismatched launcher before validation, or refuse with a named mismatch;
+  tag existence alone cannot authorize reuse. Bind the observed pre-run and post-run source state
+  to the same execution, rejecting changes during the run instead of attaching a fresh hash to an
+  old result. The in-image snapshot and the host checkout must be independently compared.
+- Keep shell within its permitted prerequisite/build boundary. Establish a fixed, bounded seed
+  build that can produce the first binary without a preexisting generated host manifest; that
+  binary renders the host seed from its decoder-owned defaults. Remove shell-rendered Dhall and
+  the unit expectation that blesses the Dockerfile's handwritten record.
+- Make the documented Linux clean-start sequence create/verify its launcher before `up` or
+  `test` enters it. Keep initialization explicit at the supported wrapper/binary boundary.
+- Document and exercise the existing Apple `run-daemon`/host-engine step with a generated engine
+  machine identity, a ready subscription, and a real request after cluster startup. Cluster
+  readiness alone is not inference readiness.
+- Preserve `linux-gpu` bootstrap prerequisites and image selection through machine-independent
+  coverage; this phase's hardware sign-off does not assert CUDA execution.
+
+### Validation
+
+- Through the governed bootstrap and closed CLI gates, pass build, `infernix test lint`,
+  `infernix test unit`, focused `lint files|docs|chart|proto|plan`, and `docs check`.
+- In isolated checkout/image fixtures, retain an old image then introduce a syntax-breaking source
+  edit, a changed test assertion, and a changed generated-contract input separately. Each must
+  rebuild and expose the change or fail the mismatch gate before success. A matching unchanged
+  snapshot is the positive reuse control; retagging the old image and changing files mid-run are
+  independent negative controls.
+- Missing or altered receipt artifacts, an omitted required check, a skip reported as success,
+  and a changed expected-source handoff fail independently. A complete retained positive receipt
+  is accepted only for the matching actual execution. These runner controls are available to
+  dependent phases; later fixture-specific regressions do not own the foundation's gate.
+- A clean bootstrap without a launcher or host manifest reaches a binary-generated decodable seed;
+  a missing required seed input fails before later build/lifecycle work. Compare the generated
+  payload with the decoder/default producer, not with a copied expected Dockerfile string.
+- On Apple, execute the published operator sequence including the host engine and receive real
+  output. Omitting the engine produces an explicit unavailable/not-ready condition, never an
+  inference-success result.
+- Wave R1 retains the selected accelerator and CPU full-suite outcomes against the same frozen
+  implementation. A self-authored receipt or exit zero without executed-check accounting is
+  insufficient; protection from an actor rewriting both code and validators needs an independently
+  controlled execution/attestation boundary and is not claimed by a local hash.
+
+### Remaining Work
+
+Implement these boundaries and controls; retain Wave R1 results. No code or full-suite run for
+this scope is supplied by the documentation refactor.
+
+## Sprint 1.45: Refuse Unobservable Cgroup Availability [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Not implemented.
+**Cohort gate**: Wave R1.
+**Blocked by**: Sprint 1.44 code-side closure; accelerator scheduling is not a prerequisite.
+**Implementation targets**: `src/Infernix/Runtime/Enforcer/Internal.hs`, `src/Infernix/HostClaimants.hs`, `test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/bounded_host_memory.md`, `documents/architecture/bounded_inference_memory.md`, `documents/engineering/host_tools_manifest.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Require a successful usage observation before available cgroup memory can admit work.
+
+### Deliverables
+
+- Remove the fallback that treats unreadable `memory.current` as the entire cgroup limit being
+  free. Return a typed observation refusal naming the failed operand.
+- Validate finite limit and usage observations, overflow, and the host/cgroup availability
+  combination; distinguish a legitimate unlimited envelope from unavailable measurement.
+- Propagate failure through claimant admission before any engine/toolchain launch, preserving the
+  doctrine's distinction between installed capacity and presently available memory.
+
+### Validation
+
+- Unit fixtures independently cover missing, denied, malformed, overflowing, and contradictory
+  usage; each refuses rather than returning full capacity. A valid partially occupied cgroup is
+  the positive subtraction control, and an exhausted valid cgroup yields no available admission.
+- The native CPU lane proves the production observer/refusal path without fabricating a memory
+  observation or launching work after refusal. Run the common code-side gates and Wave R1.
+
+### Remaining Work
+
+Implement typed refusal and independent regressions; retain the phase's selected pair.
+
+## Sprint 1.46: Domain-Owned Lease Authority and Precise Lifetime Proofs [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Not implemented.
+**Cohort gate**: Wave R1.
+**Blocked by**: Sprint 1.45 code-side closure.
+**Implementation targets**: `src/Infernix/Evidence/Lease.hs`, `src/Infernix/Cluster/LifecycleLock.hs`, `src/Infernix/Cluster.hs`, `test/compile-fail/`, `test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/development/haskell_style.md`, `documents/development/assistant_workflow.md`
+
+### Objective
+
+Make revocable authority originate at the domain operation that holds it, and claim only the
+lifetime guarantees proved by the effect boundary.
+
+### Deliverables
+
+- Remove public generic acquisition/payload extraction paths that allow capturing a lock marker
+  after the underlying lock is released and reminting another lease from it.
+- Keep protected effects and revocable tokens behind domain-owned runners. Where containment is
+  a compile-time requirement, expose a closed indexed program interpreted entirely inside the
+  held region; a rank-2 callback returning arbitrary `IO` alone is insufficient.
+- Inventory consumers of lease-bearing values and document separate type, runtime-liveness,
+  exclusive-ownership, and exception-cleanup obligations. Kernel observations remain runtime
+  facts, not consequences of a phantom index.
+- Retire the existing generic authority hatch in the cleanup ledger only after all callers use
+  the protected boundary.
+
+### Validation
+
+- Add independent external negative-compilation fixtures for payload reminting, nested/deferred
+  `IO` capture, mutable-reference/existential capture, child-thread escape, region substitution,
+  and reused linear authority. Pair each with a valid compile control and check the intended
+  refusal so an unrelated import or syntax error cannot count as proof.
+- Runtime tests exercise normal return, synchronous failure, asynchronous cancellation, and
+  contention while effects remain inside the real lock. A deliberately retained ordinary value
+  cannot authorize a protected effect after release.
+- Run the common code-side gates and Wave R1. Evidence of no production exploit does not discharge
+  a claimed but unproved lifetime property.
+
+### Remaining Work
+
+Implement the domain boundary and its proofs, review all consumers, and retain the selected
+accelerator plus CPU evidence.
+
+## Remaining Work
+
+Implement Sprints 1.44–1.46, pass their governed machine-independent gates, and retain Wave R1's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -2919,3 +2986,9 @@ None.
 - keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned
   when substrate ids, serialized `runtimeMode` identifiers, build-root rules, launcher doctrine,
   or command-registry ownership change
+
+**Remediation documentation obligations:**
+
+- Keep the contracts named by Sprints 1.44–1.46 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
+- Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.

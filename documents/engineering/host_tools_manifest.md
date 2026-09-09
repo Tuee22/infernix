@@ -225,11 +225,12 @@ the operator's generated manifest is written by `infernix init` to `./infernix-h
 (gitignored). There is no packaged `.dhall` schema in the repo or launcher image. `hostArchitecture`
 stores the normalized native host architecture (`amd64` or `arm64`) used by the `linux-cpu`
 publication selector. `commandPolicies` has exactly the 36 fields shown above; test-only subprocess
-probes are deliberately not represented in operator configuration. The Linux launcher Dockerfile
-embeds that complete default record in its generated host payload. Unit coverage extracts the
-literal Dockerfile payload, substitutes only the build-time native architecture value, strictly
-decodes it through `HostConfig`, and compares the full result with the typed Linux
-outer-container default so a missing field or default-policy drift fails before image build.
+probes are deliberately not represented in operator configuration. The Linux launcher's host
+payload is emitted by the binary from that complete default record. Its fixed bounded seed build
+does not depend on a host manifest that only the resulting binary can generate. Dockerfile and
+bootstrap shell contain no handwritten Dhall record or command-policy copy. Tests execute the
+producer, strictly decode its actual output through `HostConfig`, and compare semantic defaults;
+extracting a handwritten Dockerfile string would verify only that copy's shape.
 
 `memory` is the only record in this manifest that is **measured rather than declared**. `infernix
 init` reads `MemTotal` from `/proc/meminfo` on Linux and intersects it with the cgroup v2 maximum in
@@ -244,6 +245,9 @@ What these fields measure is the machine's **capacity**, which is not the memory
 moment a build starts; availability is observed separately at the point of use, and admission
 against it is owned by
 [../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md).
+For a finite cgroup, this availability observation requires both its maximum and current usage.
+Unreadable or malformed usage is a typed refusal, never the maximum presented as free memory;
+an observed unlimited envelope is distinct from an unavailable measurement.
 Both fields feed
 [../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md): the toolchain
 account is a share of `effectiveMemoryMib`, and `infernix init` divides it by a job count into the

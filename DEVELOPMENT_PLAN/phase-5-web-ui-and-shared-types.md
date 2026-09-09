@@ -1,9 +1,7 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Done. Sprints 5.1 through 5.11 are closed and no defect is known in this phase's own
-surface: the PureScript demo UI, the generated contract path, the clustered hosting rule, the
-container-owned routed executor, the process-environment retirement, and the typed inference errors
-carried through the browser contracts.
+**Status**: Active — Sprints 5.13 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md),
 [system-components.md](system-components.md),
 [cohort-validation-waves.md](cohort-validation-waves.md)
@@ -14,38 +12,15 @@ carried through the browser contracts.
 
 ## Phase Status
 
-Phase 5's original PureScript demo UI, Haskell-owned browser-contract source, generated contract
-path under `web/src/Generated/`, clustered demo hosting rule, container-owned routed Playwright
-executor, and Phase 5.9 process-environment retirement are closed for Sprints 5.1-5.10. Sprint
-5.11 is closed for typed inference errors in the browser contract and demo UI. Phase 7 extends the
-PureScript demo surface with the durable-context Chat, Artifacts, and Model Picker views; the
-supported manual-inference path moves from a direct HTTP request/poll cycle to WebSocket-delivered
-`ConversationStatePatch` deltas.
+Sprints 5.1–5.12 retain their closed headings and only their established scope. Static file containment and browser evidence require repair. Demo/Api.hs joins decoded paths beneath web/dist without enforcing containment; backend exposure is demonstrated by source inspection, while the deployed Gateway's handling of the payload needs direct verification. A retained Phase 5 accelerator attestation is missing.
 
-Sprint 5.11 closes the shared type boundary for runtime failures code-side: failed inference
-results carry closed `InferenceError` values through the Haskell browser contracts, generated
-PureScript types, WebSocket patches, and Chat rendering. `ModelMemoryLimitExceeded` is rendered from
-explicit `requiredMib` and `availableMib` fields, not from a generic string or successful inline
-output. the selected accelerator's `linux-cpu` and selected `linux-gpu` routed full-suite proofs cover the live
-browser capacity path.
+The missing Phase 5 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
+
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R5 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
-The repository ships the supported PureScript demo path: `web/src/Main.purs` and the handwritten
-PureScript modules under `web/src/Infernix/Web/` own the browser SPA, `web/test/Main.purs` owns
-the frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browser contract,
-and `npm --prefix web run build` regenerates generated contracts and bundles the app into
-`web/dist/app.js`. The generated browser contracts and SPA state still expose the active
-substrate through `runtimeMode` fields. The code can honor `demo_ui = false`, and the supported
-materialization path now emits that shape with `--demo-ui false`. The browser SPA now also exposes
-`daemonLocation` and `inferenceDispatchMode` (`web/src/Main.purs`) alongside `runtimeMode`; the
-published platform state serialized by the Haskell publication path (`src/Infernix/Models.hs`)
-additionally carries `inferenceExecutorLocation`, which the integration suite asserts
-(`test/integration/Spec.hs`). The routed Playwright suite (`web/playwright/inference.spec.js`)
-currently asserts only `publication.runtimeMode` on the `/api/publication` payload, and the
-clustered demo app closes around Apple host inference execution
-without claiming cluster-resident Apple inference parity. Phase 6 Sprint 6.25 distinguishes the
-always-present cluster daemon from the Apple host inference executor.
+The PureScript SPA, Haskell-generated browser contracts, and routed Playwright harness exist. Sprint 5.13 owns backend and Gateway containment tests plus a browser bundle tied to the tested checkout and launcher. An encoded-path rejection by a Gateway alone cannot establish that the backend file handler is safe.
 
 ## Substrate-Driven Demo Catalog Contract
 
@@ -59,6 +34,8 @@ always-present cluster daemon from the Apple host inference executor.
   the `infernix` Webapp role reads the active `.dhall` and owns substrate-appropriate dispatch
 
 ## Sprint 5.1: Demo Web Application Host (PureScript) [Done]
+
+**Scope boundary**: Static-root containment and source-bound browser evidence require Sprint 5.13; routed bundle loading alone does not prove safe file reads.
 
 **Status**: Done
 **Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/`, `web/package.json`, `web/spago.yaml`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `src/Infernix/Demo/Api.hs`
@@ -490,19 +467,6 @@ None.
 
 ---
 
-## Remaining Work
-
-Sprint 5.11 is closed for typed inference errors in the browser contracts and demo UI by
-the selected accelerator's `linux-cpu` plus selected `linux-gpu` routed full-suite proof.
-Sprints 5.1-5.10 are `Done`; Apple cohort validation is closed in
-[Waves A/A.2](cohort-validation-waves.md) and the CUDA Linux `linux-cpu` and `linux-gpu` gates pass.
-
-Sprint 5.12's Managed-State-Transition Doctrine readiness-contract reopen is closed by
-apple-silicon plus linux-cpu full-suite `test all` clean. No
-remaining work exists for this phase.
-
----
-
 ## Sprint 5.12: Shared Readiness Contract [Done]
 
 **Status**: Done — implemented and validated.
@@ -555,6 +519,55 @@ None.
 
 ---
 
+## Sprint 5.13: Static Asset Containment and Source-Bound Browser Proof [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Backend containment and browser baseline regressions pending.
+**Cohort gate**: Wave R5 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: Sprint 4.50 code-side closure.
+**Implementation targets**: `src/Infernix/Demo/Api.hs`, `web/playwright/inference.spec.js`, `web/playwright.config.js`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Serve only permitted public assets and prove the tested browser bundle belongs to the source
+being validated.
+
+### Deliverables
+
+- Reject absolute, traversal, invalidly encoded, and out-of-root static paths before reading files.
+  Enforce containment against symlinks and path substitution at the actual read boundary, not
+  merely a lexical string-prefix comparison.
+- Define one decoding/canonicalization contract for the backend and validate the configured
+  Gateway's forwarding/normalization behavior separately.
+- Extend source-binding from the launcher to the generated browser contracts and served bundle.
+  Reconcile the rendered route inventory and active configuration with the browser fixture.
+- Recover the missing Phase 5 retained attestation or supply new selected-pair evidence; a bundle
+  loading or a previous closed sprint declaration is not that record.
+
+### Validation
+
+- Create owned public and outside-root sentinel files in isolated fixture directories. Test
+  encoded absolute paths, dot segments, encoded separators, malformed/double encoding,
+  lookalike root prefixes, symlinks and substitution races directly at the backend and through
+  the real Gateway. The outside sentinel is never returned; a normal public asset is the
+  positive control. Record actual Gateway outcomes without assuming interception.
+- Change the SPA and generated-contract inputs while retaining an old bundle/image; the gate
+  exposes the new content or refuses source mismatch. DOM assertions must inspect the served
+  application output, not only metadata supplied by the harness.
+- Run governed build, aggregate lint/unit and focused docs/plan gates, then Wave R5 with routed
+  browser checks and retained source/bundle/image identities. Required inference-success cases
+  inherit Sprint 4.50's behavioral oracle and cannot pass as admission refusals.
+
+### Remaining Work
+
+Implement containment, establish the source-bound browser baseline, and recover or rerun the
+missing phase evidence. Hardware scheduling alone does not block subsequent implementation.
+
+## Remaining Work
+
+Implement Sprints 5.13, pass their governed machine-independent gates, and retain Wave R5's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -571,3 +584,9 @@ None.
 **Cross-references to add:**
 - keep [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
   aligned when UI request shapes, generated demo-config fields, or routed API assumptions change
+
+**Remediation documentation obligations:**
+
+- Keep the contracts named by Sprints 5.13 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
+- Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.

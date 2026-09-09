@@ -16,17 +16,21 @@
 
 ## Durable Versus Derived
 
-Durable state lives only in MinIO and Pulsar. Everything else is derived and must be rebuildable
-from them without operator intervention:
+Application conversation history and binary artifact authority live in Pulsar and MinIO. Daemon
+projections and caches are derived from those services; operator intent, lifecycle authority, and
+explicit local result records retain the distinct ownership and durability described in the table
+below. Calling a daemon stateless does not make every repo-local file disposable:
 
 - Pulsar carries every typed event stream: the conversation log, contexts metadata, drafts, the
   inference request / batch / result family, and the model-bootstrap topics.
 - MinIO holds binary blobs in three buckets — model weights, immutable engine payloads, and
   user uploads plus engine-generated artifacts.
 - The engine model cache is derived: a per-machine cache rebuilt from the models bucket, purgeable
-  at any time.
-- Kubernetes workloads hold no PersistentVolumeClaim. Pulsar subscription cursors are broker-side
-  durable, so a restarted daemon resumes from them rather than from local state.
+  only under the owner's mutation authority when no active execution uses the selected generation.
+- Infernix daemon workloads hold no PersistentVolumeClaim; durable platform services do. Pulsar
+  subscription cursors are broker-side durable but do not contain a dispatcher projection. A restarted
+  dispatcher reconstructs complete queued/in-flight state from retained history or a validated
+  checkpoint plus suffix before resuming the existing cursor.
 
 ## Owner And Durability Table
 
@@ -42,7 +46,7 @@ from them without operator intervention:
 | Publication state and generated ConfigMap mirrors | cluster lifecycle and demo activation | `./.data/runtime/publication.json`, `./.data/runtime/configmaps/infernix-demo-config/` | derived but user-visible | regenerate from `cluster up`, `cluster down`, or the active generated demo config |
 | Repo-local kubeconfig and chosen edge-port record | cluster lifecycle | `./.build/infernix.kubeconfig`, `./.data/runtime/infernix.kubeconfig`, `./.data/runtime/edge-port.json` | derived | recreate from the supported control-plane lifecycle; Kind and `nvkind` create or delete use transient scratch kubeconfig state under system temp and may remove stale repo-local `*.lock` artifacts automatically |
 | Build roots and staged generated demo config | build or cluster lifecycle | `./.build/`, `/opt/build/` | derived | rebuild from source and the active runtime mode |
-| Runtime model cache | Haskell service runtime | `./.data/runtime/model-cache/...` | derived | rebuild from durable manifests and artifacts |
+| Runtime model cache | owning engine machine | Linux `/model-cache/<modelId>/`; Apple `./.data/runtime/model-cache/...` | derived | hydrate and verify the complete selected generation from durable MinIO artifacts; local manifests describe real payloads and are not a durable source |
 | Python virtualenvs | bounded Poetry provisioning | shared `python/.venv/`; prepared `python/engines/<engine>/.venv/` | derived | recreate the shared quality environment and the canonical substrate-specific per-engine plan; runtime never repairs on request |
 | Playwright validation artifacts | Playwright validation tooling | Playwright default output directories such as `test-results/` and `playwright-report/` under the active runner working tree when emitted; compose-run artifacts are container-local unless explicitly bind-mounted | derived | recreate by rerunning the routed E2E validation lane |
 
@@ -73,6 +77,15 @@ from them without operator intervention:
   **disk**-state property only. Model memory is handled by the typed runtime admission policy and
   can reject a request even when the weights are cache-resident on disk (canonical home:
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)).
+- Cache inspection and mutation target the same owning engine and generation used by inference.
+  Replacement/eviction cannot race active reads, partial hydration cannot publish readiness, and
+  measured bytes/files are distinct from unavailable observations. The webapp's scratch directory
+  never represents fleet-wide cache state; see [model_lifecycle.md](model_lifecycle.md).
+- Conversation KV state is also derived, but a verified history hash is not a tensor cache. Engines
+  reconstruct prior context from retained history, verify the requested offset/hash, and reuse only
+  an actual compatible native state handle when supported. Retained resident state remains charged
+  to the inference authority and invalidates on failure/cancel/restart; see
+  [../architecture/durable_context_design.md](../architecture/durable_context_design.md).
 - Build roots and frontend bundles are disposable because the supported build and web workflows
   regenerate them from source.
 - Durable cluster-lifecycle `state` persistence replaces its `Show`/`Read` encoding with a
@@ -85,6 +98,13 @@ from them without operator intervention:
   scale deployments back). The cluster records its owner, carries a first-class mutating position,
   persists fail-closed, and reconciles on the next start; reservation and teardown are
   owner-atomic.
+- Lifecycle authority is minted by the domain that actually holds the protected resource, and
+  destructive effects revalidate the same owned condition at use. A rank-2 tag alone does not
+  prohibit a returned `IO` closure from retaining evidence: the indexed effect boundary and runtime
+  release/revalidation obligations follow
+  [Managed State Transitions](../architecture/managed_state_transitions.md). An orphaned
+  `.harness-backup` without a reservation identity is preserved with a refusal, not automatically
+  restored under an assumed owner.
 
 ## Cleanup Rules
 
@@ -110,6 +130,10 @@ from them without operator intervention:
   publication path.
 - `infernix cluster status` reports the build or data roots that hold the active
   derived state.
+- Cache roundtrips verify actual artifacts and model execution before/after eviction and rebuild;
+  lifecycle negatives prove no mutation after lease release or without a live owner. Dispatcher
+  restart tests preserve the existing cursor and prove an acknowledged queued prompt survives
+  through reconstruction, rather than testing only a fresh subscription.
 
 ## Cross-References
 

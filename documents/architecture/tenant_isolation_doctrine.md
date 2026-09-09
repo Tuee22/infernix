@@ -77,10 +77,18 @@ Generated artifacts follow the same rule. A generated-object target is derived f
 `sub` and `contextId` before dispatch; Python adapters and native process runners consume only that
 target; and the result bridge rejects a raw or cross-user generated object ref.
 
+Static bundle requests are a separate filesystem trust boundary, not an object-prefix operation.
+They obey [web_ui_architecture.md](web_ui_architecture.md#static-asset-boundary) and cannot reach
+runtime configuration, credentials, or user content outside the bundle root. Admin status never
+bypasses per-user object scope or filesystem containment. Preview and full-download intents repeat
+the same authorization before reading any bytes.
+
 ## Validation
 
 - integration and e2e prove a user's JWT receives HTTP 403 on another user's
 object prefix (list / get / put / delete) and cannot read another user's chat context.
+- the same cross-user negatives apply to bounded previews, full downloads, and generated outputs;
+  direct backend and routed static containment tests independently exclude outside-root reads.
 
 ## Cross-References
 

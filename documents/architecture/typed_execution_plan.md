@@ -161,6 +161,12 @@ quantities are derived from the artifact and the execution shape rather than aut
 derivation and its refusals owned by
 [bounded_inference_memory.md](bounded_inference_memory.md).
 
+Derivation covers the complete checkpoint inventory on both remote and local-cache paths; a warm
+cache cannot replace a multi-shard requirement with its first file. Unsupported or incomplete
+inventories refuse before admission. Retained engine KV/weight state and reconstruction buffers
+participate in the physical-resource account. One active inference does not make prior resident
+cache state disappear.
+
 ## Compile And Refinement Boundary
 
 Raw decoded records are confined to hidden configuration modules. Coordinator routing consumes a
@@ -271,6 +277,12 @@ command overrides are absent. The execution shape the cache term was derived fro
 that same executable value onto the typed worker request, so the engine runs the context length,
 batch, generation bound, and load strategy the compiler reasoned about instead of restating literals
 of its own.
+
+The optional cache handle identifies a backend capability, not proof of a hash-map lookup.
+Conversation input is reconstructed from its tenant-scoped durable prefix; reuse requires
+successfully constructed engine state with matching model, tokenizer/template, shape, context,
+and prefix identity. Unsupported backend reuse takes an explicit bounded replay path. Failed
+construction publishes no valid reusable state, and retained state remains charged to the budget.
 
 The declared load strategy matches the invocation that actually runs. In particular, the CUDA GGUF
 row invokes the CPU-only llama.cpp payload with `--gpu-layers 0`, so it declares
@@ -479,6 +491,10 @@ The contract is proved by:
 - command-kernel tests prove exact required-tool validation, total-deadline retry behavior,
   allowlisted read-only operator kubectl compatibility, and process-group descendant
   cleanup/reaping;
+- independent authority controls reject payload reminting, deferred/nested `IO`, existential or
+  mutable-reference capture, and child-thread escape; nominal indices alone do not prove these
+  lifetime properties. Each negative has a valid compile control, and runtime brackets prove
+  actual held-condition and cleanup behavior;
 - runtime tests refuse readiness when the selected mechanism is absent, ineffective, or weaker than
   the strength the plan declares for its lane;
 - the installed ceiling is proved by reading both its soft and hard values back inside the process
@@ -490,6 +506,9 @@ The contract is proved by:
 - adversarial Apple, Linux CPU, and CUDA tests exceed each declared ceiling and observe a typed,
   terminal per-request failure naming the breached resource and the observed footprint, while the
   host and daemon remain alive;
+- required CUDA cases execute in the actual GPU-enabled engine workload and retain positive
+  device observations. Missing tooling, fixture timeout, skip, absent result, or cleanup failure
+  cannot close that gate; the ordinary outer launcher need not have device access;
 - production `System.Process` use is confined to the bounded command, capped engine, fixed
   public-tool observer, and bounded provisioning kernels, plus the CLI-passthrough and host-tool
   surfaces that remain explicitly exempt;

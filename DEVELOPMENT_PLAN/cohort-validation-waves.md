@@ -26,8 +26,19 @@
 
 | Wave | Phase | Chosen accelerator | Paired lane | Gate | State |
 |------|-------|--------------------|-------------|------|-------|
+| R1 | 1 | `apple-silicon` | `linux-cpu` | Sprints 1.44–1.46; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R2 | 2 | `linux-gpu` | `linux-cpu` | Sprints 2.18; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R3 | 3 | `linux-gpu` | `linux-cpu` | Sprints 3.18; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R4 | 4 | `apple-silicon` | `linux-cpu` | Sprints 4.50; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R5 | 5 | `apple-silicon` | `linux-cpu` | Sprints 5.13; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R6 | 6 | `linux-gpu` | `linux-cpu` | Sprints 6.55; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R7 | 7 | `linux-gpu` | `linux-cpu` | Sprints 7.30–7.33; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R8 | 8 | `linux-gpu` | `linux-cpu` | Sprints 8.15; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R9 | 9 | `linux-gpu` | `linux-cpu` | Sprints 9.12; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
 
-No cohort validation waves are open.
+All rows are open obligations, not scheduled or completed runs. The paired CPU lane is native arm64
+or amd64 as recorded by the actual run; emulated Apple/Linux execution does not qualify. Hardware
+sign-off remains independent from the next phase's implementation gate.
 
 ## Recorded Attestations
 
@@ -77,18 +88,24 @@ available cohort during the active wave and record only the phase's chosen accel
 
 ## Phase Cohort Disposition Index
 
-| Phase | Current cohort disposition |
-|-------|----------------------------|
-| 0 | No accelerator cohort; machine-independent throughout, and it blocks no accelerator phase |
-| 1 | Closed on `apple-silicon` plus native-arm64 `linux-cpu`; see Recorded Attestations |
-| 2 | No open disposition |
-| 3 | No open disposition |
-| 4 | Closed on `apple-silicon` plus native-arm64 `linux-cpu`; see Recorded Attestations |
-| 5 | No open disposition |
-| 6 | Closed on `linux-gpu` plus native-amd64 `linux-cpu`; see Recorded Attestations |
-| 7 | No open disposition |
-| 8 | Closed on `linux-gpu` plus native-amd64 `linux-cpu`; see Recorded Attestations |
-| 9 | Closed on `linux-gpu` plus native-amd64 `linux-cpu`; see Recorded Attestations |
+The Wave Table is the sole open-cohort index. Phase 0 has no accelerator gate.
+Phase status remains in [README.md](README.md#current-phase-overview).
+
+Phases 2, 3, 5, and 7 have no retained closure tuple in Recorded Attestations. Their waves require
+recovery of authentic source and run artifacts or fresh runs. The five existing rows are preserved
+verbatim; their uncommitted-patch digests require the retained patch preimages to be reproducible,
+and the rows do not establish that the new remediation criteria passed.
+
+For new closure evidence, retain the machine-readable execution receipt and referenced artifacts
+outside this narrative plan, and append a compact tuple linking them here. The receipt binds the
+commit plus reconstructable relevant worktree snapshot (including untracked build inputs), image
+digest or native executable identity, configuration and lane/device context, required check
+inventory, executed/skipped/not-applicable counts, terminal outcomes, and artifact digests.
+Both lanes must test the same source snapshot. A digest without its preimage is not recovery
+evidence. A skipped required check, missing artifact, stale image, or mismatched source blocks
+closure even when the aggregate process exits zero. Receipt consistency is not protection against
+an actor who controls both executor and evidence storage; trust is rooted in the retained runner
+and artifact provenance described by Section Q.
 
 ## Cross-References
 

@@ -86,13 +86,27 @@
 - `cluster status` reports the active runtime mode together with the chosen port, the published
   route inventory, and the publication-state details that back `/api/publication`
 
+## Static Asset Containment
+
+The demo backend resolves a requested static asset only within its configured static root. It
+rejects decoded traversal and absolute-path inputs, and prevents symlink or concurrent path
+replacement from escaping that root. Authentication and Gateway normalization are not substitutes
+for filesystem containment. SPA fallback also remains inside that boundary.
+
+Backend tests and routed tests are separate obligations: send raw and encoded traversal variants
+directly to the backend and through the configured Gateway, record rejection or safe normalization,
+and assert no outside-root bytes are returned. Do not infer routed exploitability from a direct
+backend test, or backend safety from a Gateway redirect. See
+[web UI architecture](../architecture/web_ui_architecture.md) and
+[object access](../architecture/object_access_doctrine.md).
+
 ## Validation
 
 - `infernix docs check` fails if this document loses its governed metadata, required structure, or
   the registry-generated route-inventory section.
-- `infernix test integration` exercises the published registry, MinIO, Pulsar, publication, and
-  demo routes and requires the real registry, MinIO, and Pulsar upstream responses on the
-  tool-route probes.
+- `infernix test integration` exercises the published registry, Pulsar, publication, and demo
+  routes, and validates MinIO through the webapp object mediator or trusted internal data plane,
+  never an external MinIO Gateway route. Probes require real upstream behavior.
 - `infernix test e2e` verifies the routed demo surface through the shared edge port when the demo
   UI is enabled for the selected runtime mode, including the JWT-gated operator route checks.
 

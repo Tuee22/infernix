@@ -1,29 +1,7 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done. All 49 sprints are implemented and validated. The selected `apple-silicon`
-and paired native-arm64 `linux-cpu` full suites each pass with exit 0, complete live integration,
-and 16/16 browser tests. The Phase 4 row in
-[Recorded Attestations](cohort-validation-waves.md#recorded-attestations) binds both results to the
-tested working-tree patch.
-**Current implementation state**: Sprints 4.37 through 4.42 landed in numerical order, each building
-on the one before: a breach names the resource it breached, the requirement becomes resource-indexed,
-the requirement is derived from the artifact's own bytes, three sampling loops become one, a kernel
-ceiling is installed before the engine's first allocation on the lane that can install one, and the
-admitted quantities plus the execution shape reach the engine on the message it already reads. The
-architecture's device half is closed by Phase 6 Sprint 6.51 and is not owned here. Sprints 4.31, 4.32, 4.34,
-and 4.35 were the last four before this group, and each closed on that shared cohort. Sprint 4.35 (native runner front-end correction
-and failure diagnosability) was opened by a `linux-cpu` cohort failure found while executing Phase 3
-Sprint 3.16's gate: post-split llama.cpp made `llama-cli` an interactive chat front-end, so a
-*successful* run published chat chrome as the model's answer — a realness-contract violation on the
-success path — while a failed one published one bit, because the argv silenced the only channel
-carrying the reason. Both lanes now run the completion front-end, each corrected against the binary
-that lane actually executes. The scope boundary around member identity is drawn where the resource
-is: this phase owns the machine-local, fail-closed identity a daemon establishes about itself, while
-excluding a *second machine* that claims the same identity is a fleet-wide property of the broker and
-belongs to the fleet topology subject rather than here. Sprint 4.34 is complete against the former and
-never depended on the latter. Sprint 4.36 is `Done` by supersession: the per-engine Python producer is
-implemented in Phase 1 Sprint 1.23, so strict Phase 1 validation has no forward dependency on this
-phase for that prerequisite.
+**Status**: Active — Sprints 4.50 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -34,139 +12,15 @@ phase for that prerequisite.
 
 ## Phase Status
 
-All sprints are Done. The reader recognizes and validates the legacy Whisper GGML fixed header,
-derives its resident charge from the actual object extent, and keeps artifact admission distinct
-from the lane-budget execution bound required when no trustworthy projection exists. The selected
-speech row completes with the expected normalized JFK transcript in both routed integration suites;
-both complete browser matrices pass. Unit coverage verifies ordinary engine exits, the static
-mechanism declaration, Whisper artifact extent, lane-budget provenance, and the host-resident CUDA
-GGUF projection. The Phase 4 [attestation](cohort-validation-waves.md#recorded-attestations) records
-the same frozen implementation exercised by both full suites.
+Sprints 4.1–4.49 retain their closed headings and only their established scope. Cache lifecycle and model-output validation require repair. Runtime/Cache.hs marks directories as materialized without constructing usable weights; local checkpoint selection can take only the first shard; the adapter AST guard accepts a fabricated constant transform.
 
-Phase 4 closes around the staged-substrate runtime contract, the shared Python adapter boundary, the
-Pulsar-driven request and result contract, the explicit engine-runner dispatch, the mounted
-`/opt/infernix/cluster.dhall` cluster-wiring contract, and the substrate-neutral engine-pool routing
-contract. Sprints 4.1–4.20 established those typed contracts — typed dispatch, catalog, pool
-routing, cache, and object storage — and they stand; later sprints replaced engine internals and the
-memory model without undoing them. The worker resolves the selected engine entrypoint for every
-supported matrix row and publishes the typed per-family result surface: inline text for the LLM and
-speech families, and a typed `infernix-demo-objects` object reference for the source-separation,
-audio-to-MIDI, music-transcription, image, video, audio-generation, and OMR artifact families.
+The existing Phase 4 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-**Realness by construction.** An audit established that an earlier "real per-family output"
-closure was, for several catalog rows, satisfied by silent fabrication rather than real model
-execution: the Apple native engine layer was a validation wrapper, and on Linux the
-source-separation, audio-to-MIDI (ONNX run on `np.zeros`), and OMR rows returned constant
-artifacts while whisper.cpp and CTranslate2 masked runtime failures. Sprints 4.21–4.23 replaced
-those internals so the engine code is structurally incapable of returning a fabricated result:
-every missing-weights, load, or engine failure raises and becomes `status=failed`. Real Linux
-engines, fixed weight provisioning, ONNX adoption where it is the mature free choice, and modern
-PyTorch rebinds for the music-transcription rows landed with it, and a realness lint owned with
-[phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md) enforces the
-guarantee mechanically. The architectural contracts from Sprints 4.1–4.20 were not undone; only
-the faked engine internals were replaced. The removed fabrication surfaces are tracked in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-
-**Music transcription.** The obsolete MT3 residual is replaced by `music-mt3-infer` and
-`music-mr-mt3`. Both bind through `mt3-infer` on the PyTorch adapter, stage weights through the
-model-cache contract, disable upstream auto-downloads, and are generated for `linux-cpu`,
-`linux-gpu`, and `apple-silicon`; Apple uses the PyTorch CPU path and no MPS claim is made.
-
-**Memory safety.** Inference is admitted before it runs and bounded while it runs. Sprint 4.26
-introduced per-model RAM footprints, a per-substrate inference budget, and serialized runtime
-admission, after an unbounded full-catalog `test integration` drove the Apple host into memory
-exhaustion and the OS killed the daemon. Sprint 4.27 generalized that into a pure typed model —
-`InferenceMemoryBudget` and `InferenceError`, with request-time rejection rather than a
-daemon-startup veto — replacing the Apple-only integer budget, the catalog-wide fail-fast, the
-hardcoded floor, and the stringly runtime failure payload. Sprint 4.30 replaced the proof-free
-`admitModelMemory :: … -> Maybe InferenceError` with `Either InferenceError MemoryGrant` and routed
-the sole engine spawn through a grant-gated capped-engine kernel, because a `Nothing` carries no
-evidence that admission ran and a raw unbounded spawn makes a host out-of-memory condition a
-representable outcome. Sprint 4.31 added the checked `HostMemoryPartition`, the required
-`ModelMemoryFootprint`, and the budget that names its enforcer, dropping `UnenforcedMemoryBudget`.
-Sprint 4.33 narrows what those closures claim: completing a run without exhausting the host is a
-sample of the inference lane as run, not a bound. Phase 1 Sprint 1.19 supersedes the public
-admission surface with resource-indexed `compileRuntimePlan`, package-owned live refinement, and
-`RuntimePlan` / `ExecutableModel` for engine launch, while coordinator routing projects
-`CompiledPlacement` / `CompiledDaemon`. The device-lane RAM/VRAM construction and the generated wire
-schema are separate subjects with their own homes, and this phase's closure does not wait on either.
-Canonical doctrine:
-[../documents/architecture/bounded_inference_memory.md](../documents/architecture/bounded_inference_memory.md)
-and [../documents/architecture/typed_execution_plan.md](../documents/architecture/typed_execution_plan.md).
-
-**Managed state transitions.** Sprint 4.28 gates the readiness-sentinel commit on a
-`PayloadVerified` witness minted by a real bounded probe, returns typed evidence from
-`awaitModelBootstrapReady`, capability-gates the raw commit and spawn primitives, and gives native
-runners a real environment carrying `HOME` and `TMPDIR`. Sprint 4.29 makes the coordinator's
-upstream model fetch bounded and classified: a descriptive `User-Agent` (a UA-less request tripped
-the origin WAF), a `Retry-After`-honoring bounded redelivery, an ack on permanent failure so a
-rate-limited origin is not re-hammered forever, and a `PayloadVerified` minted only when the
-uploaded object's byte length matches the download, so a truncated upload cannot mint a lying
-sentinel. Both closed on the selected accelerator plus `linux-cpu`. Canonical doctrine:
-[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
-
-**Common shape.** The coordinator owns explicit Pulsar topic-lifecycle reconciliation derived from
-the typed runtime graph, replacing implicit broker auto-create reliance, and the binary emits its
-own decoder-reflected Dhall schema through
-`infernix internal dhall-schema host|cluster|secrets|substrate`. Per Phase 8 there are no
-version-controlled schema files; the schema exists only as the reflected output of the Haskell
-decoder types, emitted on demand.
-
-**Result timestamps.** Durable and Pulsar result timestamps share one total ISO-8601 conversion
-contract: the result-topic protobuf path uses the `Infernix.Storage` `formatTimestamp` /
-`parseTimestamp` pair, and a malformed `createdAt` returns `Nothing` instead of throwing from a
-partial `read`.
-
-**Matrix accuracy.** The README matrix and the generated catalog describe the active CUDA cells
-honestly: `ONNX Runtime (CPU)` for basic-pitch, and CPU Ubuntu-release binaries for the llama.cpp
-and whisper.cpp rows. The Apple transformers framework path is covered by the active safetensors LLM
-row `llm-smollm2-safetensors`. Wan2.1-T2V remains the documented Apple residual, with union coverage
-supplied by the real CUDA cell.
-
-Routed Apple `infernix test e2e` preserves prompt upload refs through single-flight dispatch,
-object-input catalog families carry an `inputObjectRef`, and the engine-side model-bootstrap
-readiness wait uses a 3600-second cold-start envelope aligned with the browser result wait so a cold
-upstream snapshot for the safetensors LLM row is not treated as a failure. The cluster image path
-uses source-fingerprint image reuse and dependency-layer caching, so a long Docker interval reflects
-Cabal dependency compilation, image export, registry push, and Helm/Pulsar readiness waits rather than
-a Docker daemon deadlock.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R4 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
-The repository has typed request or response shapes, typed runtime result metadata, a
-README-matrix-backed generated catalog, protobuf-backed manifest and result helpers, explicit
-cache status or eviction or rebuild flows, a shared Python adapter project whose setup entrypoints
-write idempotent bootstrap manifests, explicit initialization/materialization helpers, and daemon
-behavior driven by the effective runtime-config file. Durable model artifact storage lives in the
-`infernix-models` MinIO bucket. The operator runtime config is a typed Dhall record at repo-root
-`./infernix.dhall`, created by `infernix init` and decoded in-process by the `dhall` Haskell library.
-Cluster deployment derives a cluster-role mirror for mounted consumers. The runtime
-contract distinguishes daemon role from inference executor location:
-cluster daemons exist on every substrate and own Pulsar request-topic consumption; Linux cluster
-daemons run inference directly and publish results; Apple cluster daemons publish work to derived
-pool/model topics consumed by same-binary host daemons that run Apple-native inference and publish
-the completed results. Supported publication/status metadata exposes derived pool routing and omits
-the retired host batch topic fields.
-The
-runtime worker dispatches supported Python-native and native adapters through explicit harness
-branches and invokes the real engine for the selected binding: the Python adapter `transform`
-over a prebuilt host wheel for `python-stdio` bindings, or the real native runner binary resolved
-from the repo data root with an image-owned Linux fallback at `/opt/infernix/engines/<adapterId>/`
-for `native-process-runner` bindings. The Python worker request carries the mounted
-`ClusterConfig.engine` cache fields plus MinIO endpoint, bucket, region, and secret-file-backed
-credentials to `adapters.model_cache.configure()` before the adapter calls
-`get_model_path()` or uploads an artifact. The coordinator eagerly stages every configured model
-into the `infernix-models` MinIO bucket behind the `warm-model-cache` barrier; workers hydrate their
-derived local cache from those staged objects through `adapters.model_cache.get_model_path`, with
-the per-inference bootstrap path retained only for unexpected loss. The worker publishes a
-per-family real result: inline text for the LLM and speech families, and a typed
-`infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
-music-transcription, image, video, audio-generation, and OMR artifact families. Unsupported adapter
-ids fail fast with typed errors instead of returning a generic success payload. The effective runtime
-config, runtime result metadata, publication surface,
-and browser contracts still expose the active substrate through `RuntimeMode` or `runtimeMode`
-identifiers, while the final publication contract also distinguishes cluster daemon location from
-host inference executor location.
+The engine, Pulsar, artifact reader, and memory-admission modules exist. Sprint 4.50 owns real engine-consumed cache materialization/inspection/eviction/rebuild, consistent local and remote checkpoint accounting, and behavioral realness controls. Existing static guard success cannot prove a model produced an output; a typed admission refusal is a refusal result and does not satisfy a required inference-success assertion.
 
 ## Substrate Config Ownership Contract
 
@@ -207,11 +61,6 @@ Make the service runtime strongly typed before transport and UI surfaces accumul
 - `infernix test lint` passes `infernix lint proto` against the repo-owned `.proto` set
 
 ### Remaining Work
-
-None.
-
----
-
 ## Sprint 4.2: Inference Request Pipeline Over the Durable Object Store and Pulsar Contract [Done]
 
 **Status**: Done
@@ -304,6 +153,8 @@ None.
 ---
 
 ## Sprint 4.4: Demo Catalog and Cache HTTP API Surface [Done]
+
+**Scope boundary**: The API surface exists, but marker-only materialization does not prove usable cached weights. Sprint 4.50 owns real cache lifecycle behavior.
 
 **Status**: Done
 **Implementation**: `infernix.cabal`, `src/Infernix/Webapp.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Service.hs`, `src/Infernix/Models.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
@@ -1076,6 +927,8 @@ None.
 
 ## Sprint 4.21: Realness by Construction and Real Linux Engines [Done]
 
+**Scope boundary**: This closure does not prove arbitrary adapter output cannot be fabricated. Sprint 4.50 adds independent behavioral realness controls.
+
 **Status**: Done
 **Implementation**: `python/adapters/{pytorch_python,diffusers_python,transformers_python,common}.py`, `src/Infernix/Engines/LinuxNative.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `python/adapters/model_bootstrap.py`, `docker/Dockerfile`
 **Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/development/python_policy.md`, `documents/engineering/model_lifecycle.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
@@ -1172,6 +1025,8 @@ None.
 ---
 
 ## Sprint 4.23: Real Input Fixtures and Fail-Closed Per-Row Tests [Done]
+
+**Scope boundary**: Expected typed refusals and inference successes require separate assertions; Sprint 4.50 replaces reliance on output shape or syntax alone.
 
 **Status**: Done
 **Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/fixtures/artifactSamples.js`
@@ -1349,7 +1204,7 @@ helpers used by generated config and runtime admission.
 `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`,
 `documents/architecture/daemon_topology.md`, `documents/architecture/engine_pool_routing.md`,
 `documents/architecture/realness_contract.md`, `documents/engineering/testing.md`,
-`documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`,
+`documents/development/testing_strategy.md`,
 `documents/operations/apple_silicon_runbook.md`, and this plan.
 
 ### Objective
@@ -1545,6 +1400,8 @@ None.
 
 ## Sprint 4.31: Host Memory Partition, Required Footprint, and Budget-Enforcer Split [Done]
 
+**Scope boundary**: Complete cache-state and shard accounting require Sprint 4.50; cgroup observation and domain lease corrections are the lower-phase prerequisites in Sprints 1.45–1.46.
+
 **Status**: Done — implemented and validated.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs`,
 `src/Infernix/Models.hs`, `src/Infernix/Web/Contracts.hs`
@@ -1621,14 +1478,6 @@ row completed, and both 12288 MiB image rows were typed `ModelMemoryLimitExceede
 ### Remaining Work
 
 None.
-
----
-
-## Remaining Work
-
-None.
-
----
 
 ## Sprint 4.32: Verified Apple And Linux CPU Execution Enforcers [Done]
 
@@ -2427,6 +2276,8 @@ None.
 ---
 
 ## Sprint 4.39: Requirements Derived From Artifact Bytes [Done]
+
+**Scope boundary**: Complete local/remote shard selection and accounting require Sprint 4.50; a first-shard requirement is not a full-model requirement.
 
 **Status**: Done. The derivation replaces the authored constant table and passes on the selected
 `apple-silicon` plus `linux-cpu` cohort.
@@ -3520,6 +3371,65 @@ None.
 
 ---
 
+## Sprint 4.50: Real Artifact Cache Lifecycle, Complete Accounting, and Behavioral Realness [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Cache behavior, checkpoint selection, and independent realness controls pending.
+**Cohort gate**: Wave R4 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: Sprint 3.18 code-side closure.
+**Implementation targets**: `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Enforcer.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Demo/Api.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Docs to update**: `documents/architecture/realness_contract.md`, `documents/architecture/bounded_inference_memory.md`, `documents/architecture/model_catalog.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Make cache operations affect verified engine-consumed weights and make successful validation
+establish a model-specific behavior.
+
+### Deliverables
+
+- Replace marker-only `materializeCache`/`rebuildCache` readiness with real hydration from durable
+  MinIO artifacts into the engine's derived cache, verified against the artifact manifest before
+  atomic publication. A directory or `materialized.txt` cannot establish usability.
+- Make status, eviction, and rebuild address that same cache and report typed missing, corrupt,
+  unobservable, in-use, and verified-ready outcomes as appropriate. Preserve durable source
+  objects; serialize replacement/eviction with execution and bound temporary space and cleanup.
+- Apply one artifact-selection/accounting policy to local and remote paths. Support a sharded
+  model only with complete shard inventory, verified extents and aggregate resource requirements;
+  otherwise reject it consistently. Warm cache state cannot select a smaller requirement.
+- Retire hash/marker-only readiness and first-local-shard selection via the removal ledger.
+- Treat AST lint as a limited syntactic guard. Require independently chosen nondegenerate inputs,
+  artifact/output validation, model identity, and an execution observation for each asserted
+  inference success. A self-reported execution flag or well-shaped constant output is insufficient.
+- Keep exact expected admission/requirement refusals in dedicated negative cases with no launch.
+  Required success cases use supported models and adequate resources; refusal of such a case
+  leaves its inference proof unmet.
+
+### Validation
+
+- Begin with a marker-only directory, empty weights, corrupt/truncated weights, and a missing shard
+  separately; none may report ready. Valid complete weights are the positive control.
+- Hydrate, infer, evict, and rebuild a real engine cache; verify changed local artifacts and real
+  inference after rebuild while durable MinIO source identity is unchanged. Inject interruption
+  before publication and assert no partial cache is advertised ready.
+- Present the same sharded artifact remotely and locally in different enumeration orders.
+  Admission produces the same complete requirement or the same typed unsupported refusal.
+- Replace an adapter transform with a plausible constant, suppress the engine invocation, feed
+  mismatched input, and remove weights as independent negative controls. Required success gates
+  fail for each targeted reason. Positive cases validate family-specific content, such as the
+  expected normalized speech transcript and parseable meaningful model-generated media.
+- Run governed build, aggregate lint/unit, focused docs/plan gates and Wave R4. Retain per-row
+  success versus expected refusal, exact model/input/artifact identities, assertions executed,
+  and observed memory outcomes without calling a skip or refusal real inference.
+
+### Remaining Work
+
+Implement and validate the real cache, consistent accounting, and behavioral controls; retain
+Wave R4. Current marker behavior and syntactic lint do not close these criteria.
+
+## Remaining Work
+
+Implement Sprints 4.50, pass their governed machine-independent gates, and retain Wave R4's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -3557,3 +3467,9 @@ None.
   owned by [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
   Sprint 1.14 and documented in
   [../documents/engineering/apple_silicon_metal_headless_builds.md](../documents/engineering/apple_silicon_metal_headless_builds.md)
+
+**Remediation documentation obligations:**
+
+- Keep the contracts named by Sprints 4.50 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
+- Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.

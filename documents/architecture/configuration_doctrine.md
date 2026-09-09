@@ -85,13 +85,11 @@ restore a SIGKILL would bypass — so an externally-killed run cannot leave the 
 config replaced by the test config. The pre-takeover reservation is owner-atomic and rests on the
 all-Haskell lifecycle-lock and typed supervision boundary.
 
-One deliberately narrow compatibility input is a `.harness-backup` without a reservation record.
-Because that format records no owner identity,
-no command-activity proof can be associated with it. Entry reconciliation handles that legacy shape
-only while holding the lifecycle lock; every transaction publishes its reservation
-before touching config. The compatibility path is tracked explicitly in
-[legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md) and is not
-part of the v2 quiescence guarantee.
+A `.harness-backup` without a matching reservation has no owner identity against which command
+activity can be checked. Entry refuses and preserves both the active file and backup for explicit
+operator resolution. Holding the lifecycle lock does not supply the missing provenance. Automatic
+restoration requires the matching reservation and the complete quiescence proof; every transaction
+publishes that reservation before touching config.
 
 A second source of drift is **hand-maintained `.dhall` schema files** alongside the Haskell
 renderers, plus `.dhall` *values* rendered by Helm templating from `chart/values.yaml`. The binary
@@ -413,6 +411,13 @@ only the Compose image selector — not read by Infernix code, not a config subs
 
 The shell never reads a `.dhall` file directly. The Haskell binary is the only Dhall reader.
 
+The first binary is built through a fixed bounded seed invocation that does not require a generated
+host manifest. It then emits the image's host manifest from the same decoder-owned defaults used by
+normal initialization. Dockerfile and bootstrap shell do not render Dhall records, schemas, or
+command-policy copies. Image-default configuration identifies a build execution context; it does
+not fabricate live machine capacity or authorize an engine daemon. Clean-start tests prove this
+sequence with no preexisting binary-generated manifest.
+
 ## Cluster pod contract
 
 Every `chart/templates/deployment-*.yaml` for infernix-owned workloads (coordinator, engine, webapp)
@@ -454,6 +459,12 @@ The lint gates carry an explicit exception list naming this and any future upstr
   tracked `.dhall` to diff against). The unit suite additionally round-trips a default value of each
   config through encode → decode.
 - A tree scan asserts **zero tracked `.dhall`** (`git ls-files '*.dhall'` is empty).
+- Clean-image tests execute the bounded seed build without an existing host manifest, decode the
+  binary-emitted defaults, and compare them with decoder-owned values. A handwritten Dockerfile
+  payload or stale generated policy is an independent negative control; a zero-file count cannot
+  establish sole-generator ownership.
+- Recovery tests distinguish a matching dead reservation with quiescent activity from a backup
+  with no matching reservation. The latter refuses and preserves exact file bytes.
 - End-to-end: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` (empty starting env) reaches steady
   state, proving the contract holds when the operator's shell starts with no env vars at all.
 

@@ -59,9 +59,11 @@ generated execution plan into an opaque Apple enforcer before an engine member b
 - run `./bootstrap/apple-silicon.sh up`; it runs `./.build/infernix init --if-missing` before
   `cluster up`
 - run `./bootstrap/apple-silicon.sh status`
+- in a second terminal run `./bootstrap/apple-silicon.sh run-daemon` and keep it running during
+  operator/demo inference; `up` does not start the required host engine
 - use `./.build/infernix kubectl ...` instead of mutating global
   kubeconfig
-- run `./bootstrap/apple-silicon.sh down` when tearing the cluster down
+- stop the foreground engine with Ctrl-C, then run `./bootstrap/apple-silicon.sh down`
 - only after the operator-owned cluster is down, run `./bootstrap/apple-silicon.sh test`; it runs
   `./.build/infernix init --runtime-mode apple-silicon --demo-ui true --if-missing`, then
   `./.build/infernix test init --runtime-mode apple-silicon --demo-ui true`, before `test all`. A
@@ -79,7 +81,9 @@ Direct reference path:
   claimant vector described by [bounded host memory](../architecture/bounded_host_memory.md)
 - run `./.build/infernix init` if `./infernix.dhall` and `./infernix-host.dhall` are not present
 - run `./.build/infernix cluster up`
-- run `./.build/infernix cluster status` as needed, then run `./.build/infernix cluster down`
+- in a second terminal run `./.build/infernix service --role engine`
+- run `./.build/infernix cluster status` as needed; stop the foreground engine before
+  `./.build/infernix cluster down`
 - with no live operator-owned cluster, run
   `./.build/infernix init --runtime-mode apple-silicon --demo-ui true --if-missing`
 - run `./.build/infernix test init --runtime-mode apple-silicon --demo-ui true`
@@ -458,6 +462,16 @@ internal wiring is unaffected.
 See [../tools/registry.md](../tools/registry.md) for the supported registry surface and
 [../engineering/docker_policy.md](../engineering/docker_policy.md) for the containerd
 registry-hosts patch.
+
+## Operator Inference Check
+
+Validate the manual flow independently of harness-owned engine startup: with the explicit host
+engine running, submit a small supported request through the routed demo and require a real result.
+A healthy cluster status alone does not demonstrate an inference executor. With the host engine
+stopped, the check must not report successful inference. Retain the actual lane, source, and result
+evidence under the [testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary).
+Conversation reconstruction and cancellation retain the same host-memory ownership described in
+[bounded inference memory](../architecture/bounded_inference_memory.md); no cache hash bypasses it.
 
 ## Validation Selection
 

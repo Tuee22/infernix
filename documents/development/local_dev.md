@@ -43,8 +43,18 @@
 ./bootstrap/apple-silicon.sh build
 ./bootstrap/apple-silicon.sh up
 ./bootstrap/apple-silicon.sh status
-./bootstrap/apple-silicon.sh down
 ```
+
+After `up`, start the required host engine in a second terminal and keep it running during
+operator/demo inference:
+
+```bash
+./bootstrap/apple-silicon.sh run-daemon
+```
+
+`up` starts the cluster services and coordinator, not the Apple host engine. When finished, stop
+the foreground engine with Ctrl-C and run `./bootstrap/apple-silicon.sh down`. The harness starts
+and cleans up its own engine; that does not replace the manual operator step.
 
 The operator/demo cluster must be down before the separate harness workflow:
 
@@ -59,8 +69,10 @@ Post-build operator/demo path (use the bootstrap again for every rebuild):
 ./.build/infernix init
 ./.build/infernix cluster up
 ./.build/infernix cluster status
-./.build/infernix cluster down
 ```
+
+For this direct path, run `./.build/infernix service --role engine` in the second terminal.
+Stop that process before `./.build/infernix cluster down` or any harness-owned validation.
 
 Post-build harness path, after the operator cluster is down:
 
@@ -75,8 +87,9 @@ before `test all`, so it works in a clean workspace without a separate config st
 existing operator config, performs no operator `cluster up`, and refuses a live `OperatorOwned`
 cluster because the harness owns its own cluster lifecycle.
 
-The first supported Apple host-native command that needs Docker, Kubernetes tooling, Node.js,
-Python, or Poetry reconciles those prerequisites automatically.
+The first supported Apple host-native command that needs Kubernetes tooling, Node.js, Python, or
+Poetry reconciles those prerequisites automatically. Docker must already use the operator's native
+arm64 daemon; the workflow does not provision or switch Docker virtualization.
 
 ### Config Is Created by Explicit `init`
 
@@ -106,15 +119,15 @@ removes the generated file when there was none). That backup is held at
 `./infernix.dhall.harness-backup` and reconciled on entry, so a killed run cannot leave your
 `./infernix.dhall` clobbered by the test config (canonical home
 [Configuration Doctrine](../architecture/configuration_doctrine.md)), while the owner-atomic
-reservation and teardown are owner-atomic over the all-Haskell lifecycle-lock and supervision
-boundary; canonical home
-[Configuration Doctrine](../architecture/configuration_doctrine.md)). The Linux
+reservation and teardown use the all-Haskell lifecycle-lock and supervision boundary. A backup
+without a matching reservation is refused and preserved for operator resolution, not restored. The Linux
 launcher image bakes both files at build time so the containerized `infernix test all` runs without a
 manual init step.
 
 ## Containerized Linux Flow
 
 ```bash
+./bootstrap/linux-cpu.sh build
 ./bootstrap/linux-cpu.sh up
 ./bootstrap/linux-cpu.sh status
 ./bootstrap/linux-cpu.sh down
@@ -138,6 +151,17 @@ reference path uses the same `compose.yaml` service and prefixes the direct comm
 `LAUNCHER_IMAGE=infernix-linux-gpu:local`. If the host does not already pass `nvidia-smi -L`, the
 supported bootstrap installs the recommended Ubuntu compute driver, stops, and instructs the
 operator to reboot before rerunning the same command.
+
+The Linux `build` step is required for a clean clone and after source changes: Compose launches a
+baked snapshot and does not build it or mount the checkout. Validation binds the expected relevant
+source snapshot to the immutable image actually used, retaining dirty-source preimages when needed.
+A mutable local tag alone does not establish freshness. See
+[Docker policy](../engineering/docker_policy.md#source-and-image-identity) and
+[execution evidence](../engineering/testing.md#execution-evidence-and-trust-boundary).
+
+Required GPU assertions run in the binary-owned device-capable validation context, not by assuming
+the ordinary outer launcher has CUDA access. Missing required probes or observations fail closed;
+CPU not-applicable results do not count as GPU evidence.
 
 ## Cross-Hardware Validation
 

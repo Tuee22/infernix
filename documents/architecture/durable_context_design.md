@@ -32,7 +32,9 @@
   WebSocket side; Pulsar named `Failover` subscriptions are the
   per-context single-flight dispatcher. No Redis, no NATS, no in-cluster
   session broker.
-- Crashes degrade to redelivery plus cache miss. Pulsar producer-side
+- Restart reconstructs the complete dispatcher projection before resuming consumption; a durable
+  acknowledgement cursor alone is not reducer state. Crashes degrade to replay, redelivery, and a
+  genuine engine-state rebuild when no reusable state survives. Pulsar producer-side
   deduplication on the conversation, inference-request, and inference-result
   topics makes every retry idempotent.
 
@@ -326,9 +328,17 @@ rule:
 That decision is a deterministic function of the log prefix.
 The coordinator uses a Pulsar named `Failover` subscription per conversation
 topic, so exactly one consumer is the active dispatcher per context at a time.
-After a crash, the owning coordinator process restarts and resubscribes under
-the stable name; Pulsar redelivers unacknowledged messages, and the dispatcher
-reaches the same decision because it folds the same log.
+Before dispatch or acknowledgement after startup, the owning coordinator reconstructs the complete
+projection through an explicit replay boundary. It reads retained history from the beginning, or
+validates a complete durable checkpoint and reads the suffix through that boundary; it then joins
+live consumption without a gap, deduplicating overlapping events. The projection includes queued
+prompts, already dispatched work, terminal results, cancellation, and producer/idempotency identity.
+A durable subscription cursor records acknowledgement, not that projection. Selecting the earliest
+initial position when subscribing does not reset an existing cursor and cannot replace replay.
+Missing history or an invalid checkpoint is a visible recovery refusal, never an empty conversation.
+Only after reconstruction may the stable `Failover` consumer resume dispatch and acknowledgement.
+Acknowledging a queued prompt is safe only when retained history or a validated checkpoint can
+reconstruct it after process restart; process-local queue membership is insufficient.
 
 **Two prompts in a row.** Permitted. UI renders the second prompt as
 "queued" until the first completes. State is derived from the same fold.
@@ -337,25 +347,39 @@ reaches the same decision because it folds the same log.
 target prompt in the projection immediately — the reducer's `isResolving`
 treats `UserCancel` as a resolver — so the single-flight slot is freed and
 the next queued prompt can dispatch even before the engine responds. The
-engine still produces an `InferenceResult` with `status = Cancelled` (or
-ignores the cancel if a Completed result was already published) so the
-engine-side lifecycle stays consistent. Replay is deterministic.
+engine receives cancellation for the canonical request identity, stops the owned execution, reaps
+its children, releases their memory, and invalidates affected cache state. It durably publishes an
+`InferenceResult` with `status = Cancelled` before releasing the serialized execution authority.
+A completion already durably published
+wins over a later cancel. Concurrent completion, cancellation, retries, and redelivery resolve to
+one durable terminal outcome for the request, using the same idempotency identity through the
+engine and result bridge. Cancellation acknowledgement is not proof of engine cleanup: a new request
+may be queued for the engine but cannot execute until the previous authority is released. Replay is
+deterministic, and no completed output is manufactured to resolve a cancellation.
 
 ## Engine Cache Consistency
 
-Inference request envelopes carry `prefixHash`, a Merkle-style content
-hash of the deterministic projection at the dispatch offset. The engine's
-KV cache is keyed by `(contextId, prefixHash)`:
+Inference request envelopes carry `prefixHash`, a content hash of the deterministic projection at
+`conversationLogOffset`. The engine obtains the authorized conversation history through exactly that
+offset, folds the canonical projection, and verifies the hash before using the resulting prompt,
+prior turns, or artifact references. A supplied hash is a claim to verify, not evidence of history.
+Missing, divergent, or truncated history fails closed rather than executing only the newest prompt.
+Model identity, artifact generation, tokenizer/execution shape, user/context identity, and verified
+prefix identify any reusable engine state:
 
-- **Hit**: cached KV state is provably consistent with the SSoT; reuse.
+- **Hit**: a supported engine actually owns usable KV state for those identities and the verified
+  prefix. Its native state handle and lifecycle, not a hash-map entry, authorize reuse.
 - **Miss** (engine restart, cancelled-then-replaced prompt, interleaved
-  tab activity): rebuild from scratch by folding the conversation log up
-  to `conversationLogOffset` and verifying `prefixHash` matches.
+  tab activity): reconstruct real engine state from the verified prior conversation and execute
+  the request with that context. An engine with a one-request subprocess and no supported native
+  state-reuse protocol always takes this path; it does not report a metadata match as KV reuse.
 
-Pulsar is append-only and never retracts, so a cached `prefixHash` can
-never become silently invalid. The cache cannot lie: either it matches
-the SSoT exactly, or it's a miss. There is no "stale but plausible"
-mode.
+Publish a reusable-state entry only after the engine confirms successful state construction. A
+failed load, cancelled execution, process restart, model/artifact change, or incompatible execution
+shape invalidates the entry. Append-only history makes a verified prefix stable; it does not prove
+that an engine retained its tensors. Resident KV state consumes the same resource-indexed memory
+account and single execution authority as inference, including between turns. It cannot survive as
+an unaccounted second model or process; see [bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Failure Semantics
 
@@ -386,8 +410,9 @@ Failure modes:
   catches duplicates. The frontend acknowledges a client submit only after Pulsar
   confirms the publish, so "acked then crashed" implies "already on the
   log."
-- **Dispatcher process crash.** The restarted dispatcher resubscribes under
-  its stable Failover name; Pulsar redelivers unacknowledged `UserPrompt`
+- **Dispatcher process crash.** The restarted dispatcher reconstructs queued and in-flight state
+  from complete retained history or a validated checkpoint and suffix before resuming its stable
+  Failover subscription. Pulsar redelivers unacknowledged `UserPrompt`
   messages, and the dispatcher applies the same pure-fold rule; producer
   dedup on `inference.request.<mode>` (keyed by `userPromptMessageId`)
   prevents duplicate dispatches.
@@ -414,8 +439,9 @@ The primitives are exercised by the validation surface
 through the first concrete binding. The primitives themselves are
 covered by:
 
-- reducer property tests (determinism, idempotency dedup, hash chain
-  monotonicity, patch-stream equivalence to snapshot equality)
+- reducer property tests (determinism, idempotency dedup, stable verification of an ordered prefix
+  after append, tamper detection, and patch-stream equivalence to snapshot equality; hash values
+  themselves are not ordered or numerically monotone)
 - dispatcher pure-fold rule tests across arbitrary log prefixes including
   cancels, two-in-a-row prompts, and out-of-order results
 - topic name derivation tests for every `<topicNamespace>` shape
@@ -429,6 +455,18 @@ covered by:
   validation for the demo binding
 - live Pulsar prompt roundtrip through the demo binding's dispatcher, engine, result
   bridge, and conversation-log writeback
+- live-broker restart regression with prompt A executing and prompt B already acknowledged but
+  queued: restart only the owning coordinator process, preserve the existing subscription, and
+  require B to reach a terminal result after A resolves without resubmission or a duplicate visible
+  terminal outcome. Repeat across replay/live boundaries and
+  missing-checkpoint/history failures; creating a new subscription does not exercise this case
+- multi-turn real-inference tests whose answer depends on an earlier turn, plus independently
+  mismatched hash/offset, missing-history, failed-state-construction, engine restart, and model-change
+  controls. A cache-hit assertion observes actual supported native state reuse; a rebuild assertion
+  observes real history-fed execution, not an enum returned from a metadata map
+- cancellation before dispatch and during observed engine execution, racing completion and
+  redelivery: require one terminal result, stopped/reaped execution, released authority, invalidated
+  state, and successful subsequent work; a rendered cancel event alone is insufficient
 
 A second application reuses every test above by binding the same
 parameters to its own concrete values; only the application-specific

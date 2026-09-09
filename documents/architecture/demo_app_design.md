@@ -268,9 +268,11 @@ bytes, never a presigned MinIO URL):
 - `audio/*` — rendered via `<audio>` against the webapp download surface.
 - `video/*` — rendered via `<video>` against the webapp download surface.
 - `application/pdf` — delegated to the browser-native PDF viewer.
-- `text/*` and `application/json` — rendered through a bounded preview.
+- `text/*` and `application/json` — rendered through independently bounded backend and browser
+  previews with explicit truncation metadata and a separate full-download action, under
+  [object_access_doctrine.md](object_access_doctrine.md).
 - MIDI, MusicXML/MXL notation, and ZIP archives — inline rendering
-  (notation rendering for MIDI/MusicXML, in-browser archive listing for
+  (playback for MIDI, notation for MusicXML/MXL, in-browser archive listing for
   ZIP) rather than download-only.
 - arbitrary binary — generic download through the webapp download
   surface with the browser's native save dialog.
@@ -278,6 +280,15 @@ bytes, never a presigned MinIO URL):
 Every family is sourced through the webapp `/api/objects/download` proxy, including inline MIDI,
 MusicXML/MXL, and ZIP rendering. Adapter and native outputs are forced under
 `users/<sub>/contexts/<ctx>/generated/`.
+
+The MIDI player ships actual, versioned piano sample assets at the same-origin `/samples/smplr/`
+bundle path with their source/licensing provenance. Build/materialization verifies the required
+sample set, and loading has a bounded deadline with a visible failure state. A user playback action
+must decode notes and produce nonempty rendered audio using those samples; mounting a player
+container is not playback. MusicXML/MXL renders nonempty notation and ZIP renders real archive
+entries. Failed fetch, decode, or renderer initialization remains visible; it cannot silently leave
+an empty inline-success panel. All families retain a usable download action without claiming that
+download satisfied a required inline-rendering test.
 
 Upload flow:
 
@@ -303,8 +314,8 @@ Download flow:
 3. The webapp authorizes the key against the caller's `sub`, streams the
    bytes back with the correct `Content-Type` and `Content-Disposition`,
    and the browser uses the typed render disposition.
-4. Browser renders inline (image/audio/video, plus MIDI/MusicXML/ZIP at
-   the target), opens the browser PDF path, renders bounded text/JSON, or
+4. Browser renders inline (image/audio/video, plus MIDI/MusicXML/ZIP),
+   opens the browser PDF path, renders bounded text/JSON, or
    initiates a download-only flow.
 
 `POST /api/objects/upload` carries the bytes and returns an `ArtifactUploadGrant` with the canonical
@@ -361,6 +372,10 @@ and covers three layers:
   non-`Not recommended` row gets one passing flow). The Playwright
   source is identical across `apple-silicon`, `linux-cpu`, and
   `linux-gpu`.
+- Artifact acceptance measures actual bytes read, decoded/rendered content, and truncation for
+  previews; sample fetch/decode and rendered audio for MIDI; nonempty notation/archive output for
+  MusicXML/MXL/ZIP; and full streamed download independently. Missing samples, failed loading,
+  oversized previews, and malformed artifacts are explicit negative controls.
 
 ## Cross-References
 

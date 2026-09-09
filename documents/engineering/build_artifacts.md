@@ -64,7 +64,8 @@ of the supported artifact contract.
   Helm uses local archives without a host bind mount
 - the substrate image captures the sorted, pruned source snapshot at
   `/opt/infernix/source-snapshot-files.txt`, which stays in the image overlay where git-less
-  `infernix lint files` runs can read it
+  `infernix lint files` runs can read it. That path inventory is not a content identity or proof
+  that an image contains the checkout being validated
 - `cluster up` publishes `./.build/infernix.kubeconfig` on the host path after Kind create or
   delete uses a transient host-local scratch kubeconfig
 - `cluster up` publishes `./.data/runtime/infernix.kubeconfig` on the outer-container path after
@@ -93,6 +94,27 @@ of the supported artifact contract.
   recomputing the post-install `pyproject.toml` plus optional `poetry.lock` digest
 
 ## Native Engine Artifacts
+
+### Validation source identity
+
+Validation binds its result to a reproducible content snapshot of implementation, tests, schemas,
+chart, build inputs, and governed documentation, including dirty and relevant untracked inputs.
+Record the inventory and digest version, immutable launcher/workload image identities, binary and
+served-bundle identities, configuration/catalog digest, required-check inventory, executed
+results, and skips. Retain reconstructable source bytes or a base revision with its complete patch
+and untracked-input archive; a digest alone cannot reconstruct the tested source.
+
+Launcher reuse compares the actual image snapshot with the requested checkout. Missing or
+mismatched images rebuild or refuse before validation; a mutable `:local` tag or a hash printed by
+the image cannot establish the match. The before/after source identity must agree, so an edit
+during execution invalidates the claimed run. Browser contracts and bundled sample/media assets
+belong to the same validated image and served-bundle identity.
+
+Required results survive an ephemeral launcher under the durable validation artifact location
+described by [Testing Strategy](../development/testing_strategy.md). Reports distinguish successful
+inference, expected refusal, skipped optional checks, and unmet mandatory checks. Local source
+hashes bind content; they do not authenticate an execution by an actor able to rewrite both code
+and validators. Such a claim needs an independently controlled execution and attestation boundary.
 
 Native engine artifacts and install roots live under `./.data/engines/<adapterId>/` (the existing
 engine-install root), never `./.build/`. The `infernix` and `infernix-demo` Haskell binaries still
@@ -218,8 +240,9 @@ that consume the file link the same library through the in-cluster `infernix` bi
   flows do not read legacy `*.state` compatibility files
 - generated web build output lives under `web/dist/`; Playwright validation artifacts use
   Playwright default output directories such as `test-results/` and `playwright-report/` under the
-  active runner working tree when emitted, and compose-run artifacts are container-local unless
-  explicitly bind-mounted
+  active runner working tree when emitted. Required reports and supporting results are retained
+  under the binary-owned durable validation artifact location before an ephemeral launcher exits;
+  an unexported container-local report is not retained evidence
 - engine-adapter quality/protobuf builds use Poetry against the framework-free shared `python/`
   project and materialize `python/.venv/`. Python-stdio execution uses the canonical prepared
   project under `python/engines/<engine>/.venv/`; Apple and Linux CPU call the same bounded Haskell
@@ -232,6 +255,11 @@ that consume the file link the same library through the in-cluster `infernix` bi
   `python/.venv/` and `python/engines/*/.venv/` are not tracked
 
 ## Validation
+
+- With an old image retained, change source, tests, generated-contract inputs, and assets
+  independently. Each gate rebuilds to expose the change or refuses the mismatch. Retagging the
+  old image, editing source mid-run, and supplying only an inventory/digest without reconstructable
+  inputs cannot produce valid closure evidence. An unchanged matching snapshot is the reuse control.
 
 - `infernix docs check` fails if this governed artifact document loses its required structure or
   metadata contract.

@@ -332,6 +332,22 @@ Keycloak release, demo MinIO bucket, and demo Pulsar namespaces are absent from 
 See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) and
 [../tools/keycloak.md](../tools/keycloak.md) for the full contract.
 
+## Launcher and Engine Preconditions
+
+Build the Linux launcher with the supported `bootstrap/linux-cpu.sh build` or
+`bootstrap/linux-gpu.sh build` command before a clean-clone run and after source changes.
+Compose runs the baked image; it neither rebuilds it nor mounts the host checkout. Source-bound
+validation follows [Docker policy](../engineering/docker_policy.md#source-and-image-identity).
+
+On Apple Silicon, cluster bring-up does not launch the host engine. Follow the separate-terminal
+`./bootstrap/apple-silicon.sh run-daemon` step in the
+[Apple runbook](apple_silicon_runbook.md#supported-flow), and stop that process before teardown or
+harness-owned validation. Cluster readiness alone is not real inference evidence.
+
+Recovery retains the lock-owned resource for every mutation and cleanup effect. An orphan runtime
+configuration backup without a matching reservation is preserved and refused, not used as implicit
+restore authority; see [configuration doctrine](../architecture/configuration_doctrine.md).
+
 ## Validation Selection
 
 Lifecycle validation follows the selected-accelerator contract in

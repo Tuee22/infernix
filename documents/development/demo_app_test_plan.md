@@ -14,12 +14,13 @@
   dispatcher rule, JWT, presigned URLs, WS envelope codec) plus PureScript view-model patch
   application and rendering.
 - Integration covers real Pulsar / MinIO / Keycloak round-trips, producer-dedup verification,
-  stable Failover resubscription after a coordinator restart, and a multi-user throughput test. It injects no failures: see the LinuxCpu
-  block below for why that reduction is deliberate.
+  complete dispatcher reconstruction before stable Failover resubscription, real multi-turn context,
+  engine cancellation/cleanup, and a multi-user throughput test. Process restart tests exercise the
+  owning process without assuming a standby role or service instance.
 - E2E covers Playwright flows through the routed demo surface for every primary lifecycle, the
   pre-auth landing entry points, and a per-model smoke matrix driven by the active substrate's
   generated demo catalog. The browser layer asserts the per-family rendered result for every
-  demo-visible row — inline text, audio player, image, video, or MIDI/MusicXML download — and
+  demo-visible row — inline text, audio player, image, video, or MIDI/MusicXML rendering — and
   stays substrate-agnostic, with the demo app selecting the engine binding from the active
   `.dhall`. The `ResultFamily` and inline-vs-object-ref mapping lives in the model catalog.
 - The reducer lives only in Haskell; PureScript tests cover patch application and rendering,
@@ -41,7 +42,7 @@ gateway. Cross-user isolation is asserted at the single server-side trust bounda
 registered user's JWT presented against the first user's `users/<sub>/…` object key receives HTTP
 403 on list, get, put, and delete, and each user reads only that user's own bytes. The
 render-disposition matrix (inline image/audio/video, browser-native PDF, bounded JSON/text
-preview, download-only MIDI / MusicXML / generic-binary) is asserted from the webapp's
+preview, MIDI playback, MusicXML notation, ZIP listing, and generic-binary download) is asserted from the webapp's
 `/api/objects/download` response and the corresponding rendered browser surface — the dedicated
 artifact-rendering coverage drives each supported artifact class
 through the rendered `Files` and Artifacts surfaces and asserts the family-appropriate rendered
@@ -63,8 +64,11 @@ The suite must prove, per layer:
   streamed conversation patches, artifact upload and download through the webapp proxy, per-user
   isolation, and the admin-versus-user split.
 
-Every layer fails closed. A model whose engine is not real returns `status=failed` and its row goes
-red; that red is the backlog, not a reason to relax the assertion.
+Every layer fails closed. Required successful-inference cases require actual execution and validated
+output; expected typed refusals are separate cases and never fill a successful-inference slot.
+Reports distinguish those counts and fail on a skipped mandatory check or an all-refused catalog.
+Static realness checks are heuristics; behavior and independent negative mutation controls follow
+[../architecture/realness_contract.md](../architecture/realness_contract.md).
 
 ## Unit Layer
 
@@ -74,8 +78,10 @@ The unit layer runs through the `infernix-unit` Cabal stanza and the PureScript
 - **Reducer property tests.** Determinism over arbitrary `ConversationEvent` logs; idempotency
   dedup; cancellation semantics; two-prompt-in-a-row ordering; equivalence of state-snapshot
   and snapshot + patch-stream evolution.
-- **`prefixHash` chain tests.** Determinism; monotonicity; equality under reorder of
-  independent events; mismatch on tampered event.
+- **`prefixHash` chain tests.** Determinism for the same ordered prefix; stable verification of a
+  retained prefix after append; mismatch on tampering, a different offset, or changed event order.
+  Hash values have no numeric monotonicity requirement, and reordering is equal only where the
+  canonical projection explicitly defines order independence.
 - **Dispatcher pure-fold tests.** Hold-vs-dispatch decisions across arbitrary log prefixes
   including cancels, queued prompts, and out-of-order results.
 - **Topic naming tests.** Every `TopicNamespace` shape derives the expected per-user and
@@ -137,9 +143,9 @@ Coverage:
   result-bridge path runs.
 - **Linux CPU durable-context block.** The validation topology runs one process per role. The suite
   validates engine-pool placement, broker-native `Shared`-subscription backpressure, and that every
-  deployed workload is scheduled with no `Pending` workload. There is no failure-injection block:
-  the supported topology has no standby role or service instance to promote, and process/service
-  loss recovers by restart or restore. The effect-layer gate asserts at-least-once delivery with an
+  deployed workload is scheduled with no `Pending` workload. Restart tests stop and restart the
+  owning coordinator process while retaining its subscription; the supported topology has no
+  standby role or service instance to promote. The effect-layer gate asserts at-least-once delivery with an
   effectively-once observable outcome through acknowledgement ordering, producer dedup, and
   per-context ordering.
 - **Compact multi-user throughput.** The suite submits the default `ThroughputMatrix` (3 users × 2
@@ -151,10 +157,27 @@ Coverage:
   short timeout attached to whichever concurrently dispatched context the harness inspects first. The
   `validateMultiUserDurablePromptThroughputWith` surface permits larger matrices without changing
   the test body.
-- **Runtime KV-cache path.** `Infernix.Runtime.KVCache` flows through
-  `executeInferenceWithKVCache`. Unit coverage asserts native-runtime rebuild, reuse, and divergent
-  prefix rebuild behavior; integration covers the durable dispatcher, exact broker counts,
-  throughput, the production-shape deployment, and clean teardown.
+- **Dispatcher replay.** Hold prompt A in observed execution, acknowledge queued prompt B, restart
+  the owning coordinator with its existing subscription, and require B to dispatch and complete
+  after A resolves. Test replay/live overlap and missing or invalid checkpoint/history. A fresh
+  subscription or an in-memory fold does not establish this restart property.
+- **Runtime KV-cache path.** Multi-turn real inference requires information from an earlier turn.
+  Instrument the engine boundary to establish verified history/offset/hash consumption and genuine
+  state construction. Native reuse is asserted only for engines supporting an actual retained state
+  handle; one-request subprocesses must demonstrate history-fed reconstruction. Tampered hash/offset,
+  missing history, failed construction, model changes, cancellation, and restart are independent
+  negatives. An enum or metadata-map hit is insufficient, and retained state remains memory-accounted.
+- **Engine cancellation.** Cancel before dispatch and during observed execution, including
+  completion/redelivery races. Require one durable terminal outcome, bounded child termination and
+  reaping, released execution authority, invalidated state, and successful subsequent work.
+- **Real cache lifecycle.** Hydrate verified model artifacts into the actual engine-owned cache,
+  execute, evict the selected idle generation, rebuild, and execute again. Assert owner/runtime/model
+  identity, measured counts, missing/corrupt-payload refusal, and active-reader exclusion. A webapp
+  marker or empty directory cannot establish cache behavior.
+- **Static containment and cache request parsing.** Direct backend tests reject decoded traversal,
+  absolute paths, symlink escapes, and substitution races with no outside-root content returned.
+  Separate routed tests exercise the actual Gateway normalization policy. Malformed admin cache
+  requests return 400 with zero effects, independently of anonymous 401 and non-admin 403.
 
 ## E2E Layer
 
@@ -198,7 +221,7 @@ that user's own bytes. The object-grant flow validates the server-side download-
 disposition for image, audio, video, PDF, JSON, text, MIDI, MusicXML, and generic binary MIME
 cases. The browser artifact flow covers the app-owned PKCE login path, local context creation,
 bounded text/JSON previews, inline image/audio/video media URL wiring, browser-native PDF URL
-wiring, and MIDI / MusicXML / generic-binary download-only states. The canonical browser
+wiring, real MIDI playback, MusicXML/MXL notation, ZIP listing, and generic-binary download. The canonical browser
 artifact payloads live in `web/test/fixtures/artifactSamples.js` and are imported by the
 Playwright suite. The browser flow asserts the initial `ClientHello`, inbound context-list and
 draft snapshots, context-create `ServerContextListPatch`, draft-upsert `ServerDraftMapPatch`,
@@ -208,7 +231,9 @@ force-closes the live WebSocket, verifies `ClientHello` and active `ClientSubscr
 resent, observes a fresh `ServerConversationSnapshot`, and submits another prompt through the
 reconnected socket. The flow clicks the browser cancel control for the canonical prompt id from
 the prompt append patch, asserts outbound `ClientCancelPrompt`, observes the inbound
-`ConversationCancelEvent` append patch, and verifies the rendered cancel entry. The flow keeps
+`ConversationCancelEvent` append patch, and verifies the rendered cancel entry. The lifecycle gate
+also requires the engine's terminal outcome and observed cleanup; UI projection alone is insufficient.
+The flow keeps
 only the active context id/model id in browser session storage, asserts an in-progress draft
 returns after forced WebSocket reconnect, reloads the page, signs in again through Keycloak,
 observes the restored `ClientSubscribeContext`, and verifies the broker draft replay restores
@@ -266,11 +291,21 @@ the textarea value.
   append patch, and rendered Chat upload message for each supported browser fixture.
 - **Artifact download lifecycle.** Click an artifact; the webapp `/api/objects/download` proxy
   streams the bytes; inline render via `<img>` / `<audio>` / `<video>` where applicable; bounded text/JSON preview and
-  browser-native PDF handling where applicable; MIDI, MusicXML/MXL, unknown, and generic
-  binary artifacts download otherwise. The routed backend grant-disposition matrix for these
+  browser-native PDF handling where applicable; MIDI playback, MusicXML/MXL notation, and ZIP listing;
+  unknown and generic binary artifacts download otherwise. The routed backend grant-disposition matrix for these
   MIME classes is covered; browser click/render behavior is covered for bounded text/JSON
   previews, inline image/audio/video media URL wiring, browser-native PDF URL wiring, and
-  MIDI / MusicXML / generic-binary download-only states.
+  actual MIDI playback, MusicXML/MXL notation, ZIP entries, and generic-binary downloads.
+- **Bounded preview.** Large/chunked text, absent or misleading content length, multibyte boundary,
+  and malformed-text cases measure backend upstream reads, browser stream consumption, and rendered
+  text separately. Assert the positive caps and truncation metadata; independently download the full
+  object with exact byte equality. Fetching the whole response then truncating fails the test.
+- **MIDI/media rendering.** Require same-origin sample requests to return the actual pinned sample
+  assets, sample decode to succeed, and playback of a known note to produce nonempty rendered audio
+  (for example a bounded audio buffer with nonzero samples). No physical microphone is required.
+  Missing samples, load timeout, parse errors, or an empty renderer are failures with visible UI
+  errors, not a successful mount or disposition assertion. MusicXML/MXL and ZIP similarly require
+  nonempty notation or archive entries.
 - **Generated artifact lifecycle.** Prompt a model that generates a non-text artifact
   (e.g., SDXL Turbo for an image, bark-small for audio, Basic Pitch for MIDI, Audiveris for
   MusicXML/PDF notation); confirm the artifact appears in the conversation AND in the
@@ -309,24 +344,25 @@ The per-model smoke matrix is a parameterized Playwright flow.
     families render or download from the typed `object_ref` into infernix-demo-objects. The
     generated artifact (if any) appears in the conversation thread AND in the Artifacts view, and
     the expected handler succeeds: inline rendering for image/playable-audio/video, bounded
-    preview for text/JSON, browser-native handling for PDF, and download-only handling for MIDI,
-    MusicXML/MXL, unknown, or generic binary artifacts. The browser asserts the rendered shape,
+    preview for text/JSON, browser-native handling for PDF, MIDI playback, MusicXML/MXL notation,
+    ZIP listing, and download handling for unknown or generic binary artifacts. The browser asserts useful rendered output,
     never a golden string, and the demo app — not the browser — selects the engine binding from
     the active `.dhall`.
 - **Closure rule.** Across the active substrate's catalog, every non-`Not recommended` row in
   the README "Comprehensive Model / Format / Engine Matrix" has one terminal smoke flow.
-  Failure on any row fails the suite unless the row returns the expected typed
-  `ModelMemoryLimitExceeded` capacity failure for the active budget. Test reports name the
-  substrate and the catalog entry explicitly, and capacity failures must assert constructor and MiB
-  quantities rather than string-matching a prose message.
+  Required successful-inference rows must complete; a capacity refusal cannot silently replace
+  their expected result. Separately declared capacity cases assert the exact typed
+  `ModelMemoryLimitExceeded` constructor and MiB quantities for the active budget. Reports name the
+  substrate, source/image identity, catalog entry, expected outcome, actual outcome, and whether the
+  check executed. Coverage, refusal, and successful-inference counts remain separate.
 - Canonical fixtures are checked into the repo under `web/test/fixtures/` and held under a
   strict size cap; large outputs derive from these via the engines under test rather than
   being checked in.
 
 ### Real-Inline-Output and Catalog-Completeness Guards
 
-The routed browser matrix closes the two ways an empty or fabricated result could otherwise
-slip through a smoke row:
+The routed browser matrix uses independent guards for output presence and catalog coverage; these
+guards complement, but do not replace, semantic realness tests:
 
 - **Real inline text for text-family rows.** The Chat result renderer
   (`web/src/Infernix/Web/Chat.purs`) tags each result-message body with
@@ -334,9 +370,9 @@ slip through a smoke row:
   `data-inline-output="absent"` when it renders the `No inline output.` placeholder. For the
   text families (LLM continuation, speech transcription) the routed matrix
   (`web/playwright/inference.spec.js`) requires `data-inline-output="present"` and rejects the
-  placeholder, so a row cannot pass on an empty or fabricated result hidden behind the
-  placeholder — the assertion is on the presence of real rendered inline output, still never a
-  golden string.
+  placeholder, so a row cannot pass on absent inline output. A nonempty fabricated string can
+  satisfy that presence assertion; input-sensitive behavior and the literal-prose/echo/constant-output
+  negative controls from the realness contract must reject it independently.
 - **Catalog-completeness guard.** The matrix asserts the model-picker option set equals the
   published demo-config catalog — the README "Comprehensive Model / Format / Engine Matrix" rows
   minus the active mode's residual rows — so a catalog row silently dropped from the picker (and
@@ -403,19 +439,19 @@ e2e/browser layer asserts the family-appropriate rendered surface:
   continuation in the Chat thread.
 - **Speech transcription** (whisper.cpp, faster-whisper CT2) — rendered inline transcript text.
 - **Source separation** (Demucs, Open-Unmix) — playable audio players for the stem object refs.
-- **Audio-to-MIDI** (basic-pitch Core ML/ONNX) — a MIDI download-only artifact.
-- **Music transcription** (MT3-PyTorch, MR-MT3, ByteDance Piano Transcription) — a MIDI or MusicXML download-only artifact.
+- **Audio-to-MIDI** (basic-pitch Core ML/ONNX) — playable MIDI with a download action.
+- **Music transcription** (MT3-PyTorch, MR-MT3, ByteDance Piano Transcription) — playable MIDI or rendered MusicXML with a download action.
 - **Image generation** (SDXL-Turbo, Apple SD Core ML) — an inline `<img>` render.
 - **Video generation** (Wan2.1) — an inline `<video>` render.
 - **Audio generation / TTS** (bark) — an inline `<audio>` player.
-- **OMR tool** (Audiveris) — a MusicXML download-only artifact.
+- **OMR tool** (Audiveris) — rendered MusicXML notation with a download action.
 
 The browser asserts the result surface by rendered shape (inline text, audio player, image, video,
-MIDI/MusicXML download) and never by golden strings. Inline-text rows render directly from
-`inline_output`; artifact rows render or download from a typed `object_ref` into the always-on
-infernix-demo-objects bucket. Realness is guaranteed by construction — the engine code cannot
-fabricate a result (enforced by the realness lint) — so the browser trusts the result and fails closed
-on `status=failed` whenever the engine surfaces a terminal status. Capacity failures surface through
+MIDI playback/MusicXML notation) without requiring golden strings. Inline-text rows render directly from
+`inline_output`; artifact rows render or download from a typed `object_ref` into the demo-gated
+infernix-demo-objects bucket. Realness requires fail-closed engine code, behavioral assertions, and
+negative mutation controls; static lints and a rendered container are not a semantic proof.
+Required successful cases fail on `status=failed`; independently expected capacity cases surface through
 typed `InferenceError.ModelMemoryLimitExceeded`, not through successful inline output (canonical home:
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)). Real
 output is attested per accelerator, and the union across the three substrate catalogs covers every

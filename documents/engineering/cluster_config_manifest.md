@@ -164,6 +164,12 @@ never receives a presigned MinIO URL — the webapp `/api/objects` proxy signs a
 
 ## Validation
 
+Configuration validation executes the binary producers and decodes the actual generated payloads,
+including image defaults and mounted role mirrors. A handwritten Dockerfile host seed is not a
+valid producer even when it decodes successfully. The seed build and sole-generator rule are owned
+by [Configuration Doctrine](../architecture/configuration_doctrine.md); tests reject stale defaults,
+missing required mounts, and mismatched machine/system pins independently.
+
 - `infernix lint chart` rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
 - `infernix lint files` rejects any new project-prefixed env lookup in the Haskell sources.

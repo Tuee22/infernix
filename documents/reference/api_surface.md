@@ -23,9 +23,12 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - `GET /api/models/:modelId` returns model metadata, selected engine, and request-shape
   information
 - `GET /api/demo-config` returns the serialized generated demo config for the active runtime mode
-- `GET /api/cache` (**admin-only**) returns manifest-backed cache status for the active runtime mode
-- `POST /api/cache/evict` (**admin-only**) removes derived cache directories while retaining the durable manifest
-- `POST /api/cache/rebuild` (**admin-only**) rebuilds derived cache directories from the durable manifest set
+- `GET /api/cache` (**admin-only**) returns verified cache state with the engine owner, runtime,
+  model/artifact identity, and observed byte/file counts; an unavailable owner is not an empty cache
+- `POST /api/cache/evict` (**admin-only**) removes selected derived engine-cache generations under
+  their owner's mutation authority while preserving durable MinIO artifacts
+- `POST /api/cache/rebuild` (**admin-only**) hydrates and verifies real engine-cache payloads from
+  durable MinIO artifacts before publishing readiness
 - `GET /api/admin/overview` (**admin-only**) returns cluster-wide monitoring for the admin panel
 - `GET /api/cache`, `POST /api/cache/evict`, `POST /api/cache/rebuild`, and `GET /api/admin/overview` all require the `infernix-admin` realm role (`jwtClaimsHasRealmRole`, backend `withAdminRequest`): 401 without a token, 403 for a valid non-admin token, 2xx for an admin token. See [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md)
 - `DELETE /api/account` (JWT-validated, per-user; `handleAccountDeletion`) deletes the caller's account data — it reaps the caller's `users/<sub>/` MinIO prefix and the caller's demo Pulsar conversation / metadata / draft topics. See [web_portal_surface.md](web_portal_surface.md)
@@ -56,6 +59,30 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   [../tools/minio.md](../tools/minio.md), and
   [../architecture/demo_app_design.md](../architecture/demo_app_design.md).
 
+## Cache Request Contract
+
+Cache mutations require a valid JSON object. A nonempty string `modelId` selects one catalog model;
+an explicitly submitted empty object `{}` selects all models within the operation's identified cache
+owner and runtime scope. Omission of `modelId` in that valid empty object is intentional all-model
+selection, not the result of failed decoding. An empty body, malformed JSON, a non-object body,
+unknown fields, an empty or wrongly typed `modelId` (including `null`), or an unknown model is HTTP
+400 with a typed error and no filesystem, cache-owner, or MinIO mutation. Authentication and admin
+authorization precede effects and do not make a malformed request valid.
+
+All-model selection does not imply all machines. The response names the owner(s) actually contacted
+and reports incomplete or unavailable scopes without a fabricated success count. The cache lifecycle
+contract is owned by [../engineering/model_lifecycle.md](../engineering/model_lifecycle.md).
+
+## Preview And Download Contract
+
+The bounded text/JSON preview carries an explicit typed preview intent, positive byte/render limits,
+and truncation metadata. The backend stops the MinIO read at the preview bound (with at most one
+bounded lookahead to determine truncation); the browser independently caps streamed bytes, decoding,
+and rendered text. The implementation does not buffer a complete object before truncating it.
+The separate full-download intent streams the complete object with backpressure and bounded buffers.
+Both intents use the existing authorized object-download family; neither relaxes user-prefix checks.
+See [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md).
+
 ## Rules
 
 - the demo API surface is served by Haskell `src/Infernix/Demo/Api.hs` and exposed by
@@ -68,7 +95,8 @@ never serve these endpoints
 structured-text) are written server-side to the `infernix-demo-objects` MinIO bucket under the
 caller's generated prefix; the inference result message carries an `ObjectRef`, and the browser
 fetches the bytes through the webapp `GET /api/objects/download` proxy (never directly from MinIO).
-Text outputs ride inline in the result message. Cache manifests sit beside the cached weights at
+Text inference outputs ride inline in the result message; uploaded text objects use the bounded
+preview/download contract above. Cache manifests sit beside the cached weights at
 `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb` and are rebuildable via
 `infernix cache rebuild`.
 - publication details stay mode-stable and source from the repo-local publication-state file

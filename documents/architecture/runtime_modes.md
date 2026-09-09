@@ -65,9 +65,10 @@ inventory.
 On the `apple-silicon` substrate the worker dispatches to Apple-native engine entrypoints, not to a
 generic placeholder branch. The runtime worker invokes the selected Python adapter or native runner,
 streams model weights from the eagerly pre-staged `infernix-models` MinIO bucket via
-`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness
-is guaranteed by construction — the Apple engine code cannot return a fabricated result (enforced by
-the realness lint). On `apple-silicon` there are no in-cluster engine pods. The execution-plan
+`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Missing
+weights, load failure, and engine failure produce visible failure. The realness lint is a limited
+syntactic guard; independent model-specific behavioral tests establish required success cases.
+On `apple-silicon` there are no in-cluster engine pods. The execution-plan
 compiler accounts for each configured model as a fitting placement or explicit unavailable model
 against the checked host partition; package-owned live observations then refine fitting placements
 into `ExecutableModel`. The supported daemon runs fresh engine subprocesses under a process-local
@@ -94,8 +95,8 @@ Runtime revalidates that evidence before launch and compiles only target-specifi
 The image build installs the native payload layer for llama.cpp and whisper.cpp using the image
 architecture (`linux/amd64` or `linux/arm64`), plus Basic Pitch's ONNX model, ONNX
 Runtime/CTranslate2 Python dependencies, faster-whisper, and Audiveris app jars with an
-image-architecture Temurin 25 JRE. Realness for this direct-target topology is enforced in the
-engine code by the realness lint.
+image-architecture Temurin 25 JRE. This direct-target topology follows the same real-output-or-visible-
+failure contract and independent behavioral controls in [realness_contract.md](realness_contract.md).
 
 ## Per-Substrate Inference Memory Budget
 
@@ -161,8 +162,10 @@ process-group anonymous residency through `/proc`, and on `linux-gpu` per-proces
 through a fixed device query. None of the three accepts a caller-supplied command or uses direct FFI,
 and a measured breach SIGKILLs the child group and produces a typed
 `status=failed ModelMemoryLimitExceeded` that names the resource it breached and the footprint it
-observed. The single-flight authority remains encapsulated so aggregate concurrent overcommit is
-unrepresentable. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error naming
+observed. The single-flight authority remains encapsulated; its aggregate account includes any
+retained model/KV state and reconstruction buffers, or releases them before admitting the next
+request. Finite-cgroup availability requires a valid current-usage observation, and an unreadable
+counter refuses admission. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error naming
 the required and available quantities in MiB for the named resource.
 
 The settlement discipline belongs to that one kernel rather than to a lane. Terminal procfs tasks are
@@ -174,6 +177,8 @@ backstop and to nothing else, because an allocation the installed ceiling refuse
 poll at. Linux CPU refinement probes that sampler and the exact larger cgroup envelope under the same
 opaque serialization authority; CUDA OOM classification is not proof of an installed device limit, so
 Linux GPU refinement additionally requires independent live NVIDIA accounting.
+Required CUDA validation executes inside a GPU-enabled engine workload with recorded device
+access and measured behavior; an outer launcher exit or a skipped fixture is not that evidence.
 Engine members do not become ready until the mechanism their lane declares has been verified against
 the compiled execution plan, at the strength it declares.
 

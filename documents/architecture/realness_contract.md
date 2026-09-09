@@ -4,12 +4,12 @@
 **Referenced by**: [../../AGENTS.md](../../AGENTS.md), [../../CLAUDE.md](../../CLAUDE.md), [model_catalog.md](model_catalog.md)
 
 > **Purpose**: Define the code-level "realness by construction" invariant — an inference result is
-> always real model output or a visible failure, never a fabricated value — and the lint that enforces
-> it across every substrate.
+> always real model output or a visible failure, never a fabricated value — and the complementary
+> implementation, review, and behavioral checks required across substrates.
 
 ## TL;DR
 
-- The inference engine code is **structurally incapable** of returning a fabricated result. Every
+- The inference engine has no permitted fabricated-success branch. Every
   successful (`status=completed`) result is the output of a real model run; every missing-weights,
   model-load, or engine-runtime failure **raises / exits non-zero** and surfaces as `status=failed`.
   This is an *engine-logic* guarantee for in-band failures the adapter/runner can raise or exit on,
@@ -24,12 +24,14 @@
 - **A capacity refusal, a fabrication, and an ordinary model bug are three different facts.** A
   failure mapping must not infer the first from an exit status: without explicit evidence the
   outcome stays the third, which is safer than publishing a false typed diagnosis.
-- Tests therefore **trust the result** and assert only the per-family contract, failing closed on
-  `failed`. Realness is a property of the engine code, not of the test.
+- Tests establish the per-family output contract and its connection to real inference; a success
+  label, nonempty string, or plausible artifact alone is not evidence of model execution. Expected
+  refusal tests assert their exact typed failure, separately from required successful-inference tests.
 - A lint (`realnessFabricationViolations` in `Infernix.Lint.HaskellStyle` plus the Python
   `check-code` AST pass) is a mechanical regression tripwire on a fixed set of named fabrication
   tokens and AST shapes. It catches the known fabrication patterns rather than proving the absence of
-  every conceivable one; the invariant ultimately rests on the fail-closed engine code plus review.
+  every conceivable one. Arbitrary constant prose and semantically disguised fabrication cannot be
+  ruled out by token or AST matching; behavioral evidence and review are independent obligations.
 - The [Managed State Transitions](managed_state_transitions.md) doctrine is the canonical home for
   generalizing this "real output or a visible failure" contract from inference results to system
   state transitions.
@@ -91,8 +93,8 @@ and public engine launch accepts only that capability. The typed rejection is a 
 `ResultPayload` — not successful inline output and not a parsed string — and is published without
 launching the engine, while smaller compiled placements continue to run.
 
-The **enforcement half** removes an admitted request's actual resident memory and aggregate
-execution authority as a cause of host exhaustion. It is owned by
+The **enforcement half** bounds admitted execution only to the strength and observation coverage
+declared for each lane; it does not prove host exhaustion impossible. It is owned by
 [bounded_inference_memory.md](bounded_inference_memory.md): a requirement **derived from the
 artifact's own bytes and the execution shape the engine will run under** mints one resource-indexed
 grant per physical resource the placement consumes, live refinement pairs each grant with its
@@ -111,7 +113,19 @@ fabricated pass.
 
 ## Validation
 
-- `infernix test lint` fails on any reintroduced fabrication (the Haskell + Python passes above).
+- `infernix test lint` and `poetry run check-code` reject the enumerated fabrication patterns above;
+  neither gate proves semantic realness for all programs.
+- Behavioral realness tests use controlled, meaningfully different inputs and family-appropriate
+  semantic assertions, with recorded model/artifact identity and the actual engine execution path.
+  They reject a literal-prose result, input echo, constant valid artifact, missing model invocation,
+  and a masked engine failure through independent negative mutation controls. A negative control
+  must fail for its intended reason, not an unrelated parse or setup failure. Stochastic output does
+  not require golden strings, and byte inequality alone does not prove semantic input dependence.
+- Each required real-inference case must execute and complete with validated output. A deliberately
+  over-capacity or unsupported-input case can pass its expected typed-refusal assertion, but counts
+  only as refusal coverage, never as successful inference. Reports distinguish completed inference,
+  expected refusal, expected measured breach, unexpected failure, and skipped/not-applicable checks;
+  an all-refused catalog or a skipped mandatory check cannot satisfy real-inference coverage.
 - `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` pass only on real inference for
   the active catalog; withholding weights or the engine yields a visible `status=failed`. This
   fail-closed mapping covers engine-logic failures; model-memory capacity is additionally covered by

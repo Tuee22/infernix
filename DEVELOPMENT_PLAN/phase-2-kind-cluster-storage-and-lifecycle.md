@@ -1,17 +1,8 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done — Sprints 2.1 through 2.17 are implemented and validated. Sprint 2.17 owns the
-single-binary `registry:2` bootstrap embedded in `cluster up`.
+**Status**: Active — Sprints 2.18 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
 
-The landed correction set is a global cross-runtime cluster inventory, lifecycle-region-indexed
-owner/runtime teardown authority, a harness reservation established before config takeover,
-writer-frozen transactional Apple snapshots, durable pre-workload retained-replay intent with
-proof-gated interrupted-create recovery, effect-adjacent authority and replay-intent revalidation
-for every Kind deletion, collision-safe target-exec provenance, detached parent-death supervision,
-parent-side process-group termination, real monotonic readiness deadlines, stale-state mutation
-publication, claim-permission repair, operator-kubectl mutation-bypass refusal, closed operand
-validation at the subprocess compiler, single-deadline generated retries, observed post-failure
-absence, and stdin/protected-file credential transport. **Referenced by**: [README.md](README.md),
+**Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
 [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
@@ -22,23 +13,11 @@ absence, and stdin/protected-file credential transport. **Referenced by**: [READ
 
 ## Phase Status
 
-Sprints 2.1–2.17 are closed. The lifecycle, ownership, retained-state, and
-bounded-command implementation passed its settled-source review and explicit post-Phase-1
-machine-independent gates.
+Sprints 2.1–2.17 retain their closed headings and only their established scope. Lifecycle consumers require review against the corrected authority boundary. A retained Phase 2 accelerator attestation is missing; source inspection and existing closed sprint declarations do not supply that evidence.
 
-The Kind bootstrap, manual PV doctrine, registry-first image flow, shared substrate publication
-path, Linux outer-container launcher contract, lifecycle progress surface, retained-state repair
-behavior, narrowed bootstrap responsibility boundary, and teardown preservation contract are
-implemented in this worktree. Sprint 2.13 (Cluster Lifecycle Host-Manifest Retirement) closed the
-Linux cluster lifecycle path so it no longer consumes `INFERNIX_HOST_KIND_ROOT`,
-`INFERNIX_HOST_REPO_ROOT`, or `HOSTNAME`, no longer inherits the parent process environment in the
-shared cluster/process-monitor helpers, and routes known cluster tools through the
-`HostConfig`-backed HostTool resolver. The Apple setup path in
-`src/Infernix/Engines/AppleSilicon.hs` no longer inherits the parent environment; it invokes the
-Poetry setup entrypoint with an explicit `--install-root` argument and an empty process
-environment. The obsolete C/Cabal boundary is removed. The focused all-Haskell replacement proofs,
-renewed review, fresh machine-independent gates, and ordered Apple/`linux-cpu` cohorts are
-complete.
+The missing Phase 2 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
+
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R2 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Storage Doctrine
 
@@ -73,25 +52,7 @@ These rules close in this phase and remain mandatory afterward:
 
 ## Current Repo Assessment
 
-The storage doctrine, Helm rollout, registry-first image flow, route de-duplication, generated
-values overlay path, in-image `nvkind` path, shared substrate-publication filename, and bootstrap
-responsibility boundary are implemented on the supported Kind substrate. `cluster up`, `cluster
-down`, and `cluster status` expose the active lifecycle action, phase, child-operation detail, and
-heartbeat during the monitored Docker build, registry publication, registry-backed Kind-worker
-preload, and Apple retained-state replay windows. Bootstrap shells build or enter the active
-launcher only and then delegate lifecycle, validation, image preparation, and teardown to
-`infernix`; the shared lifecycle skips broad pre-registry support-image preloads, may hydrate and
-stream only the narrow registry warmup dependency set into Kind workers before Helm warmup, and
-loads every remaining image, including the active runtime image, into the registry after it is
-responsive. Repo-root runtime-config generation and deployment-mirror publication are atomic so
-concurrent status readers do not observe truncated payloads, and retained-state Apple reruns
-automatically reinitialize stopped Patroni PostgreSQL replicas from the current Patroni leader
-when timeline drift leaves replicas unready after promotion. Legacy lifecycle proof points are
-inventoried in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) rather than
-repeated in the current phase narrative. Phase 2 carries landed implementation only: the
-registry-only publication verification correction is implemented with closed-command, redaction,
-and path coverage; the all-Haskell lifecycle correction and the bounded-subprocess replacement are
-implemented; and the obsolete C/Cabal boundary is removed.
+The Kind lifecycle, storage reconciler, bounded subprocess kernel, and ownership checks exist. Sprint 2.18 owns their consumer containment/cleanup regressions and the evidence gap. The orphan harness backup without a reservation is refused by src/Infernix/Cluster.hs; it is not automatically restored. Reservation-backed recovery and explicit operator resolution of ambiguous files remain distinct contracts.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -1001,13 +962,6 @@ so no cluster lifecycle path can invoke a raw or unbounded process.
 
 ---
 
-## Remaining Work
-
-None. Sprints 2.1-2.17 are `Done`.
-
----
-
-
 ## Sprint 2.17: Single-Binary Registry Bootstrap and Lifecycle Collapse [Done]
 
 **Status**: Done — `cluster up` brings up the single-binary `registry:2` in its bootstrap Helm
@@ -1060,6 +1014,55 @@ None.
 
 ---
 
+## Sprint 2.18: Lifecycle Consumer Containment and Verifiable Closure [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Consumer audit and regressions pending; missing historical evidence is unresolved.
+**Cohort gate**: Wave R2 — selected `linux-gpu` plus native `linux-cpu`.
+**Blocked by**: Sprint 1.46 code-side closure.
+**Implementation targets**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/LifecycleLock.hs`, `src/Infernix/Cluster/Subprocess.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `test/compile-fail/`
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/engineering/storage_and_state.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/architecture/configuration_doctrine.md`
+
+### Objective
+
+Apply the domain-owned authority boundary to actual lifecycle effects and establish checkable
+evidence for the lifecycle scope.
+
+### Deliverables
+
+- Recheck ownership, reservation identity, writer quiescence, and same-region authority at teardown,
+  retained-state mutation, readiness publication, and harness configuration restoration.
+- Require every lifecycle-owned helper and fixture to retain cleanup custody until its child is
+  terminal, reaped, and its owned pipes are closed; cleanup failure cannot become success.
+- Keep reservation-backed interrupted config recovery distinct from an orphan
+  `infernix.dhall.harness-backup` lacking owner evidence. Refuse the latter and preserve both
+  files for explicit operator resolution; do not infer absence or choose a config silently.
+- Recover a verifiable Phase 2 closure record with its underlying results, or replace missing proof
+  by Wave R2. Closed sprint headings alone are not retained evidence.
+
+### Validation
+
+- Exercise stale owner, changed reservation after initial authorization, foreign checkout,
+  deferred action after lock release, and concurrent mutation independently. Each must refuse
+  before the destructive primitive; a valid matching owner inside its held region succeeds.
+- Exercise timeout, synchronous failure, cancellation, and normal completion through the actual
+  subprocess consumer and verify no owned live child or pipe remains. No sleep duration or vanished
+  parent alone is a cleanup oracle.
+- Test reservation-backed config recovery and orphan-backup refusal with distinguishable operator
+  and harness file bytes; assert exact preservation/restoration and no unproved deletion.
+- Run governed build, aggregate lint/unit and focused docs/plan gates. Wave R2 covers real Kind
+  lifecycle, manual storage, registry-first bootstrap, preserved data, and teardown under one
+  source/image identity. Recover or rerun missing evidence without inventing a historical result.
+
+### Remaining Work
+
+Audit and repair consumers as needed, add the regressions, and retain Wave R2 or verifiable
+equivalent underlying evidence for every required criterion. Hardware-only sign-off does not
+block the next phase's implementation after code-side closure.
+
+## Remaining Work
+
+Implement Sprints 2.18, pass their governed machine-independent gates, and retain Wave R2's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 
@@ -1084,3 +1087,9 @@ None.
   when storage, image-flow, generated-input, or GPU-lifecycle assumptions change
 - keep [phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md)
   aligned when lifecycle progress surfaces or failure-classification doctrine changes
+
+**Remediation documentation obligations:**
+
+- Keep the contracts named by Sprints 2.18 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
+- Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.

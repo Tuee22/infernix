@@ -111,6 +111,15 @@ Pulsar+MinIO wiring under the integration validation suite.
   worker configures from request-carried model-cache and MinIO settings
   before adapter execution.
 
+Hash/reducer helpers identify and verify a durable conversation prefix; they cannot construct an
+engine's KV state on their own. Shared transport supplies the authorized complete prefix, and the
+engine adapter owns verified backend reconstruction/reuse under the admitted execution shape.
+Unsupported reuse is explicit replay. The same runtime boundary accounts for retained state and
+makes cache status/eviction/rebuild operate on real engine-consumed artifacts; marker files alone
+do not establish materialization. See
+[bounded_inference_memory.md](../architecture/bounded_inference_memory.md) and
+[durable_context_design.md](../architecture/durable_context_design.md).
+
 The Haskell style gate enforces that engine-runtime import boundary for
 `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`,
 `src/Infernix/Runtime/KVCache.hs`, and

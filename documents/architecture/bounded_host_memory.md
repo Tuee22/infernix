@@ -84,12 +84,20 @@ descendant is foreign. Either observation failing is a refusal naming
 what it found. This clause exists because arithmetic over installed capacity cannot see a claimant
 it never started, and an unseen claimant is exactly what exhausts a host.
 
+Inside a finite cgroup, available memory additionally requires a successful observation of both
+`memory.max` and `memory.current` for the applicable hierarchy. Compute nonnegative remaining
+bytes before conservatively converting to MiB and intersect that headroom with host availability.
+Missing, unreadable, malformed, overflowing, or contradictory usage is a typed refusal before
+claimant admission; the maximum is capacity, never a fallback measurement of free memory. A
+positively observed unlimited envelope is distinct from an unobservable envelope. These
+observations remain snapshots and do not reserve memory against unrelated processes.
+
 ## Enforcement
 
 | Surface | Mechanism | Forbids |
 |---|---|---|
 | Types | GHC module export lists (opaque types, hidden constructors and nominal role annotations) under `-Wall -Werror` | constructing a build ceiling outside its minting module; deriving a per-process ceiling without the concurrency it is multiplied by; coercing either the spawn authority or Darwin refinement across region tags |
-| Region | rank-2 `forall s.` scope plus one private `MVar` on the spawn authority | using a ceiling outside the region that established it; coercing its region tag; overlapping two package-owned child lifecycle calls through one authority |
+| Region | nominal rank-2 indices, closed domain-owned execution operations, a private serialization `MVar`, and runtime brackets | region substitution and overlapping owned child lifecycles; delayed-action/thread containment requires the closed effect boundary, not an unrestricted `IO` callback |
 | OS (Linux) | an existing cgroup v2 maximum when the execution context supplies one; otherwise Haskell runtime heap caps plus a temporarily inherited per-process address-space rlimit | the current cgroup bounds its aggregate when present; without it, only individual Haskell/address-space images are enforced and the claimant sum remains arithmetic |
 | OS (Linux, outer container) | the container's own cgroup limit, plus the runtime heap cap and rlimit | the same, bounded by the container envelope rather than a nested scope |
 | OS (Apple host-native) | none — Darwin supplies no cgroup and no installable address-space ceiling, so the caps are Haskell runtime heap values carried on the invocation rather than a kernel mechanism | an unbounded Cabal/compiler/test Haskell heap; the native-helper reserve and the aggregate are arithmetic plus sampled evidence, and no operating-system bound is engaged on this lane |
@@ -388,6 +396,10 @@ toolchain — not otherwise.
   does not name the native helpers any unrelated build also runs. The account decision refuses an account larger than observed availability, refuses
   a named claimant while leaving it running, and admits an exactly funded account with an empty
   census.
+- cgroup observation controls independently remove, deny, corrupt, and overflow `memory.current`
+  while retaining a readable finite maximum. Each refuses before any protected spawn. A valid
+  occupied cgroup proves subtraction and conservative rounding; a valid unlimited observation is
+  a separate positive case. A missing probe result cannot count as successful admission.
 - the Darwin unit adversary observes an active 64 MiB RTS heap cap, requests approximately twice that
   amount on the GHC heap, and requires an ordinary positive nonzero exit without multi-GiB host
   pressure. The enforced-address-space lane retains its separate clean over-allocation proof.

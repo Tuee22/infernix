@@ -20,9 +20,10 @@
 - An **unenforced admission is an unmanaged resource transition**: an inference admitted on a *static
   estimate* but then run with no structural tie to an *enforced* ceiling can consume more host memory
   than the budget that admitted it and take the whole process tree down with it (a `SIGKILL` that
-  bypasses cleanup and leaves the cluster orphaned). Closing that gap removes *this* claimant as a
-  cause of host exhaustion; it does not remove the others, which
-  [bounded_host_memory.md](bounded_host_memory.md) enumerates.
+  bypasses cleanup and leaves the cluster orphaned). Admission and enforcement constrain this
+  claimant only to the strength each lane/resource mechanism supplies. Detection can miss a
+  transient peak and cannot prevent every host exhaustion; the full residual account is in
+  [bounded_host_memory.md](bounded_host_memory.md).
 - The invariant, the memory analog of the bounded-command kernel
   ([managed_state_transitions.md](managed_state_transitions.md): `runBoundedCommand` under a required
   `Timeout`): compilation mints a resource-indexed grant from a **derived** requirement, live
@@ -86,8 +87,9 @@
 
 For every compiled placement there is a resource-indexed grant per physical resource that placement
 consumes; every executable placement pairs each grant with a live enforcer for the same resource, and
-therefore carries an enforced ceiling for every resource it can consume. A placement that names a
-device but carries no device grant is not a constructible term.
+therefore carries the declared prevention or detection mechanism for every resource it consumes.
+A detection threshold is not a kernel-enforced ceiling. A placement that names a device but carries
+no device grant is not a constructible term.
 
 - **Compilation mints positive evidence, on the machine that will execute.** `compileRuntimePlan`
   validates the model footprint against **the executing machine's own observed capacity** and
@@ -105,19 +107,19 @@ device but carries no device grant is not a constructible term.
 - **Execution requires the executable capability.** The public daemon/worker launch surface accepts
   `ExecutableModel`, never a bare grant, enforcer, model descriptor, command override, or raw process
   specification. The package-internal capped-engine kernel owns the only inference spawn and a
-  rank-2 bracketed handle that cannot escape its actively enforced region. Its total
+  closed operation runner that keeps its handles and protected effects inside the runtime bracket.
+  Nominal rank-2 indices alone do not prevent a deferred `IO` closure from escaping. Its total
   `EngineOutcome` distinguishes a measured `EngineExceededCeiling` from
   `EngineEnforcementUnavailable`; only the measured breach maps to typed
   `ModelMemoryLimitExceeded`.
-- **Serialization is per machine, and it is what makes the aggregate sound.** Execution is serialized
-  behind one execution authority minted with the refined plan and carried inside the private engine
-  topic capability, so a caller cannot pair a plan with a foreign token or reach execution
-  unguarded. One engine process per machine plus one authority per plan means the resident set on a
-  machine is **one model at a time**, so the aggregate a machine must satisfy is
-  `max(footprint of the models it serves)`, not their sum. Per-model admission checks that maximum,
-  which is why the fleet's memory contract is sound locally and needs no
-  cross-machine arithmetic. It is also why a second engine process on one machine is a correctness
-  bug rather than a scaling choice: see
+- **Serialization is per machine.** One private execution authority permits one active inference
+  and remains inside the domain-owned worker boundary. Serialization alone does not remove
+  resident weights or KV state retained from prior requests. The aggregate includes active
+  execution, retained model/KV state, and bounded reconstruction buffers for each physical
+  resource. A maximum-of-model-footprints account is valid only when other resident model/KV state
+  is released before the next admission; otherwise its retained charge is added or evicted before
+  launch. Reusable engine state is not free merely because it belongs to an inactive context.
+  One engine process per machine remains the topology rule in
   [daemon_topology.md](daemon_topology.md).
 - **The ceiling is installed before the first allocation where a lane can install one.** On the Linux
   lanes the engine is started through a fixed public-tool launch prefix that lowers both the soft and
@@ -201,11 +203,22 @@ derived rather than authored, so the related unmanaged states are also unbuildab
   resulting quantity is resource-indexed and its constructor is hidden, so a host
   quantity cannot be admitted against a device limit; a requirement that is absent, zero, or built from
   anything but a verified artifact is unrepresentable.
+- **Checkpoint selection is complete and cache-independent.** Local and remote paths apply the
+  same inventory and integrity rules. A sharded model requires every referenced shard, validated
+  extents, consistent geometry, and aggregate weight accounting; enumeration order and a warm
+  cache cannot reduce its requirement to one shard. A backend without complete sharded-model
+  accounting refuses that artifact explicitly on both paths.
 - **The execution shape is one value with two consumers.** The context length, batch, generation bound,
   and load strategy that the cache term is computed from are the same values the engine is started
   with, carried to it rather than restated in it. Generation shape is part of a model's bounded
   execution kernel, not an unaccounted caller choice: an engine free to choose its own arena from the
   size of the device it happens to find is not bounded by anything the compiler reasoned about.
+- **KV validity names real engine state.** A conversation hash identifies a verified input prefix;
+  validity additionally requires successful backend state construction with matching model,
+  tokenizer/template, execution shape, and tenant/context identity. Cache loss or divergence
+  rebuilds the bounded prefix from durable events. A backend without a reuse API replays that
+  prefix and reports replay rather than claiming reuse. Construction failure publishes no valid
+  cache; retained-state accounting follows the serialization rule above.
 
 Because admission is against the model footprint and the partition reserves real headroom, a host
 whose pledged co-tenant reserve leaves less inference capacity than a model's footprint
@@ -226,7 +239,7 @@ with different drivers.**
 | Surface | Mechanism | Forbids |
 |---|---|---|
 | Types | GHC module export lists and nominal resource roles over the opaque plan, executable, requirement, and grant/enforcer types, under `-Wall -Werror` | constructing or relabeling a grant; admitting a host quantity against a device limit; refining from caller-fabricated observations; launching from a raw model/config record; a requirement built from anything but a verified artifact; a budget with no named enforcer; a device-using placement carrying no device grant |
-| Region | package-internal rank-2 capped-engine region with `bracket` teardown, entered only from an `ExecutableModel`-gated worker launch | an engine handle that escapes its capped region; a subprocess that runs or persists without the executable's ceiling and watchdog |
+| Region | closed package-internal capped-engine operations with nominal region indices, `bracket` teardown and owned child joining, entered through an `ExecutableModel`-gated worker | protected operations escaping their enforced lifetime; an unrestricted rank-2 `IO` callback alone cannot prove closure or thread containment |
 | Serialization | one opaque process-local execution authority owned inside the engine API | concurrent reuse of independently admitted footprints that collectively exceed the host/pod partition |
 | OS (prevention) | a fixed public-tool launch prefix lowering the soft and hard data-segment limit, then replacing itself with the engine image, at the greater of the artifact-derived requirement and the engine's own bounded pre-flight projection, or at the admitted lane budget when no trustworthy projection exists | one process of an admitted engine allocating private writable memory beyond its installed ceiling. Bounds neither shared mappings nor device memory, and bounds a tree only per process |
 | OS (detection) | one resource-parameterised sampling kernel over process-group physical footprint, anonymous residency, or per-process device bytes | the residue prevention does not cover — pinned and shared host memory, and device memory on every lane — exceeding its ceiling without a clean, typed, terminal per-request failure. This half is sample-and-kill on a fixed cadence: a breach is detected and terminated, not prevented |
@@ -346,6 +359,15 @@ a fabricated pass.
   ceiling, reads it back, initializes its runtime, and an over-budget allocation is prevented without
   killing the daemon. The receipt is behavioral evidence; no `HostCeilingCalibrationObserved`
   constructor is minted from a handwritten constant.
+- Required accelerator checks run in an execution context with actual device access. For CUDA,
+  the binary orchestrates the GPU-enabled engine workload; ordinary outer-launcher success does
+  not imply GPU execution. Missing tooling, allocation failure, timeout, skipped checks, absent
+  samples, or cleanup failure cannot satisfy a required behavioral result. Every fixture retains
+  child/pipe custody through termination, reaping, and handle closure.
+- Independent controls cover local/remote shard parity, missing or truncated shards, occupied
+  cgroup usage failure, failed KV construction, prefix/model/user invalidation, and retained-cache
+  budget pressure. A supported successful inference case requires real output; expected admission
+  refusal and post-launch measured breach are separate cases and do not substitute for success.
 - `infernix lint docs` keeps this document registered and its cross-references resolving.
 
 ## Cross-References

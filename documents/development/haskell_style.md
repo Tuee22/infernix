@@ -65,9 +65,15 @@
 - `Typed control flow:` prefer ADTs, records, and pattern matching over stringly mode switches,
   sentinel values, or silently ignored cases. The type-driven enforcement mechanisms of the managed
   state transitions doctrine — hidden-constructor newtypes via GHC export lists, one honest mint,
-  rank-2 region leases (`withLease`), and surgical `LinearTypes` — are the complement to these
+  nominal region indices, closed domain-owned operation runners, and surgical `LinearTypes` — complement these
   ADT-over-sentinel and `-Werror` rules; see [Managed State Transitions](../architecture/managed_state_transitions.md)
   for the canonical home.
+- `Authority lifetime:` a rank-2 callback returning ordinary `IO` can capture authority in a
+  deferred action, existential, mutable reference, or child thread. Do not infer nonescape from
+  its signature. Keep acquisition and protected effects domain-owned, disallow payload reminting,
+  and use a closed indexed program where compile-time containment is required. Runtime brackets
+  own liveness checks, cleanup, and child joining. Review and independently test each boundary
+  with positive controls and negative cases that fail for the intended restriction.
 - `Bounded provisioning:` Apple engine materialization may select only closed adapter/operation
   identities through the package-internal `Infernix.Engines.Provisioning` facade. Its opaque
   nominal `ProvisioningGrant s` and indexed `ProvisioningSession s result` remain inside

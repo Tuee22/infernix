@@ -3,346 +3,186 @@
 **Status**: Authoritative source
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [development_plan_standards.md](development_plan_standards.md)
 
-> **Purpose**: Record the authoritative component inventory for operator surfaces, supported
-> substrates, and durable state locations in `infernix`.
+> **Purpose**: Record component ownership, execution surfaces, state locations, and scoped
+> implementation gaps without duplicating phase status.
 
 ## Current Execution State
 
-Phases 0 through 9 are `Done`. Phase 6 Sprint 6.53 passes its selected current-source CUDA
-accelerator validation plus the paired current-source native-amd64 `linux-cpu` full suite. Each
-phase document names its scope, and
-[README.md](README.md) holds the plan's single phase-status table.
-
-Each lane record binds source identity, lane, model id, adapter and engine-artifact identity with
-manifest digest, request and result identity, terminal status, real-output witness, and the exact
-command and settlement receipt. [cohort-validation-waves.md](cohort-validation-waves.md) holds no
-open cohort gate, and every superseded surface is inventoried in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+[README.md](README.md#current-phase-overview) owns the single phase-status table.
+Follow-on work begins at Sprint 1.44; [Waves R1–R9](cohort-validation-waves.md#wave-table)
+hold the separate chosen-accelerator plus CPU sign-off obligations.
+Component existence is not proof that its target contract or new validation criteria are satisfied.
 
 ## Current Repo Assessment
 
-- the typed execution-plan refactor is landed code-side: the generated Dhall is proper unions
-throughout, compilation produces an opaque `RuntimePlan`, the engine refines declared enforcers
-against live OS evidence, only `ExecutableModel` values reach routing, and every subprocess is
-gated behind a bounded command, provisioning, or resource-indexed inference capability. The
-reflected substrate schema went from 110 lines to 54 as the derivable wire fields were deleted.
-Behavioral sign-off for its `linux-gpu` arm is complete.
-See [Typed Execution Plan](../documents/architecture/typed_execution_plan.md) - the
-bounded-command kernel replacement uses public Haskell process APIs: the parent self-execs one
-anchor with closed descriptor inheritance, an explicit environment, a new process group, and
-standard-stream framing. The required replacement starts the supervisor inside the anchor group
-and a self-exec pin inside the supervisor group, forwarding both provisional birth identities to
-parent custody before either helper detaches. A version-5 activity lease persists exact
-owner/anchor/supervisor/pin birth identities plus shared kernel lifetime protection, while a bounded
-fsynced protected version-6 incoming-intent filename preserves them across a crash before payload
-write. The arbitrary target remains a supervisor-owned unreaped child rather than a persisted
-birth identity. A hidden rank-2 linear session orders `AnchorReady -> SupervisorReady ->
-LeaseDurable -> TargetRunning`. The obsolete repository-owned subprocess C file and Cabal
-declaration are removed - the Apple capped-engine footprint observer uses only fixed absolute
-`/usr/bin/top` process-group discovery and `/usr/bin/footprint` exact-byte measurement under one
-total deadline, bounded captures, an explicit environment, and exhaustive cleanup. The direct-FFI
-sampler and its prior evidence are superseded; Phase 4 Sprint 4.32 is closed on both its
-exact-source `linux-cpu` half and its selected Apple accelerator half, including the observer and
-adversarial-breach proof - the repo ships the one-binary Haskell role topology, Envoy Gateway
-assets, the PureScript demo UI, the split runtime modules under `src/Infernix/Runtime/`, the
-shared Python project, the shared Linux substrate Dockerfile that bakes the source-snapshot
-manifest used by git-less `infernix lint files` runs, the route registry, and the snapshot
-launcher - the supported CLI reads the active substrate from repo-root `./infernix.dhall`, without
-a user-facing runtime-mode flag - `infernix init` is the supported operator creation path for
-`./infernix.dhall` and `./infernix-host.dhall`; `infernix test init` creates the separate
-`./infernix.test.dhall` - ordinary lifecycle and validation commands validate the initialized
-config and fail fast naming the required init when it is absent; focused `infernix lint ...` and
-`infernix docs check` remain config-independent - the Apple stage-0 `up` wrapper explicitly runs
-`./.build/infernix init --if-missing` before delegating to `cluster up`; internal image/test
-generation is not an operator preflight path - the runtime config, `cluster status`, publication
-JSON, demo config, and generated browser contracts still expose that active substrate through
-`runtimeMode` field names - cluster publication derives a cluster-role deployment mirror from the
-runtime config and mounts it inside cluster workloads at `/opt/build/infernix.dhall` - the
-implemented Apple product shape is a split-executor lane: `apple-silicon` keeps Apple-native
-inference execution host-side for Apple GPU and unified-memory access while Kind continues to host
-the registry, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the cluster coordinator daemon, and the
-optional routed demo surface - the daemon-role contract is code-side implemented around
-substrate-neutral engine pools: on every substrate the coordinator owns Pulsar request-topic
-consumption, batching, model-to-pool routing, result writeback, and model bootstrap. Linux engine
-members are Kubernetes workloads; Apple engine members are same-binary host daemons selected by
-stable host id. Normal pools use Pulsar `Shared` and broker-native backpressure, while pinned
-routes use derived per-member topics with `Exclusive`. The current code validates the pool/member
-graph and routes coordinator handoff through derived pool/model topics; current Apple integration
-evidence covers pinned-route `Exclusive` duplicate rejection, same-machine Apple host-member
-coexistence on one real `Shared` pool subscription, single-host logical `Shared`
-backlog/backpressure execution, and production `demo_ui = false` route/publication assertions. The
-current Linux CPU shape has one worker, one engine, and one instance of each platform service; its
-current-source lifecycle proof is complete under Phase 3 Sprint 3.16 / Phase 6 Sprint 6.47.
-Physical Apple multi-host proof is hardware-deferred while no second Apple host is available.
-Existing workers use typed Python or native adapter harnesses after the coordinator eagerly stages
-every configured model in `infernix-models` behind the `warm-model-cache` barrier, and publish the
-typed per-family result surface; the selected `linux-gpu` plus `linux-cpu` real-output proof
-closed on the selected accelerator plus `linux-cpu`. Unsupported adapter ids fail fast instead of
-returning a generic success payload - Linux operator workflows close around Compose-driven outer
-containers, validation reports the active initialized substrate for the complete
-selected-substrate suite, and `infernix init --demo-ui false` can emit `demo_ui = false` -
-validation follows the Section Q single-accelerator rule: code-side closure (implementation plus
-the machine-independent gate set) is completed in natural phase order on whichever single machine
-is present and gates the next phase's implementation, while `Done` requires the phase's one chosen
-accelerator (`apple-silicon` or `linux-gpu`) plus `linux-cpu`; the other accelerator is handled by
-a sibling or later aggregation phase rather than a must-pass-together gate - direct
-`infernix-demo` execution no longer doubles as a compatibility target for the registry, MinIO, or
-Pulsar tool-route probes; those checks now require the real Gateway-backed upstream behavior -
-real cluster and routed validation paths use Pulsar's WebSocket and admin surfaces, while the
-repo-local topic spool under `./.data/runtime/pulsar/` remains only a harness-oriented surface for
-unit-level or intentionally endpoint-absent daemon checks - the Linux bootstrap entrypoints
-install Docker or CUDA prerequisites and enter `docker compose run --rm infernix infernix
-<command>`; substrate preflight belongs to the binary command. `cluster up` persists repo-local
-cluster state before later rollout phases so `cluster status` and cleanup can still observe an
-in-progress Linux reconciliation - the supported `linux-cpu` and `linux-gpu` surfaces use the
-stricter real-upstream route assertions, the restaged Linux substrate flow, and the single project
-`ghc-9.12.4` toolchain baked into the substrate image - the supported Linux launcher bakes a
-reusable `/opt/infernix/chart/charts/` cache into the image and links `/workspace/chart/charts` to
-it for Helm dependency lookup; the cached top-level dependency archives are PostgreSQL
-(pg-operator and pg-db), Pulsar, and Envoy Gateway, while MinIO is deployed from the repo-owned
-hand-authored StatefulSet under `chart/templates/minio/` rather than a Helm sub-chart tarball; and
-`cluster up` repairs the known stale retained Pulsar or ZooKeeper epoch mismatch by resetting only
-the Pulsar claim roots and retrying once - the Apple clean-host bootstrap verifies same-process
-ghcup-managed `ghc` and `cabal` resolution before its fixed, authority-derived build/install step.
-Operators invoke `./bootstrap/apple-silicon.sh build`, then use the generated `./.build/infernix`
-closed command surface; bare host Cabal is not a supported validation entrypoint. Phase 1 Sprint
-1.24 replaces the former Custom Setup compiler/plugin path with four exact tracked Haskell
-generator outputs and a Linux-only regeneration gate, so Darwin has no standalone protobuf
-compiler prerequisite. Apple adapter setup or validation paths reconcile the Homebrew-managed
-`python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap on demand. The
-native-only workflow doctrine requires Docker-backed Apple work to use the current native arm64
-Docker daemon and forbids Docker-context creation or switching, Colima VM creation, and
-cross-architecture emulation; Phase 1 Sprint 1.12 replaced the previous Colima reconciliation path
-with selected Docker-context and daemon-architecture validation and closed on positive
-lifecycle/full-test evidence plus negative no-daemon boundary evidence. The Poetry bootstrap may
-reuse an already available compatible Python 3.12+ executable when one passes the implemented
-version check - routed Apple Playwright validation runs host-native `npm exec` against the
-published `127.0.0.1` edge port, and retained Kind state is replayed into and out of the worker
-rather than bind-mounted - the `infernix-demo` SPA bootstrap now starts in `auth-unknown`, then
-switches the `body` to `auth-signed-out` or `auth-signed-in` from `Main.purs.renderAuthGate`;
-anonymous visitors see only the `.app-landing` card with `#login-button` (`Sign in`) and
-`#register-button` (`Create account`), while the summary grid and Chat / Artifacts shell render
-only after the in-memory Keycloak JWT is present - Keycloak uses the chart-owned `infernix` login
-theme from `ConfigMap/infernix-keycloak-theme`; the realm import and idempotent admin reconcile
-both set `loginTheme = infernix`, so the routed login and registration pages carry the
-Infernix-specific titles without building a custom Keycloak image - when the demo UI is enabled,
-the signed-in SPA shell exposes an operator console ribbon for `/registry` and `/pulsar/admin`
-**only to admins** (Phase 9): `web/src/index.html` marks `<html>.infernix-admin` when the token
-carries the `infernix-admin` realm role and hides the ribbon otherwise.
-`SecurityPolicy/infernix-operator-routes-jwt` now **authenticates and admin-authorizes** — it
-accepts that cookie or a direct `Authorization: Bearer ...` header and then requires the
-`infernix-admin` realm role before forwarding the four operator route prefixes (`/registry`,
-`/pulsar/admin`, `/pulsar/ws`); the same cookie authenticates browser-issued media `src` GETs
-against the webapp `/api/objects/download` proxy - Phase 9 role-based access control: the
-`infernix-admin` Keycloak realm role (emitted in `realm_access.roles`, decoded by
-`Infernix.Auth.Jwt.jwtClaimRealmRoles` / `jwtClaimsHasRealmRole`) gates every cluster-wide
-surface. The backend (`withAdminRequest`) requires it on `GET /api/cache`, the
-`/api/cache/{evict,rebuild}` mutations, and the `GET /api/admin/overview` cluster-wide monitoring
-endpoint (real substrate / dispatch / catalog / engine-pool / model-cache / all-user aggregates);
-the SPA (`web/src/index.html`) additionally shows the admin monitoring panel + the five
-infrastructure summary cells only to admins, while ordinary users get chat / artifacts / files and
-a personal dashboard scoped to their own `sub`. The Apple host-worker data plane reaches MinIO
-(NodePort 30011) and the Pulsar proxy (NodePort 30080) directly on loopback (`127.0.0.1`),
-trust-boundary-internal and never through the admin-gated edge — the loopback binding of every
-Kind data-plane + edge port mapping is enforced by `infernix lint chart` plus a
-generated-Kind-config unit assertion. Per-user object isolation additionally carries a MinIO STS
-defense-in-depth layer (`Infernix.Objects.Sts`: a scoped credential keyed to `users/<sub>/`, gated
-by `cluster.minio.stsPerUser`). Doctrine:
-  [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md)
-- the signed-in SPA shell exposes `Delete account`. The browser waits for `DELETE /api/account` to
-synchronously remove the caller's `infernix-demo-objects/users/<userId>/` prefix and user-owned
-demo Pulsar topics before redirecting to Keycloak with `kc_action=delete_account` - Linux
-outer-container lifecycle runs forward the host repo root so generated Kind or `nvkind` node
-configs mount host-resolved `./.data/kind/<runtime-mode>/` and
-`./.build/kind/<runtime-mode>/registry/` directories directly into node containers instead of
-replaying retained state with `docker cp`; runtime-scoping prevents a CPU and GPU lane from
-clobbering each other's `localhost:<registryPort>` mirror target - the shared lifecycle exposes
-`lifecycleStatus`, `lifecyclePhase`, `lifecycleDetail`, and heartbeat timestamps during monitored
-Docker build, registry publication, registry-backed final-image preload, and Apple retained-state
-replay work; runtime-config generation is atomic for concurrent readers. The retired Patroni
-replica-reinitialization path is not part of the current single-instance service topology. Sprint
-2.15 adds the persisted `ClusterOwner` (`OperatorOwned` / `HarnessOwned`) and a `ClusterMutating`
-(mutation-incomplete) `lifecyclePhase`, so a killed test's cluster is reported dirty and
-reconciled on the next `cluster up` rather than read as a false `steady-state`. - Phase 2 carries
-the memory-admission and publication-verification corrections its own cohort must still exercise:
-`audio-bark-small` declares an 8192 MiB footprint, admitted placements carry a strict integration
-completion rule, the Playwright catalog-matrix runtime-ceiling escape hatch is removed, and exact
-Apple and Linux admission unit tests are implemented. The Bark adapter loads fp16 on MPS or CUDA
-and fp32 on CPU, generates under inference mode, and serializes fp32 WAV. The final audit's
-registry-only publication verifier is implemented: a bounded authenticated platform-selected
-skopeo copy reads the registry manifest, config, and layers into a fresh birth-identity-owned
-mode-0700 `dir:` store, with primary-preserving cleanup and focused command, redaction, and path
-coverage. Phase 2 is blocked by Phase 1, and Phase 4 and Phase 6 validation are ordered after
-their predecessors - the shared lifecycle skips broad pre-registry support-image preloads; shell
-scripts never pull or publish images, supported lanes hydrate and stream only the narrow registry
-warmup dependency set into Kind before Helm warmup, only the storage the registry needs may pull
-upstream before the registry is responsive, and every remaining image, including the active
-`infernix` runtime image, is loaded into the registry before final rollout - legacy validation
-proof points are inventoried in Phase 2 retains landed implementation plus dead-owner recovery and
-failure-cleanup evidence, and its own closure follows Phase 1 and precedes the Apple Silicon and
-`linux-cpu` resumption - [cohort-validation-waves.md](cohort-validation-waves.md) records the
-closed lane attestations: - Beyond the Phase 9 admin overview (`/api/admin/overview`) and per-user
-personal dashboard, no general observability stack (metrics, tracing, log aggregation) is
-deployed. Monitoring is not a supported first-class surface.
+The baseline CLI, cluster, runtime, browser, and access-control surfaces exist.
+Their scoped implementation and evidence gaps are recorded below by owning sprint, not by a
+second phase-status inventory. No remediation implementation or new validation result is claimed
+by this documentation refactor. The [deletion ledger](legacy-tracking-for-deletion.md) records
+still-existing shortcuts; [governed documents](../documents/README.md) own the target contracts.
 
 ## Operator and Host Components
 
-| Component | Technology | Deployment | Purpose | Durable state |
-|-----------|------------|------------|---------|---------------|
-| Apple host control plane | `./bootstrap/apple-silicon.sh build` plus the generated `./.build/infernix` closed command surface, backed internally by the authority-derived ghcup toolchain | host-native | canonical operator surface on Apple Silicon; host-native cluster lifecycle owner; host-side Apple inference-daemon owner; repo-local kubeconfig owner; uses a host-local scratch kubeconfig under system temp for Kind create or delete before publishing the durable repo-local kubeconfig | `./.build/`, `./.data/` |
-| Apple headless Metal/Core ML materialization lane | typed engine-artifact manifests plus public upstream MLX/coremltools APIs behind a hidden opaque rank-2 provisioning/session facade; replacement for the legacy `tart` / `hostTart` / `AppleTart`, repository-owned native bridge, and raw install-first implementations, with the retained `materialize-metal-engines` command as the whole-plan facade | host-native Apple process | runs closed provisioning operations through the bounded self-exec kernel; fully hydrates, relocates, authoritatively smokes, records exact provenance, and actual-payload-hashes a sibling candidate before fsynced activation with rollback/crash reconciliation. MLX executes and synchronizes a real GPU operation, coremltools reports available compute devices, and native runner roots hydrate real host CLIs/venvs/apps. The generic closure policy stays strict: every symlink inside a hashed package closure must be relative and must not escape the closure root, and a candidate carrying an unsafe link fails the provisioning session closed. The Audiveris invocation therefore declines JavaCPP symbolic-link creation on every lane, so its extraction cache is a plain tree of regular files: JavaCPP's only fixed point is an absolute self-referential link naming its configured cache directory, which it re-establishes on every load and which names whichever root the payload currently occupies, so no spelling survives both the candidate smoke and the post-rename installed smoke. Declining the alias — which no library load traverses — makes the payload relocation-invariant rather than repaired, and the strict-relative closure policy is left as the sole defence against a stray absolute link. Sprint 1.20's correction set is implemented; the complete governed gates precede the materializer run, and the specialized validators run after it. The cohort covers the materializer, installed smokes, cancellation and installed-Python source isolation, the seven-row Apple attestation, the typed `image-sdxl-turbo` refusal, and the paired source-matched `linux-cpu` closure | engine artifacts under `./.data/engines/<adapterId>/`; optional immutable payloads in `infernix-engine-artifacts` |
-| Linux native engine materialization lane | `src/Infernix/Engines/LinuxNative.hs` plus `infernix internal materialize-linux-native-engines` | Linux substrate image build | writes typed metadata roots under `/opt/infernix/engines/<adapterId>/`; a Cabal-hidden catalog selects image-owned llama.cpp, whisper.cpp, Python interpreter/module, or Audiveris JRE/classpath targets directly, and the manifest binds the selected target plus its immutable runtime closure to descriptor-derived identities and digests. No generated `bin/*` command wrapper is permitted. Corrected-topology cohort validation passes under Phase 1 Sprint 1.20 and Phases 4/6 | image-owned `/opt/infernix/engines/<adapterId>/`; optional immutable payloads in `infernix-engine-artifacts` |
-| Linux outer-container control plane | `docker compose --project-name <lane> --file compose.yaml ... run --rm infernix infernix ...` | Linux container | only supported Linux CLI surface for `linux-cpu` and `linux-gpu`; the GPU lane prefixes the same single Compose file with `LAUNCHER_IMAGE=infernix-linux-gpu:local` to select the CUDA snapshot, forwards the Docker socket, and bind-mounts only `./.data/` while the build root, source snapshot, and chart archives stay in the image overlay; uses a launcher-local scratch kubeconfig under system temp for Kind or `nvkind` create or delete before publishing the durable repo-local kubeconfig | `./.data/`, `./.data/runtime/infernix.kubeconfig` |
-| Bootstrap shell entrypoints | `bootstrap/*.sh` | host shell | bounded stage-0 prerequisite and launcher builders; Apple builds the host binary, Linux installs Docker or CUDA prerequisites and enters `docker compose run --rm infernix infernix <command>`; lifecycle, validation, Kind, Kubernetes manifests, cluster workload image pulls, registry publication, and teardown behavior are delegated to `infernix` | preserves `./.build/`, `./.data/`, host-level images, Apple host binaries, and installed prerequisites |
-| Command registry | Haskell command registry | host or outer container | owns the supported command inventory, `--help` output, and the generated CLI-reference sections that docs lint enforces, including the `infernix service --config` explicit substrate override for targeted daemon validation | none |
-| Runtime configuration | the **system contract**: repo-root typed Dhall record at `./infernix.dhall`, decoded in-process by the `dhall` Haskell library | host or outer container | primary source of truth for active substrate, the pool graph and the model descriptors each pool owns, inference placement, Pulsar request/result/batch topics, active engine dispatch, routed Apple bridge behavior, and test scope; byte-identical on every machine in a fleet; `infernix init` creates the operator file atomically, `infernix test init` creates the harness input, and ordinary config-dependent commands fail fast rather than auto-materializing it; `infernix service --config PATH` may intentionally point one daemon at an explicit config for targeted diagnostics | repo-root `./infernix.dhall`; harness input `./infernix.test.dhall`; cluster deployment mirror at `/opt/build/infernix.dhall` |
-| Machine contract | the `machine` block of the repo-root host manifest `./infernix-host.dhall` | host or outer container | this box's default daemon role (overridden per process by `infernix service --role`), the engine member identities it may adopt, its model-cache quota, and the content digest of the system contract it was generated against; the pools it serves are derived from its members against that pinned graph. A `Machine` block always carries its pin; `ImageDefault` is the byte-identical manifest the launcher image bakes and describes no machine, so a daemon started against it is refused by name | repo-root `./infernix-host.dhall`; image default at `/opt/infernix/dhall/InfernixHost.dhall` |
-| Route registry | Haskell-owned route inventory | host or outer container during render or reconcile | records public prefixes, backend identity, rewrite rules, visibility, and publication metadata | none |
-| Automation entry documents | `AGENTS.md`, `CLAUDE.md`, and their governed canonical-home links into `documents/` | repo source | point assistant users at canonical workflow rules without turning root entry docs into competing topic homes | none |
-| Frontend contract generator | `infernix internal generate-purs-contracts` | host or outer container during web build | emits generated PureScript contracts from handwritten Haskell browser-contract ADTs | `web/src/Generated/` |
-| Repo-local durable root | local filesystem | repo root | authoritative home for cluster state, runtime state, config publication mirrors, and test artifacts | `./.data/` |
-| Build artifact root | explicit Cabal builddir or installdir flags plus generated artifacts | host or outer container | keeps compiled output and generated files out of tracked source paths | `./.build/` on Apple; image-local `/workspace/.build/outer-container/` on the Linux outer-container path |
+| Component | Owner or location | Contract and remaining work |
+|---|---|---|
+| Apple host control plane | `bootstrap/apple-silicon.sh`; `./.build/infernix` | Native Apple build/lifecycle surface. Operator inference requires the separately started host engine; source-bound operator validation belongs to [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Apple headless Metal/Core ML materialization | `Infernix.Engines.AppleSilicon` and hidden provisioning modules | Materializes upstream engine payloads under `./.data/engines/<adapterId>/` through bounded candidate verification and activation. Domain lifetime proof precision belongs to [1.46](phase-1-repository-and-control-plane-foundation.md); no historical cohort statement substitutes for its new checks. |
+| Linux native engine materialization | `Infernix.Engines.LinuxNative`; `infernix internal materialize-linux-native-engines` | Image-owned targets under `/opt/infernix/engines/<adapterId>/`; hidden target catalog and manifests select direct upstream execution. Behavioral realness controls belong to [4.50](phase-4-inference-service-and-durable-runtime.md). |
+| Linux outer-container control plane | `compose.yaml`; `docker compose run --rm infernix infernix ...` | Baked launcher, Docker socket and `./.data/` mounts, no checkout mount or Compose build definition. Independent source/image binding belongs to [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Bootstrap shell entrypoints | `bootstrap/*.sh` | Prerequisite/build/launcher handoff only; binary owns lifecycle and validation. Explicit Linux build and binary-generated seed obligations belong to [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Command registry | Haskell command registry | Owns parsing/help and generated references. Explicit initialization may select a substrate; ordinary operations consume initialized config. `service --config PATH` selects a config for that daemon, not a second configuration language. |
+| Runtime configuration | Repo-root `./infernix.dhall`; `Infernix.ProjectInit`, `Infernix.DemoConfig`, `Infernix.Models` | System contract owns substrate and pool/model facts; roles and member identity belong to machine/process scope. Seed generation belongs to [1.44](phase-1-repository-and-control-plane-foundation.md); consumer validation to [8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md). |
+| Machine contract | `./infernix-host.dhall` | `machine` union carries role, member identities, cache quota and system-contract digest; `ImageDefault` grants no daemon authority. Live availability and lifetime checks belong to [1.45–1.46](phase-1-repository-and-control-plane-foundation.md). |
+| Route registry | Haskell route inventory | Prefix/backend/rewrite authority; source-bound routed evidence belongs to [3.18](phase-3-platform-services-and-edge-routing.md), backend containment to [5.13](phase-5-web-ui-and-shared-types.md). |
+| Automation entry documents | `AGENTS.md`, `CLAUDE.md` | Link to the canonical assistant workflow; do not own parallel workflow rules. |
+| Frontend contract generator | `infernix internal generate-purs-contracts` | Emits presentation contracts from Haskell browser ADTs into `web/src/Generated/`; source/bundle binding belongs to [5.13](phase-5-web-ui-and-shared-types.md). |
+| Repo-local state root | `./.data/` | Contains both authoritative lifecycle/local-result state and derived mirrors, caches and outputs; durability is classified below, not inferred from the root name. |
+| Build artifact root | `./.build/`; image-local `/workspace/.build/outer-container/` | Derived build products; bounded execution and source identity follow [Phase 1](phase-1-repository-and-control-plane-foundation.md). |
 
 ## Repository Asset Components
 
-| Component | Current content | Purpose | Gap |
-|-----------|-----------------|---------|-----|
-| Linux substrate image definition | `docker/Dockerfile` | one shared build definition produces the Linux control-plane image and the Linux daemon image family while owning ghcup, Poetry, Node.js 22.5+ for the demo bundle, Playwright runtime packages, Docker buildx for nested Docker operations, npm update-notifier suppression, and the Kind toolbelt; installs Cabal/NPM/Poetry dependency layers from package metadata before the full source copy, binary-generates a build-arg-selected empty-model runtime default inside the image overlay before web build and Python quality checks, and writes a pruned `/opt/infernix/source-snapshot-files.txt` for git-less lint runs; host-native Apple cluster-image builds stamp source-fingerprint, runtime-mode, and fingerprint-version labels so unchanged-source `cluster up` can safely reuse `infernix-linux-cpu:local`; cabal-home and the cabal builddir live at the toolchain's natural in-image locations rather than under any bind-mounted host path; the image uses `tini` as its `ENTRYPOINT` for clean signal handling and zombie reaping | none |
-| Playwright runtime | baked into `docker/Dockerfile` (Node, the Playwright runtime, and the three browsers) and invoked from inside the outer container via `npm --prefix web exec -- playwright test --config web/playwright.config.js` on Linux substrates; on Apple Silicon the host-native lane invokes `npm --prefix web exec -- playwright test` from the host CLI against the published localhost edge port using the same typed fixture. Apple routed Playwright validation closed in Waves A.1/A.2, and the rebuilt Linux GPU launcher closed its routed E2E coverage on the selected accelerator plus `linux-cpu`. | none |
-| Compose launcher | `compose.yaml` | outer-container launcher for supported Linux workflows; the file defines exactly the `infernix` service with two bind mounts (`./.data` and `/var/run/docker.sock`), no `environment:` block, no `build:` block, and a one-shot image selector that defaults to `infernix-linux-cpu:local` while allowing the GPU lane to choose `infernix-linux-gpu:local`. The Phase 3 Sprint 3.10 `playwright` service removal is landed — Playwright now runs inside the same substrate image | none |
-| Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single **framework-free** adapter tree + `check-code` quality gate for Python-native engines; declares no ML framework so `poetry run check-code` is machine-independent | none in the supported operator contract |
-| Per-engine framework venvs (Phase 4 Sprint 4.16; producer consolidated by Phase 1 Sprint 1.23) | `python/engines/<engine>/pyproject.toml` for `transformers`, `vllm`, `pytorch`, and `diffusers`; canonical Haskell plan in `Infernix.Python` | isolated in-project venvs path-depend on the shared `infernix-adapters` package and install mutually conflicting framework wheels in a substrate group. Apple prepares `transformers`, `pytorch`, and `diffusers` with `apple-silicon`; Linux CPU prepares `transformers` and `pytorch` with `linux-cpu`; Linux GPU engine images own selected `cuda` venvs. The project-lock-aware producer publishes a post-install digest marker, and Worker/CappedEngine fail closed when it is absent or stale — there is no shared-venv fallback or request-time repair. Framework adapters return real output or fail closed under the realness lint | `python/engines/<engine>/.venv/` and fixed marker (gitignored derived artifacts) |
-| Per-engine engine images and routing (Phase 4 Sprint 4.17) | `docker/Dockerfile`, `docker/engine.Dockerfile`, `src/Infernix/Models.hs`, `src/Infernix/{Types,Substrate,DemoConfig}.hs`, `src/Infernix/Runtime/{Daemon,Pulsar}.hs`, `src/Infernix/Cluster*.hs`, `chart/templates/deployment-engine.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js` | the linux-gpu monolith (~121 GB) split into a slim 22.4 GB control-plane/coordinator image (`docker/Dockerfile`, no framework venvs) plus per-engine images (`docker/engine.Dockerfile` = CUDA-runtime base + the binary + one engine's `--with cuda` venv); `Infernix.Models` owns engine name/image mapping (`engineNameForSelectedEngine`, `frameworkEngineNamesForMode`, `perEngineImageName`) plus substrate-neutral pool/member topic derivation; generated runtime configs carry `enginePools`, `engineMembers`, and explicit `engineDaemons` so targeted daemon configs survive Dhall round-trip while normal generated daemon metadata still follows the pool/member graph; the coordinator routes requests to `inference.batch.<mode>.pool.<poolId>.model.<modelId>` and pinned routes use `inference.batch.<mode>.member.<memberId>.model.<modelId>`; `infernix service --role engine --engine-name NAME` selects a stable engine member id; the chart renders one engine process per machine and registry overlays carry per-engine images. Repo-owned `linux-gpu` lifecycle values leave per-engine image deployments at zero until the integration/E2E harness selects exactly one for per-model validation. Full serialized routed cluster evidence for the selected per-engine images closed on the selected accelerator plus `linux-cpu` | none |
-| Apple host prerequisite bootstrap | governed docs plus Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap while requiring any Docker-backed work to use the already selected native arm64 Docker daemon; Docker readiness validation reports the current context and daemon architecture without creating or switching contexts or creating a VM | none |
-| Testing doctrine docs | `documents/engineering/testing.md` and `documents/development/testing_strategy.md` | keep one canonical testing doctrine together with one operator-facing detail layer | none |
-| Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | none |
-| Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | none |
-| Kind topology reference assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-gpu.yaml` | tracked topology references and chart-lint inputs for the substrate-specific Kind shapes; the supported lifecycle renders the active runtime config from Haskell into `./.build/kind/cluster-<runtime-mode>.generated.yaml` before invoking Kind or nvkind. Each reference uses one worker; the current `linux-cpu` lifecycle gate asserts the collapsed topology reaches readiness with no `Pending` replica | none |
-| Protobuf contract assets | `proto/infernix/...` plus on-demand generated `tools/generated_proto/` stubs under a `tools/` directory that may be absent in a clean checkout | define canonical runtime, manifest, and event schema boundaries | generated stubs must stay untracked |
+| Component | Current location | Purpose | Scoped remaining work |
+|---|---|---|---|
+| Linux substrate image definition | `docker/Dockerfile` | Shared launcher/coordinator image build, toolchain, web bundle, browser runtime and baked source inventory | Hand-rendered host seed and source provenance: [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Playwright runtime | `docker/Dockerfile`; `web/playwright/` | In-image Linux browser execution; native Apple browser execution through the same typed fixture | Source-bound browser evidence: [5.13](phase-5-web-ui-and-shared-types.md); useful artifact rendering: [7.33](phase-7-demo-app-durable-context.md). |
+| Compose launcher | `compose.yaml` | One service, two mounts, explicit image selector; reuses a prebuilt image | Missing/stale image rejection and independent expected-source handoff: [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Shared Python adapter project | `python/pyproject.toml`; `python/adapters/` | Framework-free adapter quality/protobuf project | AST heuristics cannot prove semantic realness; behavioral controls: [4.50](phase-4-inference-service-and-durable-runtime.md). |
+| Per-engine framework environments | `python/engines/<engine>/`; `Infernix.Python` | Prepared isolated framework venvs with project-bound markers; no request-time installation | Real engine behavior is validated under [4.50](phase-4-inference-service-and-durable-runtime.md), independently of environment readiness. |
+| Per-engine images and routing | `docker/engine.Dockerfile`; `Infernix.Models`; `chart/templates/deployment-engine.yaml` | CUDA framework images selected by compiled pool/member routing; engine facts are projections, not parallel authored `engineMembers`/`engineDaemons` lists | Required device execution and cleanup evidence: [6.55](phase-6-validation-and-e2e-hardening.md); role-contract validation: [8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md). |
+| Apple prerequisite bootstrap | `bootstrap/apple-silicon.sh`; host-tool modules | Uses existing native arm64 Docker daemon; no Docker context/VM provisioning | Explicit manual engine workflow evidence: [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Testing doctrine docs | `documents/engineering/testing.md`; `documents/development/testing_strategy.md` | Canonical evidence rules and operator-facing validation detail | Implementation and new receipts remain in the owning sprints and [waves](cohort-validation-waves.md). |
+| Browser-contract source | `src/Infernix/Web/Contracts.hs`; `web/package.json` | Haskell ADTs generate browser wire/presentation types | Source binding [5.13](phase-5-web-ui-and-shared-types.md), bounded artifact contract [7.33](phase-7-demo-app-durable-context.md). |
+| Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | Workloads, configuration, routes and third-party dependencies | Retained platform/publication evidence: [3.18](phase-3-platform-services-and-edge-routing.md). |
+| Kind topology references | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-gpu.yaml` | Reference inputs; binary renders active topology into `./.build/kind/` | Lifecycle evidence and containment: [2.18](phase-2-kind-cluster-storage-and-lifecycle.md). |
+| Protobuf assets | `proto/infernix/`; four tracked modules under `src/Proto/`; generated `tools/generated_proto/` | Canonical schemas, hash-pinned Haskell bindings and untracked Python bindings | Preserve generated ownership and validate changed wire consumers in their owning sprint. |
 
 ## Cluster and Publication Components
 
-| Component | Technology | Deployment | Purpose | Durable state |
-|-----------|------------|------------|---------|---------------|
-| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind; on detached-snapshot lanes scrub the explicit rebuildable Patroni/registry set only from the post-delete local retained copy under `WriterQuiesced`; retry recursive claim-root chmod when a rebuildable directory or child disappears during repair and leave the root present after the bounded missing-path race window; reset StorageClasses, reconcile PVs, deploy the registry first, publish the cluster-role runtime-config mirror, perform registry-first image preparation, run dedicated Keycloak/Pulsar preparation phases where required, apply final workloads without rerunning Helm hooks, deploy coordinator and engine roles, expose lifecycle progress, repair precise retained Pulsar/Patroni failure shapes, enforce local resource envelopes, and render the substrate-specific local validation topology | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
-| Registry image preparation | the in-cluster `registry:2` plus the Haskell image publication flow | Kind cluster plus control plane | bring the registry up with an explicit resource envelope and only the MinIO storage it needs, then mirror every remaining third-party image and publish the active runtime before final rollout; `BlobServable` is minted only after bounded authenticated platform-selected skopeo copy reads the selected manifest, config, and layers from the registry into a fresh protected `dir:` store independent of Docker's cache; rebuildable registry state may be scrubbed only from the post-delete detached retained copy under `WriterQuiesced` | Registry blob state under `./.data/kind/<runtime-mode>/...` is rebuildable; durable product blobs remain in MinIO `infernix-models`, `infernix-engine-artifacts`, and `infernix-demo-objects` |
-| PostgreSQL substrate | Percona Kubernetes operator plus single-instance Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for every service that needs one; rebuildable Patroni roots may be scrubbed only from the post-delete detached retained copy under `WriterQuiesced` before later bring-up recreates them; the current topology has one database instance and one pgBouncer per cluster, with explicit database/proxy/backup resource envelopes bounding startup pressure | `./.data/kind/<runtime-mode>/...` |
-| Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, cluster daemon location, host inference executor presence when the active substrate is Apple, the routed demo API upstream mode, the active inference dispatch mode, derived engine-pool routing metadata, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
-| Edge Gateway controller | Helm-installed Envoy Gateway controller | Kind cluster | owns all browser-visible and host-consumed routing | none |
-| Cluster Gateway resource | `GatewayClass/infernix-gateway` plus `Gateway/infernix-edge` | Kind cluster | single localhost-bound HTTP listener on the chosen edge port | none |
-| HTTPRoute rendering | data-driven `chart/templates/httproutes.yaml` from the Haskell route registry | Kind cluster | publishes the route inventory for demo, registry, and Pulsar surfaces (MinIO has no external gateway route since Phase 3 Sprint 3.13; the browser reaches it only through the webapp `/api/objects` proxy) | none |
-| Runtime-config publication | generated `ConfigMap/infernix-demo-config` plus repo-local deployment mirror | Kind cluster and repo-local state | derives and publishes the cluster-role payload from repo-root `./infernix.dhall`; cluster consumers use the mount `/opt/build/infernix.dhall`, while Apple host daemons read the repo-root operator config | `./.data/runtime/configmaps/infernix-demo-config/` |
-| Service runtime daemons | `infernix service` plus `src/Infernix/Runtime/{Daemon,Cache,KVCache,Worker,Pulsar}.hs`, `src/Infernix/ExecutionPlan.hs`, `src/Infernix/Runtime/Enforcer.hs`, `src/Infernix/Bridge/Result.hs`, `src/Infernix/Bootstrap/Models.hs` | cluster pods on every substrate plus host processes for Apple inference execution | the three-role daemon model uses substrate-neutral engine pools (see [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) and [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md)). The coordinator owns request fan-in, batching, compiled model-to-pool routing, result writeback, and eager model staging; engine members consume derived pool/model topics, run the compiled binding, own process-local KV cache, and publish typed results. Normal pools use Pulsar `Shared`; pinned routes use per-member `Exclusive` topics. Startup decodes hidden presentation records into `CompiledRuntimePlan`; coordinator paths project `CompiledPlacement` / `CompiledDaemon`, while package-owned live observations refine engine work into `RuntimePlan` / `ExecutableModel`. Oversized Apple/Linux CPU rows remain explicit `UnavailableModel` values and now produce typed `ModelMemoryLimitExceeded` without engine launch; empty/unknown/wrong-route/malformed inputs likewise terminate as failed results before source removal/acknowledgement. Plan-derived bootstrap publication, cross-family topic-collision rejection, raw-publisher removal, and UTF-8 Dhall emission are closed Phase 1 work. Phase 4 owns Apple/Linux CPU adversarial enforcement and encapsulated serialization. Linux GPU plan compilation fails closed with `GpuDualResourceBudgetRequired` until Phase 6 provides independently indexed host-RAM/GPU-VRAM enforcement; Phase 8 owns the final wire schema. The `unboundedEngineSpawnViolations` lint keeps new spawns on the package-internal capped-engine kernel. | none on cluster daemons (Pulsar cursors are broker-side; KV cache is in-memory); Linux engine pod `emptyDir` model caches and Apple host model caches are derived and rebuildable |
-| Demo UI host | `infernix-demo` Deployment running `infernix service --role webapp` | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/demo-config`, `/api/models`, `/api/cache`, `/api/objects/{upload,download}`, and `/ws` when demo is enabled; routed manual inference closes through the durable-context Chat surface, where the Webapp role publishes inference work and (on Apple) hands batches off to host inference daemons | none |
-| Web runtime executor | PureScript bundle plus Playwright runtime (Node, the Playwright executor, and the three browsers) both baked into `docker/Dockerfile` | substrate image runs cluster-resident as the demo app; routed E2E runs in-container on Linux substrates via `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private `kind` network. Apple host-native E2E uses host `npm exec` with the same typed fixture against the published localhost edge port and is covered by Apple cohort validation batches | serves the browser bundle from the clustered demo app and runs routed E2E coverage from the same substrate image | test artifacts under `./.data/` |
-| Engine adapter set | shared source in `python/adapters/`; Python-stdio launch through the exact prepared `python/engines/<engine>/.venv/bin/python -m adapters.<module>` | host child process or cluster child process | Python-native engine boundary over typed protobuf-over-stdio; runtime verifies executable, project digest, and fixed marker and never installs or repairs on request | shared quality venv under `python/.venv/`; prepared per-engine venvs under `python/engines/<engine>/.venv/` |
-| Per-engine Python environment producer | `Infernix.Python` plus the closed `Infernix.Engines.Provisioning` project language, invoked by `internal materialize-substrate`, Apple startup, and `internal materialize-metal-engines` | Darwin host or Linux CPU base-image build; Linux GPU engine image owns its selected CUDA venv | derives the canonical Python-stdio bindings, installs the substrate group under the project lock, recomputes `pyproject.toml` plus optional post-install `poetry.lock` digest, publishes/reads back the fixed marker, and fails closed on unavailable or malformed evidence | `python/engines/<engine>/.venv/` and `.infernix-framework-groups-*` marker |
-| Python quality gate | `poetry run check-code` | host or Linux outer-container image | runs `mypy --strict`, `black --check`, and `ruff check` against the shared adapter tree | none |
-| Keycloak identity | Keycloak Helm release | Kind cluster, demo-gated | OIDC identity provider for the durable-context demo: self-signup on, email verification off, public SPA client reconciled for the routed edge URL; the local demo runs one Keycloak application pod until proxy-affinity or clustered-cache validation lands, and is absent when `demo_ui = false`; see [../documents/tools/keycloak.md](../documents/tools/keycloak.md) | Keycloak Patroni Postgres state under `./.data/kind/<runtime-mode>/...` |
-| Keycloak Patroni Postgres | Percona PostgreSQL operator | Kind cluster, demo-gated | dedicated single-instance Patroni cluster backing Keycloak; absent when `demo_ui = false` | `./.data/kind/<runtime-mode>/...` |
-| Demo artifact bucket | MinIO bucket `infernix-demo-objects` | Kind cluster, demo-gated | single shared bucket holding per-user prefix trees `users/<userId>/contexts/<contextId>/{uploads,generated}/`; the webapp `/api/objects` proxy reads/writes it server-side per user (no browser presigned URL); absent when `demo_ui = false`; see [../documents/tools/minio.md](../documents/tools/minio.md) | MinIO durable state under `./.data/kind/<runtime-mode>/...` |
-| Demo conversation Pulsar topics | Pulsar topic family `persistent://infernix/demo/demo.conversation.<userId>.<contextId>` | Pulsar broker, demo-gated | per-context append-only conversation log; single-partition, broker-assigned `MessageId` is the canonical sequence; producer-side dedup supports an effectively-once observable terminal outcome over at-least-once delivery; the current integration suite validates real publish/Reader decode, duplicate frontend publish collapse, and completed result writeback on the supported non-chaos lifecycle path; absent when `demo_ui = false` | Pulsar BookKeeper state |
-| Demo per-user metadata topics | Pulsar topic families `demo.user.<userId>.contexts` and `demo.user.<userId>.drafts` | Pulsar broker, demo-gated | compacted per-user metadata for the left-rail context list and drafts; broker message key is `contextId`; the integration suite validates real publish + Reader decode with key assertions, admin compaction threshold readback, explicit topic compaction, compacted-reader latest-per-key behavior, and duplicate draft publish collapse; absent when `demo_ui = false` | Pulsar BookKeeper state |
-| Inference batch topics | Derived pool/model topic family `persistent://infernix/demo/inference.batch.<mode>.pool.<poolId>.model.<modelId>` plus pinned-member topic family `persistent://infernix/demo/inference.batch.<mode>.member.<memberId>.model.<modelId>` | Pulsar broker | the coordinator publishes pre-batched inference work only to topics derived from the validated engine-pool graph. Normal pool topics use `Shared` so broker permits and receiver backlog distribute work; pinned member topics use `Exclusive`. The old `inference.batch.<mode>`, `inference.batch.<mode>.<engine>`, and Apple `.host` helper topics are removed from supported routing. | Pulsar BookKeeper state |
-| Platform model bucket | MinIO bucket `infernix-models` | Kind cluster, always-on (not demo-gated) | platform-owned model weights, tokenizers, and configs; eagerly staged at coordinator startup from the mounted `infernix.dhall` model set (a `warm-model-cache` cluster-up barrier blocks until all are `.ready`); per-model `.ready` sentinel object written last marks an atomic publish; Linux engine pods and Apple host engine members stream from here into derived model caches | MinIO durable state under `./.data/kind/<runtime-mode>/...` |
-| Model-cache staging + fallback topic | eager coordinator staging plus the fallback Pulsar topic `persistent://infernix/system/model.bootstrap.request` and `model.bootstrap.ready.<modelId>` family | Pulsar broker, always-on | effectively-once model population workflow (at-least-once delivery collapsed by producer dedup and the `.ready` guard): on startup the coordinator iterates the mounted `infernix.dhall` model set and, per model, downloads from the upstream URL in the mounted `infernix.dhall` → uploads to `infernix-models/<modelId>/` → writes `.ready` sentinel last → publishes ready event keyed by `modelId`; the `warm-model-cache` cluster-up barrier blocks until all are `.ready`. An engine that hits an unstaged model can still publish a fallback bootstrap request (dedup key `modelId@requestedAt`), serviced by the same coordinator Failover subscription; the MinIO `.ready` guard prevents duplicate effective population. The integration suite validates real ready-topic publish + Reader decode with key assertion and staging dedup across coordinator replacement (exactly one ready event); the coordinator is the only daemon with outbound-internet egress to upstream model hosts | Pulsar BookKeeper state |
+| Component | Deployment or authority | State and contract | Scoped remaining work |
+|---|---|---|---|
+| Kind and Helm lifecycle | Binary on Apple host or Linux launcher | Manual retained storage, registry-first bring-up, owner-aware teardown and generated configuration | Domain-held mutation/cleanup and retained lifecycle proof: [2.18](phase-2-kind-cluster-storage-and-lifecycle.md). |
+| Registry image preparation | `registry:2` plus binary publication | Registry bootstrap content is rebuildable; blob-servability requires fresh authenticated content reads, not tag presence | Source-bound platform/publication evidence: [3.18](phase-3-platform-services-and-edge-routing.md). |
+| PostgreSQL substrate | Percona operator, single-instance Patroni | Platform service PVCs under `./.data/kind/<runtime-mode>/...`; no database standby topology | Retained lifecycle/platform evidence: [2.18](phase-2-kind-cluster-storage-and-lifecycle.md), [3.18](phase-3-platform-services-and-edge-routing.md). |
+| Publication state | Binary lifecycle and `/api/publication` | Derived `./.data/runtime/publication.json` reports placement/configuration; placement alone is not a live engine observation | Source-bound publication evidence: [3.18](phase-3-platform-services-and-edge-routing.md). |
+| Edge Gateway controller | Envoy Gateway in Kind | Browser-facing routes; Apple internal data-plane access uses separate loopback NodePorts | Routed validation: [3.18](phase-3-platform-services-and-edge-routing.md). |
+| Cluster Gateway resource | `GatewayClass/infernix-gateway`; `Gateway/infernix-edge` | Single localhost-bound listener on the selected edge port | Backend and Gateway containment are independently tested by [5.13](phase-5-web-ui-and-shared-types.md). |
+| HTTPRoute rendering | `chart/templates/httproutes.yaml`; route registry | Demo, registry and Pulsar routes; no external MinIO route | [3.18](phase-3-platform-services-and-edge-routing.md), [5.13](phase-5-web-ui-and-shared-types.md). |
+| Runtime-config publication | `ConfigMap/infernix-demo-config` | Cluster mount `/opt/build/infernix.dhall`; local mirror under `./.data/runtime/configmaps/`; Apple engine reads repo-root config | Binary-owned generation/consumer proof: [1.44](phase-1-repository-and-control-plane-foundation.md), [8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md). |
+| Service runtime daemons | `Infernix.Runtime.{Daemon,Pulsar,Worker}`, `Infernix.ExecutionPlan`, `Infernix.Runtime.Enforcer` | Coordinator routes/stages, Engine executes, Webapp serves HTTP/WS. Resource-indexed RAM/VRAM capability code exists; GPU device memory remains detection-only | Cgroup availability [1.45](phase-1-repository-and-control-plane-foundation.md), artifacts [4.50](phase-4-inference-service-and-durable-runtime.md), mandatory GPU proof [6.55](phase-6-validation-and-e2e-hardening.md), replay/KV/cancel [7.30–7.32](phase-7-demo-app-durable-context.md). |
+| Demo UI host | `infernix-demo` running `service --role webapp` | Demo-gated API/WS/static host; coordinator, not Webapp, batches/routes engine work | Static containment [5.13](phase-5-web-ui-and-shared-types.md), media [7.33](phase-7-demo-app-durable-context.md), cache API [9.12](phase-9-access-control-and-monitoring.md). |
+| Admin and personal dashboards | PureScript application renderer and Webapp APIs | Admin cluster overview is role-gated; personal data is scoped by verified `sub` | Actual cache effects and admin/tenant regressions [9.12](phase-9-access-control-and-monitoring.md). |
+| Web runtime executor | PureScript bundle; native Apple or in-image Linux Playwright | Same generated catalog and typed fixture; output artifacts are runner-local unless retained explicitly | Source/bundle binding [5.13](phase-5-web-ui-and-shared-types.md) and media proof [7.33](phase-7-demo-app-durable-context.md). |
+| Engine adapter set | `python/adapters/`; hidden native target catalog | Typed one-request/one-response subprocesses; real outputs or failures, no request-time tool installation | Behavioral realness [4.50](phase-4-inference-service-and-durable-runtime.md), history-fed execution [7.31](phase-7-demo-app-durable-context.md). |
+| Per-engine Python environment producer | `Infernix.Python`; closed provisioning language | Locked environment preparation with post-install source-bound markers | Lifetime authority [1.46](phase-1-repository-and-control-plane-foundation.md); actual inference is a separate proof. |
+| Python quality gate | `poetry run check-code` | mypy, Black, Ruff and limited AST checks | Semantic negative controls [4.50](phase-4-inference-service-and-durable-runtime.md). |
+| Keycloak identity | Demo-gated Keycloak release | One application instance; signup, PKCE, JWT role claims and logout | Admin/tenant regressions [9.12](phase-9-access-control-and-monitoring.md). |
+| Keycloak Patroni PostgreSQL | Demo-gated Percona-managed database | Single-instance database backing Keycloak; bootstrap-owned rebuild rules follow storage doctrine | Lifecycle/platform evidence [2.18](phase-2-kind-cluster-storage-and-lifecycle.md), [3.18](phase-3-platform-services-and-edge-routing.md). |
+| Demo artifact bucket | MinIO `infernix-demo-objects` | Durable demo-gated `users/<sub>/contexts/<ctx>/{uploads,generated}/`; webapp mediator | Preview/media [7.33](phase-7-demo-app-durable-context.md), tenant/admin regression [9.12](phase-9-access-control-and-monitoring.md). |
+| Demo conversation topics | Pulsar `demo.conversation.<userId>.<contextId>` | Durable ordered conversation events; cursor alone does not restore dispatcher state | Actual restart, context reconstruction and cancellation [7.30–7.32](phase-7-demo-app-durable-context.md). |
+| Demo metadata topics | Pulsar `demo.user.<userId>.{contexts,drafts}` | Compacted per-user metadata; broker-owned durability | Retained context/reconstitution evidence [Phase 7](phase-7-demo-app-durable-context.md). |
+| Inference batch topics | Derived pool/model and pinned-member Pulsar topics | `Shared` normal pools, `Exclusive` pinned members; ack follows durable terminal result | Execution/cancellation/replay tests [7.30–7.32](phase-7-demo-app-durable-context.md). |
+| Platform model bucket | Always-on MinIO `infernix-models` | Durable model weights/config/tokenizers, eagerly staged by coordinator | Real local hydration and complete artifact accounting [4.50](phase-4-inference-service-and-durable-runtime.md). |
+| Engine software bucket | Always-on MinIO `infernix-engine-artifacts` | Immutable reusable engine software, separate from model weights and user outputs | Preserve artifact identity through [4.50](phase-4-inference-service-and-durable-runtime.md) validation. |
+| Model-cache staging and fallback | Coordinator; `infernix/system/model.bootstrap.request` and ready topics | Bounded upstream staging with verified readiness; engine cache is derived from MinIO | Artifact readiness [4.50](phase-4-inference-service-and-durable-runtime.md), generated-config consumers [8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md). |
 
 ## Runtime and Validation Components
 
-| Component | Entry point | Purpose |
-|-----------|-------------|---------|
-| Cluster reconcile | `infernix cluster up` | require the initialized runtime config, then reconcile Kind, storage, registry-first bootstrap, image publication, the cluster runtime-config mirror, publication state, edge port, and repo-local kubeconfig while recording lifecycle phase, child operation, and heartbeat; uses scratch kubeconfig state under system temp for Kind or `nvkind` create/delete and may repair retained-state Patroni PostgreSQL replicas or recycle unready startup pods without turning StatefulSet name reuse into the gate |
-| Cluster status | `infernix cluster status` | report cluster presence, active substrate, publication/routing metadata, lifecycle action/phase/detail/heartbeat, `ClusterOwner`, and mutation-incomplete `ClusterMutating`. Phase 2 owns its own closure after Phase 1, Apple, and `linux-cpu`. The command is observational |
-| Kubernetes wrapper | `infernix kubectl ...` | scoped, allowlisted read-only diagnostic wrapper around upstream `kubectl` against the repo-local kubeconfig |
-| Cache lifecycle | `infernix cache status`, `infernix cache evict`, `infernix cache rebuild` | inspect or reconcile derived runtime cache state without mutating authoritative sources |
-| Focused lint | `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart` | run the repo-owned focused lint entrypoints for files, docs, `.proto`, and chart assets. File lint rejects the governed repo-owned native-source extension set, Cabal native-source fields/native-token CPP definitions, and embedded native-source/compiler relocation; it uses the baked source snapshot inside git-less images and invokes Git with a scoped `safe.directory=<repo>` override for mounted-source runs so validation does not depend on global Git config |
-| Aggregate static validation | `infernix test lint` | validate the initialized runtime config at command entry, then run the focused lint entrypoints together with Haskell style/build and Python quality checks |
-| Docs validation | `infernix docs check` | validate the governed docs suite and phase-plan shape through the canonical docs linter |
-| Service runtime | `infernix service` | consume repo-root `./infernix.dhall` at startup, or an explicit `--config PATH` file for targeted diagnostics, and own inference for the active substrate through real Pulsar transport on supported cluster paths, with a repo-local topic-spool harness available only when Pulsar endpoints are intentionally absent |
-| Demo UI runtime | `infernix service --role webapp` in the `infernix-demo` Deployment | serve the demo-only HTTP surface against the active initialized catalog |
-| Frontend contract generation | `infernix internal generate-purs-contracts` | generate the supported PureScript contract module from Haskell source |
-| Unit validation | `infernix test unit` | validate the initialized runtime config at command entry, then run Haskell runtime behavior checks plus PureScript unit suites without claiming cluster matrix coverage |
-| Integration validation | `infernix test integration` | validate the initialized substrate's published catalog contract through one substrate-aware integration suite that traverses the README matrix rows, selects the active engine from the effective runtime config, covers every generated active-substrate catalog entry, and carries the supported single-instance lifecycle/recovery assertions |
-| Routed E2E validation | `infernix test e2e` | exercise the real routed browser surface for the initialized substrate through a substrate-agnostic Playwright suite that relies on `infernix-demo` to read the effective runtime config and dispatch the correct engine |
-| Single-accelerator phase closure | chosen accelerator full-suite plus `linux-cpu` evidence | record the phase's chosen accelerator (`apple-silicon` or `linux-gpu`) plus `linux-cpu` attestation; code-side closure and its machine-independent gates stay on one machine in natural order, and the other accelerator is handled only by a sibling phase or later aggregation work |
-| In-process Haskell style gates | `src/Infernix/Lint/HaskellStyle.hs`, `test/haskell-style/Spec.hs`, `test/cabal-format/{Spec.hs,cabal.project,infernix-cabal-format.cabal}` | Root-package `infernix-haskell-style` owns the recursive `app/`/`src/`/`test/` inventory and readability rules behind an Ormolu/HLint callback seam, excluding only the exact four generated Proto paths. The genuinely separate Cabal-format package owns the pinned Cabal 3.16 parse/render check for both manifests. `ToolchainCabalFormat` runs it as a closed top-level child under the same sequential authority, keeping Ormolu's Cabal-syntax 3.14 solver world separate from Cabal 3.16 without a runtime install or nested style-tool process. |
+| Component | Entry point | Purpose and evidence boundary |
+|---|---|---|
+| Cluster reconcile | `infernix cluster up` | Binary-owned lifecycle under initialized config and live ownership; [2.18](phase-2-kind-cluster-storage-and-lifecycle.md) owns new containment proof. |
+| Cluster status | `infernix cluster status` | Observes presence, placement, owner and mutation state; not inference-success evidence. |
+| Kubernetes wrapper | `infernix kubectl ...` | Allowlisted read-only diagnostics against repo-local kubeconfig. |
+| Cache lifecycle | `infernix cache status`, `evict`, `rebuild` | Marker-based behavior is insufficient; [4.50](phase-4-inference-service-and-durable-runtime.md) owns actual engine-cache operations. |
+| Focused lint | `infernix lint` with `files`, `docs`, `proto`, `chart`, or `plan` | Mechanical checks only; baked source inventory does not establish checkout freshness. |
+| Aggregate static validation | `infernix test lint` | Command-level configured preflight plus static gates; does not prove real inference. |
+| Docs validation | `infernix docs check` | Structure, links and generated-contract checks; not proof of prose or attestation truth. |
+| Service runtime | `infernix service` | Startup-configured role over real Pulsar; endpoint-absent local spool is a separate unit/isolated harness, not routed evidence. |
+| Demo UI runtime | `infernix service --role webapp` | Demo-only routed HTTP/WS/static host. |
+| Frontend contract generation | `infernix internal generate-purs-contracts` | Haskell-owned presentation ADTs generate PureScript. |
+| Unit validation | `infernix test unit` | Closed configured Haskell/PureScript suites; mandatory CUDA execution cannot be discharged by a skip ([6.55](phase-6-validation-and-e2e-hardening.md)). |
+| Integration validation | `infernix test integration` | Active-catalog real behavior, lifecycle and explicit refusals; source-bound and per-check evidence required. |
+| Routed E2E validation | `infernix test e2e` | Real Keycloak/Gateway/browser path; useful rendering, not just mounted containers. |
+| Single-accelerator phase closure | `infernix test all` on chosen accelerator plus native CPU | Scope-bound retained evidence in [waves](cohort-validation-waves.md); code-side closure is separate. |
+| Haskell style and manifest gates | `Infernix.Lint.HaskellStyle`; `test/haskell-style/`; `test/cabal-format/` | In-process Ormolu/HLint plus solver-isolated Cabal-format package; preserve exact generated-source exclusions. |
 
 ## Browser and API Surface
 
-| Route | Upstream | Purpose | Notes |
-|-------|----------|---------|-------|
-| `/` | HTTPRoute -> `infernix-demo` Service | demo browser UI; anonymous visitors see only the landing card with `Sign in` and `Create account` CTAs until Keycloak auth completes | absent when `demo_ui` is false |
-| `/api` | HTTPRoute -> `infernix-demo` Service | demo API prefix for models, publication, demo-config, and cache discovery | absent when `demo_ui` is false |
-| `/api/publication` | `GET` endpoint on the `/api` route -> `infernix-demo` Service | routed publication metadata | absent when `demo_ui` is false |
-| `/api/cache` | `GET` and `POST` endpoints on the `/api` route -> `infernix-demo` Service | demo cache lifecycle API | absent when `demo_ui` is false |
-| `/auth` | HTTPRoute -> Keycloak Service | Keycloak login pages and OIDC endpoints for the durable-context demo; routed E2E covers self-registration to OIDC authorization-code redirect | absent when `demo_ui` is false |
-| `/ws` | HTTPRoute -> `infernix-demo` Service | WebSocket endpoint for authenticated durable-context sessions; carries chat, drafts, context list, progress, and artifact-ready notifications | absent when `demo_ui` is false |
-| `/api/objects` | HTTPRoute -> `infernix-demo` Service | webapp object-proxy: `POST /upload` (bytes), `GET /download` (streamed bytes), `POST /download` (render disposition), `GET /list`, and `DELETE` — all per-user scoped server-side; artifact bytes flow through the demo backend (no presigned MinIO URL) | absent when `demo_ui` is false |
-| `/registry` | HTTPRoute -> in-cluster registry Service | OCI `/v2` API surface; `registry:2` ships no browser portal | always published |
-| `/pulsar/admin` | HTTPRoute -> Pulsar admin Service | Pulsar admin surface | always published |
-| `/pulsar/ws` | HTTPRoute -> Pulsar HTTP or WebSocket Service | Pulsar browser-facing HTTP surface | always published |
+| Route | Owner | Contract and remaining proof |
+|---|---|---|
+| `/` | Webapp through Gateway | Demo landing/app bundle; containment [5.13](phase-5-web-ui-and-shared-types.md). |
+| `/api` | Webapp through Gateway | Demo-only API prefix; endpoint-specific authentication/authorization. |
+| `/api/publication` | Webapp | Placement/publication metadata, not proof of a live engine. |
+| `/api/cache` and `/api/cache/{evict,rebuild}` | Admin-gated Webapp API | Actual owner-scoped cache operations [4.50](phase-4-inference-service-and-durable-runtime.md), strict parsing/admin proof [9.12](phase-9-access-control-and-monitoring.md). |
+| `/auth` | Keycloak | Demo-gated login/signup/OIDC. |
+| `/ws` | Webapp | Authenticated durable-context sessions; runtime completion remains an independent assertion. |
+| `/api/objects` | Webapp | Per-user upload/download/list/delete; bounded preview and full download differ ([7.33](phase-7-demo-app-durable-context.md)). |
+| `/registry` | Registry through Gateway | OCI API, not a registry portal; admin authorization when demo is enabled. |
+| `/pulsar/admin` | Pulsar through Gateway | Admin API; admin authorization when demo is enabled. |
+| `/pulsar/ws` | Pulsar through Gateway | WebSocket transport; browser-edge admin policy does not replace trusted engine data-plane access. |
+
+The route registry and [web portal reference](../documents/reference/web_portal_surface.md)
+own exact generated routing. MinIO has no browser-direct Gateway route.
+Beyond the admin overview and personal dashboard, no general observability stack is deployed.
+Monitoring is not a supported first-class surface.
 
 ## Substrate Inventory
 
-| Substrate | Canonical substrate id | Supported contract | Current repo gap |
-|-----------|------------------------|--------------------|------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native control plane, cluster `infernix-coordinator` daemon for request-topic consumption and model-to-pool routing, same-binary host engine daemons with stable host ids consuming assigned derived pool/model topics and publishing results, and clustered support services plus optional routed demo workloads sharing one initialized runtime contract through role-specific deployment mirrors; normal Apple pools use `Shared` across distinct host ids and exact-host routes use pinned `Exclusive` topics; Metal and Core ML native engine artifacts materialize through typed manifests and public upstream MLX/coremltools APIs before host-native execution | none |
-| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose on native Linux amd64 or native Linux arm64; publication selects the normalized native host architecture from `InfernixHost.dhall`; the current Kind shape has one worker, one engine process, and one instance of each platform service, with collapsed-topology lifecycle validation owned by Phase 3 Sprint 3.16 / Phase 6 Sprint 6.47 | none |
-| Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | none |
+| Substrate | Execution placement | Remaining proof |
+|---|---|---|
+| `apple-silicon` | Native host CLI and separately started host engine; cluster coordinator/platform/Webapp | Manual workflow [1.44](phase-1-repository-and-control-plane-foundation.md), artifact behavior [4.50](phase-4-inference-service-and-durable-runtime.md), browser proof [5.13](phase-5-web-ui-and-shared-types.md). |
+| `linux-cpu` | Native amd64/arm64 Linux launcher and cluster engine, no emulation | Source binding and fail-closed observation [1.44–1.45](phase-1-repository-and-control-plane-foundation.md); paired lane for every open wave. |
+| `linux-gpu` | Linux launcher/coordinator image plus selected CUDA engine image/workload | Mandatory device execution/cleanup [6.55](phase-6-validation-and-e2e-hardening.md); outer launcher needs no NVIDIA access. |
 
 ## Serialization Boundaries
 
-| Boundary | Direction | Format | Owner | Notes |
-|----------|-----------|--------|-------|-------|
-| Runtime-config generation -> repo-root config | local initialization boundary | typed Dhall record at `./infernix.dhall`, schema reflected from the substrate decoder type | `src/Infernix/ProjectInit.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs` | `infernix init` creates operator config; `infernix test init` creates the harness input from which a run generates its temporary runtime config; the active substrate selects engine bindings and daemon roles consumed by cluster daemons, Apple host daemons, `infernix-demo`, and the integration suite |
-| Runtime config -> ConfigMap publication | control plane | real ConfigMap data plus repo-local deployment mirror | `infernix cluster up` | the repo-local mirror stores the derived cluster-role payload, and cluster-resident consumers, including Apple and Linux cluster daemons plus the routed demo surface, mount it at the compatibility path `/opt/build/infernix-substrate.dhall`; Apple host daemons read repo-root `./infernix.dhall` |
-| Browser <-> demo API | external (demo only) | JSON over HTTP | handwritten Haskell browser-contract ADTs plus generated PureScript bindings | production deployments do not expose this surface |
-| Inference requester <-> Pulsar | external | protobuf over Pulsar topics | repo-owned `.proto` schemas with Haskell and Python generated bindings | production inference surface; successful `InferenceResult` payloads carry either `inline_output` text (LLM and speech families) or a typed `object_ref` into the `infernix-demo-objects` bucket (the artifact families), while failed payloads carry typed `InferenceError` values such as `ModelMemoryLimitExceeded` |
-| Coordinator -> engine | internal production path on every substrate | protobuf batches over derived engine-pool Pulsar topics | `src/Infernix/Runtime/Pulsar.hs` plus coordinator-role, engine-pool, and engine-member `.dhall` config | the coordinator role publishes pre-batched inference work to derived pool/model topics with producer dedup. Engine members consume only topics assigned by the validated pool graph. Apple host daemons and Linux Kubernetes workloads share the same pool-routing contract; only placement differs by substrate. |
-| Haskell worker <-> engine adapter | internal child-process boundary | protobuf over stdio for Python adapters; typed target-specific argv/stdout plus descriptor-owned artifact output for direct native targets | `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`, the hidden native target catalog, and `python/adapters/` | Python adapters are invoked through their isolated Poetry/venv entrypoints; direct native targets receive non-secret argv plus an invocation-owned output directory. Text families return engine output text; artifact output is accepted only as a bounded descriptor-validated regular file before the Haskell worker performs secret-backed MinIO upload |
-| Browser <-> demo WebSocket | external (demo only) | typed framed envelopes (JSON via `Simple.JSON`) carrying server-sent `ConversationState`/`*Patch` snapshots/deltas and client-sent typed actions | handwritten Haskell browser-contract ADTs in `src/Infernix/Web/Contracts.hs` plus generated PureScript bindings via purescript-bridge | absent when `demo_ui = false`; business logic stays Haskell-only |
+| Boundary | Format and owner | Contract |
+|---|---|---|
+| Initialization to repo-root config | Dhall; `Infernix.ProjectInit` and decoder-owned defaults | System and machine contracts are distinct; binary sole-generation proof [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Runtime config to ConfigMap | Binary-produced Dhall embedded by Helm | Cluster mount `/opt/build/infernix.dhall`; Apple host reads repo-root config; consumers [8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md). |
+| Browser to demo API | JSON; Haskell browser ADTs and generated PureScript | Demo-only presentation surface; private engine/routing authority is not browser configuration. |
+| Inference requester to Pulsar | Protobuf; canonical `proto/infernix/` schemas | Text success or artifact reference; typed failure is not successful output. Demo artifacts use the demo-gated user bucket. |
+| Coordinator to engine | Protobuf batches over compiled pool/member topics | Same logical routing across Linux pods and Apple host engine placement. |
+| Haskell worker to adapter | One protobuf request/response for Python; typed direct-target invocation for native engines | Real engine output, verified artifact ownership, bounded process authority; actual history reconstruction [7.31](phase-7-demo-app-durable-context.md). |
+| Browser to demo WebSocket | Typed JSON actions, snapshots and patches | Haskell owns business state; browser applies generated presentation contracts. |
 
 ## State and Artifact Locations
 
-| State class | Authority | Durable home | Notes |
-|-------------|-----------|--------------|-------|
-| Durable PV directories | storage reconciliation in `cluster up` | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | deterministic host path layout for every PVC-backed workload |
-| Apple operator runtime config | `infernix init` | repo-root `./infernix.dhall` plus `./infernix-host.dhall` | ordinary config-dependent commands validate it and fail fast naming `infernix init` when absent |
-| Per-machine build ceiling | `infernix init` and `internal materialize-substrate` | untracked repo-root `cabal.project.local` | derived from the host manifest's measured `memory` facts by `Infernix.BuildMemory.deriveBuildMemoryPlan`; states its job count and per-process cap together because neither bounds anything alone. Deleting it reverts to the committed `cabal.project` floor, never to an unbounded build |
-| Generated Apple kubeconfig | `cluster up` | `./.build/infernix.kubeconfig` | repo-local kubeconfig used by `infernix kubectl` on Apple; Kind create or delete uses transient scratch kubeconfig state under system temp before this file is published |
-| Test-harness config | `infernix test init` plus the reservation-gated harness config transaction | repo-root `./infernix.test.dhall`; temporary repo-root `./infernix.dhall` during the run | the harness owns and restores the runtime config only after reserving the cluster slot |
-| Generated Linux kubeconfig | `cluster up` | `./.data/runtime/infernix.kubeconfig` | durable repo-local kubeconfig reused across fresh outer-container invocations; Kind or `nvkind` create or delete uses transient scratch kubeconfig state under system temp before this file is published |
-| Helm dependency archive cache | `cluster up`, `test integration`, `test all`, and any supported chart-reconcile path that calls `ensureHelmDependencies` | image-local `/opt/infernix/chart/charts/` on the Linux outer-container path, exposed to Helm through `/workspace/chart/charts`; `chart/charts/` in the Apple host worktree | cached top-level Helm dependency archives for PostgreSQL, Pulsar, and Envoy Gateway |
-| Cluster-mounted runtime-config mirror | Helm deployment plus ConfigMap mount | `/opt/build/infernix-substrate.dhall` | cluster-resident consumers — `infernix-demo` (frontend), `infernix-coordinator` (Pulsar coordinator role), and `infernix-engine` (engine role on Linux substrates) — consume the cluster-role deployment mirror; Apple on-host engine daemons read repo-root `./infernix.dhall` |
-| Fleet machine contracts and claim topics | `cluster up` publication plus `chart/templates/configmap-machine-contracts.yaml`, `chart/templates/deployment-engine.yaml`, and `Infernix.EngineRouting.engineMemberClaimTopicForMode` | `ConfigMap/infernix-machine-contracts` (one binary-rendered manifest per machine, mounted at each pod's `/workspace/infernix-host.dhall`); one derived `persistent://infernix/demo/fleet.member-claim.<mode>.<member>` topic per member | present only when the system contract declares more than one engine machine (`infernix init --engine-machines N`). Each machine's contract names exactly one member identity, so the byte-identical image-baked manifest cannot make two machines the same one, and the published system contract is mounted at the repo-root contract path beside it so a fleet pod holds a real generated pair. The Kind topology grows one worker per machine, labelled `infernix.fleet/slot`, and the engine deploys as one `infernix-engine-m<slot>` Deployment per machine with `--engine-name` as a compiled constant. Each machine holds the only `Exclusive` subscription on its claim topic for its consuming life; a second machine on the same identity is refused by name after a bounded wall-clock reacquisition window, and a lost claim is fatal. The single-machine deployed topology renders none of this and is unchanged | claim topics are broker-owned durable state; the machine contracts are generated and untracked, like every other `.dhall` |
-| Outer-container build root | containerized build or runtime | image-local `/workspace/.build/outer-container/build/` in the outer container | generated build output only; it is not the operator runtime-config authority |
-| Source snapshot manifest | Linux outer-container image build | `/opt/infernix/source-snapshot-files.txt` inside the substrate image | sorted source snapshot captured from the baked image context before later generated outputs so git-less image runs of `infernix lint files` validate only the baked source tree; the manifest stays in the image overlay |
-| Outer-container cabal-home and builddir | Linux outer-container image overlay | the toolchain's natural in-image locations (`/root/.cabal/`, `dist-newstyle/`) | populated during `docker compose build infernix`; not bind-mounted to the host so cabal package state stays in the image overlay |
-| Publication state | `cluster up`, `cluster down` | `./.data/runtime/publication.json` | route inventory and substrate metadata |
-| ConfigMap publication mirror | `cluster up` | `./.data/runtime/configmaps/infernix-demo-config/` | mirrored cluster-role substrate `.dhall` plus rendered YAML |
-| Chosen edge port record | cluster lifecycle | `./.data/runtime/edge-port.json` | records the `9090`-first chosen port |
-| Service model cache | service runtime | `./.data/runtime/model-cache/<substrate>/<model-id>/default/` | derived cache keyed by substrate and model |
-| Generated frontend contract staging | `infernix internal generate-purs-contracts` | `web/src/Generated/` | generated PureScript output only |
-| Generated frontend dist | `npm --prefix web run build` | `web/dist/` | ignored static output served by `infernix-demo` |
-| Tracked Haskell protobuf snapshot | canonical `.proto` schemas plus pinned Linux `libprotoc 34.1` / `proto-lens-protoc 0.9.0.1` gate | exactly four modules under `src/Proto/` plus `proto/haskell-bindings.sha256` | generated source, not handwritten; normal builds and Darwin lint consume/hash it without code generation, while the Linux image build regenerates and byte-compares all outputs |
-| Shared Apple adapter-quality venv | bounded Poetry provisioning | `python/.venv/` | shared framework-free quality/protobuf environment; not an inference fallback |
-| Prepared per-engine Python venvs | shared Haskell materializer before inference | `python/engines/<engine>/.venv/` | Apple: `transformers`, `pytorch`, `diffusers` with `apple-silicon`; Linux CPU: `transformers`, `pytorch` with `linux-cpu`; exact marker binds project inputs |
-| Playwright and test artifacts | validation flows | `./.data/` | repo-local test output location |
-| Demo artifact bucket prefixes | demo backend (webapp object-proxy, server-side) | MinIO bucket `infernix-demo-objects` (`users/<userId>/contexts/<contextId>/{uploads,generated}/`) | per-user prefix layout; browsers reach it only through the webapp `/api/objects` proxy; absent when `demo_ui = false` |
-| Demo conversation Pulsar topics | demo backend | Pulsar BookKeeper | append-only per-context conversation logs; SSoT for sequencing and text; the integration suite validates real publish + Reader decode, duplicate frontend publish collapse, and completed result writeback from a non-chaos dispatcher/result-bridge prompt roundtrip; absent when `demo_ui = false` |
-| Demo metadata Pulsar topics | demo backend | Pulsar BookKeeper | compacted per-user contexts and drafts topics keyed by `contextId`; SSoT for the left-rail list and unsubmitted drafts; the integration suite validates real publish + Reader decode with key assertions, admin compaction threshold readback, explicit topic compaction, compacted-reader latest-per-key behavior, and duplicate draft publish collapse; absent when `demo_ui = false` |
+| State class | Owner and location | Durability and remaining work |
+|---|---|---|
+| Retained platform PV data | Binary storage reconciliation; `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | Durable except explicitly rebuildable bootstrap-owned paths; [storage doctrine](../documents/engineering/storage_and_state.md). |
+| Operator runtime and machine config | `infernix init`; `./infernix.dhall`, `./infernix-host.dhall` | Generated, untracked operator configuration; not disposable harness scratch. |
+| Per-machine build ceiling | Binary derivation; `cabal.project.local` | Derived from observed capacity; use is re-admitted against live availability ([1.45](phase-1-repository-and-control-plane-foundation.md)). |
+| Generated Apple kubeconfig | Cluster lifecycle; `./.build/infernix.kubeconfig` | Derived, persistent across CLI invocations; scratch kubeconfig is separate. |
+| Harness config and backup | `infernix test init`; `./infernix.test.dhall`, temporary `./infernix.dhall`, `.harness-backup` | Reservation-gated transaction preserves operator intent; orphan backup refuses rather than assuming recovery authority. |
+| Generated Linux kubeconfig | Cluster lifecycle; `./.data/runtime/infernix.kubeconfig` | Derived, reused across launcher invocations. |
+| Helm dependency archives | `/opt/infernix/chart/charts/` in image; `chart/charts/` on Apple | Derived dependency cache; image exposes it through `/workspace/chart/charts`. |
+| Cluster-mounted runtime config | Binary ConfigMap generation; `/opt/build/infernix.dhall` | Derived mirror, not a second authored contract. |
+| Fleet machine contracts | `ConfigMap/infernix-machine-contracts`; pod `/workspace/infernix-host.dhall` | Generated per-member manifests; explicit multi-machine configuration only. |
+| Fleet member claim topics | Pulsar `fleet.member-claim.<mode>.<member>` | Broker-owned `Exclusive` membership claims, distinct from per-machine configuration. |
+| Outer-container build root | Image `/workspace/.build/outer-container/build/` | Derived build products, not operator config authority. |
+| Source snapshot manifest | Image `/opt/infernix/source-snapshot-files.txt` | Baked lint inventory, not independent source freshness evidence; [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Outer-container Cabal home/builddir | Image `/root/.cabal/`, `dist-newstyle/` | Derived during supported explicit bootstrap image build, not `docker compose build`. |
+| Publication state | Binary lifecycle; `./.data/runtime/publication.json` | Derived route/placement metadata. |
+| ConfigMap publication mirror | Binary lifecycle; `./.data/runtime/configmaps/infernix-demo-config/` | Derived Dhall/YAML inspection mirror. |
+| Chosen edge port | Cluster lifecycle; `./.data/runtime/edge-port.json` | Derived selected-port record. |
+| Local runtime result records | Runtime; `./.data/runtime/results/*.pb` | Explicit local result persistence, distinct from durable Pulsar conversation authority. |
+| Model cache and manifests | Engine-owned Linux `/model-cache/<modelId>/`; Apple `./.data/runtime/model-cache/`; local `manifest.pb` | Derived from MinIO, never made usable by markers alone; [4.50](phase-4-inference-service-and-durable-runtime.md). |
+| Conversation/KV projection | Engine/coordinator process state | Derived; hashes do not prove tensors. Reconstruct history and account retained state under [7.30–7.31](phase-7-demo-app-durable-context.md). |
+| Generated browser contracts | Binary generator; `web/src/Generated/` | Derived ignored output. |
+| Generated browser bundle/assets | Web build; `web/dist/` | Derived ignored output; contained serving [5.13](phase-5-web-ui-and-shared-types.md), actual MIDI samples [7.33](phase-7-demo-app-durable-context.md). |
+| Tracked Haskell protobuf snapshot | Four `src/Proto/` modules; `proto/haskell-bindings.sha256` | Exact generated source exception, hash-checked; not handwritten implementation. |
+| Shared adapter quality venv | Provisioning; `python/.venv/` | Derived framework-free quality/protobuf environment, not inference fallback. |
+| Prepared per-engine venvs | Provisioning; `python/engines/<engine>/.venv/` | Derived or image-owned environment with fixed project-bound marker. |
+| Playwright/test outputs | Runner working directories such as `test-results/`, `playwright-report/` | Re-creatable output; retained closure evidence must be explicitly exported and preserved before ephemeral runner removal. |
+| Demo artifact prefixes | MinIO `infernix-demo-objects/users/<sub>/contexts/<ctx>/{uploads,generated}/` | Durable demo-gated user objects; browser access only through Webapp. |
+| Demo conversation history | Pulsar BookKeeper | Durable ordered events; existing cursor plus empty reducer loses queued state until [7.30](phase-7-demo-app-durable-context.md) is implemented. |
+| Demo metadata history | Pulsar BookKeeper | Durable compacted contexts/drafts keyed by context; no browser-local authority. |
 
 ## Cross-References
 
+- [README.md](README.md)
 - [00-overview.md](00-overview.md)
-- [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md)
-- [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
-- [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md)
-- [phase-3-platform-services-and-edge-routing.md](phase-3-platform-services-and-edge-routing.md)
-- [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
-- [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md)
-- [phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md)
-- [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md)
-- [phase-8-zero-tracked-dhall-config-and-eager-model-cache.md](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md)
-- [phase-9-access-control-and-monitoring.md](phase-9-access-control-and-monitoring.md)
+- [cohort-validation-waves.md](cohort-validation-waves.md)
+- [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 - [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
+- [../documents/engineering/storage_and_state.md](../documents/engineering/storage_and_state.md)

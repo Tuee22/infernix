@@ -7,6 +7,12 @@
 > surface owned by `infernix-demo` and the PureScript browser application, and the gating model
 > that keeps the demo surface absent from production deployments.
 
+## TL;DR
+
+The Webapp role serves a same-origin PureScript demo from a contained static bundle. Server-side
+authorization owns access control; Haskell-generated contracts own browser data shapes. Artifact
+rendering proves useful output and bounds previews independently of the full-download path.
+
 ## Topology
 
 The demo UI is a separate workload (`infernix-demo`) gated by the active `.dhall` `demo_ui` flag.
@@ -46,6 +52,21 @@ Playwright system packages, and the browser engines. Routed Playwright execution
 same image with `npm --prefix web exec -- playwright test`. On Apple Silicon, host-native routed
 E2E uses host `npm exec` with the same typed fixture and must pass the Apple host-native gate.
 
+## Static Asset Boundary
+
+Static requests can open only regular bundle assets contained beneath the configured `web/dist/`
+root. The backend rejects absolute paths, decoded parent traversal, invalid separators/encodings,
+and symlink escapes before opening a file; containment remains true through the actual open so a
+check-then-replace race cannot redirect the read. Unknown or rejected asset requests do not expose
+source, runtime config, secrets, or another host path through a SPA fallback.
+
+Gateway path normalization is an independent boundary, not the backend's containment mechanism.
+Direct backend tests and real routed Gateway tests separately exercise raw and encoded traversal,
+absolute paths, symlink escape, and substitution races, using a known outside-root file and positive
+asset controls. Authentication, a routed redirect, or a UI-hidden link does not prove containment.
+The operator-facing route boundary is owned by
+[../engineering/edge_routing.md](../engineering/edge_routing.md).
+
 ## Landing Surface
 
 The app shell is gated behind a Keycloak JWT. The `body` element carries
@@ -78,9 +99,7 @@ the public client `infernix-spa` on realm `infernix`:
   handler (`completeRedirectImpl`) does not branch on entry-point.
 
 The PKCE / state / nonce generation is shared between the two redirects through a private
-`beginAuthorizationCodeRedirect(config, kcAction)` helper in `web/src/Infernix/Web/Auth.js`;
-there is no single-CTA `#login-button` pattern (its removal is tracked in
-[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)).
+`beginAuthorizationCodeRedirect(config, kcAction)` helper in `web/src/Infernix/Web/Auth.js`.
 
 The Keycloak forms those redirects reach use the chart-owned `infernix` login theme. The stock
 Keycloak image is unchanged; the chart mounts `ConfigMap/infernix-keycloak-theme` under
@@ -97,9 +116,10 @@ route family — but it is **admin-only**:
 - `Pulsar Admin` -> `/pulsar/admin/admin/v2/clusters`
 
 The ribbon is part of `.app-shell`, so the auth gate hides it before login; after login it is shown
-**only to admins**. `web/src/index.html` decodes the `infernix_operator_token` cookie and marks
-`<html>.infernix-admin` when the token carries the `infernix-admin` realm role, and CSS hides the
-ribbon for everyone else. The browser auth module writes the Keycloak access token into the
+**only to admins**. The PureScript application derives `AppState.isAdmin` from the active in-memory
+access token and renders the operator ribbon, infrastructure summaries, and admin panel from that
+state. The static `web/src/index.html` shell neither decodes tokens nor implements role logic.
+The browser auth module writes the Keycloak access token into the
 same-origin `infernix_operator_token` cookie when login or refresh succeeds, clears it on Sign out,
 and redirects through Keycloak OIDC logout so switching to the separate admin account cannot reuse a
 prior non-admin SSO session.
@@ -146,13 +166,14 @@ demo Pulsar topics (`demo.user.<userId>.contexts`, `demo.user.<userId>.drafts`, 
 ## Shared Contracts
 
 - dedicated browser-contract ADTs in `src/Infernix/Web/Contracts.hs` are the source of truth for the
-  PureScript request, response, engine-binding, and error types consumed by the demo UI
+  PureScript presentation request, response, and error types consumed by the demo UI; private
+  engine-launch and routing authority is not a browser contract
 - `infernix internal generate-purs-contracts` emits `web/src/Generated/Contracts.purs`
 - `npm --prefix web run build` invokes that codegen entrypoint before `spago build`
 - the generator appends active runtime constants, catalog constants, and explicit `Simple.JSON`
   instances used by routed `/api` decoding
 
-## Testing
+## Validation
 
 - `purescript-spec` suites cover the generated contract module shape plus the SPA view-model
   logic for selection, catalog parity, publication summary rendering, family-aware request
@@ -163,6 +184,11 @@ demo Pulsar topics (`demo.user.<userId>.contexts`, `demo.user.<userId>.drafts`, 
   and inference-dispatch-mode reporting
 - supported routed E2E on Linux uses Playwright from the substrate image; Apple host-native E2E
   uses host `npm exec` with the same typed fixture and must pass the Apple host-native gate
+- static asset tests exercise the direct backend and routed edge independently under the containment
+  contract above; a route-only rejection does not excuse an unsafe backend
+- text preview tests measure bounded upstream/browser reads and rendered text, and separately verify
+  full download; MIDI tests load real self-hosted samples and render nonempty audio from a known
+  note. Container mount, disposition, or a swallowed player error cannot satisfy rendering
 
 ## Durable Context Surface
 
@@ -200,8 +226,8 @@ routed WebSocket valid/malformed-token handshake behavior, expired-token rejecti
 malformed-frame `ServerError` handling, and `/api/objects` grant plus same-user MinIO byte roundtrip
 on the clean rebuilt Linux GPU launcher. The browser shell also owns the PKCE redirect completion,
 local context creation, browser upload through the webapp `/api/objects` proxy, bounded text/JSON
-previews, inline image/audio/video rendering, browser-native PDF URL wiring, and MIDI / MusicXML /
-generic download-only states — all mediated by the webapp object-proxy over typed `ObjectRef`s,
+previews, inline image/audio/video rendering, browser-native PDF handling, real MIDI playback,
+MusicXML/MXL notation, ZIP listing, and a generic binary download state — all mediated by the webapp object-proxy over typed `ObjectRef`s,
 never a presigned MinIO URL the browser holds. Successful browser uploads send
 `ClientRecordUpload` so the backend appends a typed `ConversationUserUploadEvent` to the
 conversation log. The Chat form sends `ClientSubmitPrompt` over the active WebSocket and
@@ -225,7 +251,9 @@ reconnects after unexpected WebSocket close, resends `ClientHello` and the activ
 through the reconnected socket. Cancel events resolve their target prompt in the queued-count
 projection; the browser cancel action sends `ClientCancelPrompt` for the latest unresolved
 server-backed prompt id, and Playwright verifies the inbound cancel append patch plus rendered
-cancel entry. The SPA stores only the active context id/model id in session storage, resubscribes
+cancel entry. The engine lifecycle gate separately verifies terminal cancellation, cleanup, and
+authority release; the immediate UI projection does not imply those transitions completed.
+The SPA stores only the active context id/model id in session storage, resubscribes
 that context after a reload login, and Playwright proves draft text is restored after both forced
 WebSocket reconnect and full page reload through the broker-backed draft stream. The routed flow
 also submits a second prompt before the first unresolved prompt resolves, asserts the rendered `2

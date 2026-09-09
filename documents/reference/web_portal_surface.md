@@ -157,6 +157,10 @@ Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`
 
 - the SPA is implemented in PureScript, built into `web/dist/` by
   `npm --prefix web run build`, and served by the `infernix` Webapp role
+- static serving opens only contained regular bundle assets, including self-hosted MIDI sample
+  assets; decoded traversal, absolute paths, symlink escape, and open-time substitution cannot expose
+  outside-root files. Backend and routed guarantees are tested independently under
+  [../architecture/web_ui_architecture.md](../architecture/web_ui_architecture.md#static-asset-boundary)
 - frontend contract modules are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`
 - the visible catalog comes from the generated demo catalog for the active runtime mode
@@ -195,6 +199,11 @@ Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`
   `Content-Type` and `Content-Disposition`. The browser holds only the `ObjectRef` and the webapp
   origin — never a presigned MinIO URL. See
   [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md).
+- bounded text/JSON previews report truncation and independently limit backend reads, browser reads,
+  and rendered text. The full-download action streams separately. MIDI playback loads real
+  same-origin piano samples with bounded loading and visible errors; MusicXML/MXL renders notation
+  and ZIP renders archive entries. A failed or empty renderer is not an inline-success state; see
+  [../architecture/demo_app_design.md](../architecture/demo_app_design.md#artifacts-view-contract)
 - a `Files` view lists the authenticated user's artifacts and drives webapp-mediated upload and
   download for the supported artifact classes. Like every other per-user surface, the listing is
   scoped server-side to the caller's `users/<sub>/…` object prefix derived from the verified

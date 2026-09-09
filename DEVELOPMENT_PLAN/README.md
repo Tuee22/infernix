@@ -13,41 +13,20 @@ govern this plan.
 
 ## Current execution gate
 
-Phases 0 through 9 are `Done`; no phase or cohort gate remains open. Phase 1's stable
-Poetry framework resolution, HTTPS Hackage initialization, and Homebrew formula-directory
-resolution pass the selected `apple-silicon` and paired native-arm64 `linux-cpu` full suites.
-Each exits 0 with 16/16 browser tests; the Phase 1 row in
-[Recorded Attestations](cohort-validation-waves.md#recorded-attestations) records the tested source.
-Phase 4 also passes that unchanged-source pair, including the required spoken transcript; its
-[attestation](cohort-validation-waves.md#recorded-attestations) records the closure. Phase 6 also
-passes the selected current-source `linux-gpu` plus paired native-amd64 `linux-cpu` full suites,
-including its fixed observer, retained-state recovery, real inference, typed refusal, throughput,
-and 16/16 routed browser gates; its
-[attestation](cohort-validation-waves.md#recorded-attestations) records the frozen source. Phase 8's
-decoded role-contract split and narrow presentation boundary pass the same selected `linux-gpu`
-plus native-amd64 `linux-cpu` full suites; its attestation records that closure. Phase 9's
-application-owned admin renderer and access-control surfaces pass that pair as well, recorded in its
-attestation. Sprint 0.27 closes the plan-level delivery
-language on the supported at-least-once transport with an effectively-once observable outcome,
-Sprint 1.40 closes its build-memory and capability cleanup rows, and Phase 4 Sprint 4.45 closes
-against the selected current-source `apple-silicon` plus paired native-arm64 `linux-cpu` full
-suites. Each phase retains the status earned by its own scope under Section C.
+Phase 0 remains `Done` and frozen at Sprint 0.36. Phases 1–9 are `Active` because each has
+explicit implementation or evidence obligations in its own scope. Start with Sprint 1.44; the
+follow-on sprints proceed in natural phase order after their named code-side prerequisites.
+Closed sprint headings remain closed records of their original scope, not proof of the new work.
 
-The Bounded Engine Launch host and device halves remain separate contracts on separate accelerators.
-Phase 4 owns the artifact-derived, resource-indexed host requirement, unified charged-field sampling,
-installed host ceiling, and execution-shape propagation. Phase 6 owns device admission, arena sizing,
-and the sampled device backstop; no lane claims a kernel device-memory bound.
+No remediation implementation or new cohort validation is claimed by this documentation update.
+[Open waves R1–R9](cohort-validation-waves.md#wave-table) each require one selected accelerator plus
+`linux-cpu`; their hardware sign-off does not block the next phase's code-side work. The
+[phase table](#current-phase-overview) is the sole phase-status summary.
 
-No cohort validation wave remains open.
-Phase 4's routed-speech correction is closed on `apple-silicon` plus native-arm64 `linux-cpu`, and
-Phase 6's fixed-observer correction and entry-document cleanup are closed on `linux-gpu` plus
-native-amd64 `linux-cpu`. Phase 8's decoded role-contract split is closed on that same selected
-`linux-gpu` plus native-amd64 `linux-cpu` pair. Phase 9's application-owned admin renderer,
-role enforcement, dashboard isolation, authentication lifecycle, and catalog browser matrix are
-also closed on that pair.
-
-Under Section C, an earlier phase reopening does not revert a later one: each phase's `Done` is scoped
-to its own deliverables and validation gate.
+The retained attestation table has no closure tuples for Phases 2, 3, 5, or 7. This is an evidence
+gap, not proof that historical tests never ran. Recover the actual source preimage and run records
+or rerun the gates; do not reconstruct a PASS from prose. Existing tuples remain append-only and
+do not certify the new remediation scopes.
 
 ## Document Index
 
@@ -82,7 +61,8 @@ to its own deliverables and validation gate.
 
 A phase or sprint can move to `Done` only when all of the following are true:
 
-1. The listed implementation paths exist in the current worktree.
+1. The listed implementation paths enforce the specified behavior, including adversarial and
+   negative cases; path existence, status markers, or nominal type names alone are insufficient.
 2. The listed validation gates pass on the supported execution path, with the phase's **single
    chosen accelerator** cohort (`apple-silicon` **or** `linux-gpu`) plus `linux-cpu` recorded when
    substrate-aware behavior is in scope — never both accelerators against one phase.
@@ -90,6 +70,10 @@ A phase or sprint can move to `Done` only when all of the following are true:
 4. No remaining cleanup or compatibility surface is left unstated.
 5. Cleanup promised by the sprint is reflected in
    [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+6. Retained execution evidence identifies the reconstructable source snapshot, immutable built
+   artifact, lane/device context, required checks, executed/skipped counts, outcomes, and log
+   artifacts. Missing evidence or a skipped mandatory check prevents closure. Section Q defines
+   the trust boundary; Markdown lint does not authenticate execution.
 
 `Done` is the single-accelerator sign-off gate (item 2's one-accelerator-plus-`linux-cpu` evidence).
 It is distinct from *code-side closure* — the implementation plus the machine-independent gate set —
@@ -103,157 +87,35 @@ contract.
 
 ## Current Repo Assessment
 
-Phase 0 is `Done`; it closes at Sprint 0.36 and does not reopen. Phases 1 through 9 are `Done`, and
-no cohort gate remains open. Phase 1's stable Darwin Poetry framework resolution,
-clean-launcher HTTPS Hackage initialization, and Homebrew formula-directory resolution pass the
-selected `apple-silicon` and paired native-arm64 `linux-cpu` full suites, recorded in its
-[attestation](cohort-validation-waves.md#recorded-attestations). Phase 4's routed-speech correction
-passes both selected full suites and its required transcript assertion; its attestation records the
-same tested implementation. Phase 6's unified fixed-observer correction and complete validation
-surface pass on selected `linux-gpu` plus paired native-amd64 `linux-cpu`, recorded in its
-[attestation](cohort-validation-waves.md#recorded-attestations). Phase 8's by-role decoded-contract
-split passes selected `linux-gpu` plus paired native-amd64 `linux-cpu`, recorded in its
-[attestation](cohort-validation-waves.md#recorded-attestations). Phase 9's application-owned admin
-renderer and access-control surfaces pass that same pair, recorded in its attestation.
-Under Section C each phase's status describes only its own scope. Phase 4's Bounded Engine Launch
-host half and Sprint 4.45 runtime-capability closure pass on the selected Apple accelerator plus
-paired native-arm64 `linux-cpu`. Phase 6's device half, Linux GPU host calibration, and residual safety and recovery
-implementation pass on the selected current-source CUDA accelerator plus paired current-source
-native-amd64 `linux-cpu`; device memory remains honestly detection-only because no supported kernel
-mechanism bounds it.
+The worktree contains substantial implementations for the one-binary CLI, platform services,
+Pulsar routing, engine adapters, browser application, and role-based access control. The governing
+architecture describes the target contract; it is not evidence that every contract is enforced.
 
-The repository implements the explicit-init runtime-config architecture, the baked Linux
-outer-container launcher, the single-instance platform services, the Gateway-owned routed edge, the
-shared Python adapter project, the Haskell-owned browser-contract generation path, the
-substrate-specific validation surface, and the Apple split-executor topology described below.
-Runtime routing closes around substrate-neutral engine pools: the coordinator is the production
-router, normal pools use Pulsar `Shared` plus broker-native backpressure, pinned routes use derived
-per-member topics with `Exclusive`, Linux members are Kubernetes workloads, and Apple members are
-same-binary host daemons selected by stable host id. Legacy raw-topic compatibility surfaces, the
-demo-off coordinator gate, and the two-binary `infernix` / `infernix-demo` split are all removed;
-the supported topology is the one-binary model with the demo frontend served by the `Webapp` role
-through `infernix service --role webapp`.
+The outstanding findings are owned as follows:
 
-Runtime admission is serialized and FIFO, with no catalog-wide fail-fast and no hardcoded budget
-floor, and it happens on the machine that will execute the work rather than on the coordinator: the
-observation admission consumes is package-owned and derived from live capacity probes, so a routing-only role
-cannot reach admission at all. The requirement is derived from the artifact's own bytes and indexed
-by physical resource. Host enforcement installs the available lane's ceiling before engine allocation
-and samples only the residue that ceiling does not cover; device memory remains admission plus a
-sampled backstop because no lane has a kernel device-memory bound. Budgets carry typed `InferenceMemoryBudget` semantics, admission
-extends to Linux CPU pod memory and Linux GPU VRAM, and a capacity failure publishes a typed
-`InferenceError.ModelMemoryLimitExceeded` payload with explicit MiB quantities from the machine that
-refused the work. The Apple `materialize-metal-engines` prerequisite, the pytorch-engine
-`mt3-infer <0.2` and linux-arm64 `demucs <4.1` dependency-drift caps, and the `docker/Dockerfile`
-engine-venv fail-fast that turns a silently masked venv-install failure into a build failure are
-part of that supported surface.
+| Owning work | Observed gap and required correction |
+|------------|--------------------------------------|
+| [Phase 1: 1.44–1.46](phase-1-repository-and-control-plane-foundation.md) | Source-bound validation and required-check runner, binary-owned seed generation, explicit Apple engine startup, fail-closed cgroup observation, and domain-owned lifecycle authority. |
+| [Phase 2: 2.18](phase-2-kind-cluster-storage-and-lifecycle.md) | Lifecycle consumer containment and cleanup; recover or rerun missing retained lifecycle evidence. |
+| [Phase 3: 3.18](phase-3-platform-services-and-edge-routing.md) | Recover or rerun source-bound platform, routed publication, and registry evidence. |
+| [Phase 4: 4.50](phase-4-inference-service-and-durable-runtime.md) | Real engine-cache hydration and rebuild, complete artifact accounting, and behavioral realness checks. |
+| [Phase 5: 5.13](phase-5-web-ui-and-shared-types.md) | Backend static-file containment and real Gateway negative tests; retained browser evidence. |
+| [Phase 6: 6.55](phase-6-validation-and-e2e-hardening.md) | Required device checks cannot silently skip; bounded fixture-process cleanup and structured execution evidence. |
+| [Phase 7: 7.30–7.33](phase-7-demo-app-durable-context.md) | Dispatcher replay, genuine conversation/KV reconstruction, engine cancellation, bounded previews, and rendered audio/playback evidence. |
+| [Phase 8: 8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md) | Validate sole-binary configuration generation through every consumer, using the Phase 1 bootstrap boundary. |
+| [Phase 9: 9.12](phase-9-access-control-and-monitoring.md) | Reject malformed cache requests before effects; validate real cache operations and admin/tenant isolation. |
 
-The repository implements the runtime-config doctrine described by this plan. `infernix init`
-creates the operator's repo-root `./infernix.dhall` and `./infernix-host.dhall`;
-`infernix test init` creates the harness input `./infernix.test.dhall`. Ordinary config-dependent
-commands validate the initialized file and fail fast naming the required init instead of
-auto-materializing it. The Linux substrate image uses binary-owned generation for its image-local
-defaults, not an ordinary-command preflight path. Focused `infernix lint ...` and `infernix docs
-check` remain config-independent. The runtime payload distinguishes cluster and host daemon roles:
-cluster-role configs name the substrate, request and result topics, and the engine-pool graph, while
-host-role Apple configs include the routed Pulsar connection details and the host member's pool
-membership.
-Cluster publication mirrors the cluster-role payload locally under
-`./.data/runtime/configmaps/infernix-demo-config/` and mounts it inside cluster workloads at the
-path `/opt/build/infernix.dhall`, while Apple host daemons read repo-root
-`./infernix.dhall`. The file is a typed Dhall record decoded in-process by the `dhall` Haskell
-library, and its schema is reflected from the substrate decoder type
-(`infernix internal dhall-schema substrate`) rather than from any tracked schema file.
+Static-asset handling lacks a proven backend containment boundary; the public routed exploitability
+must be measured separately because Gateway path normalization can differ. Generic rank-2 `IO`
+leases do not prove nonescape through deferred effects or reminted markers; private destructive
+consumers limit exposure but do not justify the stronger type claim. Static adapter checks are
+heuristics, not a proof that arbitrary output came from inference.
 
-`infernix test all` runs the full supported validation suite for the active initialized substrate.
-Full repository substrate closure comes from separate governed reruns for `apple-silicon`,
-`linux-cpu`, and `linux-gpu`, not from one implicit cross-substrate matrix invocation. The generated
-file, `cluster status`, publication JSON, and generated browser contracts serialize that active
-substrate under `runtimeMode` field names. `cluster status` does not mutate Kubernetes resources,
-publication state, or authoritative repo-local state; the accepted Linux outer-container exception
-is an idempotent Docker network membership repair that attaches the fresh launcher container to the
-private `kind` network for observation.
-
-The Apple split-executor contract is implemented on `apple-silicon`: `cluster up` keeps the registry,
-MinIO, Pulsar, PostgreSQL, Envoy Gateway, the optional clustered `infernix-demo` surface, and the
-cluster `infernix-coordinator` Deployment in Kind, while Apple inference execution remains
-host-native. Pool topics are derived from `(runtimeMode, pool id, model id, optional member id)`
-rather than from a single Apple host topic or Linux-specific per-engine special cases. The generated
-final-phase Helm values use role-specific coordinator and engine knobs; Apple sets the cluster
-engine replica count to 0 because Apple engine members are host-native. Pulsar-owned topics,
-`Shared` pool subscriptions, `Exclusive` pinned routes, and acknowledgement handling are the
-ordering and ownership boundary for request handoff, inference, and result publication. The
-coordinator eagerly stages the configured model set in `infernix-models` behind the
-`warm-model-cache` barrier; workers hydrate their derived local caches from those staged objects and
-publish the typed per-family result surface, while unsupported adapter ids fail fast instead of
-falling through to a generic success path. The selected `linux-gpu` plus `linux-cpu` real-output
-proof closed on the selected accelerator plus `linux-cpu`.
-
-The worktree omits the direct registry, MinIO, and Pulsar tool-route compatibility handlers, requires
-the real routed upstream behavior in integration, and persists Linux cluster state before later
-rollout phases. Bootstrap shells do not restage the active substrate payload before lifecycle
-commands; that preflight belongs to the binary command that needs the file. The dedicated Haskell
-style component links pinned `ormolu`, `hlint`, and `Cabal` libraries and invokes them in-process
-over one exact source inventory; it has no runtime tool install, host-manifest formatter field, or
-nested style process. The Linux substrate image installs a single `ghc-9.12.4` toolchain. The
-supported Linux outer-container launcher reuses the image-local `/opt/infernix/chart/charts/`
-archive cache, hydrates the MinIO dependency through the supported direct tarball path instead of
-Docker Hub-backed OCI metadata, and detects the known stale Pulsar or ZooKeeper epoch mismatch by
-resetting only the retained Pulsar claim roots and retrying, with a bounded number of such resets
-per `cluster up`.
-
-The Apple clean-host bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables
-before its fixed stage-0 measured, seed-accounted build handoff. Phase 1 Sprint 1.24 consumes the
-exact tracked Haskell protobuf snapshot, so Darwin installs and starts no standalone compiler or
-plugin. Apple adapter setup and validation paths reconcile the Homebrew-managed `python@3.12`
-formula and `python3.12` command plus a user-local Poetry bootstrap on demand, and that bootstrap
-may reuse an already available compatible Python 3.12+ executable when one passes the implemented
-version check.
-
-Docker-backed Apple work uses an already selected native arm64 Docker daemon; creating or switching
-Docker contexts, creating Colima VMs, and cross-architecture emulation are all outside the supported
-doctrine. Phase 1 Sprint 1.12 replaced the previous Colima reconciliation path with selected
-Docker-context and daemon-architecture validation, covering both the positive Apple lifecycle gate
-and the negative no-daemon boundary gate. Phase 1 Sprint 1.14 closes the Apple Metal/Core ML
-materialization lane under the Section Q single-accelerator rule: no `tart` / `hostTart` /
-`AppleTart` implementation exists in the host-tool schema, and the retained
-`materialize-metal-engines` command targets typed engine-artifact manifests. Phase 1 Sprint 1.15
-builds on that lane with real Apple native runner roots for Core ML, MLX, llama.cpp/whisper.cpp
-Metal, CTranslate2, ONNX Runtime, and Audiveris, plus indexed native snapshot hydration for Core ML
-Stable Diffusion; that native-engine scope closed on the selected accelerator plus `linux-cpu`. The
-target has no Tart VM, user keychain dependency, host Xcode UI flow, or request-time toolchain
-install.
-
-Routed Apple Playwright validation runs host-native `npm exec` against the published `127.0.0.1`
-edge port, and the in-image Playwright runtime bakes no conflicting `NO_COLOR` default. The shared
-cluster lifecycle surfaces explicit in-progress phase, child-operation detail, and heartbeat data
-through `cluster status` during monitored Docker build, registry publication, registry-backed
-final-image preload, and Apple retained-state replay steps; explicit substrate materialization
-writes the staged `infernix.dhall` atomically so concurrent status readers do not observe truncated
-payloads; retained-state Apple reruns reinitialize stopped Patroni PostgreSQL replicas from the
-current Patroni leader when timeline drift leaves replicas unready after promotion; and all lanes
-scrub operator-managed Patroni claim roots before recreating claim directories and after
-retained-state sync, so regenerated database credentials are never paired with stale registry or
-Keycloak data directories. The shared lifecycle skips broad pre-registry support-image preloads and
-follows the stricter registry-first target: supported lanes hydrate and stream only the narrow registry
-warmup dependency set into Kind before Helm warmup, only the storage the registry needs may pull upstream
-before the registry is responsive, and every remaining image, including the active `infernix` runtime
-image, is loaded into the registry before final rollout.
-
-Open cohort gates live in [cohort-validation-waves.md](cohort-validation-waves.md), which names the
-per-accelerator validation still outstanding. A wave that has closed is deleted rather than
-archived: per Section D of
-[development_plan_standards.md](development_plan_standards.md) the plan carries no history.
-
-The production and routed validation path uses real Pulsar transport. The repository keeps the
-repo-local topic spool under `./.data/runtime/pulsar/` as a deliberate harness surface for
-unit-level checks or manually isolated daemon runs that intentionally omit Pulsar endpoint
-configuration; that harness is not routed cluster evidence and does not replace the Gateway-backed
-Pulsar assertions in integration or E2E validation.
-
-Beyond the Phase 9 admin overview (`/api/admin/overview`) and per-user personal dashboard, no
-general observability stack (metrics, tracing, log aggregation) is deployed.
-Monitoring is not a supported first-class surface.
+Current launcher reuse can select stale source, mandatory GPU fixtures can report success without
+executing their assertions, and retained phase evidence is incomplete. Until their owning work is
+closed, an exit code, Markdown status, cache directory, prefix hash, or rendered DOM container is
+insufficient evidence of the corresponding behavior. Removal of the concrete shortcut surfaces is
+tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ## Execution Contexts and Substrates
 
@@ -328,35 +190,36 @@ trust the phase document.
 ## Current Phase Overview
 
 | Phase | Current status | Current gate and retained implementation state |
-|-------|----------------|----------------------------------------|
-| 0 | Done | Closed at Sprint 0.36. The charter states that this phase does not reopen; Section Q enumerates the mechanical governance set by name; the attestation evidence a `Done` cites is retained rather than deleted on close. |
-| 1 | Done | All 43 sprints are closed. Stable Poetry framework resolution and HTTPS Hackage initialization pass the selected `apple-silicon` and paired native-arm64 `linux-cpu` full suites; see the Phase 1 [attestation](cohort-validation-waves.md#recorded-attestations). |
-| 2 | Done | Every sprint is closed. Sprint 2.17 validates the single-binary registry bootstrap on the selected `linux-gpu` accelerator plus `linux-cpu`, including a populated second reconcile and stateless registry-pod reschedule. |
-| 3 | Done | Every sprint is closed. Sprint 3.17 validates anonymous single-binary registry publication, the routed catalog, populated backing, and stateless pod rescheduling on the selected `linux-gpu` accelerator plus `linux-cpu`; Sprint 3.16 enforces the one-worker topology, and Sprints 3.14 and 3.15 own the readiness and bounded-publication evidence boundaries. |
-| 4 | Done | All 49 sprints are closed. Required spoken output, Whisper artifact admission, refusal classification, and lane-budget execution bounds pass the selected `apple-silicon` and paired native-arm64 `linux-cpu` full suites; see the Phase 4 [attestation](cohort-validation-waves.md#recorded-attestations). |
-| 5 | Done | Every sprint is closed and no code-side work is open. |
-| 6 | Done | All 54 sprints are closed. The fixed observer, entry-document governance, retained-state recovery, real inference, typed refusal, throughput, and routed 16/16 browser gates pass the selected current-source `linux-gpu` plus paired native-amd64 `linux-cpu` full suites; see the Phase 6 [attestation](cohort-validation-waves.md#recorded-attestations). |
-| 7 | Done | Every sprint is closed and no code-side work is open. |
-| 8 | Done | All 14 sprints are closed. Shared wire facts decode into distinct routing, launch, publication, and presentation views, and the browser receives only the active runtime plus model catalog. Selected current-source `linux-gpu` plus paired native-amd64 `linux-cpu` full suites pass; see the Phase 8 [attestation](cohort-validation-waves.md#recorded-attestations). |
-| 9 | Done | All 11 sprints are closed. The in-memory access token derives `AppState.isAdmin`; the application renderer owns the operator ribbon, cluster summaries, admin overview, and Files-backed personal dashboard; and the shell remains static. Selected current-source `linux-gpu` plus paired native-amd64 `linux-cpu` full suites pass with 16/16 routed browser tests; see the Phase 9 [attestation](cohort-validation-waves.md#recorded-attestations). |
+|-------|----------------|------------------------------------------------|
+| 0 | Done | Frozen at Sprint 0.36; no new Phase 0 work. |
+| 1 | Active | [Sprints 1.44–1.46](phase-1-repository-and-control-plane-foundation.md) and [Wave R1](cohort-validation-waves.md#wave-table): Source-bound validation and required-check runner, binary-owned seed generation, explicit Apple engine startup, fail-closed cgroup observation, and domain-owned lifecycle authority. |
+| 2 | Active | [Sprints 2.18](phase-2-kind-cluster-storage-and-lifecycle.md) and [Wave R2](cohort-validation-waves.md#wave-table): Lifecycle consumer containment and cleanup; recover or rerun missing retained lifecycle evidence. |
+| 3 | Active | [Sprints 3.18](phase-3-platform-services-and-edge-routing.md) and [Wave R3](cohort-validation-waves.md#wave-table): Recover or rerun source-bound platform, routed publication, and registry evidence. |
+| 4 | Active | [Sprints 4.50](phase-4-inference-service-and-durable-runtime.md) and [Wave R4](cohort-validation-waves.md#wave-table): Real engine-cache hydration and rebuild, complete artifact accounting, and behavioral realness checks. |
+| 5 | Active | [Sprints 5.13](phase-5-web-ui-and-shared-types.md) and [Wave R5](cohort-validation-waves.md#wave-table): Backend static-file containment and real Gateway negative tests; retained browser evidence. |
+| 6 | Active | [Sprints 6.55](phase-6-validation-and-e2e-hardening.md) and [Wave R6](cohort-validation-waves.md#wave-table): Required device checks cannot silently skip; bounded fixture-process cleanup and structured execution evidence. |
+| 7 | Active | [Sprints 7.30–7.33](phase-7-demo-app-durable-context.md) and [Wave R7](cohort-validation-waves.md#wave-table): Dispatcher replay, genuine conversation/KV reconstruction, engine cancellation, bounded previews, and rendered audio/playback evidence. |
+| 8 | Active | [Sprints 8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md) and [Wave R8](cohort-validation-waves.md#wave-table): Validate sole-binary configuration generation through every consumer, using the Phase 1 bootstrap boundary. |
+| 9 | Active | [Sprints 9.12](phase-9-access-control-and-monitoring.md) and [Wave R9](cohort-validation-waves.md#wave-table): Reject malformed cache requests before effects; validate real cache operations and admin/tenant isolation. |
 
 ## Canonical Outcome
 
-The supported platform now closes around these rules:
+The target platform closes around these rules; the current gaps are owned above:
 
 - one repo-owned Haskell executable, `infernix`, links the default Cabal library exposed by the
   `infernix` package (declared in `infernix.cabal` without an explicit library name and depended on
   as `infernix`); it owns the production daemon, cluster lifecycle, validation, internal helpers, and
   the routed demo HTTP host (served by the long-running `Webapp` role selected through typed Dhall
   and `infernix service --role webapp`)
-- one Haskell command registry owns parsing, help text, and the
-  canonical CLI reference, but it no longer exposes `--runtime-mode` or any equivalent substrate
-  override
+- one Haskell command registry owns parsing, help text, and the canonical CLI reference. Ordinary
+  operations do not override the initialized substrate; `init` and `test init` retain their explicit
+  `--runtime-mode` creation option
 - the product contract standardizes three substrates:
   `apple-silicon`, `linux-cpu`, and `linux-gpu`
 - the active substrate is read from repo-root `./infernix.dhall`, and that initialized payload is
   the primary source of truth for substrate identity,
-  generated catalog content, daemon role, inference placement, Pulsar topics, and test scope
+  generated catalog content, inference placement, derived Pulsar topics, and test scope. Daemon role
+  and member selection belong to the machine/process contract
 - `infernix init` creates the operator runtime config and host manifest; `infernix test init`
   creates the harness input from which a reservation-gated run generates its temporary runtime
   config
@@ -408,7 +271,8 @@ The supported platform now closes around these rules:
   cluster-resident Apple inference execution
 - supported entrypoints no longer carry the old cross-substrate default matrix, cluster bring-up
   fallbacks, direct tool-route compatibility handlers, or generic inference-success fallback;
-  routed registry, MinIO, and Pulsar checks require the real Gateway-backed upstream behavior, while
+  routed registry and Pulsar checks require real Gateway-backed upstream behavior; MinIO checks use
+  the webapp object mediator or trusted internal data plane, while
   inference coverage goes through the typed adapter harness selected by the active substrate file.
   The repo-local Pulsar topic spool remains only a harness-oriented path for endpoint-absent unit
   or isolated daemon checks, not a substitute for routed cluster validation
@@ -451,7 +315,7 @@ The supported platform now closes around these rules:
 | 4 | 0-3 | closes the runtime, adapter boundary, object-store contract, and Apple host-daemon bridge on top of the platform surfaces |
 | 5 | 0-4 | adds the clustered demo UI, generated frontend contracts, and routed browser validation on top of the runtime and publication contract |
 | 6 | 0-5 | validates the whole supported surface end to end and hardens the governed docs, routes, and lifecycle behavior around that implementation |
-| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless Webapp role in the `infernix-demo` workload, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded on the selected accelerator plus `linux-cpu`, Sprint 7.24 pool assignment and broker-native backpressure closed on the selected accelerator plus `linux-cpu`, Sprints 7.25-7.27 object-proxy / Files / in-browser rendering closed on the selected accelerator plus `linux-cpu`, and Sprint 7.28 generated artifact ownership closed on the selected accelerator plus `linux-cpu`. |
+| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless Webapp role in the `infernix-demo` workload, stateless `infernix-coordinator`, substrate-specific engine pools). Current reconstruction, cancellation, media, and evidence obligations are owned by Sprints 7.30–7.33. |
 | 8 | 0-7 | adopts the hostbootstrap Dhall doctrine on top of the whole platform: zero version-controlled `.dhall`, the binary as sole generator of every `.dhall` (including ConfigMap/Secret bodies), explicit `init` / `test init` creation with ordinary commands failing fast when config is missing, the Apple bootstrap `up` wrapper explicitly running `init --if-missing`, a test harness that generates/runs/deletes the runtime config, and eager coordinator model-cache staging (replacing the lazy per-inference bootstrap) driven by the mounted `infernix.dhall`. |
 | 9 | 0-8 | adds the role-based access-control and monitoring surface on top of the whole demo platform: the Keycloak `infernix-admin` realm role + JWT `realm_access.roles` claim, the edge admin `SecurityPolicy` (a valid JWT is necessary but not sufficient for cluster-wide surfaces) plus ungated-route closure, the backend admin gate + admin cluster-wide monitoring panel, the per-user personal dashboard, per-user MinIO STS defense-in-depth, and the enforced Apple host-worker loopback data-plane invariant. Every dependency edge references an equal-or-lower-numbered phase, so the forward-only DAG holds — and since Sprint 0.25 that invariant covers ownership and evidence as well as blocker edges, checked mechanically rather than read for. |
 

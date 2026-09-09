@@ -175,6 +175,12 @@ prefix used to select the already-built Linux launcher image for one Docker Comp
 set by the bootstrap script or written explicitly in direct-reference commands; Infernix code
 never reads it, and all runtime configuration still comes from Dhall.
 
+The pre-manifest build is a fixed, bounded seed invocation; it does not authorize shell-owned
+Dhall generation. Once the first binary exists it emits the host manifest from decoder-owned
+defaults, including command policies. Bootstrap and Dockerfile code neither duplicate those
+records nor read Dhall to discover the tools needed to build their generator. The canonical
+generation boundary is [Configuration Doctrine](../architecture/configuration_doctrine.md).
+
 ## Chart templates
 
 Pod specs for infernix-owned workloads carry no `env:` block. Mount the cluster ConfigMap +

@@ -93,10 +93,11 @@ single host installs every wheel. The gate stays machine-independent through one
   real-inference time, so `mypy --strict`/`black`/`ruff` over the adapter tree pass on any host
   without the wheels installed.
 - Installing the real wheels and producing real per-family output happens on substrate hardware and
-  is never a precondition for `poetry run check-code` (the lazy-import invariant). Realness itself is
-  guaranteed by construction in the adapter code: the `check-code` realness AST pass forbids any
-  fabricated result — a `return` from an `except`, constant artifact bytes, or a
-  `_validation_*`/`*_smoke*`/`*_fallback*` helper — so a fabricated "success" cannot pass review. A
+  is never a precondition for `poetry run check-code` (the lazy-import invariant). The `check-code`
+  realness AST pass rejects enumerated patterns — a `return` from an `except`, selected constant
+  artifact constructions, or a `_validation_*`/`*_smoke*`/`*_fallback*` helper — but cannot prove
+  absence of arbitrary fabrication. Input-sensitive real-engine behavior and independent negative
+  mutation controls are required by [../architecture/realness_contract.md](../architecture/realness_contract.md). A
   top-level framework import or a framework entry in `pyproject.toml` silently re-couples the
   machine-independent gate to one host and is rejected on review.
 
@@ -193,12 +194,11 @@ Each engine-specific adapter module under `python/adapters/` honors a small proc
 
 **One message in each direction is a deliberate choice, not an accident of the original shape, and
 the memory contract is carried without breaking it.** The admitted quantities and the execution
-shape travel in on the request the adapter was already going to read, and the adapter's
-acknowledgement of the ceiling it actually received travels back on the result payload it was
-already going to write. A separate handshake round trip — the adapter announcing its installed limit
-and waiting for permission to continue — would turn a process with exactly one failure mode into one
-with a protocol state machine, a second deadline, and a partial-exchange state that neither side can
-classify. The acknowledgement therefore rides the response.
+shape travel on the request, and the adapter's acknowledgement of the ceiling it actually received
+travels on the result payload. This keeps the worker exchange at one protobuf request and one
+protobuf response. Load, execution, serialization, timeout, cancellation, and partial-exchange failures
+remain distinct outcomes; the small protocol does not eliminate them. Observation inside the engine
+occurs before its first weight allocation even though the response carries that observation later.
 
 Worker protocol:
 
@@ -208,6 +208,12 @@ Worker protocol:
 - the worker request includes selected-model metadata, the engine install root, non-text input
   object references, and model-cache/MinIO wiring decoded by the Haskell worker from mounted
   `ClusterConfig` plus secret-file-backed `SecretsConfig` values
+- conversational requests include the canonical prior context reconstructed and hash/offset-verified
+  by the Haskell worker. The adapter consumes that context for real inference, never only the newest
+  prompt while claiming a KV hit. The one-request subprocess contract has no persistent native KV
+  handle: it reconstructs state for each request. Actual engine-native reuse requires its own
+  supported state capability within the same memory/execution authority, as specified in
+  [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
 - the worker request carries one further category: the admitted resource-indexed memory budget and
   the execution shape — context length, batch, generation bound, and load strategy — the plan
   derived that budget from. The adapter both **acts on** it and **acknowledges** it. It acts on it
@@ -250,12 +256,15 @@ Worker protocol:
   child process, and returns only bounded direct-owned output. Native artifact-producing processes
   receive non-secret cache and bucket hints plus an invocation-owned output directory; the Haskell
   worker accepts an output only after descriptor validation proves it is the expected bounded
-  regular file. Realness is enforced in the engine code by the realness lint.
+  regular file. Realness requires fail-closed engine code, review, and the behavioral checks in
+  [../architecture/realness_contract.md](../architecture/realness_contract.md).
 
-Adapters do not open network sockets and do not subscribe to the topic transport themselves; the
-Haskell worker owns those boundaries and treats the adapter as a pure request-to-response process.
+Adapters do not own the inference topic subscription or dispatch loop; the Haskell worker owns those
+boundaries and treats the adapter as a bounded request-to-response subprocess, not a pure function.
+Typed model-cache and artifact helpers may perform the authorized MinIO I/O described in
+[../engineering/object_storage.md](../engineering/object_storage.md).
 For the artifact families the adapter returns a typed object reference for the generated bytes,
-which the worker resolves against the always-on infernix-demo-objects MinIO bucket
+which the demo worker resolves against the demo-gated infernix-demo-objects MinIO bucket
 (see [../engineering/object_storage.md](../engineering/object_storage.md)).
 
 ## Engine Parameters

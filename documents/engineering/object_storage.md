@@ -7,7 +7,7 @@
 > buckets exist, what they hold, who reads and writes them, and how the
 > coordinator's eager model-cache staging workflow populates platform model
 > weights (on startup from the mounted `infernix.dhall`; at-least-once delivery plus producer dedup
-> and the `.ready` guard make the effective upload single) while engine
+> and verified readiness make publication idempotent) while engine
 > software artifacts stay separate from model weights.
 
 ## Bucket Contract
@@ -39,7 +39,8 @@ The supported shape uses three MinIO buckets and nothing else:
 - `infernix-models` is read by every engine and the coordinator's
   bootstrap worker; only the coordinator's service account has PUT
   permission. The bucket is not browser-addressable directly; weights
-  never leave the cluster.
+  are available only to trusted engine/coordinator paths, including the Apple host engine's
+  loopback data-plane connection, never to browser clients.
 - `infernix-engine-artifacts` is read by controlled materialization
   commands and engine pods that need reusable software payloads. Writes
   are content-addressed and immutable; mutable adapter pointers, when
@@ -81,7 +82,8 @@ The materialization flow is:
    `infernix-engine-artifacts`.
 3. Materialize into a temporary local directory under the active engine-install
    root.
-4. Validate the manifest contract and run the manifest's smoke/load command before rename.
+4. Validate the manifest contract and run the hidden catalog's source-specific smoke/load operation
+   before rename; manifest data cannot supply executable or command text.
 5. Rename atomically into `./.data/engines/<adapterId>/` on Apple or into the
    image-owned `/opt/infernix/engines/<adapterId>/` root on Linux.
 6. Ack the materialization work only after the local root is complete.
@@ -102,8 +104,9 @@ bytes-loading branch.
 
 The helper:
 
-1. Checks `/model-cache/<modelId>/.ready` on the engine pod's
-   `emptyDir` mount. If present, returns the path immediately.
+1. Checks the selected generation under `/model-cache/<modelId>/` on the engine pod's
+   `emptyDir` mount. Readiness requires a complete verified artifact inventory, not marker or directory
+   existence alone. A generation in active use remains protected against eviction/replacement.
 2. If absent, checks `infernix-models/<modelId>/.ready` in MinIO. Under eager staging the
    coordinator has already populated the bucket at startup, so `.ready` is normally present; the
    helper downloads every file under `infernix-models/<modelId>/` to `/model-cache/<modelId>/`,
@@ -112,12 +115,13 @@ The helper:
      `infernix/system/model.bootstrap.request` (producer dedup key = `modelId`) and subscribes to
      `model.bootstrap.ready.<modelId>` with a bounded timeout — the same coordinator worker services
      it. This is a safety net, not the hot path.
-3. Returns the local filesystem path.
+3. Publishes a verified generation atomically and returns its local filesystem path under the cache
+   owner's use authority. Failed hydration cannot publish an empty or partial ready generation.
 
-The model cache is ephemeral: a pod restart wipes `/model-cache/` and
-the next load repopulates from MinIO. Aggressive eviction is by
-design — the user explicitly accepted repeated MinIO pulls as the
-price of true daemon statelessness. This LRU policy bounds the on-DISK
+The model cache is ephemeral: pod replacement discards `/model-cache/`, whereas a container restart
+within the same pod preserves its `emptyDir`. The next load verifies retained content or repopulates
+from MinIO. Eviction is permitted only under the cache owner's mutation authority when no active
+execution uses that generation. This LRU policy bounds the on-DISK
 model cache only; resident model memory is governed separately by typed
 runtime admission.
 
@@ -249,12 +253,21 @@ operator's machine, not durable cluster state. This posture bounds DISK
 only: model memory is governed separately by the typed resource-admission
 policy described under Engine Model-Weight Loading and Validation.
 
+Cache inspection and administration use the owning engine's actual cache, with explicit machine,
+runtime, model, artifact-generation identity, and measured byte/file counts. The webapp's private
+scratch mount is not cluster-wide cache authority. `materialize` and `rebuild` hydrate and verify
+real artifacts from MinIO; a `manifest.pb` plus a marker file is not a materialized model. The
+complete replacement, locking, and API-scope contract lives in [model_lifecycle.md](model_lifecycle.md).
+
 Browsers fetch generated artifacts exclusively through the webapp's
 `/api/objects` endpoints against the `infernix-demo-objects` MinIO
 bucket. Those endpoints stream the bytes
 server-side and the browser never receives a presigned MinIO URL (see
 [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
 Browser reads and generated-artifact writes both resolve under the same user/context prefix.
+Text/JSON preview bounds apply to the upstream read as well as the browser reader and renderer;
+full downloads stream separately with backpressure. Neither path buffers an entire object merely
+to truncate or forward it.
 
 ## Routed Surface
 
@@ -294,6 +307,11 @@ failure.
 - `infernix test e2e` covers `/api/objects` upload/download through the webapp proxy from a
 real Keycloak JWT, same-user routed byte equality, and cross-user object-prefix isolation for two
 Keycloak users with the same context id and display name.
+- Cache lifecycle validation executes a real model from the verified generation before and after
+  scoped eviction/rebuild, rejects missing/corrupt artifacts, observes actual owner-local counts,
+  and proves active use prevents destructive replacement. A webapp-local directory cannot satisfy
+  this test. Large/chunked object tests separately measure bounded preview reads and full streamed
+  download equality.
 - Production-shape validation (`demo_ui =
 false`) confirms `infernix-models` and `infernix-engine-artifacts` are present,
 `infernix-demo-objects` is absent, and no daemon has a PVC.

@@ -59,21 +59,23 @@
 Delivery is **at-least-once with an effectively-once observable outcome**: an engine acknowledges a
 pool message only after the terminal result is published, so a machine lost mid-inference costs a
 redelivery and duplicate compute rather than an unanswered request, and producer-side dedup collapses
-the duplicate at the effect. Redelivery is the only recovery path the pipeline has, because request
+the duplicate at the effect. Redelivery is the recovery path for already-published engine work, because request
 publishes carry a deduplicating sequence id that makes re-dispatch a no-op. The canonical statement
 and its rationale live in
 [../architecture/daemon_topology.md](../architecture/daemon_topology.md).
 
 The active `.dhall` config carries the production inference fields consumed by `infernix service`:
 
-- the **system contract** carries the substrate and the validated pool record whose values are the
-  model descriptors; every publish and subscribe topic is *derived* from
+- the **system contract** carries the substrate and pool catalog, with each pool containing its
+  model descriptors; every engine-pool publish and subscribe topic is *derived* from
   `(runtimeMode, pool id, model id, optional member id)` rather than written down, so two machines
   cannot spell one topic differently
-- the **machine contract** carries this box's `node` block — its role, its required member id, and
-  the pools it serves — selected out of the system contract by field access
-- `engines : List EngineBinding` - the engines available to the worker dispatch layer; Python-native
-  bindings execute through the named adapter entrypoints in the active substrate project
+- the **machine contract** carries a `machine` union: an image default grants no daemon authority;
+  a machine value declares its role, member identities, cache quota, and pinned system-contract
+  digest. Served pools are derived from membership in the pinned pool catalog, not re-authored in a
+  second list. Unknown or unserved identity fails closed
+- engine bindings are compiled projections consumed by the worker dispatch layer, not a second
+  authored catalog; Python-native bindings execute through the prepared named adapter entrypoints
 - the optional `demo_ui : Bool` flag toggles the `infernix-demo` workload (production deployments
   leave it off)
 
@@ -81,9 +83,9 @@ The three-role daemon model in
 [../architecture/daemon_topology.md](../architecture/daemon_topology.md) and
 [../architecture/engine_pool_routing.md](../architecture/engine_pool_routing.md) maps to Pulsar
 subscriptions as follows. The coordinator role (`infernix-coordinator` Deployment on every
-substrate) consumes `request_topics`, applies dispatch, batching, and pool-routing rules, and
+substrate) consumes the compiled request-topic capabilities, applies dispatch, batching, and pool-routing rules, and
 publishes to a derived pool/model topic. Engine members consume their assigned derived topics,
-execute the engine adapter, and publish results to `result_topic`. Normal scalable pools use
+execute the engine adapter, and publish through the compiled result-topic capability. Normal scalable pools use
 `Shared` subscriptions so Pulsar's permits and receiver backlog provide broker-native
 backpressure. Pinned routes use derived per-member topics with `Exclusive` subscriptions. `Failover`
 provides stable single-active broker coordination for dispatcher, result-bridge, and model-bootstrap
@@ -161,9 +163,21 @@ Rules:
   Pulsar provides that single-active-consumer coordination; it is not a claim that a second
   coordinator is standing by. One process per role per machine means a single-machine
   deployment has exactly one coordinator, and its loss is a restart
+- a restarted dispatcher reconstructs the complete conversation projection from retained history or
+  a validated durable checkpoint plus suffix before dispatching or acknowledging through its stable
+  subscription. The replay/live boundary has no gap and deduplicates overlap. A subscription cursor
+  is not reducer state, and an earliest initial position does not rewind an existing subscription.
+  Queued acknowledged prompts remain reconstructible; missing history refuses recovery rather than
+  initializing an empty queue
 - engine-pool messages are acknowledged only after engine materialization, inference, and durable
   result publication succeed, while failed materialization leaves the message unacked or negatively
   acknowledged for redelivery
+- cancellation is keyed to the canonical inference request and reaches the executing engine. The
+  engine stops and reaps the owned computation and releases affected cache state before terminal
+  `Cancelled` publication, then releases its serialized execution authority; a
+  completion already durably published wins. The result bridge deduplicates terminal outcomes across
+  cancellation/completion races and redelivery. A conversation cancel event alone is not engine
+  cleanup evidence
 - Failover ownership uses stable subscription names; individual
   consumers use process-qualified names via `Infernix.Runtime.Pulsar.Failover`
   so coordinators on different machines do not present identical member names or
@@ -204,9 +218,8 @@ Rules:
   platform-level concern, present even in production where `demo_ui = false`
 - the coordinator's bootstrap subscription is a Pulsar named **Failover** subscription —
   exactly one coordinator processes a given `modelId` at a time. On crash the unacked request is
-  redelivered: to another machine's coordinator if the fleet has one, and otherwise to the same
-  coordinator once it restarts. Redelivery is the recovery path; promotion is not guaranteed to
-  find a survivor
+  redelivered to the owning coordinator once it restarts. Broker coordination does not provide
+  another coordinator process
 - the coordinator is the only daemon role with outbound-internet egress; the request
   carries no upstream URL itself — the worker reads the URL from the active substrate's
   staged `.dhall` catalog, keyed by `modelId`
@@ -228,6 +241,15 @@ Rules:
 
 See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the full
 event model, reducer, dispatcher rule, and failure semantics.
+
+## Validation
+
+Live-broker tests preserve existing durable subscriptions while restarting the owning coordinator
+with one active and one acknowledged queued prompt; they require the queued prompt to complete after
+reconstruction. Separate replay-boundary and duplicate-publication cases prove no lost or duplicate
+observable work. Engine cancellation tests verify cleanup and one terminal outcome, not merely a
+published cancel event. Cache consistency tests verify actual prior-history input and native reuse
+only where supported, under [../architecture/durable_context_design.md](../architecture/durable_context_design.md).
 
 ## Cross-References
 

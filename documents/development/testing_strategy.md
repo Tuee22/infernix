@@ -66,7 +66,7 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
   at build time so the containerized `docker compose run --rm infernix infernix test all` finds them.
   The integration suite's per-variant `internal materialize-substrate` keeps rewriting that same
   harness-owned path across substrate variants. `infernix test lint` and `infernix test unit` remain
-  config-independent (fixtures only).
+  fixture-based at the suite level but still honor command-level initialized-substrate preflight.
 - `infernix docs check` validates governed docs, README or plan cross-references, required CLI
   registry coverage in `documents/reference/cli_reference.md`, phase-document documentation
   sections, and forbidden legacy-doctrine phrases
@@ -93,9 +93,11 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
   isolated helper handles, bounded framed-protocol failures, target provenance, parent/supervisor
   death, timeout/exception/cancellation cleanup, stopped groups, descendants, reaping, and
   activity-retirement proofs
-- `cabal test infernix-compile-fail` separately proves subprocess phase skipping, session escape,
-  linear start-authority reuse, lifecycle authority escape/reuse, and external access to the raw
-  command, subprocess, lifecycle-lock, or protocol kernels do not typecheck
+- `infernix test unit` runs the closed `infernix-compile-fail` suite to reject the specific invalid
+  subprocess, session, and authority programs it names. Direct region-substitution fixtures do not
+  prove arbitrary ordinary-`IO` callbacks cannot escape through closures or existential values;
+  domain-owned authority and runtime lifetime tests follow
+  [managed-state doctrine](../architecture/managed_state_transitions.md)
 - `infernix test integration` validates cluster lifecycle for the active initialized substrate,
   generated demo-config publication, routed demo or tool surfaces, routed inference plus cache
   endpoints, service-path request or result publication through the active topic contract,
@@ -117,6 +119,21 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
   host disk headroom for Kind image preload, registry-backed image publication, and Pulsar
   BookKeeper durability; low disk headroom can block `infernix-engine` readiness after cluster
   creation even when the NVIDIA preflight passes
+
+## Evidence Preconditions
+
+Every lane records reconstructable source and build identity plus actual check execution under
+[the testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary).
+A stale baked image, missing retained artifact, skipped required fixture, directory marker, or DOM
+mount node does not demonstrate the requested behavior. Memory probes fail closed when required
+usage observations are unavailable. Local and remote artifact accounting exercise the same complete
+supported layout and explicitly refuse unsupported shards.
+
+Focused regressions cover backend and routed path containment; queued-work replay after the owning
+coordinator restarts; verified conversation reconstruction and actual engine reuse; cancellation
+through resource release; real cache hydration; bounded backend/browser previews; actual MIDI
+samples/playback; and malformed cache requests rejected before effects. Full behavioral definitions
+remain in their architecture homes and [the demo test plan](demo_app_test_plan.md).
 
 ## Hardware Cohort Cadence
 
@@ -182,8 +199,9 @@ Hardware-specific validation runs on the machine that owns the changed path.
 - `infernix test integration` also validates `cluster status`, `cluster down`, and repeated
   `cluster up` behavior for the active substrate
 - `infernix test integration` also validates the routed `GET /api/cache`,
-  `POST /api/cache/evict`, and `POST /api/cache/rebuild` contract against manifest-backed durable
-  state
+  `POST /api/cache/evict`, and `POST /api/cache/rebuild` contract against real verified artifacts
+  on the identified engine cache owner, not webapp-local marker directories. Malformed requests
+  return 400 before effects; valid explicit `{}` selects all models within that owner/runtime
 - `infernix test integration` also validates that `/registry` and `/pulsar/ws`
   resolve through the shared routed surface through the live registry and Pulsar upstreams (MinIO is
   reached only through the webapp `/api/objects` proxy, not a gateway route)
@@ -218,7 +236,8 @@ Hardware-specific validation runs on the machine that owns the changed path.
   cross-user object-prefix isolation, and the routed download-grant
   MIME disposition matrix. The browser artifact path covers app-owned PKCE login, local context
   creation, bounded text/JSON previews, inline image/audio/video media URL wiring, browser-native
-  PDF URL wiring, MIDI / MusicXML / generic-binary download-only states, and the per-model smoke
+  PDF URL wiring, actual MIDI playback with self-hosted samples, MusicXML score rendering,
+  explicit generic-binary download-only states, and the per-model smoke
   matrix across every active catalog row. The browser flow asserts each uploaded artifact's
   `ClientRecordUpload`, inbound `ConversationUserUploadEvent` patch, and rendered Chat upload
   message, plus new-context dialog close-negative behavior, model-picker selection through
@@ -253,12 +272,12 @@ home for the test contract itself.
 The coordinator eagerly stages the configured model set in the `infernix-models` MinIO bucket
 behind the `warm-model-cache` barrier. The runtime worker dispatches through the selected engine
 binding, hydrates its derived local cache from those staged objects via
-`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness is
-guaranteed by construction — the engine code cannot
-return a fabricated result (enforced by the realness lint), so the suites trust the result and fail
-closed on `status=failed`. That fail-closed guarantee extends to model memory through the
-resource-admission doctrine: an over-budget request publishes typed `ModelMemoryLimitExceeded`
-before launch, while rows that fit the active budget still run. Runnable rows require real-output
+`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Tests require input-sensitive real model behavior and reject controlled constant-output and
+missing-engine substitutions; static AST checks cannot prove arbitrary adapter realness. Each case
+states its expected outcome. Typed admission refusals and measured breaches pass only their own
+negative assertions, never a required successful-inference assertion. An unexpected `status=failed`
+fails the gate. Over-budget requests publish typed `ModelMemoryLimitExceeded` before launch while
+rows that fit the active budget still run; an all-refused catalog is not real-output evidence. Runnable rows require real-output
 evidence on each claimed accelerator, and rows without that evidence are explicit residuals. Adding
 a catalog row requires rerunning the catalog-driven integration and browser matrices before making
 a support claim for that row.
@@ -310,7 +329,9 @@ infernix-demo app chooses the engine binding from the active `.dhall`; the brows
 on substrate or engine. The browser layer asserts the per-family rendered result for every
 demo-visible row — inline text for LLM and speech, an audio player for audio-generation and
 playable-stem output, an image for image generation, a video for video generation, and a
-MIDI/MusicXML download for the transcription and OMR families.
+MIDI playback or MusicXML score rendering for transcription and OMR, with a separate download
+action. A mount node or disposition attribute alone is insufficient: tests verify decoded samples
+and rendered audio, or nonempty score content, and require visible load/render errors.
 
 ### Union-coverage invariant
 
@@ -374,25 +395,19 @@ substrate metadata round-trips through explicit UTF-8 Dhall emission. The valida
 must distinguish a typed admission failure, a watchdog-observed in-run breach, a plain engine
 failure, a **stall** (a genuinely missing result, including an OS-OOM kill), and a
 **fabricated pass**. A nearby peak does not promote a plain exit to a memory diagnosis.
-Machine-independent GPU enforcement tests cover the fixed `nvidia-smi`
-observer's parsers, the group
-attribution arithmetic and its overflow rejections, and a live no-CUDA-context sample that must
-complete without a fabricated breach or an enforcement failure) runs in `infernix-unit` and
-`infernix-capped-engine-observer`. Those live assertions require the device: they are real evidence
-only where one is reachable, and **skip loudly** otherwise. Whether the outer launcher container can
-reach the device is a property of the host Docker daemon's default runtime, not of `compose.yaml`, so
-that coverage is host-configuration-dependent and is never recorded as unconditional. The adversarial
-CUDA breach in `infernix-unit` uses `runNvidiaVramBreachAssertions`, which holds a real
-device allocation made through `libcuda.so.1` driver-API calls under `ctypes` — needing no compiler
-and adding no repo-owned native source — and drives the `nvidiaWatchdogOutcomeForTest` seam. The
-case asserts a typed `EngineExceededCeiling`, a
-non-successful group reap, and a subsequent smaller allocation completing cleanly. Its ceilings are
-set from measurement rather than assumption, because a CUDA context is itself a ~500 MiB device
-allocation before any `cuMemAlloc`, so a naive ceiling would be breached by context overhead and
-would prove nothing about the allocation. It skips loudly and by name when the device, the pinned
-interpreter, or the allocation gate is unavailable. The runtime ceiling-breach proof belongs to the
-unit seam: `validateCatalogModelInference` classifies catalog rows as compiler-unavailable or
-completed, while a runtime breach of an admitted ceiling is neither classification.
+Machine-independent GPU enforcement tests cover parser, attribution, and overflow behavior.
+Live observer and CUDA allocation assertions run only in an explicitly device-capable context
+owned by the binary, and are mandatory for the selected `linux-gpu` lane. A missing device,
+interpreter, allocation, or fixture timeout fails that gate rather than reporting success after a
+skip. The ordinary Compose launcher does not require NVIDIA access; the receipt identifies the
+actual validation context. CPU and Apple runs record GPU-only checks as not-applicable.
+
+The CUDA breach fixture measures the baseline including context overhead, holds an actual
+allocation, asserts the typed resource breach and process cleanup, and then proves a smaller
+allocation can complete. It retains and reaps every exact process handle on success, timeout,
+exception, and cancellation. Integration catalog admission does not replace this in-run breach
+assertion. Structured executed/skipped outcomes follow
+[the testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary).
 
 Every suite whose image spawns a subprocess bounds its descriptor space first
 (`Infernix.DescriptorSpace`). This is not a performance nicety: `close_fds = True` makes the forked
@@ -425,12 +440,13 @@ relationship to the existing entrypoints.
   compact multi-user prompt throughput, PostgreSQL lifecycle rebinding, and the proof that the
   single-node topology schedules every workload with no `Pending` workload.
 
-  There is **no failure-injection block**. The supported topology has no standby role or service
-  instance to promote: one process runs per role per machine, and each platform service is
-  single-instance, so instance loss recovers by restart or restore. Delivery is **at-least-once
-  with an effectively-once observable outcome** —
-  acknowledgement follows the terminal result — and that property is asserted at the effect layer
-  (producer dedup, the `.ready` sentinel, per-context ordering) rather than by killing a process.
+  The supported topology has no standby role or service instance to promote: one process runs per
+  role per machine, and platform services recover by restart or restore. Tests restart the owning
+  coordinator with one request active and another queued, then verify replay before live consume
+  or acknowledgement and preserve queued work without a duplicate observable terminal result.
+  This is same-owner recovery, not an HA or standby-promotion claim. Delivery remains at-least-once
+  with an effectively-once observable outcome, checked through durable replay, terminal-event
+  acknowledgement, and deduplication at the effect.
 - **E2E layer** (`infernix test e2e`) — Playwright flows for auth, context, conversation
   (including two-in-a-row and cancel), drafts, artifact upload/download plus render, preview,
   document handling, or download-only behavior per supported artifact class, generated-artifact

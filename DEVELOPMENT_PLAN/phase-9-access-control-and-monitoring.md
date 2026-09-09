@@ -1,9 +1,6 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Done. All 11 sprints are implemented and validated. The application-owned admin
-dimension, cluster overview, personal dashboard, and static HTML shell pass the selected
-current-source `linux-gpu` plus paired native-amd64 `linux-cpu` full suites against the source
-recorded in the Phase 9 [attestation](cohort-validation-waves.md#recorded-attestations).
+**Status**: Active — Sprints 9.12 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
 
@@ -14,72 +11,15 @@ recorded in the Phase 9 [attestation](cohort-validation-waves.md#recorded-attest
 
 ## Phase Status
 
-Per-user *object and chat* isolation already exists and is unchanged (Phase 7:
-`pathBelongsToUser`/`topicBelongsToUser`, `users/<sub>/` prefix — see
-[../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md)).
-This phase adds the missing **admin vs. user** dimension: before it, the Keycloak realm declared zero
-roles, `JwtClaims` could not parse a role claim, and the operator consoles (the registry, Pulsar Admin) plus
-several cluster routes were reachable by any authenticated — including self-registered — user.
+Sprints 9.1–9.11 retain their closed headings and only their established scope. Authenticated cache mutations can broaden malformed JSON or an invalid modelId to all local entries. Existing admin checks do not make that request decoding safe, and cache status reflects the marker-based cache implementation.
 
-**Invariant**: only members of the `infernix-admin` realm role may see cluster-wide data (operator
-consoles, cluster-wide monitoring); every other authenticated user sees only their own data. Admin
-credentials are hardcoded (demo app). Enforcement is at two points: the Envoy **edge**
-`SecurityPolicy` (browser path, gateway NodePort 30090) and the backend for `/api/*`. The Apple
-host-worker **data plane** (MinIO NodePort 30011, Pulsar-proxy NodePort 30080) is loopback-only and
-trust-boundary-internal — it never transits the admin-gated edge.
+The existing Phase 9 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-All eleven sprints are complete. The selected current-source `linux-gpu` plus paired native-amd64
-`linux-cpu` full suites cover the admin-claim, STS scoped-credential/session-token,
-generated-Kind-config loopback, compiled PureScript application-state, routed browser, and catalog
-assertions. The standalone files, docs, chart, and protobuf lints plus the docs check pass. The HTML
-shell contains only static markup and the compiled application module; admin role decoding and both
-dashboard transports live in the PureScript application boundary.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R9 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
+## Current Repo Assessment
 
-- **Unauthenticated** `GET /api/admin/overview`, `GET /api/cache`, `POST /api/cache/evict`, `/registry`,
-  `/pulsar/admin`, `/pulsar/ws`, `/api/objects/list` all return **401**; `/api/publication` returns 200.
-- **By role** over `/api/admin/overview`, `/api/cache`, `/registry`, `/pulsar/admin`, `/pulsar/ws`:
-  non-admin token → **403**, admin token → **2xx** (`/pulsar/ws` admin → 404, the WS backend's own
-  non-auth response — past the edge gate). The admin token carries `realm_access.roles ⊇ infernix-admin`;
-  a self-service token does not. The admin access token mints without any profile patch, because the
-  realm import carries the admin account's complete profile.
-- `GET /api/admin/overview` returns real cluster-wide aggregates (substrate, dispatch mode, catalog
-  and engine/pool sizes, member count) for the substrate actually running.
-- **Loopback data plane**: MinIO S3 (`127.0.0.1:30011`) and the Pulsar proxy (`127.0.0.1:30080`) answer
-  200 un-gated while the browser edge (`/registry`) requires admin; the live generated Kind config binds
-  every data-plane + edge port to `127.0.0.1`.
-- **Per-user isolation**: user A reads its own object (200); user B is denied A's object and any
-  cross-user key (403); B's `/api/objects/list` is empty and scoped to `users/<B>/`.
-- **Per-user STS (9.7)**: with the default-on `cluster.minio.stsPerUser` the object path works
-  end-to-end through the scoped `AssumeRole` credential.
-- **Routed Playwright RBAC + dashboard + lifecycle suite passes** on current-source native-arm64
-  `linux-cpu` (admin
-  sees ribbon/panel/cluster cells; non-admin denied; personal dashboard disjoint;
-  logout/re-login/token-refresh; returning-user sign-in; wrong-password rejected; deleted-account
-  auth loop). Browser rendering is substrate-independent: every lane deploys the identical baked
-  SPA carrying the application-owned admin panel and personal dashboard.
-
-Sprint 9.9 owns the logout/session-switching contract and its routed authentication-lifecycle
-coverage. The Phase 9 attestation records the current-source selected `linux-gpu` plus paired
-native-amd64 `linux-cpu` full-suite closure.
-
-## Remaining Work — UAT auth residual [Done]
-
-Both repo-root `notes.txt` items are resolved code-side:
-
-1. **UAT auth issue diagnosed.** The failure mode was local-only Sign out: the SPA cleared its
-   in-memory access token and `infernix_operator_token` cookie but left the Keycloak SSO browser
-   session alive, so a user who signed out of a self-registered non-admin account and then attempted
-   the separate admin credentials could be silently signed back in as the old non-admin session and
-   continue receiving 403s for admin surfaces. Sprint 9.9 implements the Keycloak OIDC logout
-   redirect and adds routed Playwright coverage for switching from user to admin.
-2. **Admin-access documentation gap answered.** Admin is a **separate login**: a single hardcoded
-   `admin` account (`keycloak.realm.demoAdmin.username` / `.password`) is the only principal granted
-   the `infernix-admin` realm role. Self-registered users are non-admin **by construction** and are
-   denied at both the edge `SecurityPolicy` and the backend `withAdminRequest` gate — no ordinary
-   user can reach the admin portal.
-
-**Remaining Work:** None.
+The Keycloak role boundary, application admin renderer, and tenant-scoped object APIs exist. Sprint 9.12 owns strict cache-request decoding and admin/tenant regressions against the real cache lifecycle from Sprint 4.50. Authentication, authorization, request validity, and mutation scope are separate checks; malformed authenticated input must not select every model.
 
 ## Sprint 9.1: Keycloak admin realm role, mapper, and hardcoded admin user [Done]
 
@@ -308,6 +248,8 @@ None.
 
 ## Sprint 9.10: Admin-Token and Object-Storage Session Leases [Done]
 
+**Scope boundary**: Credential use consumes domain-held authority under Sprint 1.46's lifetime contract; generic rank-2 IO does not itself prove delayed-action containment.
+
 **Status**: Done — implemented and validated.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`
 **Blocked by**: nothing — Sprints 4.28 and 7.29 are closed.
@@ -351,6 +293,8 @@ None.
 
 ## Sprint 9.11: The Admin Gate Renders From Application State [Done]
 
+**Scope boundary**: Admin UI rendering does not prove request decoding or actual cache mutation semantics. Sprint 9.12 owns those criteria.
+
 **Status**: Done
 **Implementation**: `web/src/Main.purs`, `web/src/index.html`, `web/src/Infernix/Web/Auth.purs`,
 `web/src/Infernix/Web/Auth.js`, `web/src/Infernix/Web/Browser.purs`,
@@ -392,6 +336,58 @@ None.
 
 ---
 
+## Sprint 9.12: Reject Malformed Cache Mutations and Verify Actual Cache Authorization [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Strict request decoding and real-cache authorization regressions pending.
+**Cohort gate**: Wave R9 — selected `linux-gpu` plus native `linux-cpu`.
+**Blocked by**: Sprint 8.15 code-side closure; Sprint 4.50 provides actual cache lifecycle behavior.
+**Implementation targets**: `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Auth/Jwt.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
+**Docs to update**: `documents/architecture/access_control_doctrine.md`, `documents/architecture/tenant_isolation_doctrine.md`, `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/reference/api_surface.md`, `documents/engineering/model_lifecycle.md`
+
+### Objective
+
+Validate request scope before cache mutation and prove admin operations affect only their
+explicit targets.
+
+### Deliverables
+
+- Decode eviction/rebuild bodies into a strict typed request: exactly `{}` explicitly selects all
+  configured models within the authenticated cache owner's active runtime; an object containing
+  only a nonempty known string `modelId` selects one. Empty body, JSON `null`, malformed JSON,
+  wrong field types, empty/unknown model identity, arrays/scalars, and unknown fields yield
+  HTTP 400 before selection or mutation. Never infer all-model scope from a decode failure.
+- Retain separate authentication and admin-authorization gates for cache inspection and mutation.
+  Apply requests to the verified engine-consumed cache from Sprint 4.50, with truthful results.
+- Keep shared model-cache administration separate from tenant-owned conversation/object access.
+  Assert admin status does not silently expand unrelated tenant data access.
+- Remove decode-failure-to-all-models behavior through the removal ledger.
+
+### Validation
+
+- Independently exercise empty body, invalid JSON, JSON `null`, scalar/array bodies, wrong-type
+  `modelId`, empty/unknown identity, and unknown fields. Assert HTTP 400 and unchanged cache
+  identities for every invalid body. A valid `{}` request and a valid one-model object are
+  separate positive scope controls.
+- Test unauthenticated, ordinary-user, and admin requests for read, single-model eviction/rebuild,
+  and explicit all-model scope. Verify status/error codes and actual artifact effects: selecting
+  one model leaves another verified cache intact; malformed requests touch neither.
+- A valid admin operation is the positive control and verifies usable cache state or an honest
+  typed operation failure. MinIO durable source artifacts and tenant-owned objects remain intact.
+- Recheck object/chat cross-user denial, per-user listings, dashboard isolation, token expiry,
+  logout and account switching against the real backend and routed browser.
+- Run governed build, aggregate lint/unit, focused docs/plan gates and Wave R9 against one frozen
+  source/image pair. Existing access-control attestations do not prove malformed-request scope
+  handling or real-cache mutation behavior.
+
+### Remaining Work
+
+Implement strict typed selection and actual-cache regressions, then retain Wave R9 evidence.
+
+## Remaining Work
+
+Implement Sprints 9.12, pass their governed machine-independent gates, and retain Wave R9's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -409,3 +405,9 @@ None.
 **Cross-references to add:**
 - register Phase 9 in `development_plan_standards.md` Section E, `DEVELOPMENT_PLAN/README.md`, `00-overview.md`, `system-components.md`, and root `README.md`
 - add the retired auth-only-operator-gate + unconditional-ribbon posture to `legacy-tracking-for-deletion.md`
+
+**Remediation documentation obligations:**
+
+- Keep the contracts named by Sprints 9.12 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
+- Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.

@@ -76,6 +76,18 @@
 
 ## Rules
 
+- Mutation and recovery effects run under the domain-owned lifecycle resource through cleanup and
+  child joining. A copied lock marker or deferred ordinary-`IO` callback cannot supply fresh
+  authority; see [managed-state doctrine](../architecture/managed_state_transitions.md).
+  A configuration backup without a matching reservation is refused and preserved for operator
+  resolution, not automatically restored.
+- Cache inventory and mutation refer to verified artifacts on the identified engine cache owner,
+  not marker-only directories on the webapp. Real hydration, active-use serialization, and scope
+  are specified by [model lifecycle](../engineering/model_lifecycle.md).
+- Validation reports source/build identity and required-check execution under
+  [testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary).
+  A zero exit alone does not prove a required device assertion or real-output case executed.
+
 - the `infernix` command inventory above is rendered from the command metadata exposed by the
   Haskell command registry in `src/Infernix/CommandRegistry.hs`; `infernix docs check` fails if this
   generated section drifts

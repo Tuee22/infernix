@@ -51,6 +51,13 @@ creates the separate `./infernix.test.dhall` consumed by the test harness.
 
 ## Cross-References
 
+- Resource lifetime and exact-owner recovery follow
+  [managed-state doctrine](../architecture/managed_state_transitions.md); generic rank-2 `IO`
+  callbacks alone do not prove that authority cannot escape. The protected runner owns effects
+  and children through release, and missing reservation provenance refuses recovery.
+- Cache families operate on real verified owner-local engine artifacts; see
+  [model lifecycle](../engineering/model_lifecycle.md). Validation families retain actual
+  source/build and required-check execution evidence under [testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary).
 - [cli_reference.md](cli_reference.md)
 - [api_surface.md](api_surface.md)
 - [../development/testing_strategy.md](../development/testing_strategy.md)

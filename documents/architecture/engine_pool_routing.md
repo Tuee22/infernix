@@ -44,12 +44,16 @@ installed before the engine's first allocation once that ceiling is calibrated o
 capacity plus live RSS and cgroup refinement; Linux GPU requires independently indexed pod-RAM and
 VRAM enforcement and fails closed without it, and its device half is admission and arena sizing plus
 detection, because no kernel mechanism bounds device memory anywhere. Capacity failures remain
-explicit unavailable models carrying a typed `ModelMemoryLimitExceeded` that names the resource it
-breached and the footprint it observed, so one oversized entry does not invalidate smaller
+explicit unavailable models carrying a typed `ModelMemoryLimitExceeded` that names the resource,
+required quantity, and available capacity; no launch or measured runtime breach is implied. One oversized entry does not invalidate smaller
 placements. A machine that places models and admits none of them refuses to start rather than
 reporting ready and rejecting every request. A fitting model launches only through
 `ExecutableModel`, whose matching indexed grant/enforcer pair installs that ceiling where the lane
 can install one and drives the capped-engine sampler over the residue everywhere.
+Admission includes all retained model/KV state and reconstruction buffers, or evicts/releases them
+before the next execution. Local and remote artifact selection use complete identical checkpoint
+accounting, and unreadable finite-cgroup usage cannot become free capacity. A single broker permit
+does not establish any of these memory facts.
 Canonical home: [bounded_inference_memory.md](bounded_inference_memory.md).
 
 **Closed messaging authority.** Compilation rejects a `TopicFamilyCollision` when any topic is

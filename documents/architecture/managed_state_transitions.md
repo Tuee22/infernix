@@ -65,16 +65,29 @@
 
 For every state `S`: a transition `T` reaches it, evidence `E(S)` witnesses it. Evidence has two kinds.
 
-- **Monotone (latching) states** — once true, stay true (`ModelBootstrapReady`, `PayloadVerified`,
-  `DemoBucketsProvisioned`, `RegistryReady`). Evidence is an **opaque newtype with a hidden
-  constructor**, minted by exactly one honest transition that consumes a real artifact. Provenance is
-  truth here because the property never un-happens.
-- **Revocable (leased) states** — can lapse after `T` (`WriterQuiesced`, `AdminTokenValid`,
-  `ClusterReachable`, `StsLive`, a held lock). Evidence is a **rank-2 region lease**
-  `withLease :: Acquire p -> (forall s. Lease s p -> IO r) -> IO r` whose `forall s.` region tag makes
-  the evidence inseparable from the scope in which the runtime actively holds the condition — it cannot
-  be returned, stashed, or mixed across regions. A capability that must be spent exactly once is
-  additionally consumed linearly (`%1 ->`) so it cannot be reused after it is spent.
+- **Monotone facts** — a particular immutable artifact version passed a specified verification.
+  Evidence has a hidden constructor and names that version, digest, and verification scope. It
+  records what was verified; mutable paths, live services, credentials, and bucket existence are
+  not monotone merely because a witness has been retained. Continued use requires immutable
+  ownership or revalidation at the effect boundary.
+- **Revocable conditions** — writer quiescence, a valid credential, a reachable cluster, and a held
+  lock can lapse. Their authority is minted only by the domain operation that establishes and
+  maintains the condition. Raw acquisition records, revocable payloads, and generic reminting
+  functions are not public authority constructors.
+- **Region containment** — a nominal rank-2 index prevents direct region substitution; it does not
+  alone prevent an ordinary `IO` callback from returning a deferred action, packaging a value
+  existentially, storing a closure, or forking a thread that captures authority. Compile-time
+  containment requires a closed indexed operation language whose constructors/interpreter are
+  hidden and whose runner completes every protected effect inside the held region. Runtime
+  brackets own release, liveness revalidation, thread joining, and exception cleanup. A
+  spend-once capability additionally uses linear consumption (`%1 ->`); linearity alone does not
+  establish the truth of an external condition.
+
+Containment claims below refer to that complete domain-owned effect boundary. Export lists prove
+which constructors and effects are accessible; review and behavioral tests establish that the
+mint observes the required condition and that its interpreter maintains it. A lock marker copied
+after release cannot mint new lock authority, and a successful compile-fail test proves only its
+specific rejected program.
 
 The raw destructive, commit, and spawn primitives are **not exported**; the only public path takes
 evidence:
@@ -85,8 +98,8 @@ evidence:
   `Lease s ClusterMutationLocked`, an `SClusterOwner owner`, the persisted owner, requested runtime,
   exact reservation access, checkout identity, and global live-runtime inventory.
   `PreWorkloadKindRecovery owner s` and `KindDeleteAuthorization owner s` retain both nominal
-  indices, so authority cannot escape, cross owner boundaries, or be reused under another
-  lifecycle-lock acquisition. The effect-adjacent check rereads reservation access and requires
+  indices to prevent owner/region substitution. Their domain-owned runner encloses every protected
+  operation, so deferred effects cannot bypass the lifetime boundary. The effect-adjacent check rereads reservation access and requires
   the exact captured record — including owner PID, process group, and birth identity — before
   revalidating owner, runtime, and checkout identity. The
   `fail-cannot-substitute-cluster-teardown-owner` compile-fail fixture shares the region variable so
@@ -211,8 +224,8 @@ evidence:
   attributable same-namespace helper groups left by a dead owner; ambiguous legacy records remain
   for the exclusive compatibility proof rather than becoming PID-only recovery authority. A live
   command's shared lock then makes the nonblocking exclusive acquisition refuse. Quiescence evidence
-  is indexed by a rank-2 region that holds the lock exclusively through config reconciliation and
-  reservation retirement, so evidence cannot escape and no protected helper can remain live or begin
+  is indexed by a nominal region whose closed operation runner holds the lock exclusively through
+  config reconciliation and reservation retirement. No protected helper can remain live or begin
   concurrently. Same-namespace records still require exact group-absence proof. A protected
   foreign-namespace record is retired under the exclusive
   lock without probing namespace-local PIDs or groups; a foreign version-4 or older record lacks
@@ -221,7 +234,7 @@ evidence:
   protected distinct-token version-6 incoming name is decoded before the overlapping protected
   namespaced prefix. Live-inventory observations that require a bounded helper complete under the
   lifecycle and reservation-owner locks before the exclusive activity-quiescence region begins;
-  its rank-2 callback performs only reconciliation and retirement and cannot recursively start a
+  its closed operation runner performs only reconciliation and retirement and cannot recursively start a
   shared-lock helper. On Darwin, a
   legacy three-group lease whose four birth identities carry the one UUID-shaped Linux kernel boot
   token is likewise quarantined rather than interpreted against host PIDs; legacy Darwin registry
@@ -415,8 +428,8 @@ retained cache.
 | Surface | Mechanism | Forbids |
 |---|---|---|
 | Types | GHC module export lists (opaque types, hidden constructors) under `-Wall -Werror` | constructing evidence outside its minting module; acting on a state without its evidence value; an unbounded or unclassified command outcome |
-| Region | rank-2 `forall s.` lease scope, plus surgical `LinearTypes` (`%1 ->`) for spend-once capabilities | using revocable evidence outside the scope that holds the condition; reusing a spent capability |
-| Haskell | `Infernix.Lint.HaskellStyle` escape-token check | `unsafeCoerce` / `unsafePerformIO` in the evidence modules (the two escapes types cannot close) |
+| Region | nominal rank-2 indices and closed domain-owned operation runners; linear consumption where authority is spend-once; runtime brackets and child joining | direct region substitution, public reminting, escaping protected operations, and reused spend-once authority, each subject to independent proof; an unrestricted `IO` callback alone provides no closure/thread containment guarantee |
+| Haskell | `Infernix.Lint.HaskellStyle` escape-token check | `unsafeCoerce` / `unsafePerformIO` bypasses in the evidence modules; this does not detect every ordinary-`IO` lifetime escape |
 | Haskell (lint) | `Infernix.Lint.HaskellStyle` capability-gating rules `unboundedExecViolations` / `unboundedHttpViolations` / `appleArtifactProvisioningViolations` | raw unbounded process spawn (`readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` / …) outside `Infernix.Cluster.Subprocess.runBoundedCommand`, raw Apple artifact process access or delegation to the legacy unbounded Poetry helpers outside the opaque provisioning facade, and raw `withResponse` for the upstream model download outside the bounded-HTTP wrapper — the raw primitives that have no type-level chokepoint |
 | Haskell (lint) | `Infernix.Lint.HaskellStyle` rule `unboundedDescriptorSpawnViolations` | a `close_fds` spawn surface that never observes `Infernix.DescriptorSpace.requireBoundedDescriptorSpace` — see [Bounded descriptor space](#bounded-descriptor-space) |
 | Files (lint) | `infernix lint files` native-source, Cabal, and embedded-source scan | repository-owned C/C++/Objective-C/CUDA/assembly/Metal/Swift/C2HS/HSC/C-- source or headers; Cabal native-source fields or native-token CPP definitions; embedded native source/writers/compiler invocations in another implementation language |
@@ -545,9 +558,10 @@ The extracted contract, stated as requirements rather than as progress:
   exception is **unobservable**, so it can neither mint readiness nor masquerade as a measured
   response. The `/v2/` probe and the authenticated artifact-metadata request each carry a required
   response timeout, and no handwritten delay loop substitutes for the kernel.
-- The Linux launcher's inline host payload carries the same complete generated command-policy
-  record, and unit coverage strictly decodes that actual payload so launcher schema drift cannot
-  reach substrate materialization.
+- The Linux launcher's host payload is emitted by the binary from the decoder-owned default
+  command-policy record. The bounded seed build requires no existing host manifest; after that
+  binary exists it generates the manifest. Tests decode the actual emitted payload and compare
+  semantic defaults, never bless a handwritten Dockerfile copy.
 - Apple artifact provisioning is a second consumer of the same bounded self-exec kernel through its
   own opaque rank-2 grant and session boundary. The Apple facade, artifact-transaction, and
   provisioning modules cannot import `System.Process`, invoke raw process primitives, delegate to
@@ -587,6 +601,11 @@ retires only after the anchor, supervisor, and target groups are proven absent.
 - Independent negative fixtures prove authority coercion, lifecycle-lease coercion, authority
   escape, and cross-lifecycle-region reuse separately, so one expected compiler failure cannot mask
   another missing region guarantee.
+- Additional independent negative fixtures cover public payload extraction/reminting, deferred or
+  nested `IO`, existential and mutable-reference capture, and child-thread escape. Every negative
+  has a matching positive compile control and fails for the intended authority restriction.
+  Runtime controls prove the actual lock remains held until protected effects and owned children
+  finish, including synchronous failure, cancellation, and cleanup failure.
 - The deletion race regression must change the global inventory after initial authorization but
   before the effect-adjacent check and prove that no delete executes and the harness reservation
   remains held.

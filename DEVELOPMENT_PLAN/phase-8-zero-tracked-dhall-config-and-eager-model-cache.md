@@ -1,9 +1,6 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Done. All 14 sprints are implemented and validated. The generated contracts, eager
-model staging, and role-specific decoded views pass the selected current-source `linux-gpu` plus
-paired native-amd64 `linux-cpu` full suites against the source recorded in the Phase 8
-[attestation](cohort-validation-waves.md#recorded-attestations).
+**Status**: Active — Sprints 8.15 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
@@ -16,18 +13,19 @@ paired native-amd64 `linux-cpu` full suites against the source recorded in the P
 
 ## Phase Status
 
-> Phase 8 reconciles the configuration substrate to the doctrine in
-> [configuration_doctrine.md](../documents/architecture/configuration_doctrine.md). It supersedes the
-> earlier "checked-in decoder-reflected `dhall/Infernix*.dhall` schema files + `lint docs` file-drift
-> check" mechanism (Phase 4 Sprint 4.13 follow-ons) and the Helm-rendered cluster-config ConfigMap
-> (Phase 4), and it retires the **per-inference trigger** for the lazy model-bootstrap workflow in
-> favour of eager startup staging. `src/Infernix/Bootstrap/Models.hs` and the
-> `model.bootstrap.request` topic family are **retained** as the on-demand fallback — the coordinator
-> still forks `runModelBootstrapLoop` at startup (`src/Infernix/Runtime/Daemon.hs`); only the lazy
-> per-request trigger is retired (Sprint 8.5). The retired trigger is recorded in
-> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+Sprints 8.1–8.14 retain their closed headings and only their established scope. Zero tracked Dhall and role-projected configuration do not establish that every generated value is binary-owned. The Linux Dockerfile's handwritten host seed violates that broader guarantee.
+
+The existing Phase 8 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
+
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R8 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+
+## Current Repo Assessment
+
+Sprint 8.15 consumes the seed-generation implementation from Sprint 1.44 and proves its downstream configuration consumers, generated defaults, and deployed role mirrors. It does not own a second seed generator. The coordinator's eager MinIO staging is distinct from the derived local cache lifecycle repaired by Sprint 4.50; readiness must establish usable artifacts rather than directory existence.
 
 ## Sprint 8.1: Zero Version-Controlled Dhall [Done]
+
+**Scope boundary**: Zero tracked Dhall does not prove every value is binary-generated. Sprint 1.44 supplies the seed generator and Sprint 8.15 verifies consumers.
 
 **Status**: Done
 **Implementation**: `infernix.cabal`, `docker/Dockerfile`, `src/Infernix/Lint/Docs.hs`, `test/unit/Spec.hs`, `src/Infernix/DhallSchema.hs`, `src/Infernix/DhallSchema/Reflection.hs`
@@ -63,9 +61,6 @@ in the doctrine is now the number the code enforces.
 - `cabal build all`, `infernix test unit`, `infernix test lint`, `infernix lint docs`, `infernix docs check` pass
 
 ### Remaining Work
-
-None.
-
 ## Sprint 8.2: `init` / `test init` Commands and Shared Defaults [Done]
 
 **Status**: Done
@@ -239,6 +234,8 @@ inference races a cold cache.
 None.
 
 ## Sprint 8.6: Test-Harness Config Lifecycle [Done]
+
+**Scope boundary**: Reservation-backed recovery is distinct from orphan-backup refusal; an ownerless backup is preserved for explicit resolution, not silently restored.
 
 **Status**: Done
 **Implementation**: `src/Infernix/CLI.hs` (`withTestHarnessConfig` + `restoreRuntimeConfig`, `test` dispatch for integration/e2e/all), `docker/Dockerfile` (bakes `./infernix.test.dhall` via `infernix test init`), `test/integration/Spec.hs` (`materializeGeneratedSubstrate` rewrites the harness-owned path), `test/unit/Spec.hs` (outer-preflight fixture isolation)
@@ -724,8 +721,8 @@ check that already exists rather than adding the check and the machines at once.
   daemon start. Absence is not disagreement: a topic registered by a binary that predates the pin is
   registered rather than refused. The coordinator registers — including over a value it disagrees
   with, which is what a deliberate contract change is — and every other role verifies
-- the existing ledger row for the deployment-mirror filename consolidation is **adopted and closed**
-  by this sprint, and the two documented mount paths collapse to one name
+- the deployment-mirror filename consolidation collapses the two documented mount paths to one
+  name; its removal row leaves the ledger when the duplicate surface is gone
 
 **Two deliverables closed differently than they were specified, and the reasons are the sprint's
 own findings.**
@@ -1102,6 +1099,8 @@ None.
 
 ## Sprint 8.14: The Decoded Contract Is Split By Role [Done]
 
+**Scope boundary**: Sprint 8.15 verifies sole-binary generation across image defaults and deployed consumers, using Sprint 1.44's seed generator. Role projection alone does not prove that producer boundary.
+
 **Status**: Done
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig/Internal.hs`,
 `src/Infernix/Substrate/Internal.hs`, `src/Infernix/ExecutionPlan.hs`,
@@ -1144,11 +1143,53 @@ role's authority.
 
 None.
 
----
+## Sprint 8.15: Verify Binary-Owned Configuration Across All Consumers [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Consumer proof and generated-config regression coverage pending.
+**Cohort gate**: Wave R8 — selected `linux-gpu` plus native `linux-cpu`.
+**Blocked by**: Sprint 7.33 code-side closure; Sprint 1.44 supplies the sole seed generator and Sprint 4.50 supplies verified local cache behavior.
+**Implementation targets**: `docker/Dockerfile`, `src/Infernix/HostConfig.hs`, `src/Infernix/ProjectInit.hs`, `src/Infernix/ClusterConfig.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/cluster_config_manifest.md`, `documents/development/no_env_vars.md`
+
+### Objective
+
+Establish that every Dhall-producing path and deployed consumer follows the same binary-owned
+configuration contract.
+
+### Deliverables
+
+- Consume Sprint 1.44's manifest-independent seed build/generator; this sprint does not re-own or
+  duplicate it. Trace image defaults, operator/test initialization, schemas, and ConfigMap/Secret
+  mirrors to their decoder-owned binary producers.
+- Remove test expectations that treat a handwritten shell payload as authoritative. Compare
+  generated output by decode and semantic agreement with the actual binary-owned defaults.
+- Verify role-specific mounted contracts and machine identity pins, ordinary missing-config
+  refusal, and explicit initializer behavior. No deployment mirror becomes a second authority.
+- Keep orphan-backup refusal aligned with the lifecycle recovery contract. Eager durable MinIO
+  readiness and verified local engine-cache readiness have distinct evidence and consumers.
+
+### Validation
+
+- Build a clean launcher from source-bound inputs, decode its actual generated defaults, and
+  exercise explicit initialization plus deployed role mirrors. Zero tracked Dhall alone is
+  insufficient.
+- Reintroduce a handwritten seed record, change a default/policy without regeneration, remove a
+  required mounted config, and mismatch a machine/system pin independently. Each must fail its
+  targeted check; a correctly generated and mounted pair is the positive control.
+- Verify eager staging against usable complete artifacts and ensure marker-only local cache
+  directories cannot supply readiness. Preserve the selected model/catalog digest in results.
+- Run governed build, lint/unit and focused docs/plan gates, then Wave R8 against one frozen
+  implementation; the existing Phase 8 attestation remains limited to its recorded assertions.
+
+### Remaining Work
+
+Prove every generated consumer and deploy-time mirror against the sole binary producer; retain
+Wave R8. Hardware sign-off alone is not an implementation prerequisite for the next phase.
 
 ## Remaining Work
 
-None.
+Implement Sprints 8.15, pass their governed machine-independent gates, and retain Wave R8's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 
@@ -1164,3 +1205,9 @@ None.
 **Cross-references to add:**
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — the retired tracked-schema, Helm-rendered-cluster-config, and lazy-model-bootstrap surfaces.
 - [development_plan_standards.md](development_plan_standards.md) Sections U (configuration substrate) and V (host tools manifest).
+
+**Remediation documentation obligations:**
+
+- Keep the contracts named by Sprints 8.15 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
+- Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.

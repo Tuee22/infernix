@@ -93,7 +93,8 @@ pool-router consumer:
 
 - **Single-flight dispatcher** via `Infernix.Dispatch.SingleFlight`
   with a Pulsar named `Failover` subscription per per-context
-  conversation topic; folds the log to apply the dispatch rule;
+  conversation topic; reconstructs the complete projection before resuming an existing cursor,
+  then folds the log to apply the dispatch rule;
   publishes typed inference requests
 - **Batcher and pool router** that groups requests into derived engine-pool topics. The
   implementation derives pool/model topics from the validated substrate graph, and Pulsar
@@ -161,10 +162,16 @@ The product-agnostic inference executor. Owns:
   a model-memory bound. Resident memory during model execution is governed separately by typed
   runtime admission (see **Failure Semantics per Role** and
   [bounded_inference_memory.md](bounded_inference_memory.md)).
-- The node's **KV cache, in-memory only**, scoped to
-  `(contextId, prefixHash)`
-- `prefixHash` verification before KV-cache reuse; rebuild from
-  conversation log on miss
+- Verified conversation reconstruction through the requested offset before execution, including
+  prior turns and a checked `prefixHash`. A supported native KV handle is reusable only for the
+  matching user/context, model/artifact generation, execution shape, and verified prefix; a
+  one-request engine without native reuse reconstructs from history on every request.
+- Cache-state publication only after successful construction, invalidation on failure/cancel/restart,
+  and resource accounting for retained resident state within the same serialized engine authority.
+  The canonical contract is [durable_context_design.md](durable_context_design.md).
+- Cancellation delivery to the actual engine execution, owned-process cleanup, and one durable
+  terminal `Cancelled` or already-winning completed result before execution-authority release. UI cancellation does
+  not certify that engine resources have been released.
 - For binary inference outputs (images, audio, video), PUT directly
   to `infernix-demo-objects` at the appropriate per-user prefix; the
   result message carries an `ObjectRef`, never inline bytes or a
@@ -446,9 +453,15 @@ depends on it and a future change that moved the acknowledgement would silently 
 - **Duplicates are collapsed at the effect, not at the delivery.** Producer-side broker
   deduplication and the conversation bridge's per-context cursor mean a redelivered request produces
   no second conversation event, so at-least-once delivery is observed as effectively-once output.
-- **Redelivery is the only recovery path.** Request publishes carry a deduplicating sequence id
+- **Redelivery recovers already-published engine work.** Request publishes carry a deduplicating sequence id
   derived from the originating prompt, so a re-dispatch from a recovered process is dropped by the
   broker by design. Nothing else in the pipeline can replace an unacknowledged message.
+- **Dispatcher recovery additionally requires state reconstruction.** Retained conversation history
+  or a validated checkpoint plus suffix restores queued and in-flight work before resuming the
+  stable subscription. Acknowledged events are not redelivered by that subscription; a cursor
+  without its complete projection cannot prove a queued prompt safe to discard. The replay/live
+  boundary has no gap and deduplicates overlap, as specified in
+  [durable_context_design.md](durable_context_design.md).
 
 At-most-once was considered and rejected. Prompt resolution requires a terminal event; there is no
 client-side deadline and no server-side reaper, so a request discarded before its result is published
@@ -475,7 +488,7 @@ readiness wait returns typed evidence for the state it gates rather than a bare 
 | Failure | What happens | What recovers |
 |---|---|---|
 | Frontend process crash | WS connections drop | The frontend process restarts; clients reconnect, the process re-derives Readers from each JWT, and state replays from Pulsar. Pending submits replay via `clientIdempotencyKey`; reducer dedup catches duplicates. The frontend acknowledges a client submit only after Pulsar confirms the publish, so "acked then crashed" implies "already on the log." |
-| Coordinator process crash | The Failover subscription's active consumer is unreachable | The owning process restarts and resubscribes under the stable Failover name; Pulsar then redelivers unacknowledged conversation events to the dispatcher and unacknowledged inference results to the result bridge. Producer dedup on `inference.request.<mode>` and on the conversation topic prevents duplicate dispatch and duplicate writeback. `Failover` supplies broker coordination, not a standby coordinator. |
+| Coordinator process crash | The Failover subscription's active consumer is unreachable | The owning process reconstructs complete queued/in-flight state from retained history or a validated checkpoint and suffix before resuming its existing subscription. Pulsar redelivers unacknowledged events; producer dedup prevents duplicate dispatch and writeback. Missing replay evidence refuses recovery. `Failover` supplies broker coordination, not a standby coordinator. |
 | Engine member crash | Active engine member disappears | Pulsar redelivers the unacked pool-topic message to another eligible member when the route is a `Shared` pool. The receiving engine has a KV-cache miss on that request's `prefixHash` and rebuilds from the conversation log; producer dedup on `inference.result.<mode>` prevents a duplicate result if the original engine had partially published. |
 | Engine machine unavailable | Its engine member disappears | Pulsar redelivers an unacknowledged pool-topic message to another eligible fleet member when one exists for a `Shared` route; otherwise the message remains pending until an eligible member returns. The receiving engine rebuilds a missing KV cache from the conversation log. |
 | Engine model-memory admission failure | Plan refinement on the executing machine classifies a placed model above that machine's own resource capacity for one of the resources it consumes as `UnavailableModel` | The engine publishes a per-request `status=failed` result with typed `InferenceError.ModelMemoryLimitExceeded`, including `requiredMib`, `availableMib`, and the `resource` the model did not fit, without launching an engine process; the coordinator forwards the request to its pool rather than vetoing it, because a machine that will not run the work has no verdict to give. Smaller admitted placements continue serving; a machine that admits none of its placements refuses to start. |
@@ -554,7 +567,10 @@ the engine rather than restated inside it. A measured ceiling breach becomes typ
 sampler loss fails closed as enforcement unavailable.
 
 The execution authority remains inside the opaque engine capability and serializes inference for
-that engine member. Where a lane can install a kernel ceiling, that ceiling is installed before the
+that engine member. Any resident KV state remains charged to that authority between turns and is
+released before admitting an incompatible model; a disk-cache quota never accounts for it. Capacity
+and availability observations must both be complete: unreadable cgroup usage is enforcement or
+admission unavailability, not unused capacity. Where a lane can install a kernel ceiling, that ceiling is installed before the
 engine's first allocation and package-owned observers **corroborate** it over the residue it does not
 charge; where a lane cannot, the observers are the whole mechanism, and the lane declares that
 strength in its own type rather than presenting a sampled bound as a prevented one. Canonical home:
@@ -583,6 +599,9 @@ The three-role contract is validated by:
 - `infernix lint chart` against the role-specific Deployment templates
 - `infernix test integration` for the dispatcher → engine → result-bridge
   writeback path
+- existing-subscription coordinator restart with acknowledged queued work, real history-dependent
+  multi-turn execution, and engine cancellation with cleanup and duplicate-terminal suppression,
+  under the detailed [durable-context validation contract](durable_context_design.md#validation)
 - `infernix test integration` for engine-pool placement and broker-native
   shared-subscription backpressure — both properties of the pool graph rather
   than of recovery

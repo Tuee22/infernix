@@ -47,11 +47,13 @@ aligned with this canonical authority.
   headless — see
   [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md)
 
-**Code invariants (lint-enforced — see the linked doctrine)**
+**Code invariants (enforcement and review boundaries are specified by the linked doctrine)**
 
-- realness by construction: adapters (`python/adapters/*_python.py`) and native runners
-  (`src/Infernix/Engines/{LinuxNative,AppleSilicon}.hs`) return only real model output or raise /
-  exit non-zero (→ `status=failed`); no fabrication helpers or failure masks. Canonical:
+- real model output: adapters (`python/adapters/*_python.py`) and native runners
+  (`src/Infernix/Engines/{LinuxNative,AppleSilicon}.hs`) return actual model output or a typed
+  failure; no fabrication helpers or failure masks. Static realness checks are heuristics, not
+  proof that arbitrary adapter code cannot fabricate a result. Behavioral tests and controlled
+  negative substitutions establish the claimed output boundary. Canonical:
   [../architecture/realness_contract.md](../architecture/realness_contract.md)
 - no environment or PATH reads: no Haskell `lookupEnv`/`getEnv`/`setEnv`, no `proc "<bare-name>"`
   external invocations, no `env:` blocks in infernix-owned chart templates, no `process.env` /
@@ -107,11 +109,13 @@ aligned with this canonical authority.
   classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
   outside that wrapper, enforced by the `unboundedHttpViolations` lint. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
-- cluster ownership and mutation-position by construction: the persisted cluster state names its
-  `ClusterOwner` (`OperatorOwned | HarnessOwned`) and the raw `clusterDown` teardown consumes typed
-  ownership evidence, so a teardown outside a held lifecycle-lock lease does not typecheck and a
-  teardown authority can neither escape its region nor be reused. What the index does not decide is
-  who owns a *live* cluster: that is a fail-closed evidence check under the same held lease, where
+- cluster ownership and mutation authority: the persisted cluster state names its
+  `ClusterOwner` (`OperatorOwned | HarnessOwned`), and destructive effects remain behind the
+  domain-owned lifecycle runner while its real lock is held. Rank-2 callbacks returning ordinary
+  `IO` do not prove nonescape: deferred effects, existential packaging, child threads, and extracted
+  markers require explicit containment. Authority is not publicly remintable, children are joined
+  before release, and runtime bracket discipline is not described as a compile-time lifetime proof.
+  Who owns a *live* cluster is a fail-closed evidence check under the same held resource, where
   the persisted owner and the live Kind inventory are reread and compared, so `infernix test all`
   fails closed on an operator's running cluster by a checked refusal rather than by GHC; the
   `ClusterLifecycle` machine carries a first-class
@@ -273,7 +277,14 @@ aligned with this canonical authority.
 
 ## Validation Before Handoff
 
-- run the repo-local docs validator via `infernix lint docs` before closing documentation changes
+- run `infernix lint docs` and `infernix docs check` for documentation changes, plus
+  `infernix lint plan` when the plan changes, through the supported execution context
+- bind validation to the actual source snapshot and immutable image or native executable; retain
+  reconstructable dirty-source inputs, required-check execution results, and referenced artifacts
+  under [the testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary)
+- report unavailable gates and skipped mandatory checks explicitly; do not substitute static
+  inspection, an older image, a status heading, or an aggregate zero exit for missing execution
+- keep documentation-only changes distinct from implementation closure and new hardware evidence
 
 ## Cross-References
 

@@ -5,6 +5,11 @@
 
 > **Purpose**: Define the manual PV doctrine for durable local state.
 
+## TL;DR
+
+MinIO and Pulsar own durable model and conversation data. Daemon caches are derived, owner-local
+state; they neither introduce daemon PVCs nor substitute marker files for hydrated artifacts.
+
 ## Storage Doctrine
 
 - default storage classes are deleted during bootstrap
@@ -25,8 +30,15 @@ absent under the lifecycle lock, and `cluster up` rebuilds them. **No `infernix`
 coordinator, or engine) has a PVC**. The coordinator's Pulsar subscription cursors are broker-side
 durable. The engine pod has no PVC and uses a single ephemeral `emptyDir` volume mounted at
 `/model-cache` with hard `sizeLimit` (default `64Gi`, chart values knob
-`engine.modelCache.sizeLimit`); the adapter helper runs LRU eviction inside that quota. The engine's
-KV cache is in-memory and rebuilds from the Pulsar conversation log on restart via `prefixHash`. The
+`engine.modelCache.sizeLimit`); the adapter helper runs LRU eviction inside that quota. An `emptyDir`
+survives a container restart within its pod but not pod replacement. The webapp's local filesystem
+does not represent an engine cache or cluster-wide materialization authority. Cache operations
+hydrate and verify actual artifacts on the identified engine owner and serialize mutation against
+active use; see [model lifecycle](model_lifecycle.md) and [storage and state](storage_and_state.md).
+The engine reconstructs verified prior conversation turns from Pulsar after state loss. A
+`prefixHash` verifies history identity, not the existence of native tensors; supported native KV
+reuse requires a compatible live engine state and remains charged to that engine's memory budget.
+One-request subprocess engines rebuild context rather than claiming persisted tensor reuse. The
 `sizeLimit`/LRU quota bounds only the on-disk `emptyDir` cache; model memory is governed separately
 by runtime admission on the machine that will execute. Each model's host requirement is *derived from
 the artifact this storage contract holds* — weight bytes from its tensor table under a bounded header
@@ -42,6 +54,14 @@ and are streamed into the engine pod's `emptyDir` from the eagerly pre-staged bu
 coordinator stages every mounted-config model at startup via the `warm-model-cache` cluster-up
 barrier) as documented in [object_storage.md](object_storage.md) and
 [../architecture/daemon_topology.md](../architecture/daemon_topology.md).
+
+## Validation
+
+Lifecycle checks verify manual PV identity and retained durable data. Cache checks distinguish a
+same-pod container restart from pod replacement, verify real artifact hydration after cache loss,
+and reject mutation of a cache in active engine use. A matching conversation hash alone does not
+prove reconstructed engine state; see [model lifecycle](model_lifecycle.md) and
+[testing](testing.md#execution-evidence-and-trust-boundary).
 
 ## Cross-References
 

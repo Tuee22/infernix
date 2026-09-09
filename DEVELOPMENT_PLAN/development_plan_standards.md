@@ -374,8 +374,11 @@ Rules:
   `infernix` workflow outside the outer container.
 - On Linux substrates, the stage-0 shell may install Docker Engine plus the Docker buildx and
   Compose plugins, and on `linux-gpu` may also install the supported NVIDIA driver and container
-  toolkit. The shell relies on `docker compose run --rm infernix infernix <command>` to build or
-  reuse the active `infernix-linux-<mode>:local` launcher image and then run the binary command.
+  toolkit. The supported bootstrap `build` command builds the launcher; Compose has no build
+  definition and runs an already-built image. Clean-clone and source-change instructions must
+  include that explicit build. Validation must bind the requested source snapshot to the immutable
+  image actually executed; trusting a mutable `:local` tag is not source validation. The
+  [execution gate](README.md#current-execution-gate) names the owning implementation work.
 - When the active Linux snapshot differs from the default `linux-cpu` image, phase docs call out
   the one-shot Compose launcher image selector that chooses the already-built
   `infernix-linux-gpu:local` image while keeping the same single-file Compose command surface
@@ -510,9 +513,9 @@ Rules:
   family, selected engine, request or result contract identifiers, and any substrate-specific
   runtime metadata needed by the service, web UI, or tests.
 - The **machine contract** records the daemon role for the process that reads it, its required
-  member id, and the pools it serves — selected out of the system contract by field access, so a
-  pool the contract does not define is a decode-time type error rather than a subscription to a
-  topic nobody publishes to. Topic names are derived from `(runtimeMode, pool id, model id, optional
+  member id, and the pools it serves. Membership is checked against the decoded system graph before
+  subscription; an undefined pool is a configuration refusal, not a subscription to a topic nobody
+  publishes to. A list-based graph does not make this a Dhall type error. Topic names are derived from `(runtimeMode, pool id, model id, optional
   member id)` and are not written into either file.
 - `infernix init` accepts `--demo-ui true|false`, and phase docs must keep the chosen default versus
   explicit override behavior honest.
@@ -637,48 +640,36 @@ Rules:
 
 Substrate-specific validation is explicit.
 
-- `infernix test integration` for a given initialized substrate validates only that substrate's
-published catalog contract, routed surfaces, cache lifecycle, every generated active-substrate
-catalog entry, and the supported service-loop roundtrip for that substrate. - The comprehensive
-model, format, and engine matrix in the root `README.md` is the authoritative integration-test
-coverage ledger. For the active substrate, every row or reference whose engine cell names a real
-engine has at least one integration assertion. - The repository does not carry separate
-per-substrate integration suites. One integration suite reads the active substrate from the
-generated `.dhall`, traverses the README-derived matrix rows, and chooses each row's engine
-binding from that same file. - Supported validation removes simulated cluster, route, transport,
-and generic inference-success fallback behavior from the supported execution path. Test results
-name the single substrate they exercised and do not imply coverage that was not run. - A
-resource-exhaustion result is classified into **four** outcomes, not two, and a suite that
-collapses any pair of them is not evidence. A model refused at admission is a typed capacity
-failure with no launch. A watchdog observation above an installed ceiling is a typed memory
-failure of an admitted model — a different fact, on a lane that prevents and samples. A plain
-non-zero engine exit near that ceiling remains an engine failure because neither the exit code nor
-a nearby sampled peak proves which allocation the kernel refused. A missing result, including a
-host out-of-memory kill, is a stall. And a pass produced
-without real output is a fabrication. The first two are supported outcomes; the last two are
-defects. - when an owning phase calls out real-cluster lifecycle or recovery assertions, the
-supported non-Apple-cluster lane owns those checks on the deployed single-instance substrate
-rather than any simulated fallback. - `infernix test e2e` for a given initialized substrate
-exercises every demo-visible catalog entry present in that same generated file through the routed
-web surface unless a narrower exception is called out explicitly in the owning phase document. -
-Playwright is substrate-agnostic at the browser layer. The browser suite does not branch on
-substrate id or engine family; `infernix-demo` reads the generated `.dhall` and chooses the
-correct engine binding for the active substrate behind the routed demo API. - On Apple Silicon,
-the supported host CLI owns test orchestration. It proves that the cluster daemon is deployed,
-starts the same-binary host inference daemon when the service-loop checks need Apple-native
-inference, validates the Pulsar batch handoff from cluster daemon to host daemon, and verifies
-that the host daemon publishes the result; host-native routed E2E now uses host `npm exec`
-Playwright fed by the same typed fixture against the published localhost edge port and is covered
-by Apple cohort validation batches. - On Linux substrates, all supported CLI and test commands run
-through `docker compose run --rm infernix infernix ...`, and test flows do not manage a host
-daemon because request consumption, inference, and result publication all run from deployed
-cluster daemons. - Integration checks use the engine binding encoded in the colocated or
-ConfigMap-backed substrate `.dhall`, which must match the appropriate substrate column from the
-README matrix. E2E checks rely on the demo app to honor that same file rather than selecting
-engines in browser code. - `infernix test all` aggregates lint, unit, integration, and E2E as the
-full supported suite for the initialized substrate. Repository closure requires separate
-substrate-specific reruns instead of one default matrix run that silently covers Apple, CPU, and
-GPU together.
+- One integration suite reads the active initialized substrate and its generated catalog, exercises
+  the real platform, routes, cache lifecycle, and service loop, and supplies an assertion for every
+  README matrix row supported by that substrate. It does not substitute simulated services.
+- The browser suite exercises every demo-visible catalog entry through the routed surface and
+  delegates engine selection to the generated backend contract, not browser substrate branches.
+- Each case declares its expected outcome before execution. Successful real inference, expected
+  admission or unsupported-layout refusal, and expected measured in-run breach are distinct
+  assertions. A refusal/breach test can pass its expectation but never counts as successful model
+  execution. Required real-output cases must actually complete; an all-refused catalog does not
+  prove inference support.
+- An unexpected engine exit is an engine failure, not proof of a memory refusal from a nearby
+  sampled peak. A missing terminal result is a stall. Fabricated output is a realness failure.
+  Any unexpected outcome or skipped mandatory assertion fails the gate.
+- Realness checks validate input-sensitive model behavior and reject controlled constant-output,
+  missing-engine, marker-only-cache, and empty-renderer substitutions. Static AST checks are
+  useful heuristics, not a proof that arbitrary code cannot fabricate output.
+- Selected-lane GPU fixtures run in a binary-owned, explicitly device-capable validation context.
+  The ordinary outer launcher still requires no direct NVIDIA runtime access. Missing device,
+  interpreter, fixture allocation, or a fixture timeout cannot turn a required check into PASS.
+  CPU or Apple runs may mark an inapplicable GPU check not-applicable, recording the reason.
+- Every fixture process is owned through cleanup and reaping on success, failure, timeout, and
+  cancellation. Aggregate exit status is checked alongside required-check execution records.
+- Apple harness orchestration starts and cleans up its own host engine and proves the cluster
+  coordinator-to-host Pulsar handoff. Operator instructions separately require an explicit host
+  engine process after `cluster up`; harness-owned startup does not validate that manual flow.
+- Linux commands use the supported outer-container launcher. Lifecycle and recovery checks run
+  against the deployed single-instance substrate and retain source-bound execution artifacts.
+- `infernix test all` aggregates lint, unit, integration, and E2E for the initialized substrate.
+  Separate scoped reruns supply other-lane evidence; a zero aggregate exit does not imply coverage
+  of a lane, source snapshot, or mandatory assertion that was not executed.
 
 ### Q. Single-Accelerator Phase Validation and Forward-Only Cohorts
 
@@ -873,6 +864,35 @@ What a clean report does not establish: that the plan is well written, that a
 recorded status is true, that a cited receipt describes a run that happened, or
 that a `Done` cites the attestation row its evidence produced.
 
+#### Q. Execution evidence and trust boundary
+
+The frozen Markdown scans above remain unchanged. Behavioral validation and structured execution
+receipt checking belong to the binary's validation/test boundary, not an expanding prose lint set.
+The [current finding map](README.md#current-repo-assessment) names the owners of source binding and
+required-check execution enforcement. These are acceptance requirements, not a claim that the
+mechanisms already exist.
+
+A new closure receipt identifies the commit and reconstructable relevant source snapshot, including
+dirty tracked changes and untracked build inputs; the immutable image or native executable identity;
+the initialized configuration and actual architecture/substrate/device context; the required check
+inventory and per-check executed, skipped, not-applicable, and terminal outcomes; and retained logs
+and output artifacts with integrity digests. Retain the patch/archive preimage, not only its hash,
+and use the same source snapshot on both lanes. Store bulky artifacts outside the narrative plan
+and link the compact attestation tuple to them.
+
+Negative controls must demonstrate rejection of a stale image, changed relevant untracked input,
+missing or altered receipt artifact, changed required-check inventory, skipped mandatory fixture,
+constant-output adapter, and success-shaped empty cache or renderer. Refusal tests are counted
+separately from real-output successes. A receipt cannot promote an unexecuted assertion to PASS.
+Missing historical evidence is recovered from authentic retained artifacts or replaced by a fresh
+run, never inferred from a closed heading or reconstructed log narrative.
+
+The threat model includes accidental stale builds, optimistic skip paths, hand-edited status prose,
+and success-shaped substitutes. Integrity hashes and internally consistent receipts do not prove
+honesty against an actor who controls the source, executor, and evidence store together. Closure
+therefore includes review of the trusted runner/build boundary and retained artifact provenance;
+this is tamper-evident, source-bound validation, not an absolute claim of unspoofability.
+
 `poetry run check-code` stays in the machine-independent gate set only because adapters never
 declare or top-level-import substrate-specific inference wheels; the lazy-import invariant that
 preserves this is governed by
@@ -924,9 +944,10 @@ Static quality and compiler hygiene are first-class repository requirements.
 
 ### S. Supported Control-Plane Architecture Contract
 
-The standards govern current repository truth, not imported doctrine. When the plan names control-
-plane architecture patterns, they must match the implementation that actually exists in the
-worktree and the governed docs that describe it.
+The plan distinguishes current implementation from the target architecture. Under Section J and
+the documentation standards, governed architecture documents prescribe the finished-product
+contract even when an owning sprint has implementation work left. Current-state and validation
+claims belong in this plan and require evidence; target prose alone cannot close a sprint.
 
 - One Haskell-owned command registry remains the supported
   source of truth for parsing, help text, generated CLI-reference sections, and the operator
@@ -943,9 +964,9 @@ worktree and the governed docs that describe it.
   contract. The plan must not imply dedicated admin-HTTP endpoints, structured JSON logging,
   SIGHUP reload, separate daemon-config files, or typed event-ledger subsystems unless they are
   implemented and validated.
-- Architecture docs may call out typed runtime, storage, route, publication, or adapter
-  boundaries that exist today, but they do not treat unimplemented capability-class, retry-policy,
-  GADT state-machine, or paired-resource-constructor doctrine as active repository requirements.
+- Architecture docs prescribe approved typed runtime, storage, route, publication, and adapter
+  boundaries. The plan names the implementing sprint and remaining work for an unmet contract;
+  it neither weakens the target to hide a gap nor claims the boundary is implemented by naming it.
 - Generated-artifact and lint docs describe the implemented `web/src/Generated/` and
   `tools/generated_proto/` paths plus the current `lint files`, `lint docs`, `lint proto`,
   `lint chart`, and `docs check` behavior. The plan must not claim broader generated-path or
@@ -999,8 +1020,9 @@ Rules:
   prefix for selecting the already-built Linux launcher image for a single Compose process. The
   value is set by the bootstrap script or written explicitly in direct-reference commands; no
   Infernix process reads it, and runtime configuration still comes from Dhall.
-- No Python adapter may consume `os.environ`. Adapters receive a typed JSON config blob on stdin
-  from the Haskell daemon and parse it once at startup.
+- No Python adapter may consume `os.environ`. Adapters receive the typed protobuf worker request
+  on stdin and emit the typed protobuf worker response on stdout; Haskell owns configuration
+  decoding and projects the required fields into that worker protocol.
 - No web / Playwright test script may consume `process.env`. The Playwright config file emits the
   typed fixture via Playwright's `use:` block sourced from a Dhall-decoded JSON file written to the
   repo-relative `.data/runtime/playwright-fixture.json` at test setup, which resolves to

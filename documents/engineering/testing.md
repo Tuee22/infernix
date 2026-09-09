@@ -50,6 +50,40 @@
 - emulated validation is unsupported; `linux-cpu` evidence must come from native Linux rather than
   amd64 Linux under Apple Silicon emulation
 
+## Execution Evidence and Trust Boundary
+
+A gate binds the requested source snapshot to the code it actually executes. Retained evidence
+identifies the commit and reconstructable dirty tracked/untracked inputs, immutable image or native
+executable, configuration, actual lane/architecture/device context, required check inventory,
+per-check execution and terminal outcomes, and logs/output artifacts with integrity digests.
+A source hash without its patch or archive preimage is not reconstructable evidence. Both selected
+lanes use the same source snapshot. [Docker policy](docker_policy.md#source-and-image-identity)
+owns baked-image identity and the explicit build prerequisite.
+
+Report executed successes, expected refusals/breaches, failures, skips, and not-applicable checks
+separately. Missing required interpreter/device/allocation prerequisites, timeouts, stale builds,
+missing receipt artifacts, and skipped mandatory assertions fail closure even when a process
+returns zero. An all-refused catalog cannot prove inference support; designated real-output cases
+must execute successfully.
+
+GPU parser/arithmetic checks are machine-independent. Live GPU observations and CUDA allocation
+checks are mandatory for the selected GPU lane in an explicitly device-capable, binary-owned
+validation context, without requiring NVIDIA access in the ordinary outer launcher. CPU and Apple
+runs can record those device checks as not-applicable, never as GPU PASS. Every spawned fixture
+retains its exact process handle and owns termination and reaping on all exits.
+
+Negative controls demonstrate that stale images, changed relevant source inputs, altered/missing
+receipt artifacts, skipped required checks, constant-output adapters, marker-only caches, and empty
+renderers cannot satisfy their gates. Static lint, compile-fail fixtures, and successful process
+exits prove only their actual checked properties. Domain-owned lifetime tests include delayed
+effects, marker reminting, existential escape, and child-thread cleanup; ordinary rank-2 `IO`
+does not prove all such programs impossible.
+
+This evidence model addresses stale builds and success-shaped substitutes; it is not an absolute
+unspoofability claim. An actor controlling both executor and evidence storage can forge internally
+consistent records. Build/runner review and retained artifact provenance establish the trusted
+boundary. The development plan owns current implementation and attestation status.
+
 ## Lifecycle Failure Classification
 
 - Each supported lifecycle state carries typed evidence rather than an assumed pass. The canonical
@@ -117,8 +151,8 @@
   `infernix lint plan` provide the focused validation entrypoints for repository hygiene, governed
   docs, protobuf schemas, chart ownership, and development-plan standards when a narrower check is
   the supported tool for the task at hand.
-- `infernix docs check` proves that the governed docs and the development plan still match the
-  supported contract, including the required structure for broad doctrine docs.
+- `infernix docs check` checks governed structure, metadata, cross-references, and generated
+  contract drift. It does not prove prose is true or authenticate a recorded validation run.
 - `infernix test lint` proves repo-owned static quality, the development-plan standards scans, the
   Haskell style gate, the Haskell build warning policy, and the shared Python adapter quality gate.
 - `infernix test unit` proves the typed control-plane and browser-contract logic that should not
@@ -128,9 +162,11 @@
   publication state, cache contract, and the real cluster's lifecycle assertions.
 - One DRY substrate-aware integration suite plus one substrate-agnostic Playwright suite assert a
   per-family real-output result contract — asserting shape and type per closed `ResultFamily`, never
-  golden strings. Realness is guaranteed by construction — the engine code cannot fabricate a result
-  (enforced by the realness lint) — so the suites trust the result and fail closed on `status=failed`;
-  real output is attested per accelerator. Each of the
+  golden strings. Shape alone is insufficient: tests require input-sensitive model behavior and
+  reject controlled constant-output or missing-engine substitutions. Static realness checks are
+  heuristics. An expected typed refusal or measured breach may pass its own assertion, but does not
+  count as successful inference; unexpected failures fail the suite and required real-output cases
+  must complete. Real output is attested per accelerator. Each of the
   nine families has a result surface:
   LLM and speech yield inline text; source separation, audio-to-MIDI, music transcription, image,
   video, audio generation, and OMR yield a typed `infernix-demo-objects` object reference. Each

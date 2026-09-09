@@ -40,6 +40,14 @@
   cluster-internal endpoint; they are inside the trust boundary. Generated-artifact writers must use a
   coordinator/worker-supplied target derived from the verified `UserId` and `ContextId`; adapters and
   native runners must not invent family/model/digest or `native-generated/` keys.
+- Preview and full download are distinct typed intents on the authorized download surface. A
+  text/JSON preview uses positive limits from the generated typed configuration, returns explicit
+  truncation metadata, and bounds the upstream MinIO read before buffering. The browser independently
+  bounds streamed bytes, decoded text, and DOM rendering, aborting the preview reader at its limit.
+  A bounded lookahead may establish truncation without consuming the remainder of the object.
+  Full download streams with backpressure and bounded buffers; it does not materialize the entire
+  object in backend or browser memory. UTF-8 boundaries and malformed text produce defined decoding
+  behavior, never an unbounded retry or render.
 
 ## Boundary
 
@@ -55,6 +63,10 @@
 - Integration and E2E prove the browser uploads/downloads only through the webapp and that a
   cross-user object key is rejected (HTTP 403); chart lint proves the rendered chart exposes no
   `/minio/s3` route.
+- Large, chunked, and misleading-length text objects prove that the server and browser each enforce
+  their own preview bound. Tests observe actual bytes read and rendered, assert truncation metadata,
+  and separately verify a complete streamed download; naming a disposition `BoundedTextPreview`
+  is not the assertion.
 
 ## Cross-References
 

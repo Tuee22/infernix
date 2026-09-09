@@ -16,9 +16,10 @@ MPS is a named residual rather than promoted support.
 The generated Haskell catalog keeps runtime catalogs executable-only and records named residual rows
 separately through `residualMatrixRowIdsForMode`. `infernix lint docs` mechanically checks the README
 matrix cells against the generated runnable catalogs, named residual rows, and `Not recommended`
-states, so documentation cannot silently re-promote a residual or hide a runnable binding. Realness
-for the runnable rows is enforced in the engine code by the realness lint: a row whose engine is not
-capable of real output fails closed rather than fabricating.
+states, so documentation cannot silently re-promote a residual or hide a runnable binding. A row
+whose engine cannot produce real output fails closed. Static realness lint checks limited source
+patterns; model-specific behavioral evidence establishes the required success cases, under
+[realness_contract.md](realness_contract.md).
 
 ## Contract
 
@@ -77,7 +78,11 @@ adding one field. Canonical home:
   residual set
 - named residual cells are excluded from the runtime catalog and tracked explicitly as residual
   row ids; they are planning and validation obligations, not executable model descriptors
-- runtime-local caches derive from generated catalog and durable artifact metadata
+- runtime-local caches derive from generated catalog and durable artifact metadata; readiness
+  requires verified engine-consumed weights, not a directory or bookkeeping marker
+- local and remote model selection use the same complete checkpoint inventory. Every shard's
+  extent and geometry contributes to aggregate resource accounting; unsupported sharded models
+  refuse consistently on either path rather than selecting the first checkpoint
 - switching runtime modes changes the generated catalog and selected engine bindings without changing route structure
 
 ## ResultFamily and Result-Surface Mapping
@@ -95,9 +100,9 @@ The runtime worker dispatches through the selected engine binding — the Python
 over a prebuilt host wheel for python-stdio bindings, or the native runner binary resolved from a
 typed `HostConfig` absolute path for native-process-runner bindings — streams model weights from the
 eagerly pre-staged `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
-typed per-family result surface. Realness is guaranteed by construction: the engine code cannot
-return a fabricated result (any missing-weights/load/engine failure raises → `failed`), enforced by
-the realness lint. Adding
+typed per-family result surface. Missing weights, load failure, or engine failure produces a visible
+failed result. A plausible constant response can satisfy a syntactic guard, so a lint pass does not
+prove the engine ran or the output depended on its input. Adding
 a catalog row requires fresh real-output evidence before that row is claimed proven, and any row whose
 achievability is uncertain is an explicit residual in `residualMatrixRowIdsForMode`; a row that is
 merely unbuilt stays declared-runnable and fails closed.
@@ -180,6 +185,19 @@ catalog does not overstate GPU acceleration:
 - Row 17 (Wan2.1-T2V): the Apple cell stays a documented residual
   (`residualMatrixRowIdsForMode AppleSilicon`); union coverage is satisfied by the real linux-gpu
   Diffusers cell.
+
+## Validation
+
+- Every required success case records model/artifact and input identity, verifies actual engine
+  execution, and checks family-specific output behavior. Shape or extension alone is insufficient.
+- Independent negative controls replace output with a plausible constant, suppress engine
+  execution, remove/corrupt weights, and change the input. The targeted success gate rejects each;
+  expected typed refusal cases are separate and do not establish successful inference.
+- Local and remote sharded fixtures, including reordered, missing, and truncated shards, produce
+  the same complete requirement or the same explicit unsupported refusal. A verified complete
+  artifact and real post-rebuild inference are positive cache controls.
+- The governed lint/unit and integration gates run through the supported binary execution context;
+  [Testing Strategy](../development/testing_strategy.md) owns source-bound result retention.
 
 ## Cross-References
 

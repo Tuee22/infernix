@@ -64,7 +64,8 @@ The admin/user split is enforced at every layer that can observe identity:
   `SecurityPolicy` admin `authorization` over all four operator routes;
 - the backend admin gate (`withAdminRequest`) on `GET /api/cache`,
   `POST /api/cache/{evict,rebuild}`, and the cluster-wide `GET /api/admin/overview`;
-- SPA admin gating in `web/src/index.html` — the operator ribbon, the infrastructure summary cells,
+- SPA admin gating in the application renderer from `AppState.isAdmin` and the active in-memory
+  access token, never token decoding or business logic in the static HTML shell — the operator ribbon, the infrastructure summary cells,
   and the `#admin-panel` cluster monitoring card are admin-only, while every authenticated user sees
   the per-user `#personal-dashboard`;
 - the Kind data-plane plus edge loopback invariant, enforced by `infernix lint chart` and a unit
@@ -74,8 +75,18 @@ The admin/user split is enforced at every layer that can observe identity:
 - sign-out clears local browser auth state and redirects through Keycloak logout carrying the
   recorded `id_token`, so account switching cannot leave a stale session.
 
+Admin authorization grants only the documented operation. Cache mutation still validates its
+request and selected engine-owner scope before effects, under
+[../reference/api_surface.md](../reference/api_surface.md#cache-request-contract); malformed JSON
+or model selection is not implicit all-model authority. A cache success reports actual verified
+engine-cache state, not a webapp-local marker. Admin tokens do not relax user-prefix isolation,
+preview bounds, or the [static asset boundary](web_ui_architecture.md#static-asset-boundary).
+
 ## Validation
 
+- Cache API cases distinguish anonymous 401, authenticated non-admin 403, malformed admin-request
+  400 with zero effects, and successful authorized operations against a real identified engine
+  cache. A 2xx response or role-visible button alone does not prove the operation happened.
 - `infernix lint chart` proves the rendered `SecurityPolicy` carries the admin `authorization` rule
   and targets all four operator routes, and that every Kind data-plane + edge port mapping binds to
   `127.0.0.1`; `infernix lint docs` keeps this doctrine's metadata consistent.
