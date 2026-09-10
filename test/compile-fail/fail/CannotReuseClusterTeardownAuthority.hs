@@ -1,23 +1,10 @@
-{-# LANGUAGE RankNTypes #-}
-
 module Main (main) where
 
-import Infernix.Cluster
-  ( ClusterMutationLocked,
-    ClusterTeardownAuthority,
-    clusterTeardownAuthorityRegionWitness,
-    withClusterLifecycleLock,
-  )
-import Infernix.Config (Paths)
+import Infernix.Cluster (ClusterMutationLocked, ClusterTeardownAuthority, clusterTeardownAuthorityRegionWitness)
 import Infernix.Evidence.Lease (Lease)
 
-reuseAuthority ::
-  Paths ->
-  ClusterTeardownAuthority owner outerRegion ->
-  IO ()
-reuseAuthority paths authority =
-  withClusterLifecycleLock paths $ \currentLock ->
-    pure (clusterTeardownAuthorityRegionWitness currentLock authority)
+reuseAuthority :: Lease current ClusterMutationLocked -> ClusterTeardownAuthority owner previous -> ()
+reuseAuthority = clusterTeardownAuthorityRegionWitness
 
 main :: IO ()
-main = pure ()
+main = reuseAuthority `seq` pure ()

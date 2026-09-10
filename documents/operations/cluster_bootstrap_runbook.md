@@ -62,7 +62,7 @@
 - the supported progress surface reports `lifecycleStatus`, the active `lifecyclePhase`, the
   current `lifecycleDetail`, and heartbeat timestamps while `cluster up` or `cluster down` is
   still running
-- the `lifecycleStatus`/`lifecyclePhase` field surface is moving under a typed `ClusterLifecycle`
+- the `lifecycleStatus`/`lifecyclePhase` field surface is governed by a typed `ClusterLifecycle`
   machine per [Managed State Transitions](../architecture/managed_state_transitions.md), which is
   the canonical home for that transition doctrine
 - when no lifecycle action is running, the surface also reports the persisted `clusterOwner`
@@ -347,6 +347,17 @@ harness-owned validation. Cluster readiness alone is not real inference evidence
 Recovery retains the lock-owned resource for every mutation and cleanup effect. An orphan runtime
 configuration backup without a matching reservation is preserved and refused, not used as implicit
 restore authority; see [configuration doctrine](../architecture/configuration_doctrine.md).
+
+Before a retained-state scrub or readiness publication, the lifecycle runner rechecks the
+recorded state, reservation identity, and live writer inventory while holding its mutation lock.
+A changed record causes refusal and preserves the new owner's state. Harness config restoration
+uses the exact reservation captured before setup and requires bounded-command quiescence; a
+replacement reservation cannot authorize restoration of another transaction's files.
+
+Owned subprocess cleanup attempts every close, termination, reap, and absence check even when an
+earlier step fails. An owned pipe is complete only after a positive closed-handle observation;
+cleanup failure remains a failure. Normal completion, timeout, synchronous failure, and
+cancellation use these same checks.
 
 ## Validation Selection
 

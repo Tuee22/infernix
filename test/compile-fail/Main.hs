@@ -62,7 +62,9 @@ passingFixtures =
     "pass-compiled-route",
     "pass-ordered-subprocess-protocol",
     "pass-ordered-artifact-program",
-    "pass-matching-requirement"
+    "pass-matching-requirement",
+    "pass-closed-lifecycle",
+    "pass-matching-lifecycle-authority"
   ]
 
 failingFixtures :: [FailingFixture]
@@ -185,6 +187,23 @@ failingFixtures =
       "compiledPlacementEnforcedResources",
     typeMismatchFixture "fail-planned-enforcer-is-not-live" "PlannedEnforcerIsNotLive.hs" "EnforcerPlan",
     typeMismatchFixture "fail-raw-worker-route" "RawWorkerRoute.hs" "ModelDescriptor",
+    typeMismatchFixture "fail-cannot-defer-lifecycle-io" "CannotDeferLifecycleIO.hs" "LifecycleProgram",
+    typeMismatchFixture "fail-cannot-mutable-capture-lifecycle" "CannotMutableCaptureLifecycle.hs" "LifecycleProgram",
+    linearityFixture "fail-cannot-existentially-capture-lifecycle" "CannotExistentiallyCaptureLifecycle.hs" "session",
+    typeMismatchFixture "fail-cannot-child-escape-lifecycle" "CannotChildEscapeLifecycle.hs" "LifecycleProgram",
+    linearityFixture "fail-cannot-reuse-linear-lifecycle" "CannotReuseLinearLifecycle.hs" "session",
+    nominalLifecycleRegionFixture "fail-cannot-substitute-lifecycle-region" "CannotSubstituteLifecycleRegion.hs",
+    constructorFixture "fail-cannot-construct-lifecycle-session" "CannotConstructLifecycleSession.hs" "LifecycleSession",
+    constructorFixture "fail-cannot-construct-lifecycle-program" "CannotConstructLifecycleProgram.hs" "FinishLifecycle",
+    removedExportsFixture "fail-cannot-remint-lease-payload" "CannotRemintLeasePayload.hs" ["Acquire", "leasePayload", "withLease"],
+    hiddenModuleFixture "fail-cannot-import-cluster-internal" "CannotImportClusterInternal.hs" "Infernix.Cluster.Internal",
+    hiddenModuleFixture "fail-cannot-import-lease-internal" "CannotImportLeaseInternal.hs" "Infernix.Evidence.Lease.Internal",
+    hiddenModuleFixture "fail-cannot-import-lifecycle-program-internal" "CannotImportLifecycleProgramInternal.hs" "Infernix.Cluster.LifecycleProgram.Internal",
+    removedExportsFixture "fail-cannot-choose-lifecycle-lock" "CannotChooseLifecycleLock.hs" ["runClusterLifecycleAt", "cleanupHarnessRuntimeState", "requireBoundedCommandActivitiesQuiescent", "beginHarnessConfigTransaction", "completeHarnessConfigTransaction", "reconcileInterruptedHarnessStateAt", "withRuntimeConfigWriteAccessAt"],
+    removedExportsFixture "fail-cannot-choose-harness-mutation-paths" "CannotChooseHarnessMutationPaths.hs" ["withHarnessClusterSlotAt", "seizeHarnessClusterSlotAt", "releaseHarnessClusterSlotAt", "reclaimHarnessClusterSlotAt", "withDelegatedHarnessChildGroup", "writeGeneratedKindConfig"],
+    removedExportsFixture "fail-cannot-import-raw-lifecycle-callback" "CannotImportRawLifecycleCallback.hs" ["withClusterLifecycleLock", "withPersistedClusterMutation"],
+    nominalLifecycleRegionFixture "fail-cannot-coerce-lifecycle-program" "CannotCoerceLifecycleProgram.hs",
+    typeMismatchFixture "fail-cannot-extract-lease-with-coerce" "CannotExtractLeaseWithCoerce.hs" "Lease",
     typeMismatchFixture "fail-cannot-coerce-cluster-teardown-authority" "CannotCoerceClusterTeardownAuthority.hs" "ClusterTeardownAuthority",
     typeMismatchFixture "fail-cannot-coerce-cluster-lifecycle-lease" "CannotCoerceClusterLifecycleLease.hs" "Lease",
     constructorFixture
@@ -374,6 +393,12 @@ nominalResourceFixture target sourceFile =
 deviceResourceFixture :: String -> FilePath -> [String] -> FailingFixture
 deviceResourceFixture target sourceFile =
   FailingFixture target sourceFile typeMismatchDiagnostics
+
+-- GHC reports the conflicting nominal region indices for these coercions,
+-- rather than necessarily repeating the enclosing lifecycle type constructor.
+nominalLifecycleRegionFixture :: String -> FilePath -> FailingFixture
+nominalLifecycleRegionFixture target sourceFile =
+  FailingFixture target sourceFile typeMismatchDiagnostics ["Original", "Replacement", "coerce"]
 
 linearityFixture :: String -> FilePath -> String -> FailingFixture
 linearityFixture target sourceFile =

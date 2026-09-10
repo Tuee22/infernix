@@ -33,6 +33,7 @@ common protocol-fixture
         unix >=2.8 && <2.9
     other-modules:
         Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Pipe
         Infernix.Cluster.Subprocess.Protocol
         Infernix.Error
         Infernix.ProcessIdentity
@@ -742,4 +743,99 @@ executable fail-cannot-admit-without-observation
 executable fail-compiled-placement-has-no-resources
     import: fixture
     main-is: CompiledPlacementHasNoResources.hs
+    hs-source-dirs: fail
+
+executable pass-closed-lifecycle
+    import: fixture
+    main-is: ClosedLifecycle.hs
+    hs-source-dirs: pass
+
+executable pass-matching-lifecycle-authority
+    import: fixture
+    main-is: MatchingLifecycleAuthority.hs
+    hs-source-dirs: pass
+
+executable fail-cannot-defer-lifecycle-io
+    import: fixture
+    main-is: CannotDeferLifecycleIO.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-mutable-capture-lifecycle
+    import: fixture
+    main-is: CannotMutableCaptureLifecycle.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-existentially-capture-lifecycle
+    import: fixture
+    main-is: CannotExistentiallyCaptureLifecycle.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-child-escape-lifecycle
+    import: fixture
+    main-is: CannotChildEscapeLifecycle.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-reuse-linear-lifecycle
+    import: fixture
+    main-is: CannotReuseLinearLifecycle.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-substitute-lifecycle-region
+    import: fixture
+    main-is: CannotSubstituteLifecycleRegion.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-construct-lifecycle-session
+    import: fixture
+    main-is: CannotConstructLifecycleSession.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-construct-lifecycle-program
+    import: fixture
+    main-is: CannotConstructLifecycleProgram.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-remint-lease-payload
+    import: fixture
+    main-is: CannotRemintLeasePayload.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-cluster-internal
+    import: fixture
+    main-is: CannotImportClusterInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-lease-internal
+    import: fixture
+    main-is: CannotImportLeaseInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-lifecycle-program-internal
+    import: fixture
+    main-is: CannotImportLifecycleProgramInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-choose-lifecycle-lock
+    import: fixture
+    main-is: CannotChooseLifecycleLock.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-raw-lifecycle-callback
+    import: fixture
+    main-is: CannotImportRawLifecycleCallback.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-coerce-lifecycle-program
+    import: fixture
+    main-is: CannotCoerceLifecycleProgram.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-extract-lease-with-coerce
+    import: fixture
+    main-is: CannotExtractLeaseWithCoerce.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-choose-harness-mutation-paths
+    import: fixture
+    main-is: CannotChooseHarnessMutationPaths.hs
     hs-source-dirs: fail

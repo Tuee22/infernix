@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active — Sprints 1.44–1.46 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+**Status**: Active — Sprints 1.44–1.46 have passed their native Linux amd64 code-side gates. Wave R1 remains open.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
@@ -11,15 +11,15 @@
 
 ## Phase Status
 
-Sprints 1.1–1.43 retain their closed headings and only their established scope. Launcher freshness, measured availability, and lease authority require implementation work. The Linux bootstrap enters an existing image without proving it contains the checkout; the Dockerfile hand-renders its host Dhall seed; unreadable cgroup usage can become optimistic availability; and the generic lease API does not establish the advertised closure-containment guarantee.
+Sprints 1.1–1.43 retain their closed headings and only their established scope. Sprint 1.44 provides binary-generated image seeds, immutable launcher selection, an independent checkout observation, and retained suite receipts, validated by the common gates and independent controls. Sprint 1.45 provides validated cgroup availability refusal, engine admission, and initialization context preservation. Sprint 1.46 provides a closed linear lifecycle program, private lease kernel, and validated containment controls; runtime custody and type guarantees remain distinct.
 
 The existing Phase 1 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-Sprint 1.44 is ready to begin. Remediation code-side closure is incomplete. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R1 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Sprints 1.44–1.46 have code-side closure. Phase-wide remediation code-side closure is complete. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R1 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has completed the new full-suite cohort criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
-Existing command-registry, host-manifest, native-only bootstrap, and bounded-process implementations remain the baseline. Sprint 1.44 owns source/image binding, clean launcher creation, binary-generated seed configuration, and the explicit Apple host-engine workflow. Sprint 1.45 owns fail-closed availability; Sprint 1.46 owns domain authority and precise lifetime proofs. These are proposed implementation changes, not completed fixes.
+Existing command-registry, host-manifest, native-only bootstrap, and bounded-process implementations remain the baseline. Sprint 1.44 owns source/image binding, clean launcher creation, binary-generated seed configuration, and the explicit Apple host-engine workflow. Sprint 1.45 owns fail-closed availability; Sprint 1.46 owns domain authority and precise lifetime proofs. Sprints 1.44–1.46 have passed their common gates; Wave R1 remains open.
 
 ## Substrate Foundation
 
@@ -2804,10 +2804,11 @@ authority.
 
 None.
 
-## Sprint 1.44: Bind Launcher Validation to Source and Binary-Generated Configuration [Planned]
+## Sprint 1.44: Bind Launcher Validation to Source and Binary-Generated Configuration [Active]
 
-**Status**: Planned
-**Code-side closure**: Not implemented; source-binding, seed generation, bootstrap, and regression gates remain.
+**Status**: Active
+**Code-side closure**: Implemented and validated on native Linux amd64 through the governed build, aggregate lint, all seven unit gates, focused files/docs/chart/proto/plan, docs check, and 28 independent controls. The retained tuple below identifies the tested source and immutable image.
+**Implementation**: `src/Infernix/Validation.hs`, `src/Infernix/BuildMemory.hs`, `src/Infernix/Cluster/ImageFingerprint.hs`, `src/Infernix/Cluster/Command.hs`, `src/Infernix/Cluster/Subprocess.hs`, `src/Infernix/CLI.hs`, `src/Infernix/CommandRegistry.hs`, `bootstrap/`, `docker/Dockerfile`, `test/unit/Spec.hs`
 **Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
 **Implementation targets**: `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `bootstrap/apple-silicon.sh`, `docker/Dockerfile`, `compose.yaml`, `src/Infernix/HostConfig.hs`, `src/Infernix/ProjectInit.hs`, `src/Infernix/Cluster.hs`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/architecture/configuration_doctrine.md`, `documents/operations/apple_silicon_runbook.md`
@@ -2864,6 +2865,10 @@ and one binary-owned Dhall generation boundary.
 - A clean bootstrap without a launcher or host manifest reaches a binary-generated decodable seed;
   a missing required seed input fails before later build/lifecycle work. Compare the generated
   payload with the decoder/default producer, not with a copied expected Dockerfile string.
+- Generate runtime and harness configuration for different lanes. Aggregate, integration, and
+  browser validation refuse before execution rather than selecting an incomplete device inventory.
+  A missing required harness configuration also refuses before checks start; matching lanes are
+  the positive control. Retain configuration identity across the complete execution.
 - On Apple, execute the published operator sequence including the host engine and receive real
   output. Omitting the engine produces an explicit unavailable/not-ready condition, never an
   inference-success result.
@@ -2874,16 +2879,22 @@ and one binary-owned Dhall generation boundary.
 
 ### Remaining Work
 
-Implement these boundaries and controls; retain Wave R1 results. No code or full-suite run for
-this scope is supplied by the documentation refactor.
+Cohort gate only: retain Wave R1's selected `apple-silicon` plus native `linux-cpu` full-suite results
+against the same frozen implementation, including the Apple operator host-engine sequence. Apple
+hardware is unavailable on this Linux host. Required runner accounting covers suite terminals and
+explicitly selected device fixtures; fixture-level claims require their corresponding regression
+evidence. No new cohort attestation is claimed.
 
-## Sprint 1.45: Refuse Unobservable Cgroup Availability [Blocked]
+**Code-side evidence**: source `831135a664837363294e01f16481d0ef76a66f84329946595aa75285fd6041c3`; image `sha256:f568c8c0a168e679c1ee34e22a9f3fc353c25e5f522d125504c8b431ddcbb298`; lint `.data/runtime/validation/run-TcOQAh/receipt.json`; unit `.data/runtime/validation/run-poW17a/receipt.json`; controls `.data/runtime/validation/controls/phase1-144-v4/`.
 
-**Status**: Blocked
-**Code-side closure**: Not implemented.
+## Sprint 1.45: Refuse Unobservable Cgroup Availability [Active]
+
+**Status**: Active
+**Code-side closure**: Implemented and validated on native Linux amd64 through the governed build, all nine aggregate lint checks, all seven unit checks, focused files/docs/chart/proto/plan, docs check, six production refusals, a real finite-cgroup positive run, and initialization repair controls. Independent launcher processes verify the aggregate receipts.
+**Implementation**: `src/Infernix/Runtime/Enforcer/Internal.hs`, `src/Infernix/Runtime/Enforcer/Properties.hs`, `src/Infernix/HostClaimants.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/ProjectInit.hs`, `test/unit/Spec.hs`
 **Cohort gate**: Wave R1.
-**Blocked by**: Sprint 1.44 code-side closure; accelerator scheduling is not a prerequisite.
-**Implementation targets**: `src/Infernix/Runtime/Enforcer/Internal.hs`, `src/Infernix/HostClaimants.hs`, `test/unit/Spec.hs`
+**Blocked by**: nothing — Sprint 1.44 code-side closure is validated; accelerator scheduling is not a prerequisite.
+**Implementation targets**: `src/Infernix/Runtime/Enforcer/Internal.hs`, `src/Infernix/HostClaimants.hs`, `src/Infernix/ProjectInit.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/bounded_host_memory.md`, `documents/architecture/bounded_inference_memory.md`, `documents/engineering/host_tools_manifest.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -2898,25 +2909,34 @@ Require a successful usage observation before available cgroup memory can admit 
   combination; distinguish a legitimate unlimited envelope from unavailable measurement.
 - Propagate failure through claimant admission before any engine/toolchain launch, preserving the
   doctrine's distinction between installed capacity and presently available memory.
+- Initialization preserves the Linux outer-container workspace independently of a missing or
+  obsolete host manifest, so reinitializing a changed memory envelope produces a measured plan
+  in the supported context. Apple initialization retains native path discovery.
 
 ### Validation
 
 - Unit fixtures independently cover missing, denied, malformed, overflowing, and contradictory
   usage; each refuses rather than returning full capacity. A valid partially occupied cgroup is
   the positive subtraction control, and an exhausted valid cgroup yields no available admission.
+- Initialization controls replace an obsolete host manifest, preserve the Linux execution
+  context and implicit test lane, and regenerate the compiler plan under a real finite cgroup.
 - The native CPU lane proves the production observer/refusal path without fabricating a memory
   observation or launching work after refusal. Run the common code-side gates and Wave R1.
 
 ### Remaining Work
 
-Implement typed refusal and independent regressions; retain the phase's selected pair.
+Cohort gate only: retain Wave R1's selected `apple-silicon` plus native `linux-cpu` full-suite results
+against the same frozen implementation. No new accelerator or full-suite attestation is claimed.
 
-## Sprint 1.46: Domain-Owned Lease Authority and Precise Lifetime Proofs [Blocked]
+**Code-side evidence**: source `57abde98ee9ec880fa488033884ac80e007527bc33cc947bfbba77985d6df97f`; image `sha256:8e590bb556973eeed1915e6df261a6d1f04e7f0c46ac6249b432fa5aee5942a1`; lint `.data/runtime/validation/run-jXUC7X/receipt.json`; unit `.data/runtime/validation/run-3neI2c/receipt.json`; controls `.data/runtime/validation/controls/phase1-145/`.
 
-**Status**: Blocked
-**Code-side closure**: Not implemented.
+## Sprint 1.46: Domain-Owned Lease Authority and Precise Lifetime Proofs [Active]
+
+**Status**: Active
+**Code-side closure**: The explicit public facade, private lease kernel, closed linear lifecycle program, and domain-owned GPU rotation are implemented. Build-time archive caching supports bounded materialization retries. Governed build, all nine aggregate lint checks, all seven aggregate unit checks, six focused gates, and fresh independent receipt verification pass. All 122 compiler controls (nine positive and 113 negative) and their logs are retained.
 **Cohort gate**: Wave R1.
-**Blocked by**: Sprint 1.45 code-side closure.
+**Blocked by**: nothing — Sprint 1.45 code-side closure is validated.
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Internal.hs`, `src/Infernix/Cluster/LifecycleProgram/Internal.hs`, `src/Infernix/Evidence/Lease.hs`, `src/Infernix/Evidence/Lease/Internal.hs`, `test/compile-fail/`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Implementation targets**: `src/Infernix/Evidence/Lease.hs`, `src/Infernix/Cluster/LifecycleLock.hs`, `src/Infernix/Cluster.hs`, `test/compile-fail/`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/development/haskell_style.md`, `documents/development/assistant_workflow.md`
 
@@ -2952,12 +2972,13 @@ lifetime guarantees proved by the effect boundary.
 
 ### Remaining Work
 
-Implement the domain boundary and its proofs, review all consumers, and retain the selected
-accelerator plus CPU evidence.
+Cohort gate only: retain Wave R1's selected `apple-silicon` plus native `linux-cpu` full-suite results against one frozen implementation. The Apple host is unavailable in this workspace.
+
+**Code-side evidence**: source `c421d4c411c682e4467ab8b56fe8ea9dbb9559ac6680d0b9e56ed2dfea8744ec`; image `sha256:da82cbf1eb5dcfaeb2f5e794ce98f7c6cdf5e914b1e4cb69846024755edf700f`; lint `.data/runtime/validation/run-S8oPSx/receipt.json`; unit `.data/runtime/validation/run-GZlqp9/receipt.json`; controls `.data/runtime/validation/controls/phase1-146/`.
 
 ## Remaining Work
 
-Implement Sprints 1.44–1.46, pass their governed machine-independent gates, and retain Wave R1's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R1's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprints 1.44–1.46 have code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

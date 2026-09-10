@@ -17,6 +17,7 @@ import Data.Maybe (mapMaybe)
 import Data.Text qualified as Text
 import Infernix.DhallSchema (DhallSchema, parseDhallSchema)
 import Infernix.Types (DaemonRole, RuntimeMode, parseDaemonRole, parseRuntimeMode)
+import Infernix.Validation qualified as Validation
 import Text.Read (readMaybe)
 
 data Command
@@ -54,6 +55,12 @@ data Command
   | InternalDemoConfigLoadCommand FilePath
   | InternalDemoConfigValidateCommand FilePath
   | InternalDhallSchemaCommand DhallSchema
+  | InternalLinuxHostSeedCommand
+  | InternalImageBuildIdentityCommand
+  | InternalNativeBuildBeginCommand
+  | InternalNativeBuildFinishCommand
+  | InternalValidateNvidiaCommand FilePath
+  | InternalVerifyValidationReceiptCommand Validation.ValidationScope FilePath
   | InternalGeneratePursContractsCommand FilePath
   | InternalValidateDarwinBuildMemoryCommand
   | InternalValidateDarwinAudiverisCancellationCommand
@@ -448,6 +455,35 @@ internalCommandFamily =
             InternalDemoConfigValidateCommand
             ["internal", "demo-config", "validate"],
           dhallSchemaCommand,
+          simpleCommand
+            "internal linux-host-seed"
+            "prints the decoder-owned Linux image host defaults without reading existing configuration"
+            InternalLinuxHostSeedCommand,
+          simpleCommand
+            "internal image-build-identity"
+            "prints the compiled image source inventory and executable digest for the build handoff"
+            InternalImageBuildIdentityCommand,
+          simpleCommand
+            "internal native-build-begin"
+            "records the source input before the bounded native launcher rebuild"
+            InternalNativeBuildBeginCommand,
+          simpleCommand
+            "internal native-build-finish"
+            "binds the rebuilt native executable to its unchanged build input"
+            InternalNativeBuildFinishCommand,
+          singlePathCommand
+            "internal validate-nvidia PATH"
+            "executes the closed NVIDIA fixture inventory in an explicit device context"
+            InternalValidateNvidiaCommand
+            ["internal", "validate-nvidia"],
+          CommandSpec
+            { commandUsageSuffix = "internal verify-validation-receipt SCOPE PATH",
+              commandDescription = "verifies a retained receipt against the independent checkout, executable, configuration, and required check scope",
+              commandParse = \case
+                ["internal", "verify-validation-receipt", scope, path] ->
+                  InternalVerifyValidationReceiptCommand <$> Validation.parseValidationScope scope <*> pure path
+                _ -> Nothing
+            },
           pulsarRoundTripCommand,
           CommandSpec
             { commandUsageSuffix = "internal playwright prepare-engine MODEL_ID",

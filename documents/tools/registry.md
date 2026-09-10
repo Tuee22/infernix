@@ -43,14 +43,19 @@
   instead of stalling `cluster up` indefinitely
 - publication treats a tag's presence in the registry's `/v2/<name>/tags/list` response as metadata
   (`registryTagMetadataPresent`) that may shortcut a push, never as proof the blob is servable. The
-  distinction is sharper here than it was under the retired component: `registry:2` answers both
-  `/v2/` and the tag list out of its own process without reading a byte from S3, so neither is
-  evidence about blob retrievability. The terminal "published" state is a `BlobServable` witness
+  API response establishes listener readiness, while the tag list establishes metadata visibility;
+  neither requires retrieval of every referenced blob. The terminal "published" state is a
+  `BlobServable` witness
   minted only by a real bounded registry-only `skopeo copy` of the specific ref into a fresh
   private store, so a retained-state second `cluster up` re-pushes when the rebuildable
   `infernix-registry` MinIO backing has not finished rehydrating instead of trusting stale tag
   metadata. This is an instance of the readiness-returns-evidence pattern whose canonical home is
   [Managed State Transitions](../architecture/managed_state_transitions.md)
+- repeated reconcile and registry pod rescheduling require fresh registry-only image readback;
+  an unchanged tag list alone is insufficient. Verification uses a new private destination and
+  never reuses Docker's content store. Isolated owned fixtures independently remove and corrupt a
+  referenced layer while preserving API and tag responses; both must refuse servability, while a
+  complete image must be retrieved again on every verification.
 - after the registry reaches its final rollout shape, `cluster up` preloads the registry-backed
   final image refs onto the Kind worker before the remaining workloads are scaled
 
@@ -59,7 +64,7 @@
 The registry's in-cluster Kubernetes NodePort is fixed at `30002` so chart references and the
 containerd registry-hosts mappings inside Kind nodes stay deterministic. The Kind `hostPort`
 mapping observed from the operator host is selected dynamically by `cluster up`
-(`chooseRegistryPort` in `src/Infernix/Cluster.hs`), starting at `30002` and incrementing until an
+(`chooseRegistryPort` in `src/Infernix/Cluster/Internal.hs`), starting at `30002` and incrementing until an
 open port is found, and persisted under `./.data/runtime/registry-port.json`. The chosen port
 appears in `cluster status` as `registryPort` alongside `edgePort`. This mirrors Section O of
 `DEVELOPMENT_PLAN/development_plan_standards.md` (the edge port pattern). Operators on hosts where

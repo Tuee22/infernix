@@ -23,6 +23,10 @@
   that happen during routed E2E.
 - Outer-container build state lives in the baked launcher image overlay; no docker-managed named
   volumes or host bind mounts back the outer-container build root or cabal package cache.
+- Image builds retain upstream Poetry download archives in an architecture-specific, locked
+  BuildKit cache. Archive reuse supplies package inputs only: the binary still creates prepared
+  environments and verifies their markers, provenance, and native closures in the image. Prepared
+  environments and native artifact roots are not cache mounts or evidence of source freshness.
 - The outer-container contract does not include `docker compose up`, `docker compose exec`, or a
   bootstrap helper-registry sidecar.
 - Linux bootstrap scripts install Docker or the CUDA host stack only; they do not call Kind, Helm,
@@ -41,8 +45,9 @@ The image family
 `docker/Dockerfile` and owns the control plane, the baked `web/dist/` bundle, and
 the Linux Playwright runtime. `compose.yaml` defines the single `infernix` service for both Linux
 lanes, defaults to the CPU image, and accepts `LAUNCHER_IMAGE=infernix-linux-gpu:local` for the
-GPU Docker Compose invocation. The service bind-mounts only `./.data/` and the Docker socket. The
-registry-first bootstrap path does not depend on any helper-registry container cleanup.
+GPU Docker Compose invocation. The service declares `./.data/` and the Docker socket as its writable mounts. The bootstrap
+adds the requested checkout at `/opt/infernix/checkout` read-only for source observation; execution
+and generated outputs remain in the baked `/workspace` tree. The registry-first bootstrap path does not depend on any helper-registry container cleanup.
 Kind and `nvkind` cluster create or delete uses launcher-local scratch kubeconfig state under the
 container temp directory, and the durable operator-facing kubeconfig is published afterward to
 `./.data/runtime/infernix.kubeconfig`. The host Linux bootstrap installs `docker-buildx-plugin`,
@@ -61,6 +66,11 @@ A mismatch or unavailable image refuses validation and names the supported rebui
 receipt may claim host edits were tested merely because an older baked binary exited zero.
 The binary-owned validation boundary records source and image identities alongside actual check
 execution. The bootstrap owns only prerequisite/build/launcher handoff, not another test runner.
+The bootstrap reconciles the launcher with BuildKit and resolves its immutable image id before
+Compose starts it. The binary compares the independent checkout mount with `/workspace` before
+and after validation and retains the relevant source preimage under
+`./.data/runtime/validation/`. Direct validation commands require the same read-only
+handoff, supplied with `--volume "$(pwd):/opt/infernix/checkout:ro"` on Compose `run`.
 See [testing doctrine](testing.md#execution-evidence-and-trust-boundary).
 
 The outer launcher does not require NVIDIA runtime access. Required device assertions execute in
@@ -99,8 +109,8 @@ receipt; an ordinary launcher without GPU access cannot silently discharge them.
 - `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu
   --file compose.yaml run --rm infernix infernix ...` is the direct Linux GPU outer control-plane
   entrypoint.
-- the `infernix` launcher container forwards the Docker socket and bind-mounts only `./.data/`
-  into `/workspace/.data`
+- the `infernix` launcher container forwards the Docker socket and bind-mounts `./.data/`
+  into `/workspace/.data`; the bootstrap also supplies the read-only source-observation mount
 - the `infernix` launcher container sets `/workspace/.build/outer-container/build` as the
   supported outer build root for compiled artifacts, while binary-generated image config provides
   the image-local defaults, the operator runtime authority remains repo-root `./infernix.dhall`,

@@ -116,6 +116,7 @@ import Infernix.Runtime.CappedEngine.Cleanup qualified as CappedCleanup
 import Infernix.Runtime.CappedEngine.FixedObserver qualified as FixedObserver
 import Infernix.Runtime.CappedEngine.OutputCapture qualified as OutputCapture
 import Infernix.Runtime.CappedEngine.Projection qualified as Projection
+import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryAvailableMib, withCgroupMemoryHeadroom)
 import Infernix.Types
   ( EngineAdapterType (..),
     EngineBinding
@@ -190,7 +191,10 @@ withEngineCeilingInstalled ::
   IO result
 withEngineCeilingInstalled installed command action = do
   _ <- DescriptorSpace.requireBoundedDescriptorSpace "capped engine ceiling installation"
-  action (BoundedEngineLaunch (applyCeilingPrefix installed command) installed)
+  let install = action (BoundedEngineLaunch (applyCeilingPrefix installed command) installed)
+  if os == "linux"
+    then withCgroupMemoryHeadroom (Ceiling.installedCeilingDerivedMib installed) readCgroupMemoryAvailableMib install
+    else install
 
 -- | Prepend the launch prefix. A detection-only lane has none, so its command is
 -- unchanged and its strength says so.

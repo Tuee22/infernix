@@ -195,7 +195,7 @@ test("routed WebSocket validates JWTs and reports malformed frames", async ({ pa
   for (const operatorRoute of [
     `${baseUrl}/registry/_catalog`,
     `${baseUrl}/pulsar/admin/admin/v2/clusters`,
-    `${baseUrl}/pulsar/ws`,
+    `${baseUrl}/pulsar/ws/v2/producer/public/default/demo`,
   ]) {
     await expectJwtGatedOperatorRoute(request, operatorRoute, accessToken);
   }
@@ -589,7 +589,7 @@ test("admin sees cluster-wide surfaces", async ({ page, request, infernixFixture
   for (const operatorRoute of [
     `${baseUrl}/registry/_catalog`,
     `${baseUrl}/pulsar/admin/admin/v2/clusters`,
-    `${baseUrl}/pulsar/ws`,
+    `${baseUrl}/pulsar/ws/v2/producer/public/default/demo`,
   ]) {
     await expectOperatorRouteAllowed(request, operatorRoute, adminToken);
   }
@@ -641,7 +641,7 @@ test("non-admin is denied cluster-wide surfaces", async ({ page, request, infern
   for (const operatorRoute of [
     `${baseUrl}/registry/_catalog`,
     `${baseUrl}/pulsar/admin/admin/v2/clusters`,
-    `${baseUrl}/pulsar/ws`,
+    `${baseUrl}/pulsar/ws/v2/producer/public/default/demo`,
   ]) {
     await expectOperatorRouteForbidden(request, operatorRoute, nonAdminToken);
   }
@@ -2253,20 +2253,25 @@ async function expectOperatorRouteForbidden(request, url, token) {
   expect(response.status()).toBe(403);
 }
 
-// Phase 9 Sprint 9.8: the edge SecurityPolicy lets an admin token PAST the
-// admin authorization — i.e. it is never rejected 401/403. The precise property
-// under test is "admin is not denied by the edge gate", so the backend's own
-// status is allowed through: HTTP consoles (/registry, /pulsar/admin)
-// answer 2xx/3xx, while a plain GET to the WebSocket route /pulsar/ws reaches the
-// Pulsar servlet and legitimately answers a non-auth 4xx (upgrade required). The
-// paired expectOperatorRouteForbidden proves the gate denies non-admins with 403,
-// and the /api/admin/overview + /api/cache 200s prove real admin backend access.
+// The admin token must reach the expected backend successfully. A 404, 500,
+// or another non-authentication failure cannot prove a working allowed route.
 async function expectOperatorRouteAllowed(request, url, token) {
   const response = await request.get(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  expect(response.status()).not.toBe(401);
-  expect(response.status()).not.toBe(403);
+  const routePath = new URL(url).pathname;
+  if (routePath === "/registry/_catalog") {
+    expect(response.status()).toBe(200);
+    const catalog = await response.json();
+    expect(Array.isArray(catalog.repositories)).toBe(true);
+    expect(catalog.repositories).toContain("library/busybox");
+  } else if (routePath === "/pulsar/admin/admin/v2/clusters") {
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toContain("infernix-infernix-pulsar");
+  } else {
+    expect(routePath).toBe("/pulsar/ws/v2/producer/public/default/demo");
+    expect(response.status()).toBe(405);
+  }
 }
 
 // Phase 9 Sprint 9.8: reach the deleted-account state deterministically via the

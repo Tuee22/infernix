@@ -61,6 +61,7 @@ import Infernix.BuildMemory
 import Infernix.BuildMemory qualified as BuildMemory
 import Infernix.Cluster
 import Infernix.Cluster.Discover
+import Infernix.Cluster.Internal (withDelegatedHarnessChildGroup, withHarnessConfigTransaction, withRuntimeConfigWriteAccessAt)
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.CommandRegistry
@@ -129,6 +130,7 @@ import Infernix.Types
     engineMembers,
     runtimeModeId,
   )
+import Infernix.Validation qualified as Validation
 import Infernix.Web.Contracts qualified as Contracts
 import Infernix.Workflow
   ( ensureWebDependencies,
@@ -213,6 +215,10 @@ commandRequiresConfiguredStartup command =
     InitCommand {} -> False
     TestInitCommand {} -> False
     ClusterReclaimSlotCommand _ -> False
+    InternalLinuxHostSeedCommand -> False
+    InternalImageBuildIdentityCommand -> False
+    InternalNativeBuildBeginCommand -> False
+    InternalNativeBuildFinishCommand -> False
     _ -> True
 
 -- The recovery command owns the exact lifecycle-locked recovery kernel and is
@@ -250,41 +256,41 @@ dispatch command =
     CacheEvictCommand maybeModelId -> runCacheEvict Nothing (Text.pack <$> maybeModelId)
     CacheRebuildCommand maybeModelId -> runCacheRebuild Nothing (Text.pack <$> maybeModelId)
     KubectlCommand kubectlArgs -> runKubectlCompat kubectlArgs
-    DocsCheckCommand -> runDocsLint
-    LintFilesCommand -> runFilesLint
-    LintDocsCommand -> runDocsLint
-    LintProtoCommand -> runProtoLint
-    LintChartCommand -> runChartLint
-    LintPlanCommand -> runPlanLint
-    TestLintCommand -> runLint Nothing
-    TestUnitCommand -> do
+    DocsCheckCommand -> Validation.withFocusedValidation Validation.DocsLint runDocsLint
+    LintFilesCommand -> Validation.withFocusedValidation Validation.FilesLint runFilesLint
+    LintDocsCommand -> Validation.withFocusedValidation Validation.DocsLint runDocsLint
+    LintProtoCommand -> Validation.withFocusedValidation Validation.ProtoLint runProtoLint
+    LintChartCommand -> Validation.withFocusedValidation Validation.ChartLint runChartLint
+    LintPlanCommand -> Validation.withFocusedValidation Validation.PlanLint runPlanLint
+    TestLintCommand -> Validation.withValidation Validation.LintScope (`runLint` Nothing)
+    TestUnitCommand -> Validation.withValidation Validation.UnitScope $ \check -> do
       ensureWebDependencies
       ensurePythonAdapterDependencies Nothing
-      runMachineIndependentHaskellTests Nothing
-      runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
-    TestIntegrationCommand ->
+      runMachineIndependentHaskellTests check Nothing
+      check Validation.WebUnit (runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"])
+    TestIntegrationCommand -> Validation.withValidation (Validation.FocusedScope Validation.Integration) $ \check ->
       runClusterOwnedValidation
         Nothing
         ( withTestHarnessConfig
-            ( withToolchainAuthority $ \authority ->
+            ( check Validation.Integration $ withToolchainAuthority $ \authority ->
                 runToolchainCommand authority Nothing (ToolchainTest IntegrationSuite)
             )
         )
-    TestE2ECommand ->
+    TestE2ECommand -> Validation.withValidation (Validation.FocusedScope Validation.Browser) $ \check ->
       runClusterOwnedValidation
         Nothing
-        (withTestHarnessConfig (runEndToEnd Nothing))
-    TestAllCommand -> do
+        (withTestHarnessConfig (check Validation.Browser (runEndToEnd Nothing)))
+    TestAllCommand -> Validation.withValidation Validation.AllScope $ \check -> do
       ensureWebDependencies
-      runLint Nothing
+      runLint check Nothing
       ensurePythonAdapterDependencies Nothing
-      runMachineIndependentHaskellTests Nothing
-      runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
+      runMachineIndependentHaskellTests check Nothing
+      check Validation.WebUnit (runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"])
       runClusterOwnedValidation Nothing $
         withTestHarnessConfig $ do
-          withToolchainAuthority $ \authority ->
+          check Validation.Integration $ withToolchainAuthority $ \authority ->
             runToolchainCommand authority Nothing (ToolchainTest IntegrationSuite)
-          runEndToEnd Nothing
+          check Validation.Browser (runEndToEnd Nothing)
     InternalDiscoverImagesCommand renderedChartPath ->
       mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
     InternalDiscoverClaimsCommand renderedChartPath ->
@@ -349,6 +355,25 @@ dispatch command =
       case renderDhallSchema schema of
         Left err -> ioError (userError err)
         Right schemaText -> putStr (Text.unpack schemaText)
+    InternalLinuxHostSeedCommand ->
+      if os == "linux"
+        then LazyChar8.putStr (HostConfig.encodeHostConfig (HostConfig.defaultLinuxOuterContainerHostConfig "/root"))
+        else ioError (userError "Linux image host seed requires native Linux execution")
+    InternalImageBuildIdentityCommand ->
+      Validation.renderImageBuildIdentity >>= LazyChar8.putStr
+    InternalNativeBuildBeginCommand -> Validation.beginNativeBuild
+    InternalNativeBuildFinishCommand -> Validation.finishNativeBuild
+    InternalVerifyValidationReceiptCommand scope path -> Validation.verifyStoredReceipt scope path
+    InternalValidateNvidiaCommand receiptPath ->
+      Validation.withNvidiaValidation receiptPath $ \check ->
+        withToolchainAuthority $ \authority ->
+          mapM_
+            (\(required, fixture) -> check required (runToolchainCommand authority Nothing (BuildMemory.ToolchainNvidiaValidationTest fixture)))
+            [ (Validation.NvidiaWatchdogCheck, BuildMemory.NvidiaWatchdog),
+              (Validation.NvidiaCeilingBreachCheck, BuildMemory.NvidiaCeilingBreach),
+              (Validation.NvidiaCompetingTenantCheck, BuildMemory.NvidiaCompetingTenant),
+              (Validation.NvidiaHostCeilingCheck, BuildMemory.NvidiaHostCeiling)
+            ]
     InternalGeneratePursContractsCommand outputDir -> do
       runtimeMode <- resolveRuntimeMode Nothing
       writeGeneratedPursContracts runtimeMode outputDir
@@ -419,39 +444,39 @@ ensureActiveSubstrateFile = do
 configuredRuntimeMode :: Paths -> IO RuntimeMode
 configuredRuntimeMode = targetRuntimeModeForExecutionContext
 
-runLint :: Maybe RuntimeMode -> IO ()
-runLint maybeRuntimeMode =
+runLint :: (Validation.RequiredCheck -> IO () -> IO ()) -> Maybe RuntimeMode -> IO ()
+runLint check maybeRuntimeMode =
   withToolchainAuthority $ \authority -> do
-    runToolchainCommand authority maybeRuntimeMode (ToolchainTest HaskellStyleSuite)
-    runToolchainCommand authority maybeRuntimeMode ToolchainCabalFormat
-    runFilesLint
-    runChartLint
-    runProtoLint
-    runDocsLint
+    check Validation.HaskellStyle (runToolchainCommand authority maybeRuntimeMode (ToolchainTest HaskellStyleSuite))
+    check Validation.CabalFormat (runToolchainCommand authority maybeRuntimeMode ToolchainCabalFormat)
+    check Validation.FilesLint runFilesLint
+    check Validation.ChartLint runChartLint
+    check Validation.ProtoLint runProtoLint
+    check Validation.DocsLint runDocsLint
     -- Phase 0 Sprint 0.24: the development-plan standards are enforced by the
     -- aggregate gate rather than by a maintenance pass someone remembers to
     -- perform. The scans stayed outside `runLint` only while they measured the
     -- Section C and Section D backlog that preceded them; with the corpus at
     -- zero, leaving them out is what would let the backlog silently return.
-    runPlanLint
-    runPythonQualityIfPresent maybeRuntimeMode
-    runToolchainCommand authority maybeRuntimeMode ToolchainBuildAll
+    check Validation.PlanLint runPlanLint
+    check Validation.PythonQuality (runPythonQuality maybeRuntimeMode)
+    check Validation.BuildAll (runToolchainCommand authority maybeRuntimeMode ToolchainBuildAll)
 
 -- | The complete machine-independent Haskell gate set. Keeping every suite in
 -- the closed 'ToolchainTestSuite' vocabulary means no validation instruction
 -- needs a bare host Cabal command, and the compile-fail suite's serialized
 -- nested account remains beneath the same outer authority.
-runMachineIndependentHaskellTests :: Maybe RuntimeMode -> IO ()
-runMachineIndependentHaskellTests maybeRuntimeMode =
+runMachineIndependentHaskellTests :: (Validation.RequiredCheck -> IO () -> IO ()) -> Maybe RuntimeMode -> IO ()
+runMachineIndependentHaskellTests check maybeRuntimeMode =
   withToolchainAuthority $ \authority ->
     mapM_
-      (runToolchainCommand authority maybeRuntimeMode . ToolchainTest)
-      [ CompileFailSuite,
-        ArtifactTransactionSuite,
-        AppleMaterializerSuite,
-        CappedEngineObserverSuite,
-        ExecutionPlanInternalSuite,
-        UnitSuite
+      (\(required, suite) -> check required (runToolchainCommand authority maybeRuntimeMode (ToolchainTest suite)))
+      [ (Validation.CompileFail, CompileFailSuite),
+        (Validation.ArtifactTransaction, ArtifactTransactionSuite),
+        (Validation.AppleMaterializer, AppleMaterializerSuite),
+        (Validation.CappedEngineObserver, CappedEngineObserverSuite),
+        (Validation.ExecutionPlanInternal, ExecutionPlanInternalSuite),
+        (Validation.HaskellUnit, UnitSuite)
       ]
 
 runDarwinAppleMaterializerTest :: DarwinAppleMaterializerTest -> IO ()
@@ -511,35 +536,33 @@ withTestHarnessConfig action = do
       )
   testDemoConfig <- decodeDemoConfigFile testConfig
   hadExistingRuntimeConfig <- doesFileExist runtimeConfig
-  mask $ \restore -> do
+  withHarnessConfigTransaction
+    paths
+    hadExistingRuntimeConfig
     ( do
-        beginHarnessConfigTransaction paths hadExistingRuntimeConfig $ do
-          when hadExistingRuntimeConfig (renameFile runtimeConfig backupConfig)
-          restore $ do
-            _ <-
-              materializeGeneratedDemoConfigFile
-                paths
-                (configRuntimeMode testDemoConfig)
-                -- Phase 8 Sprint 8.12: the run's system contract carries the
-                -- fleet the operator initialized the test config with. Reading
-                -- it back out of the declared member ids is what keeps a
-                -- two-machine harness run from regenerating itself as a
-                -- one-machine one.
-                (engineMachineCountFromMemberIds (map engineMemberId (engineMembers testDemoConfig)))
-                (demoUiEnabled testDemoConfig)
-            pure ()
-        restore action
-      )
-      `finallyPreservingPrimary` completeHarnessConfigTransaction
-        paths
-        ( do
-            restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig
-            -- Phase 8 Sprint 8.11: the run generated its own system contract and
-            -- re-pinned this machine to it. Putting the operator's contract back
-            -- without re-pointing the pin would leave the operator holding a
-            -- machine contract that names a file the harness deleted.
-            restampMachineContractPin paths
-        )
+        when hadExistingRuntimeConfig (renameFile runtimeConfig backupConfig)
+        _ <-
+          materializeGeneratedDemoConfigFile
+            paths
+            (configRuntimeMode testDemoConfig)
+            -- Phase 8 Sprint 8.12: the run's system contract carries the
+            -- fleet the operator initialized the test config with. Reading
+            -- it back out of the declared member ids is what keeps a
+            -- two-machine harness run from regenerating itself as a
+            -- one-machine one.
+            (engineMachineCountFromMemberIds (map engineMemberId (engineMembers testDemoConfig)))
+            (demoUiEnabled testDemoConfig)
+        pure ()
+    )
+    action
+    ( do
+        restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig
+        -- Phase 8 Sprint 8.11: the run generated its own system contract and
+        -- re-pinned this machine to it. Putting the operator's contract back
+        -- without re-pointing the pin would leave the operator holding a
+        -- machine contract that names a file the harness deleted.
+        restampMachineContractPin paths
+    )
 
 -- | Restore the pre-run @./infernix.dhall@ after a harness run: remove the
 -- harness-generated file (and any per-variant rewrite), then move the backup
@@ -2234,21 +2257,22 @@ valueText :: Value -> Maybe Text.Text
 valueText (String textValue) = Just textValue
 valueText _ = Nothing
 
-runPythonQualityIfPresent :: Maybe RuntimeMode -> IO ()
-runPythonQualityIfPresent maybeRuntimeMode = do
+runPythonQuality :: Maybe RuntimeMode -> IO ()
+runPythonQuality maybeRuntimeMode = do
   paths <- discoverPaths
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
   let projectDirectory = pythonProjectDirectory paths runtimeMode
   adaptersPresent <- pythonAdaptersPresent projectDirectory
-  when adaptersPresent $ do
-    ensurePoetryProjectReady paths projectDirectory
-    poetryExecutable <- ensurePoetryExecutable paths
-    runCommandWithCwdAndEnv
-      maybeRuntimeMode
-      []
-      poetryExecutable
-      ["--directory", projectDirectory, "run", "check-code"]
-      projectDirectory
+  unless adaptersPresent $
+    ioError (userError "required Python quality check has no adapter project")
+  ensurePoetryProjectReady paths projectDirectory
+  poetryExecutable <- ensurePoetryExecutable paths
+  runCommandWithCwdAndEnv
+    maybeRuntimeMode
+    []
+    poetryExecutable
+    ["--directory", projectDirectory, "run", "check-code"]
+    projectDirectory
 
 ensurePythonAdapterDependencies :: Maybe RuntimeMode -> IO ()
 ensurePythonAdapterDependencies maybeRuntimeMode = do
@@ -2256,8 +2280,9 @@ ensurePythonAdapterDependencies maybeRuntimeMode = do
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
   let projectDirectory = pythonProjectDirectory paths runtimeMode
   adaptersPresent <- pythonAdaptersPresent projectDirectory
-  when adaptersPresent $ do
-    ensurePoetryProjectReady paths projectDirectory
+  unless adaptersPresent $
+    ioError (userError "required Python quality check has no adapter project")
+  ensurePoetryProjectReady paths projectDirectory
 
 syncBuildRootExecutable :: IO ()
 syncBuildRootExecutable = do

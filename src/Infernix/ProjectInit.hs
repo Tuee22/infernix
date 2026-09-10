@@ -12,6 +12,7 @@ module Infernix.ProjectInit
   ( runProjectInit,
     runTestInit,
     resolveDeclaredEngineMachines,
+    initializationHostConfig,
   )
 where
 
@@ -21,6 +22,7 @@ import Infernix.Config
   ( Paths,
     discoverPathsWithHostManifest,
     ensureRepoLayout,
+    repoRoot,
     runtimeConfigPath,
     targetRuntimeModeForExecutionContext,
     testConfigPath,
@@ -34,9 +36,29 @@ import Infernix.DemoConfig
     resolveInferenceMemoryBudget,
     writeProjectConfigFile,
   )
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models (engineMachineCountForMode)
 import Infernix.Types (EngineMachineCount, RuntimeMode, singleEngineMachine)
 import System.Directory (doesFileExist)
+import System.FilePath (normalise)
+import System.Info qualified as SystemInfo
+
+-- | Initialization must remain reachable with an obsolete or missing host
+-- manifest. The supported Linux image's build marker and fixed workspace
+-- identify its context independently of the record being replaced.
+discoverInitializationPaths :: IO Paths
+discoverInitializationPaths = do
+  unconfigured <- discoverPathsWithHostManifest Nothing
+  imageBuildPresent <- doesFileExist "/opt/infernix/build-identity.json"
+  hostConfig <- either (ioError . userError) pure (initializationHostConfig SystemInfo.os (repoRoot unconfigured) imageBuildPresent)
+  discoverPathsWithHostManifest hostConfig
+
+initializationHostConfig :: String -> FilePath -> Bool -> Either String (Maybe HostConfig.HostConfig)
+initializationHostConfig "darwin" _ _ = Right Nothing
+initializationHostConfig "linux" root True
+  | normalise root == "/workspace" = Right (Just (HostConfig.defaultLinuxOuterContainerHostConfig "/root"))
+initializationHostConfig platform _ _ =
+  Left ("initialization requires the supported Apple host or Linux outer-container workspace and build handoff; platform=" <> platform)
 
 -- | @infernix init@. Writes @./infernix.dhall@ (runtime substrate for the
 -- resolved mode) and @./infernix-host.dhall@ (host manifest). Fails fast if
@@ -47,7 +69,7 @@ runProjectInit maybeRuntimeMode maybeDemoUi maybeEngineMachines force ifMissing 
   -- This is deliberately independent of any existing host manifest. The
   -- command is the migration boundary that replaces that manifest, so a stale
   -- schema must not make @init --force@ unreachable.
-  paths <- discoverPathsWithHostManifest Nothing
+  paths <- discoverInitializationPaths
   ensureRepoLayout paths
   let runtimeConfig = runtimeConfigPath paths
   runtimeConfigExists <- doesFileExist runtimeConfig
@@ -88,7 +110,7 @@ runTestInit maybeRuntimeMode maybeDemoUi maybeEngineMachines = do
   -- Test initialization is the test-config migration boundary. Like
   -- @init --force@, it must remain reachable when an existing host manifest
   -- belongs to an older schema, so path discovery cannot decode that file.
-  paths <- discoverPathsWithHostManifest Nothing
+  paths <- discoverInitializationPaths
   ensureRepoLayout paths
   runtimeMode <- resolveInitRuntimeMode paths maybeRuntimeMode
   machineCount <- resolveDeclaredEngineMachines runtimeMode maybeEngineMachines

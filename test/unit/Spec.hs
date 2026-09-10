@@ -1,15 +1,16 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Main (main) where
 
-import Control.Concurrent (forkIO, killThread, threadDelay, yield)
+import Control.Concurrent (forkIO, forkIOWithUnmask, killThread, threadDelay, yield)
 import Control.Concurrent.MVar qualified as MVar
-import Control.Exception (AsyncException (ThreadKilled), IOException, SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, throwTo, toException, try, uninterruptibleMask_)
-import Control.Monad (unless, void, when)
+import Control.Exception (AsyncException (ThreadKilled), IOException, SomeAsyncException, SomeException, displayException, evaluate, finally, fromException, throwIO, throwTo, toException, try, uninterruptibleMask_)
+import Control.Monad (forM, forM_, unless, void, when)
 import Crypto.Hash.Algorithms qualified
 import Crypto.Hash.SHA256 qualified as SHA256
 import Crypto.PubKey.RSA qualified
@@ -17,6 +18,7 @@ import Crypto.PubKey.RSA.PKCS15 qualified
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.Types qualified as AesonTypes
 import Data.Bits (shiftR, (.&.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Base16 qualified as Base16
@@ -38,7 +40,9 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX qualified
+import Data.Vector qualified as Vector
 import Data.Word (Word64, Word8)
+import Data.Yaml qualified as Yaml
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Conc (BlockReason (BlockedOnException, BlockedOnMVar), ThreadStatus (ThreadBlocked), threadStatus)
 import GHC.RTS.Flags qualified as RTSFlags
@@ -105,6 +109,7 @@ import Infernix.BuildMemory
     withDarwinBuildMemoryValidationChild,
     withToolchainSpawnAuthority,
   )
+import Infernix.BuildMemory qualified as BuildMemory
 import Infernix.CLI
   ( DarwinBuildMemoryProcessGroupFixture (..),
     DarwinBuildMemorySamplingState (..),
@@ -117,12 +122,15 @@ import Infernix.CLI
     runtimeConfigRestorePlan,
     writeGeneratedPursContracts,
   )
-import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterFleetEngineDeployments, clusterWorkloadArchitectureForHostArchitecture, finalPhaseDeployments, fleetSlotLabelKey, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, perEngineDeploymentNames, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reclaimHarnessClusterSlotAt, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderFleetMachineContracts, renderHelmValues, renderKindConfig, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withHarnessClusterSlotAt, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
+import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, classifyWorkerPauseObservation, clusterCheckoutIdentityFromHostRoot, clusterFleetEngineDeployments, clusterWorkloadArchitectureForHostArchitecture, finalPhaseDeployments, fleetSlotLabelKey, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, perEngineDeploymentNames, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, renderFleetMachineContracts, renderHelmValues, renderKindConfig, retainedReplayPending, retainedReplayPlan, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady)
 import Infernix.Cluster qualified as Cluster
 import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
 import Infernix.Cluster.Command qualified as ClusterCommand
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint qualified as ImageFingerprint
+import Infernix.Cluster.Internal (beginHarnessConfigTransaction, cleanupHarnessRuntimeState, reclaimHarnessClusterSlotAt, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, seizeHarnessClusterSlotAt, withClusterLifecycleLock, withHarnessClusterSlotAt, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
+import Infernix.Cluster.Internal qualified as ClusterInternal
+import Infernix.Cluster.LifecycleLock (kernelFileLockIsHeld)
 import Infernix.Cluster.MutationRecovery
   ( InterruptedMutationRecoveryEffects (..),
     runInterruptedMutationRecovery,
@@ -138,11 +146,13 @@ import Infernix.Cluster.PublishImages
     normalizeRepositoryPath,
     prioritizePublishableImages,
     skopeoTargetRefForRegistryApiHost,
+    verifyRegistryImage,
     withRegistryAuthFile,
     writeRegistryOverridesFile,
   )
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Cluster.Subprocess.Activity qualified as SubprocessActivity
+import Infernix.Cluster.Subprocess.Pipe qualified as OwnedPipe
 import Infernix.ClusterConfig
   ( ClusterConfig (..),
     CoordinatorWiring (..),
@@ -226,7 +236,7 @@ import Infernix.Error
     onExceptionPreservingPrimary,
     runCleanupsPreservingFailures,
   )
-import Infernix.Evidence.Lease qualified as Lease
+import Infernix.Evidence.Lease.Internal qualified as Lease
 import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.ExecutionPlan qualified as ExecutionPlan
 import Infernix.ExecutionPlan.Properties qualified as ExecutionPlanProperties
@@ -294,12 +304,14 @@ import Infernix.ProcessIdentity
 import Infernix.ProcessIdentity.Internal
   ( withCurrentProcessIdentityRegistryLockForTest,
   )
+import Infernix.ProjectInit qualified as ProjectInit
 import Infernix.Python qualified as Python
 import Infernix.Routes
   ( renderChartRouteRegistryCommentSection,
     renderEdgeRoutingInventorySection,
     renderReadmeRouteSummarySection,
   )
+import Infernix.Routes qualified as Routes
 import Infernix.Runtime
 import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
 import Infernix.Runtime.CappedEngine.Internal qualified as CappedEngineInternal
@@ -369,8 +381,13 @@ import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
 import Infernix.Types qualified as Types
+import Infernix.Validation qualified as Validation
 import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 qualified as Lens
+import Network.HTTP.Client qualified as HTTP
+import Network.HTTP.Types qualified as HTTPTypes
+import Network.Wai qualified as Wai
+import Network.Wai.Handler.Warp qualified as Warp
 import Network.WebSockets qualified as WebSockets
 import Numeric (showHex)
 import ProcessIdentitySpec qualified
@@ -398,6 +415,7 @@ import System.Process
   ( CreateProcess (create_group, env, std_out),
     ProcessHandle,
     StdStream (CreatePipe),
+    createPipe,
     createProcess,
     getPid,
     proc,
@@ -469,6 +487,7 @@ allClusterOperations =
     ClusterCommand.DockerExecOperation,
     ClusterCommand.DockerProbeOperation,
     ClusterCommand.DockerBuildOperation,
+    ClusterCommand.DeviceValidationOperation,
     ClusterCommand.DockerInspectOperation,
     ClusterCommand.DockerPullOperation,
     ClusterCommand.DockerTagOperation,
@@ -517,6 +536,7 @@ expectedClusterOperationPolicy operation =
     ClusterCommand.DockerExecOperation -> minutes 15 Subprocess.NeverRetry Subprocess.FatalFailure
     ClusterCommand.DockerProbeOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
     ClusterCommand.DockerBuildOperation -> minutes 45 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DeviceValidationOperation -> minutes 45 Subprocess.NeverRetry Subprocess.FatalFailure
     ClusterCommand.DockerInspectOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
     ClusterCommand.DockerPullOperation -> minutes 20 Subprocess.NeverRetry Subprocess.FatalFailure
     ClusterCommand.DockerTagOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
@@ -2601,15 +2621,15 @@ runMissingProcessGroupSettlementAssertions = do
 -- The adversarial breach — a real CUDA allocation past a declared ceiling —
 -- needs a device-allocating child and is therefore owned by the @linux-gpu@
 -- behavioral cohort, not by this machine-independent suite. On a host without
--- the fixed tool the assertion is skipped loudly rather than passing vacuously.
+-- the fixed tool the explicitly selected device assertion fails.
 runNvidiaWatchdogAssertions :: IO ()
 runNvidiaWatchdogAssertions =
-  unless (System.Info.os == "darwin") $ do
+  do
     nvidiaSmiPresent <- doesFileExist "/usr/bin/nvidia-smi"
     if not nvidiaSmiPresent
       then
-        putStrLn
-          "skipping the live NVIDIA VRAM watchdog assertions: /usr/bin/nvidia-smi is absent on this host"
+        fail
+          "required live NVIDIA VRAM watchdog assertions: /usr/bin/nvidia-smi is absent on this host"
       else do
         childPid <-
           startGroupedCappedEngineFixture
@@ -2655,7 +2675,7 @@ cudaFixtureInterpreter = "/usr/bin/python3"
 --
 -- The first stdout line is the gate. @allocated@ means the device memory is
 -- held and attributable; @unavailable \<reason\>@ means this host cannot make
--- the observation, and the caller skips loudly rather than vacuously passing.
+-- the observation, and the caller refuses a missing allocation.
 -- Every driver call is checked, so a partial failure cannot masquerade as a
 -- held allocation.
 cudaAllocationFixtureProgram :: String
@@ -2736,7 +2756,7 @@ cudaHostCeilingCalibrationProgram =
 -- | Launch a device-allocating child and wait for its gate line.
 --
 -- Returns the process handle, its process-group pid, and the gate line. The
--- caller decides whether the gate permits an assertion or a loud skip.
+-- caller requires the allocation gate before making a device assertion.
 startCudaAllocationFixture :: Int -> Double -> IO (Maybe (ProcessHandle, CPid, String))
 startCudaAllocationFixture requestedMib holdSeconds = do
   (_, maybeOut, _, handle) <-
@@ -2814,23 +2834,22 @@ cudaFixtureGateTimeoutMicros = 60 * 1000000
 -- and the clean case allocates 64 MiB against a 3072 MiB ceiling (observed
 -- ~560 MiB), so neither outcome can be produced by context overhead alone.
 --
--- Skips loudly and never vacuously: outer-container device access depends on the
--- host daemon's default runtime rather than on @compose.yaml@, so a skip must
--- say which precondition was missing.
+-- This runs only in the binary-selected device validation container. A missing
+-- observation or allocation is a failed mandatory fixture.
 runNvidiaVramBreachAssertions :: IO ()
 runNvidiaVramBreachAssertions =
-  unless (System.Info.os == "darwin") $ do
+  do
     nvidiaSmiPresent <- doesFileExist "/usr/bin/nvidia-smi"
     interpreterPresent <- doesFileExist cudaFixtureInterpreter
     if not nvidiaSmiPresent
       then
-        putStrLn
-          "skipping the live CUDA ceiling-breach assertions: /usr/bin/nvidia-smi is absent on this host"
+        fail
+          "required live CUDA ceiling-breach assertions: /usr/bin/nvidia-smi is absent on this host"
       else
         if not interpreterPresent
           then
-            putStrLn
-              ( "skipping the live CUDA ceiling-breach assertions: "
+            fail
+              ( "required live CUDA ceiling-breach assertions: "
                   <> cudaFixtureInterpreter
                   <> " is absent on this host"
               )
@@ -2841,8 +2860,8 @@ runLiveNvidiaVramBreachAssertions = do
   started <- startCudaAllocationFixture cudaBreachAllocationMib 120
   case started of
     Nothing ->
-      putStrLn
-        ( "skipping the live CUDA ceiling-breach assertions: the device "
+      fail
+        ( "required live CUDA ceiling-breach assertions: the device "
             <> "allocation fixture produced no gate line within its bound"
         )
     Just (_, breachPid, "allocated") -> do
@@ -2864,8 +2883,8 @@ runLiveNvidiaVramBreachAssertions = do
       runNvidiaVramCleanAllocationAssertion
     Just (_, breachPid, gate) -> do
       void (reapCappedEngineFixture "unavailable CUDA fixture" breachPid)
-      putStrLn
-        ( "skipping the live CUDA ceiling-breach assertions: the device "
+      fail
+        ( "required live CUDA ceiling-breach assertions: the device "
             <> "allocation fixture reported "
             <> gate
         )
@@ -2904,12 +2923,12 @@ runNvidiaVramCleanAllocationAssertion = do
 -- machine did not start.
 runCompetingNvidiaTenantAssertion :: IO ()
 runCompetingNvidiaTenantAssertion =
-  unless (System.Info.os == "darwin") $ do
+  do
     nvidiaSmiPresent <- doesFileExist "/usr/bin/nvidia-smi"
     if not nvidiaSmiPresent
       then
-        putStrLn
-          "skipping the live competing NVIDIA tenant assertion: /usr/bin/nvidia-smi is absent on this host"
+        fail
+          "required live competing NVIDIA tenant assertion: /usr/bin/nvidia-smi is absent on this host"
       else do
         freeBefore <- CappedEngineInternal.observeNvidiaDeviceFreeMibForTest
         case freeBefore of
@@ -2966,14 +2985,14 @@ runCompetingNvidiaTenantAssertion =
                       )
               Just (tenantHandle, _, gate) -> do
                 _ <- waitForProcess tenantHandle
-                putStrLn
-                  ( "skipping the live competing NVIDIA tenant assertion: the CUDA allocation "
+                fail
+                  ( "required live competing NVIDIA tenant assertion: the CUDA allocation "
                       <> "fixture reported "
                       <> gate
                   )
               Nothing ->
-                putStrLn
-                  "skipping the live competing NVIDIA tenant assertion: the CUDA allocation fixture produced no bounded gate line"
+                fail
+                  "required live competing NVIDIA tenant assertion: the CUDA allocation fixture produced no bounded gate line"
 
 -- Large enough to move the free-device reading decisively while leaving ample
 -- room for the test image and the selected cohort's card.
@@ -2987,12 +3006,12 @@ cudaCompetingTenantAllocationMib = 2048
 -- clean non-zero host allocation refusal beyond its installed ceiling.
 runLinuxGpuHostCeilingCalibrationAssertion :: IO ()
 runLinuxGpuHostCeilingCalibrationAssertion =
-  unless (System.Info.os == "darwin") $ do
+  do
     nvidiaSmiPresent <- doesFileExist "/usr/bin/nvidia-smi"
     if not nvidiaSmiPresent
       then
-        putStrLn
-          "skipping the live Linux GPU host-ceiling calibration: /usr/bin/nvidia-smi is absent on this host"
+        fail
+          "required live Linux GPU host-ceiling calibration: /usr/bin/nvidia-smi is absent on this host"
       else do
         generous <- startCudaHostCeilingCalibrationFixture 4096 256 1
         case generous of
@@ -3047,6 +3066,456 @@ cudaCleanAllocationMib = 64
 cudaCleanCeilingMib :: Int
 cudaCleanCeilingMib = 3072
 
+runInitializationContextAssertions :: IO ()
+runInitializationContextAssertions = do
+  let linuxContext = ProjectInit.initializationHostConfig "linux" "/workspace" True
+  assert
+    (fmap (fmap HostConfig.hostControlPlaneContext) linuxContext == Right (Just "outer-container"))
+    "initialization preserves the Linux outer-container context without decoding a replaceable manifest"
+  assert
+    (ProjectInit.initializationHostConfig "darwin" "/Users/operator/infernix" False == Right Nothing)
+    "Apple initialization retains native path discovery without a Linux image marker"
+  forM_ [("linux", "/workspace", False), ("linux", "/tmp/checkout", True), ("freebsd", "/workspace", True)] $ \(platform, root, marker) ->
+    assert
+      (isLeft (ProjectInit.initializationHostConfig platform root marker))
+      "initialization refuses an unsupported host or missing Linux workspace handoff"
+
+runValidationEvidenceAssertions :: FilePath -> IO ()
+runValidationEvidenceAssertions unitRoot = do
+  completed <- IORef.newIORef ([] :: [Validation.CheckOutcome])
+  Validation.withValidationOutcome (pure ()) (\outcome -> IORef.modifyIORef' completed (<> [outcome]))
+  successful <- IORef.readIORef completed
+  assert (successful == [Validation.ExecutedPass]) "successful execution finalizes exactly once with its actual terminal outcome"
+  failed <-
+    try @SomeException $
+      Validation.withValidationOutcome
+        (IORef.writeIORef completed [Validation.ExecutedPass] >> fail "after-final-check-control")
+        (\outcome -> IORef.modifyIORef' completed (<> [outcome]) >> fail "secondary-finalization-control")
+  recorded <- IORef.readIORef completed
+  let preservesPrimary =
+        case (failed, recorded) of
+          (Left originalFailure, [Validation.ExecutedPass, Validation.ExecutedFailure reason]) -> "after-final-check-control" `isInfixOf` show originalFailure && "after-final-check-control" `isInfixOf` reason
+          _ -> False
+  assert preservesPrimary "failure after the final successful check finalizes as failure and preserves the primary exception"
+  assert
+    (Validation.selectSuiteContext LinuxCpu == Validation.MachineIndependentContext && Validation.selectSuiteContext AppleSilicon == Validation.MachineIndependentContext && Validation.selectSuiteContext LinuxGpu == Validation.NvidiaDeviceContext)
+    "suite context selection is fixed by the typed lane, independently of ambient device presence"
+  assert (isLeft (Validation.validateSuiteContext Validation.NvidiaDeviceContext False)) "a missing mandatory device context refuses before fixture execution"
+  assert (Validation.validateSuiteContext Validation.NvidiaDeviceContext True == Right ()) "an explicitly available device context is the positive selection control"
+  forM_ [AppleSilicon, LinuxCpu, LinuxGpu] $ \lane ->
+    assert (Validation.validateHarnessLane lane lane == Right ()) "matching initialized runtime and harness lanes preserve the selected inventory"
+  assert
+    (isLeft (Validation.validateHarnessLane LinuxCpu LinuxGpu) && isLeft (Validation.validateHarnessLane LinuxGpu LinuxCpu) && isLeft (Validation.validateHarnessLane AppleSilicon LinuxCpu))
+    "a harness cannot switch lanes after device requirements are selected"
+  let immutable = "sha256:" <> replicate 64 'a'
+      deviceCommand image checkout =
+        ClusterCommand.dockerRunNvidiaValidation
+          (ClusterCommand.ContainerName "infernix-validation-control")
+          (ClusterCommand.ImageRef image)
+          checkout
+          "/host/data"
+      destination = "/workspace/.data/runtime/validation/run-control/NvidiaValidation/device"
+      selectedDevice = deviceCommand immutable "/host/checkout" destination
+      deviceArguments = ClusterCommand.renderedCommandArgv (ClusterCommand.renderClusterCommand (const "/unused") selectedDevice)
+  assert
+    (ClusterCommand.validateClusterCommand selectedDevice == Right () && ["--gpus", "all"] `isInfixOf` deviceArguments && immutable `elem` deviceArguments && take 1 (reverse deviceArguments) == [destination])
+    "device dispatch explicitly requests GPUs and carries the immutable image and retained child receipt destination"
+  assert (isLeft (ClusterCommand.validateClusterCommand (deviceCommand "infernix-linux-gpu:local" "/host/checkout" destination))) "device dispatch refuses a mutable image tag"
+  assert (isLeft (ClusterCommand.validateClusterCommand (deviceCommand immutable "relative-checkout" destination))) "device dispatch refuses a relative source handoff"
+  assert (isLeft (ClusterCommand.validateClusterCommand (deviceCommand immutable "/host/checkout" "/outside/receipt"))) "device dispatch refuses an unshared receipt destination"
+  let root = unitRoot </> "validation-evidence"
+      source = root </> "checkout"
+      receipt = root </> "receipt"
+      scope = Validation.UnitScope
+      checks = Validation.requiredChecks scope
+      outcomes = [(check, Validation.ExecutedPass) | check <- checks]
+      verification = Validation.VerificationContext (replicate 64 'b') (Just ("sha256:" <> replicate 64 'a')) (replicate 40 'c') "/fixture-checkout" "x86_64" "linux" "linux-cpu" []
+  removeTestPathIfPresent root
+  createDirectoryIfMissing True (source </> "src")
+  writeFile (source </> ".dockerignore") ".data\nbuild\n"
+  writeFile (source </> "src" </> "Example.hs") "module Example where\nvalue = True\n"
+  expected <- ImageFingerprint.retainSourceSnapshot source (receipt </> "source")
+  unchanged <- ImageFingerprint.sourceSnapshot source
+  assert (expected == unchanged) "an unchanged independent source snapshot is reusable"
+  writeFile (source </> "src" </> "Untracked.hs") "module Untracked where\n"
+  untracked <- ImageFingerprint.sourceSnapshot source
+  assert (untracked /= expected) "a relevant untracked build input invalidates image reuse"
+  removeFile (source </> "src" </> "Untracked.hs")
+  let nestedInput = source </> "test" </> "build" </> "Nested.hs"
+  createDirectoryIfMissing True (takeDirectory nestedInput)
+  writeFile nestedInput "module Nested where\n"
+  nested <- ImageFingerprint.sourceSnapshot source
+  assert (nested /= expected) "a root-only Docker exclusion cannot hide a nested untracked Haskell input"
+  removeFile nestedInput
+  forM_ ["[ab]", "foo/../bar", "a**b", "foo\\bar"] $ \patternText ->
+    assert (isLeft (ImageFingerprint.parseDockerIgnorePatterns patternText)) "unsupported Docker pattern syntax refuses rather than guessing the source inventory"
+  wildcardPatterns <- either fail pure (ImageFingerprint.parseDockerIgnorePatterns "temp?\n**/cache\n")
+  assert
+    (ImageFingerprint.dockerIgnorePathIgnored wildcardPatterns "temp1/file" && not (ImageFingerprint.dockerIgnorePathIgnored wildcardPatterns "nested/temp1/file") && ImageFingerprint.dockerIgnorePathIgnored wildcardPatterns "nested/cache/file")
+    "single-character patterns stay root-relative while an explicit double star spans directory depth"
+  createDirectoryIfMissing True (source </> "docker")
+  writeFile (source </> "docker" </> "Dockerfile.dockerignore") "src\n"
+  overridden <- try @IOException (ImageFingerprint.sourceSnapshot source)
+  assert (isLeft overridden) "a Dockerfile-specific ignore override cannot silently replace the governed source inventory"
+  removeFile (source </> "docker" </> "Dockerfile.dockerignore")
+  writeFile (source </> "src" </> "Example.hs") "syntax-breaking edit\n"
+  broken <- ImageFingerprint.sourceSnapshot source
+  assert (broken /= expected) "a syntax-breaking source edit cannot validate an old image"
+  writeFile (source </> "src" </> "Example.hs") "module Example where\nvalue = True\n"
+  writeFile (source </> ".dockerignore") ".data\n.dockerignore\nsrc\n"
+  hidden <- ImageFingerprint.sourceSnapshot source
+  assert (hidden /= expected) "changing the input filter cannot hide its own change"
+  assert (Validation.validateCheckOutcomes scope outcomes == Right ()) "complete executed required-check inventory passes"
+  forM_
+    [ drop 1 outcomes,
+      outcomes <> take 1 outcomes,
+      [(check, Validation.Skipped "fixture unavailable") | check <- checks],
+      [(check, Validation.NotApplicable "wrong context") | check <- checks],
+      [(check, Validation.ExecutedFailure "assertion failed") | check <- checks]
+    ]
+    (\invalid -> assert (isLeft (Validation.validateCheckOutcomes scope invalid)) "absent, duplicate, skipped, inapplicable, and failed mandatory assertions refuse independently")
+  artifacts <- forM checks $ \check -> do
+    createDirectoryIfMissing True (receipt </> show check)
+    logs <- forM ["stdout.log", "stderr.log"] $ \name -> do
+      writeFile (receipt </> show check </> name) "fixture output"
+      pure (name, Text.unpack (TextEncoding.decodeUtf8 (Base16.encode (SHA256.hash "fixture output"))))
+    let name = show check <> ".json"
+        payload = Aeson.encode (Aeson.object ["check" Aeson..= check, "outcome" Aeson..= Validation.ExecutedPass, "configuration" Aeson..= ([] :: [(String, String)]), "logs" Aeson..= logs, "childReceiptDigest" Aeson..= (Nothing :: Maybe String)])
+    LazyChar8.writeFile (receipt </> name) payload
+    pure (name, Text.unpack (TextEncoding.decodeUtf8 (Base16.encode (SHA256.hashlazy payload))))
+  let writeReceipt = writeReceiptWithTerminal Validation.ExecutedPass True
+      writeReceiptWithTerminal terminal passed sourceIdentity inventory recordedOutcomes =
+        LazyChar8.writeFile
+          (receipt </> "receipt.json")
+          ( Aeson.encode
+              ( Aeson.object
+                  [ "version" Aeson..= (1 :: Int),
+                    "scope" Aeson..= scope,
+                    "sourceInventory" Aeson..= sourceIdentity,
+                    "sourceDigest" Aeson..= Validation.sourceInventoryDigest sourceIdentity,
+                    "digestAlgorithm" Aeson..= ("sha256-path-type-mode-payload-v1" :: String),
+                    "sourceDigestAlgorithm" Aeson..= ("sha256-aeson-source-inventory-v1" :: String),
+                    "binaryDigest" Aeson..= replicate 64 'b',
+                    "imageIdentity" Aeson..= Just ("sha256:" <> replicate 64 'a'),
+                    "commit" Aeson..= replicate 40 'c',
+                    "checkoutIdentity" Aeson..= ("/fixture-checkout" :: String),
+                    "architecture" Aeson..= ("x86_64" :: String),
+                    "operatingSystem" Aeson..= ("linux" :: String),
+                    "lane" Aeson..= ("linux-cpu" :: String),
+                    "actionOutcome" Aeson..= terminal,
+                    "passed" Aeson..= passed,
+                    "sourceStable" Aeson..= True,
+                    "requiredChecks" Aeson..= inventory,
+                    "outcomes" Aeson..= recordedOutcomes,
+                    "artifacts" Aeson..= artifacts,
+                    "configuration" Aeson..= ([] :: [(String, String)])
+                  ]
+              )
+          )
+      refuses operation message = do
+        result <- try @IOException operation
+        assert (isLeft result) message
+  writeReceipt expected checks outcomes
+  Validation.verifyValidationReceipt scope verification expected receipt
+  refuses
+    (Validation.verifyValidationReceipt scope verification untracked receipt)
+    "a receipt cannot change the independently expected source handoff"
+  writeReceipt expected (drop 1 checks) outcomes
+  refuses (Validation.verifyValidationReceipt scope verification expected receipt) "an altered receipt inventory refuses"
+  writeReceipt expected checks outcomes
+  forM_
+    [ verification {Validation.verificationBinary = replicate 64 'd'},
+      verification {Validation.verificationImage = Nothing},
+      verification {Validation.verificationCommit = replicate 40 'e'},
+      verification {Validation.verificationCheckout = "/another-checkout"},
+      verification {Validation.verificationArchitecture = "aarch64"},
+      verification {Validation.verificationOperatingSystem = "darwin"},
+      verification {Validation.verificationLane = "linux-gpu"},
+      verification {Validation.verificationConfiguration = [("unexpected", "digest")]}
+    ]
+    (\changed -> refuses (Validation.verifyValidationReceipt scope changed expected receipt) "changed execution identity or configuration refuses independently")
+  writeReceiptWithTerminal (Validation.ExecutedFailure "failure after the final check") True expected checks outcomes
+  refuses (Validation.verifyValidationReceipt scope verification expected receipt) "successful checks cannot conceal a failed enclosing execution"
+  writeReceiptWithTerminal Validation.ExecutedPass False expected checks outcomes
+  refuses (Validation.verifyValidationReceipt scope verification expected receipt) "a provisional receipt is not a completed execution"
+  writeReceipt expected checks outcomes
+  let artifact = receipt </> "WebUnit.json"
+  original <- LazyChar8.readFile artifact
+  _ <- evaluate (LazyChar8.length original)
+  removeFile artifact
+  refuses (Validation.verifyValidationReceipt scope verification expected receipt) "a missing retained check artifact refuses"
+  writeFile artifact "altered artifact"
+  refuses (Validation.verifyValidationReceipt scope verification expected receipt) "an altered retained check artifact refuses"
+  LazyChar8.writeFile artifact original
+  let logPath = receipt </> "WebUnit" </> "stdout.log"
+  removeFile logPath
+  refuses (Validation.verifyValidationReceipt scope verification expected receipt) "a missing executed-check log refuses"
+  writeFile logPath "altered output"
+  refuses (Validation.verifyValidationReceipt scope verification expected receipt) "an altered executed-check log refuses"
+  writeFile logPath "fixture output"
+  Validation.verifyValidationReceipt scope verification expected receipt
+  writeFile (receipt </> "source" </> "src" </> "Example.hs") "altered preimage"
+  refuses (Validation.verifyValidationReceipt scope verification expected receipt) "an altered source preimage refuses"
+
+-- | Device fixtures are selected by the binary's closed toolchain vocabulary.
+-- The default suite never infers device coverage from tool presence.
+dispatchNvidiaValidationTest :: IO ()
+dispatchNvidiaValidationTest = do
+  args <- getArgs
+  case args of
+    [option] ->
+      case lookup option [(BuildMemory.nvidiaValidationTestOption test, operation) | (test, operation) <- fixtures] of
+        Nothing -> fail ("unknown unit fixture selection: " <> option)
+        Just operation -> Validation.requireNvidiaValidationContext >> operation >> exitSuccess
+    [] -> pure ()
+    _ -> fail "unit fixture selection requires one closed option"
+  where
+    fixtures =
+      [ (BuildMemory.NvidiaWatchdog, runNvidiaWatchdogAssertions),
+        (BuildMemory.NvidiaCeilingBreach, runNvidiaVramBreachAssertions),
+        (BuildMemory.NvidiaCompetingTenant, runCompetingNvidiaTenantAssertion),
+        (BuildMemory.NvidiaHostCeiling, runLinuxGpuHostCeilingCalibrationAssertion)
+      ]
+
+runDeployedRouteInventoryAssertions :: IO ()
+runDeployedRouteInventoryAssertions =
+  forM_ [True, False] $ \demoEnabled -> do
+    helmValues <- expectRight "decode binary-owned route values" (Yaml.decodeEither' (ByteString8.pack (unlines (Routes.routeHelmValues demoEnabled))))
+    observedRoutes <- expectRight "construct deployed route fixture" (AesonTypes.parseEither parseRouteValues helmValues)
+    let inventory :: [Aeson.Value] -> Aeson.Value
+        inventory entries = Aeson.object ["items" Aeson..= entries]
+        healthy = inventory observedRoutes
+        refuse label payload = assert (isLeft (Routes.validateDeployedRoutes demoEnabled payload)) label
+    assert (isRight (Routes.validateDeployedRoutes demoEnabled healthy)) "matching current-generation routes pass with API defaults"
+    refuse "missing deployed route is refused" (inventory (drop 1 observedRoutes))
+    refuse "duplicate deployed route is refused" (inventory (take 1 observedRoutes <> observedRoutes))
+    assert (isLeft (Routes.validateDeployedRoutes (not demoEnabled) healthy)) "demo visibility must match the active configuration"
+    forM_
+      [ (["metadata", "name"], Aeson.String "unexpected-minio-route"),
+        (["metadata", "namespace"], Aeson.String "foreign"),
+        (["metadata", "deletionTimestamp"], Aeson.String "2026-01-01T00:00:00Z"),
+        (["metadata", "generation"], Aeson.Number 2),
+        (["spec", "hostnames"], Aeson.toJSON (["unrelated.invalid"] :: [Text.Text])),
+        (["spec", "parentRefs", "name"], Aeson.String "another-gateway"),
+        (["spec", "rules", "matches", "method"], Aeson.String "POST"),
+        (["spec", "rules", "matches", "path", "value"], Aeson.String "/minio/s3"),
+        (["spec", "rules", "backendRefs", "name"], Aeson.String "minio"),
+        (["spec", "rules", "backendRefs", "port"], Aeson.Number 1234),
+        (["spec", "rules", "backendRefs", "namespace"], Aeson.String "foreign"),
+        (["spec", "rules", "backendRefs", "weight"], Aeson.Number 0),
+        (["spec", "rules", "filters"], Aeson.toJSON [Aeson.object ["type" Aeson..= ("RequestRedirect" :: Text.Text)]]),
+        (["status", "parents", "controllerName"], Aeson.String "unrelated-controller"),
+        (["status", "parents", "conditions", "status"], Aeson.String "False"),
+        (["status", "parents", "conditions", "observedGeneration"], Aeson.Number 0)
+      ]
+      $ \(fieldPath, replacement) -> do
+        altered <- expectRight "apply exactly one route-observation mutation" (replaceRouteFixtureField ("items" : fieldPath) replacement healthy)
+        refuse ("route observation drift is refused: " <> show fieldPath) altered
+  where
+    parent = Aeson.object ["name" Aeson..= ("infernix-edge" :: Text.Text), "sectionName" Aeson..= ("http" :: Text.Text)]
+    condition conditionType =
+      Aeson.object
+        [ "type" Aeson..= conditionType,
+          "status" Aeson..= ("True" :: Text.Text),
+          "observedGeneration" Aeson..= (1 :: Int)
+        ]
+    parseRouteValues = Aeson.withObject "route values" $ \objectValue ->
+      objectValue Aeson..: "routes" >>= mapM parseRouteValue
+    parseRouteValue = Aeson.withObject "route" $ \objectValue -> do
+      routeNameValue <- objectValue Aeson..: "name"
+      prefixValue <- objectValue Aeson..: "pathPrefix"
+      backendName <- objectValue Aeson..: "serviceName"
+      backendPort <- objectValue Aeson..: "servicePort"
+      rewriteValue <- objectValue Aeson..: "rewritePrefix"
+      let filters =
+            if Text.null rewriteValue
+              then []
+              else
+                [ Aeson.object
+                    [ "type" Aeson..= ("URLRewrite" :: Text.Text),
+                      "urlRewrite"
+                        Aeson..= Aeson.object
+                          [ "path"
+                              Aeson..= Aeson.object
+                                [ "type" Aeson..= ("ReplacePrefixMatch" :: Text.Text),
+                                  "replacePrefixMatch" Aeson..= rewriteValue
+                                ]
+                          ]
+                    ]
+                ]
+      pure $
+        Aeson.object
+          [ "metadata"
+              Aeson..= Aeson.object
+                [ "name" Aeson..= (routeNameValue :: Text.Text),
+                  "namespace" Aeson..= ("platform" :: Text.Text),
+                  "generation" Aeson..= (1 :: Int)
+                ],
+            "spec"
+              Aeson..= Aeson.object
+                [ "parentRefs" Aeson..= [parent],
+                  "rules"
+                    Aeson..= [ Aeson.object
+                                 [ "matches"
+                                     Aeson..= [ Aeson.object
+                                                  ["path" Aeson..= Aeson.object ["type" Aeson..= ("PathPrefix" :: Text.Text), "value" Aeson..= (prefixValue :: Text.Text)]]
+                                              ],
+                                   "backendRefs" Aeson..= [Aeson.object ["name" Aeson..= (backendName :: Text.Text), "port" Aeson..= (backendPort :: Int)]],
+                                   "filters" Aeson..= filters
+                                 ]
+                             ]
+                ],
+            "status"
+              Aeson..= Aeson.object
+                [ "parents"
+                    Aeson..= [ Aeson.object
+                                 [ "parentRef" Aeson..= parent,
+                                   "controllerName" Aeson..= ("gateway.envoyproxy.io/gatewayclass-controller" :: Text.Text),
+                                   "conditions" Aeson..= map condition (["Accepted", "ResolvedRefs"] :: [Text.Text])
+                                 ]
+                             ]
+                ]
+          ]
+
+-- Arrays select their first member; every nonterminal field must already
+-- exist, so a broken mutation cannot silently leave the healthy fixture intact.
+replaceRouteFixtureField :: [Text.Text] -> Aeson.Value -> Aeson.Value -> Either String Aeson.Value
+replaceRouteFixtureField [] replacement _ = Right replacement
+replaceRouteFixtureField fieldPath replacement (Aeson.Array values) =
+  case Vector.uncons values of
+    Nothing -> Left "route fixture mutation encountered an empty array"
+    Just (firstValue, rest) -> do
+      changed <- replaceRouteFixtureField fieldPath replacement firstValue
+      pure (Aeson.Array (Vector.cons changed rest))
+replaceRouteFixtureField (fieldName : remaining) replacement (Aeson.Object fields) = do
+  let key = Key.fromText fieldName
+  next <-
+    if null remaining
+      then Right Aeson.Null
+      else maybe (Left ("route fixture mutation field is absent: " <> Text.unpack fieldName)) Right (KeyMap.lookup key fields)
+  changed <- replaceRouteFixtureField remaining replacement next
+  pure (Aeson.Object (KeyMap.insert key changed fields))
+replaceRouteFixtureField _ _ _ = Left "route fixture mutation encountered a scalar"
+
+-- The server is an isolated owned registry fixture. The production bounded
+-- skopeo verifier must retrieve its actual bytes, independently of API and tag
+-- readiness; no operator registry or shared Docker content is mutated.
+data RegistryBlobFixture
+  = RegistryBlobsIntact
+  | RegistryBlobMissing
+  | RegistryBlobCorrupt
+  deriving (Eq, Show)
+
+runRegistryBlobServabilityAssertions :: IO ()
+runRegistryBlobServabilityAssertions = do
+  fixtureMode <- IORef.newIORef RegistryBlobsIntact
+  observedRequests <- IORef.newIORef []
+  let firstLayer = Lazy.replicate 1024 0
+      secondLayer = Lazy.replicate 2048 0
+      digestOf = TextEncoding.decodeUtf8 . Base16.encode . SHA256.hashlazy
+      qualifiedDigest payload = "sha256:" <> digestOf payload
+      layerType = "application/vnd.oci.image.layer.v1.tar" :: Text.Text
+      configType = "application/vnd.oci.image.config.v1+json" :: Text.Text
+      manifestType = "application/vnd.oci.image.manifest.v1+json" :: Text.Text
+      configPayload =
+        Aeson.encode $
+          Aeson.object
+            [ "architecture" Aeson..= ("amd64" :: Text.Text),
+              "os" Aeson..= ("linux" :: Text.Text),
+              "config" Aeson..= Aeson.object [],
+              "rootfs"
+                Aeson..= Aeson.object
+                  [ "type" Aeson..= ("layers" :: Text.Text),
+                    "diff_ids" Aeson..= map qualifiedDigest [firstLayer, secondLayer]
+                  ]
+            ]
+      descriptor mediaType payload =
+        Aeson.object
+          [ "mediaType" Aeson..= mediaType,
+            "size" Aeson..= Lazy.length payload,
+            "digest" Aeson..= qualifiedDigest payload
+          ]
+      manifestPayload =
+        Aeson.encode $
+          Aeson.object
+            [ "schemaVersion" Aeson..= (2 :: Int),
+              "mediaType" Aeson..= manifestType,
+              "config" Aeson..= descriptor configType configPayload,
+              "layers" Aeson..= map (descriptor layerType) [firstLayer, secondLayer]
+            ]
+      tagPayload = "{\"name\":\"fixture/probe\",\"tags\":[\"latest\"]}"
+      blobs = [(qualifiedDigest payload, payload) | payload <- [configPayload, firstLayer, secondLayer]]
+      changedBlob = qualifiedDigest secondLayer
+      blobRequest digest = (HTTPTypes.methodGet, TextEncoding.encodeUtf8 ("/v2/fixture/probe/blobs/" <> digest))
+      application request respond = do
+        IORef.atomicModifyIORef' observedRequests (\entries -> ((Wai.requestMethod request, Wai.rawPathInfo request) : entries, ()))
+        mode <- IORef.readIORef fixtureMode
+        let reply status mediaType payload =
+              respond $
+                Wai.responseLBS
+                  status
+                  [ (HTTPTypes.hContentType, mediaType),
+                    ("Docker-Distribution-Api-Version", "registry/2.0")
+                  ]
+                  payload
+            missing = reply HTTPTypes.status404 "application/json" "{\"errors\":[{\"code\":\"BLOB_UNKNOWN\"}]}"
+        case Wai.pathInfo request of
+          _ | Wai.rawPathInfo request `elem` ["/v2", "/v2/"] -> reply HTTPTypes.status200 "application/json" "{}"
+          ["v2", "fixture", "probe", "tags", "list"] -> reply HTTPTypes.status200 "application/json" tagPayload
+          ["v2", "fixture", "probe", "manifests", reference]
+            | reference == "latest" || reference == qualifiedDigest manifestPayload ->
+                reply HTTPTypes.status200 (TextEncoding.encodeUtf8 manifestType) manifestPayload
+          ["v2", "fixture", "probe", "blobs", digest] ->
+            case lookup digest blobs of
+              Nothing -> missing
+              Just payload
+                | digest == changedBlob && mode == RegistryBlobMissing -> missing
+                | digest == changedBlob && mode == RegistryBlobCorrupt ->
+                    reply HTTPTypes.status200 "application/octet-stream" (Lazy.replicate (Lazy.length payload) 1)
+                | otherwise -> reply HTTPTypes.status200 "application/octet-stream" payload
+          _ -> missing
+  manager <-
+    HTTP.newManager
+      HTTP.defaultManagerSettings
+        { HTTP.managerResponseTimeout = HTTP.responseTimeoutMicro 5000000
+        }
+  Warp.testWithApplication (pure application) $ \port -> do
+    let authority = "127.0.0.1:" <> show port
+        targetRef = authority <> "/fixture/probe:latest"
+        options =
+          defaultRegistryPublishOptions
+            { registryHost = authority,
+              registryClientHost = authority,
+              registryApiHost = authority,
+              registryNamespace = "fixture"
+            }
+        assertMetadata =
+          forM_ [("/v2/", "{}"), ("/v2/fixture/probe/tags/list", tagPayload)] $ \(suffix, expectedPayload) -> do
+            request <- HTTP.parseRequest ("http://" <> authority <> suffix)
+            response <- HTTP.httpLbs request manager
+            assert
+              (HTTP.responseStatus response == HTTPTypes.status200 && HTTP.responseBody response == expectedPayload)
+              "registry API and exact tag metadata remain available independently of blob contents"
+        runControl mode = do
+          IORef.writeIORef fixtureMode mode
+          IORef.writeIORef observedRequests []
+          assertMetadata
+          result <- try @IOException (verifyRegistryImage options targetRef)
+          requests <- IORef.readIORef observedRequests
+          assertMetadata
+          case mode of
+            RegistryBlobsIntact -> do
+              assert (isRight result) ("complete registry image is independently retrievable: " <> show result)
+              forM_ blobs $ \(digest, _) ->
+                assert (blobRequest digest `elem` requests) "each fresh verification retrieves the config and every layer from the registry"
+            _ ->
+              assert
+                ( either (isInfixOf "blob is not servable" . show) (const False) result
+                    && blobRequest changedBlob `elem` requests
+                )
+                ("actual registry-only readback rejects the changed referenced blob while API/tags remain intact: " <> show mode <> "; " <> show result)
+    mapM_ runControl [RegistryBlobsIntact, RegistryBlobsIntact, RegistryBlobMissing, RegistryBlobCorrupt]
+
 main :: IO ()
 main = do
   -- Test images spawn self-exec children through the same close_fds
@@ -3056,9 +3525,14 @@ main = do
   dispatchBuildMemoryFixture
   dispatchCappedEngineMemoryFixture
   Subprocess.dispatchInternalSubprocessMode
+  dispatchNvidiaValidationTest
   unitTestRoot <- testRootPath "unit"
   ProcessIdentitySpec.runProcessIdentityTests
     (unitTestRoot </> "process-identity")
+  runInitializationContextAssertions
+  runRegistryBlobServabilityAssertions
+  runDeployedRouteInventoryAssertions
+  runValidationEvidenceAssertions unitTestRoot
   runDescriptorSpaceAssertions
   runNativeArtifactMarkerAssertions
   runAppleRuntimeEnvironmentAssertions
@@ -3067,10 +3541,6 @@ main = do
   runMissingProcessGroupSettlementAssertions
   runLinuxWatchdogBreachAssertions
   runAppleWatchdogBreachAssertions
-  runNvidiaWatchdogAssertions
-  runNvidiaVramBreachAssertions
-  runCompetingNvidiaTenantAssertion
-  runLinuxGpuHostCeilingCalibrationAssertion
   assert (length (catalogForMode AppleSilicon) == 16) "apple-silicon runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu runnable catalog count matches the revised matrix"
@@ -3171,6 +3641,10 @@ main = do
         && not (commandRequiresConfiguredStartup (TestInitCommand (Just AppleSilicon) (Just True) Nothing))
         && not (commandRequiresConfiguredStartup (ClusterReclaimSlotCommand Nothing))
         && not (commandRequiresConfiguredStartup ShowRootHelp)
+        && not (commandRequiresConfiguredStartup InternalLinuxHostSeedCommand)
+        && not (commandRequiresConfiguredStartup InternalImageBuildIdentityCommand)
+        && not (commandRequiresConfiguredStartup InternalNativeBuildBeginCommand)
+        && not (commandRequiresConfiguredStartup InternalNativeBuildFinishCommand)
         && commandRequiresConfiguredStartup TestUnitCommand
     )
     "init, test init, cluster-slot recovery, and help remain reachable without configured startup while ordinary operational commands require it"
@@ -3260,6 +3734,9 @@ main = do
   cabalManifestContents <- readFile "infernix.cabal"
   linuxDockerfileContents <- readFile "docker/Dockerfile"
   appleBootstrapContents <- readFile "bootstrap/apple-silicon.sh"
+  assert
+    ("run_launcher service --role engine" `isInfixOf` appleBootstrapContents)
+    "the manual Apple daemon wrapper explicitly starts the engine role"
   buildMemorySource <- readFile "src/Infernix/BuildMemory.hs"
   provisioningSource <- readFile "src/Infernix/Engines/Provisioning.hs"
   artifactInternalSource <- readFile "src/Infernix/Engines/Artifact/Internal.hs"
@@ -3513,8 +3990,11 @@ main = do
     ("ln -s /opt/infernix/chart/charts /workspace/chart/charts" `isInfixOf` linuxDockerfileContents)
     "Sprint 1.11: Linux launcher preserves Helm's chart/charts dependency lookup through an image-local symlink"
   assert
-    ("hostArchitecture =" `isInfixOf` linuxDockerfileContents)
-    "Linux launcher image bakes hostArchitecture into the outer-container host manifest"
+    ( "infernix internal linux-host-seed > /opt/infernix/dhall/ImageHostSeed.dhall" `isInfixOf` linuxDockerfileContents
+        && not ("hostArchitecture =" `isInfixOf` linuxDockerfileContents)
+        && not ("kindRead = { timeoutMicros" `isInfixOf` linuxDockerfileContents)
+    )
+    "Linux launcher delegates seed generation to the binary without duplicating the decoder record"
   -- The image build populates the JavaCPP cache that the deployed Linux target
   -- then loads from, so it is a second producer of the same invocation. It has
   -- to agree with the consumer on the whole property set, not just the cache
@@ -3532,23 +4012,25 @@ main = do
         ]
     )
     "Sprint 1.20: the Linux image pre-extraction runs the same JVM, cache directory, classpath, and symlink-free JavaCPP configuration the deployed target reads"
-  bakedLinuxHostManifest <-
-    expectRight
-      "extract the Linux launcher image host manifest"
-      (extractDockerfileHostManifest linuxDockerfileContents)
   let bakedLinuxHostManifestPath =
-        unitTestRoot </> "dockerfile-infernix-host.dhall"
+        unitTestRoot </> "binary-infernix-host.dhall"
       expectedBakedLinuxHostConfig =
-        HostConfig.defaultLinuxOuterContainerHostConfigForArchitecture
-          "/root"
-          "arm64"
+        HostConfig.defaultLinuxOuterContainerHostConfig "/root"
   createDirectoryIfMissing True unitTestRoot
-  writeFile bakedLinuxHostManifestPath bakedLinuxHostManifest
+  LazyChar8.writeFile bakedLinuxHostManifestPath (HostConfig.encodeHostConfig expectedBakedLinuxHostConfig)
   decodedBakedLinuxHostConfig <-
     HostConfig.decodeHostConfigFile bakedLinuxHostManifestPath
   assert
     (decodedBakedLinuxHostConfig == expectedBakedLinuxHostConfig)
-    "Linux launcher image bakes the complete typed HostConfig, including the exact default command-policy record"
+    "the binary seed producer round-trips the exact host defaults and command policies"
+  assert
+    (parseCommand ["internal", "linux-host-seed"] == Right InternalLinuxHostSeedCommand)
+    "the image seed command is a closed config-independent operation"
+  when (System.Info.os == "linux") $ do
+    emittedSeed <- HostConfig.decodeHostConfigFile "/opt/infernix/dhall/ImageHostSeed.dhall"
+    assert
+      (emittedSeed == expectedBakedLinuxHostConfig)
+      "the actual image-build binary output decodes to the semantic defaults"
   assert
     (not ("colima" `isInfixOf` linuxDockerfileContents))
     "Linux launcher image host manifest does not carry the retired Colima tool field"
@@ -4353,6 +4835,7 @@ main = do
       DemoConfigProperties.runDemoConfigParserProperties paths
       DemoConfigProperties.runColimaPledgeParserProperties
       EnforcerProperties.runFiniteCgroupLimitParserProperties
+      EnforcerProperties.runCgroupAvailabilityProperties (unitTestRoot </> "cgroup-availability")
       assertExecutionPlanCompilerCoverage paths unitTestRoot demoConfig appleHostConfig
       -- Phase 4 Sprint 4.27 — the typed inference-memory budget
       -- round-trips through the substrate config. Config validation accepts
@@ -7280,6 +7763,63 @@ main = do
   removeTestPathIfPresent lifecycleLockRoot
   createDirectoryIfMissing True lifecycleLockRoot
   let lifecycleLockPaths = subprocessPaths {runtimeRoot = lifecycleLockRoot}
+      probeLifecycle = ClusterInternal.runClusterLifecycleAt lifecycleLockPaths (Cluster.finishLifecycle ())
+      readLifecycle = ClusterInternal.runClusterLifecycleAt lifecycleLockPaths (`Cluster.observeLifecycle` Cluster.finishLifecycle)
+  initialLifecycle <- readLifecycle
+  assert (isNothing initialLifecycle) "a closed lifecycle observation returns an ordinary absent-state value"
+  let invalidLifecycleState = lifecycleLockRoot </> "cluster-state.state"
+  writeFile invalidLifecycleState "invalid-lifecycle-observation"
+  rejectedLifecycle <- try @SomeException readLifecycle
+  assert (either (isInfixOf "exists but could not be decoded" . displayException) (const False) rejectedLifecycle) "an invalid state observation fails inside the lifecycle interpreter"
+  preservedLifecycleBytes <- readFile invalidLifecycleState
+  assert (preservedLifecycleBytes == "invalid-lifecycle-observation") "a failed lifecycle observation preserves the malformed state"
+  removeFile invalidLifecycleState
+  probeLifecycle
+  retainedLifecycleAction <-
+    ClusterInternal.runClusterLifecycleAt lifecycleLockPaths (Cluster.finishLifecycle probeLifecycle)
+  withClusterLifecycleLock lifecycleLockPaths $ \_ -> do
+    rejectedRetainedAction <- try @IOException retainedLifecycleAction
+    assert (isLeft rejectedRetainedAction) "a retained ordinary action must reacquire the real lock before entering a protected operation"
+  retainedLifecycleAction
+  let observeContinuously :: Cluster.LifecycleSession s %1 -> Cluster.LifecycleProgram s ()
+      observeContinuously session =
+        Cluster.observeLifecycle session (const observeContinuously)
+      awaitInterpreterLock = do
+        held <- kernelFileLockIsHeld (lifecycleLockRoot </> "locks" </> "cluster-lifecycle.lock")
+        unless held (yield >> awaitInterpreterLock)
+      -- The nonblocking observer briefly acquires the lock when it is free.
+      -- Retry only that admission refusal until the interpreter owns the region.
+      runObservedInterpreter = do
+        entered <- try @IOException (ClusterInternal.runClusterLifecycleAt lifecycleLockPaths observeContinuously)
+        case entered of
+          Left failure
+            | "cluster lifecycle lock is already held:" `isInfixOf` displayException failure ->
+                yield >> runObservedInterpreter
+            | otherwise -> throwIO failure
+          Right () -> pure ()
+  interpreterResult <- MVar.newEmptyMVar
+  bracketPreservingPrimary
+    ( forkIOWithUnmask
+        (\unmask -> try @SomeException (unmask runObservedInterpreter) >>= MVar.putMVar interpreterResult)
+    )
+    ( \thread -> do
+        killThread thread
+        joined <- timeout 5000000 (MVar.readMVar interpreterResult)
+        assert (isJust joined) "the cancelled lifecycle interpreter thread is joined before fixture cleanup"
+    )
+    ( \thread -> do
+        entered <- timeout 5000000 awaitInterpreterLock
+        assert (isJust entered) "the closed lifecycle interpreter holds the actual kernel lock while interpreting observations"
+        refusedConcurrentProgram <- try @IOException probeLifecycle
+        assert (isLeft refusedConcurrentProgram) "a second closed program cannot enter the interpreter's held region"
+        killThread thread
+        cancelled <- timeout 5000000 (MVar.readMVar interpreterResult)
+        assert
+          (case cancelled of Just (Left failure) -> isJust (fromException failure :: Maybe SomeAsyncException); _ -> False)
+          "asynchronous cancellation leaves the actual closed interpreter as a failure"
+        reacquired <- try @IOException probeLifecycle
+        assert (isRight reacquired) "the closed interpreter releases its real lock after asynchronous cancellation"
+    )
   (contenderGateReader, contenderGateWriter) <- PosixIO.createPipe
   contenderPid <-
     forkProcess $ do
@@ -7288,7 +7828,7 @@ main = do
       PosixIO.closeFd contenderGateReader
       contenderResult <-
         try @IOException
-          (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+          probeLifecycle
       exitImmediately $
         case (contenderGate, contenderResult) of
           ("x", Left _) -> ExitSuccess
@@ -7297,7 +7837,7 @@ main = do
   withClusterLifecycleLock lifecycleLockPaths $ \_ -> do
     nestedResult <-
       try @IOException
-        (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+        probeLifecycle
     assert
       (isLeft nestedResult)
       "a nested lifecycle-lock acquisition through an independent descriptor fails"
@@ -7305,7 +7845,7 @@ main = do
     _ <-
       forkIO
         ( try @IOException
-            (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+            probeLifecycle
             >>= MVar.putMVar sameProcessContender
         )
     sameProcessResult <-
@@ -7321,7 +7861,7 @@ main = do
       "a second CLI process cannot enter the retained-state lifecycle region while its lock is held"
   lifecycleLockReleased <-
     try @IOException
-      (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+      probeLifecycle
   assert
     (isRight lifecycleLockReleased)
     "the kernel lifecycle lock is released after the outer region exits"
@@ -7335,7 +7875,7 @@ main = do
     "a synchronous exception escapes the lifecycle-lock region"
   lifecycleLockAfterException <-
     try @IOException
-      (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+      probeLifecycle
   assert
     (isRight lifecycleLockAfterException)
     "a synchronous exception releases the kernel lifecycle lock"
@@ -7365,7 +7905,7 @@ main = do
     "asynchronous cancellation escapes the lifecycle-lock region"
   lifecycleLockAfterCancellation <-
     try @IOException
-      (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+      probeLifecycle
   assert
     (isRight lifecycleLockAfterCancellation)
     "asynchronous cancellation releases the kernel lifecycle lock"
@@ -7399,7 +7939,7 @@ main = do
   _ <- getProcessStatus True False lockOwnerPid
   lifecycleLockAfterOwnerDeath <-
     try @IOException
-      (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+      probeLifecycle
   assert
     (isRight lifecycleLockAfterOwnerDeath)
     "process death automatically releases the kernel lifecycle lock"
@@ -7439,7 +7979,7 @@ main = do
     )
     "test-only acquisition and terminal-observation hooks reject relative synchronization paths"
   assert
-    ( length allClusterOperations == 41
+    ( length allClusterOperations == 42
         && length (nub allClusterOperations) == length allClusterOperations
         && map actualPolicy allClusterOperations
           == map expectedClusterOperationPolicy allClusterOperations
@@ -12599,6 +13139,7 @@ main = do
         cleanupProofRuntimeRoot </> "bounded-command-activity"
       cleanupProofActivitySentinel =
         cleanupProofActivityRoot </> "proof-sentinel"
+      cleanupProofValidationSentinel = cleanupProofRuntimeRoot </> "validation" </> "retained-evidence"
       cleanupProofRemovableMetadata =
         cleanupProofRuntimeRoot </> "removable-metadata"
   removeTestPathIfPresent cleanupProofRoot
@@ -12607,13 +13148,121 @@ main = do
   createDirectoryIfMissing True cleanupProofActivityRoot
   setFileMode cleanupProofActivityRoot 0o700
   writeFile cleanupProofActivitySentinel "must survive cleanup\n"
+  createDirectoryIfMissing True (takeDirectory cleanupProofValidationSentinel)
+  writeFile cleanupProofValidationSentinel "source-bound validation evidence\n"
   writeFile cleanupProofRemovableMetadata "must be removed\n"
+  -- The inventory helper runs between initial admission and the raw scrub.
+  -- Replace one durable record from that helper and prove exact preservation.
+  let cleanupReservationPath = cleanupProofRuntimeRoot </> "locks" </> "harness-cluster-slot.reserved"
+      cleanupStatePath = cleanupProofRuntimeRoot </> "cluster-state.state"
+      replaceTransaction value =
+        unlines
+          . map
+            (\line -> if "config-transaction=" `isPrefixOf` line then "config-transaction=" <> value else line)
+          . lines
+  originalCleanupReservation <- System.IO.readFile' cleanupReservationPath
+  let changedCleanupReservation = replaceTransaction "restored" originalCleanupReservation
+  writeExecutableFixture
+    fixtureKindPath
+    ("#!/bin/sh\nprintf '%b' " <> show changedCleanupReservation <> " > " <> show cleanupReservationPath <> "\n")
+  swappedCleanup <- try @IOException (cleanupHarnessRuntimeState cleanupProofPaths AppleSilicon)
+  swappedReservationBytes <- System.IO.readFile' cleanupReservationPath
+  preservedCleanupBytes <- System.IO.readFile' cleanupProofRemovableMetadata
+  assert
+    (isLeft swappedCleanup && swappedReservationBytes == changedCleanupReservation && preservedCleanupBytes == "must be removed\n")
+    "runtime cleanup refuses a reservation replaced by its inventory helper before deleting metadata"
+  writeFile cleanupReservationPath originalCleanupReservation
+  let replacementStatePath = cleanupProofRoot </> "replacement-state"
+  writeClusterStateFile replacementStatePath operatorPresentState
+  expectedReplacementState <- BS.readFile replacementStatePath
+  writeExecutableFixture
+    fixtureKindPath
+    ("#!/bin/sh\n/bin/cp " <> show replacementStatePath <> " " <> show cleanupStatePath <> "\n")
+  swappedStateCleanup <- try @IOException (cleanupHarnessRuntimeState cleanupProofPaths AppleSilicon)
+  preservedStateBytes <- BS.readFile cleanupStatePath
+  preservedMetadataBytes <- System.IO.readFile' cleanupProofRemovableMetadata
+  assert
+    (isLeft swappedStateCleanup && preservedStateBytes == expectedReplacementState && preservedMetadataBytes == "must be removed\n")
+    "runtime cleanup refuses state replaced during inventory and preserves the exact new record"
+  removeFile cleanupStatePath
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  removeFile cleanupProofActivitySentinel
+  -- Exercise the private production transaction runner with distinguishable
+  -- config bytes and a real held harness reservation.
+  let transactionConfig = cleanupProofRoot </> "infernix.dhall"
+      transactionBackup = transactionConfig <> ".harness-backup"
+      setupTransaction = do
+        renameFile transactionConfig transactionBackup
+        writeFile transactionConfig harnessConfigContents
+      restoreTransaction = do
+        removeFile transactionConfig
+        renameFile transactionBackup transactionConfig
+      runTransaction = ClusterInternal.withHarnessConfigTransaction cleanupProofPaths True
+      resetTransaction = do
+        writeFile cleanupReservationPath originalCleanupReservation
+        writeFile transactionConfig operatorConfigContents
+  resetTransaction
+  runTransaction setupTransaction (pure ()) restoreTransaction
+  normallyRestored <- System.IO.readFile' transactionConfig
+  assert (normallyRestored == operatorConfigContents) "matching harness transaction restores exact operator bytes"
+  resetTransaction
+  bodyFailure <-
+    try @IOException
+      (runTransaction setupTransaction (ioError (userError "transaction body failure")) restoreTransaction)
+  failedBodyRestored <- System.IO.readFile' transactionConfig
+  assert
+    (isLeft bodyFailure && failedBodyRestored == operatorConfigContents)
+    "harness transaction preserves body failure and restores exact operator bytes"
+  resetTransaction
+  setupFailure <-
+    try @IOException
+      (runTransaction (setupTransaction >> ioError (userError "transaction setup failure")) (pure ()) restoreTransaction)
+  failedSetupRestored <- System.IO.readFile' transactionConfig
+  assert
+    (isLeft setupFailure && failedSetupRestored == operatorConfigContents)
+    "restoration custody exists before harness setup can fail"
+  resetTransaction
+  swappedTransaction <-
+    try @IOException
+      (runTransaction setupTransaction (writeFile cleanupReservationPath changedCleanupReservation) restoreTransaction)
+  refusedRuntimeBytes <- System.IO.readFile' transactionConfig
+  refusedBackupBytes <- System.IO.readFile' transactionBackup
+  refusedReservationBytes <- System.IO.readFile' cleanupReservationPath
+  assert
+    ( isLeft swappedTransaction
+        && refusedRuntimeBytes == harnessConfigContents
+        && refusedBackupBytes == operatorConfigContents
+        && refusedReservationBytes == changedCleanupReservation
+    )
+    "changed transaction identity refuses restoration and preserves both configs and the replacement reservation"
+  removeFile transactionBackup
+  resetTransaction
+  transactionStarted <- MVar.newEmptyMVar
+  transactionBlock <- MVar.newEmptyMVar
+  transactionDone <- MVar.newEmptyMVar
+  transactionThread <- forkIOWithUnmask $ \unmask -> do
+    result <-
+      try @SomeException
+        ( unmask
+            (runTransaction setupTransaction (MVar.putMVar transactionStarted () >> (MVar.takeMVar transactionBlock :: IO ())) restoreTransaction)
+        )
+    MVar.putMVar transactionDone result
+  MVar.takeMVar transactionStarted
+  killThread transactionThread
+  cancelledTransaction <- MVar.takeMVar transactionDone
+  cancelledRuntimeBytes <- System.IO.readFile' transactionConfig
+  assert
+    (isLeft cancelledTransaction && cancelledRuntimeBytes == operatorConfigContents)
+    "cancelled harness transaction joins restoration before reporting failure"
+  writeFile cleanupReservationPath originalCleanupReservation
+  writeFile cleanupProofActivitySentinel "must survive cleanup\n"
   cleanupHarnessRuntimeState cleanupProofPaths AppleSilicon
   activityProofSurvived <- doesFileExist cleanupProofActivitySentinel
+  retainedValidationBytes <- System.IO.readFile' cleanupProofValidationSentinel
   removableMetadataSurvived <- doesFileExist cleanupProofRemovableMetadata
   assert
-    (activityProofSurvived && not removableMetadataSurvived)
-    "harness runtime cleanup preserves bounded-command activity proofs while removing ordinary metadata"
+    (activityProofSurvived && retainedValidationBytes == "source-bound validation evidence\n" && not removableMetadataSurvived)
+    "harness runtime cleanup preserves activity and validation evidence while removing ordinary metadata"
   removeFile cleanupProofActivitySentinel
   releaseHarnessClusterSlotAt cleanupProofPaths (Just AppleSilicon)
   -- Sprint 6.45: the cross-checkout guard, exercised behaviourally through the
@@ -12803,6 +13452,24 @@ main = do
       (fail "persisted mutation fixture is missing its ready state")
       pure
       =<< loadClusterState mutationPaths
+  refusedUnknownEngine <-
+    try @IOException $
+      ClusterInternal.runClusterLifecycleAt mutationPaths $ \session ->
+        Cluster.lifecycleHarnessGpuEngine session (Just "not-a-generated-engine") (Cluster.finishLifecycle ())
+  assert
+    (mutationFailureContains "outside the generated deployment inventory" refusedUnknownEngine)
+    "the closed GPU rotation refuses a caller-selected deployment outside its inventory"
+  refusedOperatorRotation <-
+    try @IOException $
+      ClusterInternal.runClusterLifecycleAt mutationPaths $ \session ->
+        Cluster.lifecycleHarnessGpuEngine session Nothing (Cluster.finishLifecycle ())
+  assert
+    (mutationFailureContains "requires a HarnessOwned linux-gpu cluster" refusedOperatorRotation)
+    "the closed GPU rotation cannot mutate an operator-owned or different-lane cluster"
+  stateAfterRotationRefusals <- loadClusterState mutationPaths
+  assert
+    (stateAfterRotationRefusals == Just mutationExpectedState)
+    "rotation refusals preserve the exact persisted ready state"
   (mutationBodyState, mutationDuringBody, mutationResult) <-
     withPersistedClusterMutation
       mutationPaths
@@ -13232,6 +13899,8 @@ main = do
       snapshotPausedRoot = snapshotFaultRoot </> "paused-workers"
       snapshotCancellationReady =
         snapshotFaultRoot </> "cancel-after-first-pause.ready"
+      snapshotReplacementState = snapshotFaultRoot </> "replacement-state"
+      snapshotReplacementReservation = snapshotFaultRoot </> "replacement-reservation"
       snapshotRetryCleanMarker = snapshotFaultRoot </> "retry-observed-clean-incoming"
       snapshotRetryFoundStaleMarker = snapshotFaultRoot </> "retry-found-stale-incoming"
       snapshotClusterName = ("infernix-apple-silicon" :: String)
@@ -13320,6 +13989,14 @@ main = do
         <> "  exit 0\n"
         <> "fi\n"
         <> "if [ \"$1\" = delete ] && [ \"$2\" = cluster ]; then\n"
+        <> "  mode=''; if [ -f "
+        <> show snapshotModePath
+        <> " ]; then IFS= read -r mode < "
+        <> show snapshotModePath
+        <> "; fi\n"
+        <> "  if [ \"$mode\" = snapshot-success ]; then /bin/rm -f "
+        <> show snapshotLiveMarker
+        <> "; exit 0; fi\n"
         <> "  : > "
         <> show snapshotDeleteMarker
         <> "\n"
@@ -13390,6 +14067,22 @@ main = do
         <> "      printf 'unexpected snapshot copy target: %s\\n' \"$3\" >&2\n"
         <> "      exit 46\n"
         <> "    fi\n"
+        <> "    case \"$mode\" in\n"
+        <> "      snapshot-state-swap) /bin/cp "
+        <> show snapshotReplacementState
+        <> " "
+        <> show snapshotStatePath
+        <> ";;\n"
+        <> "      snapshot-reservation-swap) /bin/cp "
+        <> show snapshotReplacementReservation
+        <> " "
+        <> show snapshotReservationPath
+        <> ";;\n"
+        <> "      snapshot-writer-unpause) /bin/rm -f "
+        <> show (pausedWorkerPath snapshotWorkerA)
+        <> ";;\n"
+        <> "    esac\n"
+        <> "    case \"$mode\" in snapshot-*) printf 'verified new snapshot\\n' > \"$3/retained.txt\"; exit 0;; esac\n"
         <> "    if [ \"$mode\" = copy-failure ]; then\n"
         <> "      printf 'partial first copy\\n' > "
         <> show firstPartialPath
@@ -13599,15 +14292,59 @@ main = do
     )
     "a retry discards the prior incomplete incoming tree before copying, never promotes it, preserves committed bytes, and still blocks Kind deletion"
 
-  removeFile snapshotLiveMarker
+  originalSnapshotReservation <- System.IO.readFile' snapshotReservationPath
+  let replacedSnapshotReservation =
+        unlines
+          [ if "config-transaction=" `isPrefixOf` line then "config-transaction=restored" else line
+          | line <- lines originalSnapshotReservation
+          ]
+  writeFile snapshotReplacementReservation replacedSnapshotReservation
+  writeClusterStateFile snapshotReplacementState snapshotReadyState
+  expectedSnapshotReplacement <- BS.readFile snapshotReplacementState
+  forM_
+    [ ("snapshot-state-swap", "cluster state changed before lifecycle effect"),
+      ("snapshot-reservation-swap", "reservation identity changed after authorization"),
+      ("snapshot-writer-unpause", "writer is no longer proven paused")
+    ]
+    $ \(mode, expectedRefusal) -> do
+      writeClusterStateFile snapshotStatePath snapshotReadyState
+      writeFile snapshotReservationPath originalSnapshotReservation
+      writeFile snapshotModePath (mode <> "\n")
+      writeFile snapshotKindLog ""
+      changedCustody <- try @IOException (releaseHarnessClusterSlotAt snapshotFaultPaths (Just AppleSilicon))
+      committedAfterRefusal <- snapshotDirectoryTree committedSnapshotRoot
+      completionPublished <- doesFileExist snapshotCompletionMarker
+      refusedKindLog <- System.IO.readFile' snapshotKindLog
+      changedWorkersThawed <- workersAreThawed
+      snapshotReservationAfterRefusal <- System.IO.readFile' snapshotReservationPath
+      stateAfterRefusal <- BS.readFile snapshotStatePath
+      assert
+        ( either (isInfixOf expectedRefusal . show) (const False) changedCustody
+            && committedAfterRefusal == committedSnapshotBeforeFaults
+            && not completionPublished
+            && noKindDelete refusedKindLog
+            && changedWorkersThawed
+            && snapshotReservationAfterRefusal == (if mode == "snapshot-reservation-swap" then replacedSnapshotReservation else originalSnapshotReservation)
+            && (mode /= "snapshot-state-swap" || stateAfterRefusal == expectedSnapshotReplacement)
+        )
+        ("snapshot copy refuses changed custody before commit and preserves exact owned records: " <> mode)
+  writeFile snapshotReservationPath originalSnapshotReservation
+  writeClusterStateFile snapshotStatePath snapshotReadyState
+  writeFile snapshotModePath "snapshot-success\n"
   snapshotFaultCleanup <-
     try @IOException
       (releaseHarnessClusterSlotAt snapshotFaultPaths (Just AppleSilicon))
   snapshotReservationAfterCleanup <-
     doesFileExist snapshotReservationPath
+  committedPositiveBytes <- System.IO.readFile' (committedSnapshotRoot </> "retained.txt")
+  positiveWorkersThawed <- workersAreThawed
   assert
-    (isRight snapshotFaultCleanup && not snapshotReservationAfterCleanup)
-    "the retained-snapshot rollback fixture releases its harness reservation after the synthetic cluster becomes absent"
+    ( isRight snapshotFaultCleanup
+        && not snapshotReservationAfterCleanup
+        && committedPositiveBytes == "verified new snapshot\n"
+        && positiveWorkersThawed
+    )
+    "matching snapshot custody commits new bytes, completes teardown, thaws workers, and releases the reservation"
   removeTestPathIfPresent snapshotFaultRoot
   -- Sprint 2.15: ownership authorization combines actual Kind presence with
   -- persisted ownership. An absent slot remains available to the first creator,
@@ -13855,13 +14592,47 @@ main = do
   legacyRecoveryResult <-
     try @IOException (reconcileInterruptedHarnessStateAt legacyRecoveryPaths)
   restoredContents <- readFile reconcileRuntimeConfig
-  backupStillPresent <- doesFileExist reconcileBackupConfig
+  backupContents <- System.IO.readFile' reconcileBackupConfig
   assert
     ( isLeft legacyRecoveryResult
         && restoredContents == "HARNESS LEFTOVER CONFIG"
-        && backupStillPresent
+        && backupContents == "OPERATOR ORIGINAL CONFIG"
     )
     "identity-free harness recovery fails closed and preserves both ambiguous config files"
+  removeFile reconcileRuntimeConfig
+  absentOrphanResult <- try @IOException (reconcileInterruptedHarnessStateAt legacyRecoveryPaths)
+  absentOrphanBackup <- System.IO.readFile' reconcileBackupConfig
+  orphanRuntimePresent <- doesFileExist reconcileRuntimeConfig
+  assert
+    (isLeft absentOrphanResult && absentOrphanBackup == "OPERATOR ORIGINAL CONFIG" && not orphanRuntimePresent)
+    "orphan backup with no runtime config is refused without choosing or deleting its bytes"
+  -- The same closure oracle used by subprocess cleanup must reject a real
+  -- pipe deliberately left open, then accept checked closure of both ends.
+  bracketPreservingPrimary
+    createPipe
+    (\(ownedReader, ownedWriter) -> runCleanupsPreservingFailures [OwnedPipe.closeOwnedPipe ownedWriter, OwnedPipe.closeOwnedPipe ownedReader])
+    ( \(ownedReader, ownedWriter) -> do
+        openPipeRefusal <- try @IOException (OwnedPipe.requireOwnedPipeClosed ownedReader)
+        assert (isLeft openPipeRefusal) "owned-pipe closure oracle rejects a retained open pipe"
+        OwnedPipe.closeOwnedPipe ownedWriter
+        OwnedPipe.closeOwnedPipe ownedReader
+        OwnedPipe.requireOwnedPipeClosed ownedWriter
+        OwnedPipe.requireOwnedPipeClosed ownedReader
+    )
+  bracketPreservingPrimary
+    ( do
+        (reader, writer) <- PosixIO.createPipe
+        closeReader <- OwnedPipe.newOwnedDescriptorCloser reader
+        closeWriter <- OwnedPipe.newOwnedDescriptorCloser writer
+        pure (reader, closeReader, closeWriter)
+    )
+    (\(_, closeReader, closeWriter) -> runCleanupsPreservingFailures [closeReader, closeWriter])
+    ( \(reader, closeReader, _) -> do
+        closeReader
+        duplicateRawClose <- try @IOException (PosixIO.closeFd reader)
+        assert (isLeft duplicateRawClose) "the kernel refuses closing an already closed pipe descriptor"
+        closeReader
+    )
   -- Sprint 5.12: the client model-bootstrap deadline is single-sourced from the
   -- server ceiling and can never be shorter than it (a negative margin clamps).
   assert
@@ -14494,52 +15265,6 @@ hermeticHostToolPaths stubRoot configured = do
           stubPermissions <- getPermissions stubPath
           setPermissions stubPath stubPermissions {executable = True}
           pure (Text.pack stubPath)
-
-extractDockerfileHostManifest :: String -> Either String String
-extractDockerfileHostManifest dockerfileContents =
-  case dropWhile (/= hostManifestPrintfStart) (lines dockerfileContents) of
-    [] -> Left "docker/Dockerfile is missing the host-manifest printf block"
-    _printfStart : remainingLines -> do
-      let (argumentLines, terminatorLines) =
-            break
-              (isInfixOf "> /opt/infernix/dhall/InfernixHost.dhall")
-              remainingLines
-      case terminatorLines of
-        [] ->
-          Left "docker/Dockerfile host-manifest printf block is unterminated"
-        _ -> unlines <$> traverse decodeArgumentLine argumentLines
-  where
-    hostManifestPrintfStart = "RUN printf '%s\\n' \\"
-
-    decodeArgumentLine rawLine
-      | "hostArchitecture =" `isInfixOf` rawLine =
-          Right ", hostArchitecture = \"arm64\""
-      | otherwise = do
-          quotedArgument <-
-            case reverse (dropWhile (== ' ') rawLine) of
-              '\\' : reversedArgument ->
-                Right (trimArgumentWhitespace (reverse reversedArgument))
-              _ ->
-                Left
-                  ( "Dockerfile host-manifest argument is missing its line continuation: "
-                      <> rawLine
-                  )
-          case quotedArgument of
-            '\'' : quotedBody
-              | not (null quotedBody),
-                last quotedBody == '\'' ->
-                  Right (init quotedBody)
-            _ ->
-              Left
-                ( "Dockerfile host-manifest argument is not a single-quoted literal: "
-                    <> rawLine
-                )
-
-    trimArgumentWhitespace =
-      reverse
-        . dropWhile (== ' ')
-        . reverse
-        . dropWhile (== ' ')
 
 removeTestPathIfPresent :: FilePath -> IO ()
 removeTestPathIfPresent path =

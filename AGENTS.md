@@ -38,3 +38,7 @@ entrypoints are restartable prerequisite reconcilers: they verify same-process t
 before continuing, stop at explicit rerun boundaries when a new shell or reboot is required, and
 delegate cluster lifecycle, Kubernetes manifests, cluster workload image pulls, registry
 publication, validation, and teardown behavior to the `infernix` binary.
+
+Linux bootstrap launcher handoff reconciles the build, selects an immutable image id, and supplies
+an independent read-only checkout for source-bound validation. See
+[the source and image identity contract](documents/engineering/docker_policy.md#source-and-image-identity).

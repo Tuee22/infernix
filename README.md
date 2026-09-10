@@ -1185,3 +1185,7 @@ its [Non-Negotiable Rules](documents/development/assistant_workflow.md#non-negot
 ## License
 
 [MIT](LICENSE)
+
+Linux bootstrap launcher handoff reconciles the build, selects an immutable image id, and supplies
+an independent read-only checkout for source-bound validation. See
+[the source and image identity contract](documents/engineering/docker_policy.md#source-and-image-identity).

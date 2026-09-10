@@ -10,9 +10,10 @@
 
 -- | Package-internal bounded provisioning facade. Every process operation is
 -- selected from a closed semantic language and runs through
--- 'Infernix.Cluster.Subprocess.runBoundedCommand'. The rank-2 region prevents
--- the grant from escaping, while the hidden deadline constructor makes a
--- missing or non-positive total deadline unrepresentable at execution time.
+-- 'Infernix.Cluster.Subprocess.runBoundedCommand'. The closed program and hidden
+-- interpreter contain protected effects, while the nominal region index prevents
+-- direct region substitution. The hidden deadline constructor makes a missing
+-- or non-positive total deadline unrepresentable at execution time.
 module Infernix.Engines.Provisioning
   ( AppleAdapterId,
     llamaCppCliAdapter,
@@ -530,8 +531,9 @@ newtype ProvisioningGrant s
 type role ProvisioningGrant nominal
 
 -- | Opaque evidence that the current continuation owns both the engine
--- materialization lock and this provisioning session. The extra rank-2
--- parameter prevents a writer lease from escaping the locked interpreter.
+-- materialization lock and this provisioning session. The extra nominal index
+-- distinguishes writer regions; the closed program and private interpreter keep
+-- writer effects inside the actual lock and retain cleanup custody.
 data EngineWriter w s q
   = EngineWriter
       !(MaterializationAuthority w)

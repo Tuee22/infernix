@@ -92,6 +92,12 @@ claimant admission; the maximum is capacity, never a fallback measurement of fre
 positively observed unlimited envelope is distinct from an unobservable envelope. These
 observations remain snapshots and do not reserve memory against unrelated processes.
 
+The Linux engine kernel repeats this cgroup observation before creating launch authority and
+requires headroom for the artifact-derived RAM admission quantity. The installed execution ceiling
+remains a separate bound; it is not treated as a prediction that the process immediately allocates
+that whole budget. Toolchain admission preserves an observation refusal before either the claimant
+census or a compiler launch.
+
 ## Enforcement
 
 | Surface | Mechanism | Forbids |

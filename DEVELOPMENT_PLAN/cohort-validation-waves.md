@@ -26,8 +26,8 @@
 
 | Wave | Phase | Chosen accelerator | Paired lane | Gate | State |
 |------|-------|--------------------|-------------|------|-------|
-| R1 | 1 | `apple-silicon` | `linux-cpu` | Sprints 1.44–1.46; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
-| R2 | 2 | `linux-gpu` | `linux-cpu` | Sprints 2.18; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R1 | 1 | `apple-silicon` | `linux-cpu` | Sprints 1.44–1.46; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending; Apple host unavailable |
+| R2 | 2 | `linux-gpu` | `linux-cpu` | Sprints 2.18; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
 | R3 | 3 | `linux-gpu` | `linux-cpu` | Sprints 3.18; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
 | R4 | 4 | `apple-silicon` | `linux-cpu` | Sprints 4.50; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
 | R5 | 5 | `apple-silicon` | `linux-cpu` | Sprints 5.13; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |

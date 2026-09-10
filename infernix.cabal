@@ -105,12 +105,17 @@ library
 
     hs-source-dirs:   src
     other-modules:
+        Infernix.Cluster.Internal
+        Infernix.Cluster.LifecycleProgram.Internal
+        Infernix.Evidence.Lease.Internal
+        Infernix.Validation
         Infernix.Cluster.ClaimPermissions
         Infernix.Cluster.Command
         Infernix.Cluster.LifecycleLock
         Infernix.Cluster.MutationRecovery
         Infernix.Cluster.Subprocess
         Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Pipe
         Infernix.Cluster.Subprocess.Protocol
         Infernix.EngineBindings
         Infernix.EngineRouting
@@ -222,6 +227,8 @@ test-suite infernix-unit
         Infernix.Bridge.Result
         Infernix.CLI
         Infernix.Cluster
+        Infernix.Cluster.Internal
+        Infernix.Cluster.LifecycleProgram.Internal
         Infernix.Cluster.ClaimPermissions
         Infernix.Cluster.Command
         Infernix.Cluster.Discover
@@ -232,6 +239,7 @@ test-suite infernix-unit
         Infernix.Cluster.PublishImages
         Infernix.Cluster.Subprocess
         Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Pipe
         Infernix.Cluster.Subprocess.Protocol
         Infernix.ClusterConfig
         Infernix.CommandRegistry
@@ -275,6 +283,7 @@ test-suite infernix-unit
         Infernix.Engines.Provisioning.Internal
         Infernix.Error
         Infernix.Evidence.Lease
+        Infernix.Evidence.Lease.Internal
         Infernix.Evidence.Readiness
         Infernix.ExecutionPlan
         Infernix.ExecutionPlan.Internal
@@ -334,6 +343,7 @@ test-suite infernix-unit
         Infernix.Types
         Infernix.Web.Contracts
         Infernix.Webapp
+        Infernix.Validation
         Infernix.Workflow
         Proto.Infernix.Manifest.RuntimeManifest
         Proto.Infernix.Manifest.RuntimeManifest_Fields
@@ -432,6 +442,7 @@ test-suite infernix-apple-materializer
         Infernix.Cluster.LifecycleLock
         Infernix.Cluster.Subprocess
         Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Pipe
         Infernix.Cluster.Subprocess.Protocol
         Infernix.Config
         Infernix.DhallSchema.Enums
@@ -565,6 +576,8 @@ test-suite infernix-integration
         Infernix.Bridge.Result
         Infernix.CLI
         Infernix.Cluster
+        Infernix.Cluster.Internal
+        Infernix.Cluster.LifecycleProgram.Internal
         Infernix.Cluster.ClaimPermissions
         Infernix.Cluster.Command
         Infernix.Cluster.Discover
@@ -575,6 +588,7 @@ test-suite infernix-integration
         Infernix.Cluster.PublishImages
         Infernix.Cluster.Subprocess
         Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Pipe
         Infernix.Cluster.Subprocess.Protocol
         Infernix.ClusterConfig
         Infernix.CommandRegistry
@@ -618,6 +632,7 @@ test-suite infernix-integration
         Infernix.Engines.Provisioning.Internal
         Infernix.Error
         Infernix.Evidence.Lease
+        Infernix.Evidence.Lease.Internal
         Infernix.Evidence.Readiness
         Infernix.ExecutionPlan
         Infernix.ExecutionPlan.Internal
@@ -677,6 +692,7 @@ test-suite infernix-integration
         Infernix.Types
         Infernix.Web.Contracts
         Infernix.Webapp
+        Infernix.Validation
         Infernix.Workflow
         Proto.Infernix.Manifest.RuntimeManifest
         Proto.Infernix.Manifest.RuntimeManifest_Fields

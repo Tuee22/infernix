@@ -8,6 +8,9 @@
 
 ## Architecture Baseline
 
+Beyond the application admin overview and personal dashboard, no general observability stack is
+deployed. Monitoring is not a supported first-class surface.
+
 The repository target closes around the explicit-init runtime-config architecture: the one-binary role model,
 single-node platform services, registry-first image flow, manual storage doctrine, Pulsar-only
 production surface, Gateway-owned routing, Haskell-owned frontend contracts, substrate-specific

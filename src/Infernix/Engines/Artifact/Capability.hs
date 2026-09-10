@@ -124,9 +124,10 @@ data ArtifactLaunchRequest = ArtifactLaunchRequest
   }
   deriving (Eq, Show)
 
--- | An unprivileged launcher. It is handed no artifact capability, no phase
--- value, and no lock authority, so it cannot retain anything that outlives the
--- runner's shared-lock region.
+-- | An unprivileged launcher. It receives paths and closed arguments, without
+-- artifact capability, phase value, or lock authority. Its ordinary-IO callback
+-- must still finish and reap every child before returning to the shared-lock
+-- runner; withholding authority alone does not establish child containment.
 newtype ArtifactLauncher
   = ArtifactLauncher
       (ArtifactLaunchRequest -> IO ArtifactTerminalOutcome)

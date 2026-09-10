@@ -437,9 +437,10 @@ interruptPreparedPythonEnvironmentAfterInvalidationForTest
 
 -- | Opaque evidence that the exact prepared interpreter and marker were
 -- validated while a shared lease over the project mutation lock is still
--- held. The nominal region prevents the evidence from escaping the callback;
--- retaining it through subprocess completion prevents Poetry from mutating
--- the environment while Python is still importing from it.
+-- held. Its nominal index prevents direct region substitution; the private
+-- ordinary-IO callback does not itself prevent deferred or child-thread capture.
+-- The capped-engine consumer must finish subprocess cleanup before returning,
+-- keeping Poetry excluded while Python is still importing from the environment.
 data PreparedPythonEnvironmentReadAuthority s
   = PreparedPythonEnvironmentReadAuthority
       !(MutationLock.PoetryProjectReadAuthority s)

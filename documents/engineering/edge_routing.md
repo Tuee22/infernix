@@ -107,8 +107,15 @@ backend test, or backend safety from a Gateway redirect. See
 - `infernix test integration` exercises the published registry, Pulsar, publication, and demo
   routes, and validates MinIO through the webapp object mediator or trusted internal data plane,
   never an external MinIO Gateway route. Probes require real upstream behavior.
+- Live HTTPRoutes must exactly match the active Haskell registry's names, prefixes, backends,
+  rewrites, and Gateway parent. `Accepted` and `ResolvedRefs` must be true for each current
+  generation. Demo-off absence requires an actual Gateway 404; transport errors and server
+  failures cannot establish absence.
 - `infernix test e2e` verifies the routed demo surface through the shared edge port when the demo
   UI is enabled for the selected runtime mode, including the JWT-gated operator route checks.
+  Admin requests require a real registry catalog, a real Pulsar cluster list, and the expected
+  405 on the plain HTTP request to the Pulsar producer WebSocket endpoint. Valid non-admin tokens
+  require 403. A response that merely differs from 401 or 403 does not establish allowed access.
 
 ## Cross-References
 

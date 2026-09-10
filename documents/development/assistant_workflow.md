@@ -213,6 +213,9 @@ aligned with this canonical authority.
   `./bootstrap/linux-gpu.sh`, or
   `docker compose run --rm infernix infernix <command>`; the bootstrap does not manage Kind or
   images directly
+- Linux bootstrap handoff selects an immutable image id and supplies the independent checkout
+  read-only for source observation; validation compares it with the baked execution tree and retains
+  its preimage. See [Docker policy](../engineering/docker_policy.md#source-and-image-identity)
 - never use cross-architecture emulation for development or validation. Apple Silicon must not run
   an emulated amd64 Linux lane, create or switch Docker contexts, or create a Colima VM
 - on Apple Silicon, the `linux-cpu` and `linux-gpu` outer-container lanes run through the operator's

@@ -92,6 +92,8 @@ module Infernix.BuildMemory
     -- * Toolchain spawn boundary
     ToolchainInvocation (..),
     ToolchainTestSuite (..),
+    NvidiaValidationTest (..),
+    nvidiaValidationTestOption,
     allToolchainTestSuites,
     toolchainTestSuiteName,
     DarwinAppleMaterializerTest (..),
@@ -734,7 +736,23 @@ data ToolchainInvocation
     ToolchainCabalFormat
   | -- | One fixed Darwin-only Apple materializer cohort mode.
     ToolchainDarwinAppleMaterializerTest DarwinAppleMaterializerTest
+  | ToolchainNvidiaValidationTest NvidiaValidationTest
   deriving (Eq, Show)
+
+data NvidiaValidationTest
+  = NvidiaWatchdog
+  | NvidiaCeilingBreach
+  | NvidiaCompetingTenant
+  | NvidiaHostCeiling
+  deriving (Bounded, Enum, Eq, Show)
+
+nvidiaValidationTestOption :: NvidiaValidationTest -> String
+nvidiaValidationTestOption test =
+  case test of
+    NvidiaWatchdog -> "--nvidia-watchdog"
+    NvidiaCeilingBreach -> "--nvidia-ceiling-breach"
+    NvidiaCompetingTenant -> "--nvidia-competing-tenant"
+    NvidiaHostCeiling -> "--nvidia-host-ceiling"
 
 -- | The root package's declared Cabal test suites a toolchain invocation may name.
 data ToolchainTestSuite
@@ -786,6 +804,8 @@ toolchainInvocationArguments authority invocation =
       case invocation of
         ToolchainBuildAll -> ["build", "all", "--enable-tests"]
         ToolchainTest suite -> ["test", toolchainTestSuiteName suite, "--enable-tests"]
+        ToolchainNvidiaValidationTest test ->
+          ["test", toolchainTestSuiteName UnitSuite, "--enable-tests", "--test-show-details=direct", "--test-options=" <> nvidiaValidationTestOption test]
         ToolchainCabalFormat ->
           [ "test",
             "--project-file=test/cabal-format/cabal.project",
@@ -855,6 +875,8 @@ toolchainInvocationLabel authority invocation =
     ToolchainBuildAll -> "cabal build all --enable-tests"
     ToolchainTest suite ->
       "cabal test " <> toolchainTestSuiteName suite <> " --enable-tests"
+    ToolchainNvidiaValidationTest test ->
+      "cabal test " <> toolchainTestSuiteName UnitSuite <> " --enable-tests --test-options=" <> nvidiaValidationTestOption test
     ToolchainCabalFormat ->
       "cabal test --project-file=test/cabal-format/cabal.project "
         <> "--builddir="
@@ -931,10 +953,11 @@ requireToolchainInvocationProjectState authority invocation =
 
 -- | Authority to start a toolchain process under a derived ceiling.
 --
--- The constructor is unexported and the phantom region tag is universally
--- quantified by 'withToolchainSpawnAuthority', so an authority cannot escape the
--- region that established its ceiling and a plan minted for one region cannot be
--- substituted for another's.
+-- The constructor is unexported and the nominal region index prevents direct
+-- substitution between separately quantified regions. The ordinary-IO callback
+-- does not prove nonescape. This value retains observations and a single-flight
+-- token; each child lifecycle rechecks settings and live admission, then holds
+-- its runtime bracket through cleanup before releasing any installed ceiling.
 --
 -- The authority carries the mechanism its region resolved, the plan, and the
 -- exact generated settings observed when the region was entered. Resolving the

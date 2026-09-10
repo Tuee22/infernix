@@ -10,6 +10,7 @@ import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
 import Data.Aeson.KeyMap qualified as AesonKeyMap
+import Data.Aeson.Types qualified as AesonTypes
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
@@ -17,7 +18,7 @@ import Data.ByteString.Lazy qualified as LazyByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper, isSpace)
 import Data.FileEmbed (embedFile)
-import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, partition, sort)
+import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, partition, sort, sortOn)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing, mapMaybe)
@@ -28,6 +29,8 @@ import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Infernix.CLI qualified as CLI
 import Infernix.Cluster
+import Infernix.Cluster.Internal (cleanupHarnessRuntimeState, requireBoundedCommandActivitiesQuiescent)
+import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
@@ -39,6 +42,7 @@ import Infernix.Error
     runCleanupsPreservingFailures,
   )
 import Infernix.ExecutionPlan qualified as ExecutionPlan
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools qualified as HostTools
 import Infernix.Models
   ( engineBindingForSelectedEngine,
@@ -50,6 +54,7 @@ import Infernix.Models
   )
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
+import Infernix.Routes qualified as Routes
 import Infernix.Runtime.Pulsar
   ( PulsarTransport (..),
     PulsarWebSocketBase (..),
@@ -187,6 +192,7 @@ exerciseRuntimeMode paths runtimeMode = do
       representativeModelId <- representativeModelForRuntime runtimeMode activeModels
       assert (clusterPresent state) ("cluster up records cluster presence for " <> showRuntimeMode runtimeMode)
       assertClusterServiceDeployment state
+      assertDeployedRouteInventory True state
       let baseUrl = routeBaseUrl paths state
       reportStep ("route probes: " <> showRuntimeMode runtimeMode)
       homeResponse <- httpGet (baseUrl <> "/")
@@ -252,6 +258,16 @@ exerciseRuntimeMode paths runtimeMode = do
       assert
         (pulsarHttpStatus `elem` [401, 403])
         "pulsar websocket route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
+      (authRouteStatus, authRouteBody) <- httpGetWithStatus (baseUrl <> "/auth/realms/infernix/.well-known/openid-configuration")
+      (demoWebSocketStatus, demoWebSocketBody) <- httpGetWithStatus (baseUrl <> "/ws")
+      (objectProxyStatus, _) <- httpGetWithStatus (baseUrl <> "/api/objects/list")
+      assert
+        (authRouteStatus == 200 && "\"issuer\"" `isInfixOf` authRouteBody && "/auth/realms/infernix" `isInfixOf` authRouteBody)
+        "the auth prefix reaches the real Keycloak realm discovery endpoint"
+      assert
+        (demoWebSocketStatus == 401 && "WebSocket upgrade" `isInfixOf` demoWebSocketBody)
+        "the demo websocket prefix reaches its JWT-protected upgrade handler"
+      assert (objectProxyStatus == 401) "the object-proxy prefix reaches its application authentication boundary"
       reportStep ("registry populated-backing reconcile: " <> showRuntimeMode runtimeMode)
       validateRegistryPopulatedBackingReconcile paths state runtimeMode
       reportStep ("registry stateless pod reschedule: " <> showRuntimeMode runtimeMode)
@@ -273,11 +289,11 @@ exerciseRuntimeMode paths runtimeMode = do
         "Phase 9 Sprint 9.3: GET /api/cache is admin-gated and rejects an unauthenticated read with 401"
 
       reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
-      ensureLinuxGpuRepresentativeEngineDeployment paths runtimeMode activeModels representativeModelId
+      ensureLinuxGpuRepresentativeEngineDeployment runtimeMode activeModels representativeModelId
       validateServiceRuntimeLoop paths state runtimeMode compiledPlan representativeModelId
 
       reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
-      ensureLinuxGpuRepresentativeEngineDeployment paths runtimeMode activeModels representativeModelId
+      ensureLinuxGpuRepresentativeEngineDeployment runtimeMode activeModels representativeModelId
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
 
       -- Phase 4 Sprint 4.34 retired the Apple host-engine coexistence case with
@@ -653,38 +669,34 @@ validateLinuxGpuCatalogModelInferenceSerially paths state compiledPlan activeMod
         sort
           . nub
           $ map snd pythonNativeDeployments
-  prepareLinuxGpuEngineDeployment paths perEngineNames Nothing
+  prepareLinuxGpuEngineDeployment Nothing
   forM_ (map (Text.unpack . modelId) nativeModels) (validateCatalogModelInference paths state LinuxGpu compiledPlan)
   forM_ perEngineNames $ \engineName -> do
     reportStep ("linux-gpu per-engine deployment: " <> Text.unpack engineName)
-    prepareLinuxGpuEngineDeployment paths perEngineNames (Just engineName)
+    prepareLinuxGpuEngineDeployment (Just engineName)
     forM_
       [ Text.unpack (modelId model)
       | (model, deploymentName) <- pythonNativeDeployments,
         deploymentName == engineName
       ]
       (validateCatalogModelInference paths state LinuxGpu compiledPlan)
-  prepareLinuxGpuEngineDeployment paths perEngineNames Nothing
+  prepareLinuxGpuEngineDeployment Nothing
 
-ensureLinuxGpuRepresentativeEngineDeployment :: Paths -> RuntimeMode -> [ModelDescriptor] -> String -> IO ()
-ensureLinuxGpuRepresentativeEngineDeployment paths runtimeMode activeModels representativeModelId =
+ensureLinuxGpuRepresentativeEngineDeployment :: RuntimeMode -> [ModelDescriptor] -> String -> IO ()
+ensureLinuxGpuRepresentativeEngineDeployment runtimeMode activeModels representativeModelId =
   when (runtimeMode == LinuxGpu) $ do
     let pythonNativeModels = filter linuxGpuModelUsesPythonNativeEngine activeModels
     pythonNativeDeployments <-
       forM pythonNativeModels $ \model -> do
         deploymentName <- requireLinuxGpuPerEngineDeploymentName model
         pure (model, deploymentName)
-    let perEngineNames =
-          sort
-            . nub
-            $ map snd pythonNativeDeployments
     case find
       ((== Text.pack representativeModelId) . modelId . fst)
       pythonNativeDeployments of
       Just (_, deploymentName) ->
-        prepareLinuxGpuEngineDeployment paths perEngineNames (Just deploymentName)
+        prepareLinuxGpuEngineDeployment (Just deploymentName)
       Nothing ->
-        prepareLinuxGpuEngineDeployment paths perEngineNames Nothing
+        prepareLinuxGpuEngineDeployment Nothing
 
 ensureCatalogInputObject :: Paths -> ClusterState -> RuntimeMode -> ModelDescriptor -> IO (Maybe Text.Text)
 ensureCatalogInputObject paths state runtimeMode model =
@@ -1041,75 +1053,6 @@ requireLinuxGpuPerEngineDeploymentName model =
     pure
     (engineNameForSelectedEngine LinuxGpu (selectedEngine model))
 
--- Sprint 6.43 (corrected 2026-08-02 by the final cross-phase review): this
--- rotates the shared engine Deployment and every per-engine Deployment between
--- replica counts, which is exactly the class of cluster mutation the
--- `ClusterMutating` position exists for. It previously ran outside
--- `withPersistedClusterMutation`, so a SIGKILL anywhere in the rotation left the
--- persisted state reading `ClusterReady` while the live cluster had engine
--- Deployments scaled to zero — the exact false steady-state the doctrine
--- forbids. The marker brackets the whole rotation so a killed run leaves a
--- detectable dirty cluster the next `cluster up` reconciles by scaling the
--- deployments back to their chart counts.
---
--- Phase 6 Sprint 6.47: this is now the suite's **only** integration exemplar of
--- the crash-safe cluster-mutation bracket. Its two former siblings — the
--- engine-deployment over-scale case and the node-drain case — were chaos cases
--- and were deleted with the replicated topology they asserted recovery for. The
--- doctrine outlives its examples, so it is re-exemplared here on a real non-HA
--- caller rather than left without one; the unit suite retains the bracket's own
--- crash/reconcile assertions independently of any cluster.
-prepareLinuxGpuEngineDeployment :: Paths -> [Text.Text] -> Maybe Text.Text -> IO ()
-prepareLinuxGpuEngineDeployment paths perEngineNames maybeEngineName = do
-  mutationState <-
-    maybe
-      (fail "linux-gpu engine deployment rotation requires a freshly persisted cluster state")
-      pure
-      =<< loadClusterState paths
-  withPersistedClusterMutation
-    paths
-    mutationState
-    "linux-gpu-engine-deployment-rotation"
-    ( "rotating the shared and per-engine linux-gpu engine Deployments to "
-        <> maybe "the shared deployment" Text.unpack maybeEngineName
-    )
-    (\freshState -> rotateLinuxGpuEngineDeployments freshState perEngineNames maybeEngineName)
-
-rotateLinuxGpuEngineDeployments :: ClusterState -> [Text.Text] -> Maybe Text.Text -> IO ()
-rotateLinuxGpuEngineDeployments state perEngineNames maybeEngineName = do
-  case maybeEngineName of
-    Just _ ->
-      runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=0"]
-    Nothing ->
-      pure ()
-  forM_ perEngineNames $ \engineName -> do
-    let replicas =
-          case maybeEngineName of
-            Just activeEngineName | activeEngineName == engineName -> "1"
-            _ -> "0"
-    runKubectl
-      state
-      [ "-n",
-        "platform",
-        "scale",
-        "deployment/infernix-engine-" <> Text.unpack engineName,
-        "--replicas=" <> replicas
-      ]
-  case maybeEngineName of
-    Nothing -> do
-      runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=1"]
-      runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
-    Just activeEngineName ->
-      runKubectl
-        state
-        [ "-n",
-          "platform",
-          "rollout",
-          "status",
-          "deployment/infernix-engine-" <> Text.unpack activeEngineName,
-          "--timeout=900s"
-        ]
-
 -- | Phase 6 Sprint 6.2 — per-family result-shape contract. Text families
 -- (LLM, speech transcription) carry a non-empty inline continuation; every
 -- artifact family carries an @infernix-demo-objects@ object reference whose
@@ -1223,6 +1166,13 @@ assertRoutedDaemonSplit runtimeMode compiledPlan = do
   assert
     (all (`elem` actualEngineRequestTopics) expectedEngineRequestTopics)
     "compiled engine daemons include every validated placement route"
+
+assertDeployedRouteInventory :: Bool -> ClusterState -> IO ()
+assertDeployedRouteInventory demoEnabled state = do
+  assert (sortOn path (routes state) == sortOn path (Routes.routeInventory demoEnabled)) "persisted routes exactly match the active binary-owned route registry"
+  payload <- kubectlOutputForState state ["-n", "platform", "get", "httproutes", "-o", "json"]
+  observed <- either (fail . ("invalid deployed HTTPRoute JSON: " <>)) pure (Aeson.eitherDecode (LazyByteStringChar8.pack payload))
+  either fail pure (Routes.validateDeployedRoutes demoEnabled observed)
 
 assertClusterServiceDeployment :: ClusterState -> IO ()
 assertClusterServiceDeployment state = do
@@ -2072,21 +2022,21 @@ validateDemoUiDisabled paths runtimeMode =
       withClusterLifecycle runtimeMode $ do
         state <- maybe (fail "cluster state was not available after demo-disabled cluster up") pure =<< loadClusterState paths
         assert (clusterPresent state) "cluster up records cluster presence when demo_ui is disabled"
+        assertDeployedRouteInventory False state
         coordinatorReplicas <- deploymentSpecReplicas state "infernix-coordinator"
-        assert (coordinatorReplicas >= 1) "production demo_ui=false topology keeps the coordinator deployment"
+        assert (coordinatorReplicas == 1) "production demo_ui=false topology keeps exactly one coordinator"
         when (runtimeMode /= AppleSilicon) $ do
           engineReplicas <- deploymentSpecReplicas state "infernix-engine"
-          assert (engineReplicas >= 1) "production demo_ui=false Linux topology keeps the engine deployment"
+          assert (engineReplicas == 1) "production demo_ui=false Linux topology keeps exactly one engine process"
         assert (not (any ((== "/") . path) (routes state))) "route inventory omits the browser root when demo_ui is disabled"
         assert (not (any ((== "/api") . path) (routes state))) "route inventory omits the demo API when demo_ui is disabled"
         let baseUrl = routeBaseUrl paths state
-        disabledHomeResult <- try (httpGet (baseUrl <> "/")) :: IO (Either IOError String)
-        disabledPublicationResult <- try (httpGet (baseUrl <> "/api/publication")) :: IO (Either IOError String)
+        forM_ ["/", "/api/publication", "/auth/realms/infernix/.well-known/openid-configuration", "/ws", "/api/objects/list", "/minio/s3"] $ \absentRoute -> do
+          (absentStatus, _) <- httpGetWithStatus (baseUrl <> absentRoute)
+          assert (absentStatus == 404) ("the real Gateway returns 404 for the unpublished route " <> absentRoute)
         registryCatalogResponse <- httpGet (baseUrl <> "/registry/_catalog")
         pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
         (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
-        assert (either (const True) (const False) disabledHomeResult) "the browser root is absent when demo_ui is disabled"
-        assert (either (const True) (const False) disabledPublicationResult) "the demo API is absent when demo_ui is disabled"
         assert
           ("repositories" `isInfixOf` registryCatalogResponse)
           "the registry remains published when demo_ui is disabled"
@@ -2170,6 +2120,7 @@ validateRegistryPopulatedBackingReconcile paths state runtimeMode = do
   assert
     (tagListAfter == tagListBefore)
     "a second cluster up preserves the populated registry tag set"
+  requireRegistryImageReadback paths state runtimeMode tagListAfter
 
 -- | The registry has one replica and therefore makes no availability claim.
 -- Its pod is nevertheless stateless: after deleting that sole instance, a
@@ -2198,14 +2149,11 @@ validateRegistryPodReschedule paths state runtimeMode = do
   assert
     (replacementPod /= originalPod && tagListAfter == tagListBefore)
     "a distinct registry replacement serves the same MinIO-backed busybox tag list"
+  requireRegistryImageReadback paths state runtimeMode tagListAfter
 
 requireRegistryBusyboxTagList :: Paths -> ClusterState -> RuntimeMode -> IO Aeson.Value
 requireRegistryBusyboxTagList paths state runtimeMode = do
-  let registryHost =
-        if Config.controlPlaneContext paths == Config.OuterContainer
-          then kindControlPlaneNodeName paths runtimeMode <> ":30002"
-          else "127.0.0.1:" <> show (registryPort state)
-      tagListUrl = "http://" <> registryHost <> "/v2/library/busybox/tags/list"
+  let tagListUrl = "http://" <> registryApiAddress paths state runtimeMode <> "/v2/library/busybox/tags/list"
   tagListPayload <- httpGet tagListUrl
   assert
     ( "\"tags\":[" `isInfixOf` compact tagListPayload
@@ -2215,6 +2163,34 @@ requireRegistryBusyboxTagList paths state runtimeMode = do
   case Aeson.eitherDecode (LazyByteStringChar8.pack tagListPayload) of
     Left parseError -> fail ("failed to decode registry tag list: " <> parseError)
     Right tagListValue -> pure tagListValue
+
+registryApiAddress :: Paths -> ClusterState -> RuntimeMode -> String
+registryApiAddress paths state runtimeMode =
+  if Config.controlPlaneContext paths == Config.OuterContainer
+    then kindControlPlaneNodeName paths runtimeMode <> ":30002"
+    else "127.0.0.1:" <> show (registryPort state)
+
+requireRegistryImageReadback :: Paths -> ClusterState -> RuntimeMode -> Aeson.Value -> IO ()
+requireRegistryImageReadback paths state runtimeMode tagListValue = do
+  selectedTag <- either fail pure (AesonTypes.parseEither parseTag tagListValue)
+  hostConfig <- maybe (fail "registry readback requires the generated host manifest") pure (pathsHostConfig paths)
+  targetArchitecture <- either fail pure (clusterWorkloadArchitectureForHostArchitecture runtimeMode (HostConfig.hostArchitecture hostConfig))
+  let address = registryApiAddress paths state runtimeMode
+      options =
+        PublishImages.defaultRegistryPublishOptions
+          { PublishImages.registryHost = address,
+            PublishImages.registryClientHost = address,
+            PublishImages.registryApiHost = address,
+            PublishImages.registryTargetArchitecture = targetArchitecture
+          }
+  PublishImages.verifyRegistryImage options (address <> "/library/busybox:" <> Text.unpack selectedTag)
+  reportStep "registry config and every selected image layer retrieved into a fresh independent destination"
+  where
+    parseTag = Aeson.withObject "registry tag list" $ \objectValue -> do
+      tagValues <- objectValue .: "tags"
+      case tagValues of
+        selected : _ -> pure (selected :: Text.Text)
+        [] -> fail "registry readback requires a published tag"
 
 registryPodName :: ClusterState -> IO String
 registryPodName state =

@@ -106,6 +106,8 @@ module Infernix.Cluster.Command
     helmTemplateInfernix,
     dockerBootstrapGpuNode,
     dockerGpuProbe,
+    dockerRunNvidiaValidation,
+    dockerRemoveValidationContainer,
     dockerProbeGpuUserspace,
     dockerSyncGpuUserspace,
     dockerBuildControlPlane,
@@ -149,6 +151,7 @@ module Infernix.Cluster.Command
     publishCopyDigest,
     poetryModelSnapshotBootstrap,
     gitListTrackedFiles,
+    gitCheckoutCommit,
     nodeVersionProbe,
     npmInstallWebDependencies,
     operatorKubectlCommand,
@@ -157,7 +160,7 @@ where
 
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy qualified as Lazy
-import Data.Char (isControl, isSpace)
+import Data.Char (isControl, isHexDigit, isSpace)
 import Data.List qualified as List
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NonEmpty
@@ -191,6 +194,7 @@ data ClusterOperation
   | DockerExecOperation
   | DockerProbeOperation
   | DockerBuildOperation
+  | DeviceValidationOperation
   | DockerInspectOperation
   | DockerPullOperation
   | DockerTagOperation
@@ -310,7 +314,9 @@ data ImageInspectField
 data ContainerInspectField
   = KindNetworkIpv4
   | MountSourceAt !FilePath
+  | ReadOnlyMountSourceAt !FilePath
   | ContainerPaused
+  | ContainerImageIdentity
   deriving (Eq, Show)
 
 -- | Phase 6 Sprint 6.44 — the coordinator's model-weight snapshot bootstrap.
@@ -479,6 +485,8 @@ data ClusterCommand
   | HelmTemplateInfernix ![FilePath]
   | DockerBootstrapGpuNode !NodeName
   | DockerGpuProbe !GpuProbe
+  | DockerRunNvidiaValidation !ContainerName !ImageRef !FilePath !FilePath !FilePath
+  | DockerRemoveValidationContainer !ContainerName
   | DockerProbeGpuUserspace !NodeName
   | DockerSyncGpuUserspace !NodeName
   | DockerBuildControlPlane !ControlPlaneBuildSpec
@@ -521,6 +529,7 @@ data ClusterCommand
   | PublishCopyDigest !Architecture !RegistryAuthFile !ImageRef !ImageRef
   | PoetryModelSnapshotBootstrap !ModelSnapshotBootstrapSpec
   | GitListTrackedFiles !FilePath
+  | GitCheckoutCommit !FilePath
   | NodeVersionProbe
   | NpmInstallWebDependencies !WebDependencyToolchain
 
@@ -657,6 +666,12 @@ dockerBootstrapGpuNode = DockerBootstrapGpuNode
 
 dockerGpuProbe :: GpuProbe -> ClusterCommand
 dockerGpuProbe = DockerGpuProbe
+
+dockerRunNvidiaValidation :: ContainerName -> ImageRef -> FilePath -> FilePath -> FilePath -> ClusterCommand
+dockerRunNvidiaValidation = DockerRunNvidiaValidation
+
+dockerRemoveValidationContainer :: ContainerName -> ClusterCommand
+dockerRemoveValidationContainer = DockerRemoveValidationContainer
 
 dockerProbeGpuUserspace :: NodeName -> ClusterCommand
 dockerProbeGpuUserspace = DockerProbeGpuUserspace
@@ -809,6 +824,9 @@ poetryModelSnapshotBootstrap = PoetryModelSnapshotBootstrap
 -- git's fixed @-c safe.directory=@ option; it never becomes a new token.
 gitListTrackedFiles :: FilePath -> ClusterCommand
 gitListTrackedFiles = GitListTrackedFiles
+
+gitCheckoutCommit :: FilePath -> ClusterCommand
+gitCheckoutCommit = GitCheckoutCommit
 
 -- | Observe the host @node@ version. Fixed argv, no operand.
 nodeVersionProbe :: ClusterCommand
@@ -1041,6 +1059,8 @@ clusterCommandOperation = \case
   HelmTemplateInfernix {} -> HelmRenderOperation
   DockerBootstrapGpuNode {} -> DockerExecOperation
   DockerGpuProbe {} -> DockerProbeOperation
+  DockerRunNvidiaValidation {} -> DeviceValidationOperation
+  DockerRemoveValidationContainer {} -> DockerExecOperation
   DockerProbeGpuUserspace {} -> DockerProbeOperation
   DockerSyncGpuUserspace {} -> GpuUserspaceSyncOperation
   DockerBuildControlPlane {} -> DockerBuildOperation
@@ -1083,6 +1103,7 @@ clusterCommandOperation = \case
   PublishCopyDigest {} -> ImagePublicationCopyOperation
   PoetryModelSnapshotBootstrap {} -> ModelSnapshotBootstrapOperation
   GitListTrackedFiles {} -> SourceInventoryOperation
+  GitCheckoutCommit {} -> SourceInventoryOperation
   NodeVersionProbe -> WebToolchainProbeOperation
   NpmInstallWebDependencies {} -> WebDependencyInstallOperation
 
@@ -1193,6 +1214,17 @@ validateClusterCommand = \case
     validateNodeName nodeName
   DockerGpuProbe _probe ->
     Right ()
+  DockerRunNvidiaValidation name image checkout dataSource receiptPath -> do
+    validateValidationContainerName name
+    validateImageRef image
+    require
+      "validation image must be an immutable image id"
+      ("sha256:" `List.isPrefixOf` unImageRef image && length (unImageRef image) == 71 && all isHexDigit (drop 7 (unImageRef image)))
+    mapM_ (validatePath "validation host mount") [checkout, dataSource]
+    require "validation mounts require absolute paths without commas" (all (\path -> isAbsolute path && ',' `notElem` path) [checkout, dataSource])
+    validatePath "device validation receipt" receiptPath
+    require "device validation receipt must use shared runtime storage" ("/workspace/.data/" `List.isPrefixOf` receiptPath && ".." `notElem` splitDirectories receiptPath)
+  DockerRemoveValidationContainer name -> validateValidationContainerName name
   DockerProbeGpuUserspace nodeName ->
     validateNodeName nodeName
   DockerSyncGpuUserspace nodeName ->
@@ -1303,6 +1335,8 @@ validateClusterCommand = \case
     validateModelSnapshotBootstrapSpec snapshotSpec
   GitListTrackedFiles repositoryRoot ->
     validatePath "git repository root" repositoryRoot
+  GitCheckoutCommit repositoryRoot ->
+    validatePath "git repository root" repositoryRoot
   NodeVersionProbe -> Right ()
   NpmInstallWebDependencies {} -> Right ()
 
@@ -1322,6 +1356,11 @@ validateContainerName (ContainerName containerName) = do
   require
     "container name must not contain ':'"
     (':' `notElem` containerName)
+
+validateValidationContainerName :: ContainerName -> Either String ()
+validateValidationContainerName name = do
+  validateContainerName name
+  require "validation container must belong to the validation namespace" ("infernix-validation-" `List.isPrefixOf` unContainerName name)
 
 validateNamespace :: Namespace -> Either String ()
 validateNamespace = validateAtom "namespace" . unNamespace
@@ -1407,7 +1446,10 @@ validateContainerInspectField inspectField =
     KindNetworkIpv4 -> Right ()
     MountSourceAt destinationPath ->
       validatePath "container mount destination" destinationPath
+    ReadOnlyMountSourceAt destinationPath ->
+      validatePath "read-only container mount destination" destinationPath
     ContainerPaused -> Right ()
+    ContainerImageIdentity -> Right ()
 
 validateHelmDuration :: HelmDuration -> Either String ()
 validateHelmDuration duration =
@@ -1777,6 +1819,29 @@ renderClusterCommand resolveTool = \case
       ""
   DockerGpuProbe probe ->
     commandSpec HostDocker (dockerGpuProbeArguments probe) ""
+  DockerRunNvidiaValidation name image checkout dataSource receiptPath ->
+    commandSpec
+      HostDocker
+      [ "run",
+        "--name",
+        unContainerName name,
+        "--gpus",
+        "all",
+        "--mount",
+        "type=bind,source=" <> checkout <> ",target=/opt/infernix/checkout,readonly",
+        "--mount",
+        "type=bind,source=" <> dataSource <> ",target=/workspace/.data",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        unImageRef image,
+        "infernix",
+        "internal",
+        "validate-nvidia",
+        receiptPath
+      ]
+      ""
+  DockerRemoveValidationContainer name ->
+    commandSpec HostDocker ["rm", "--force", unContainerName name] ""
   DockerProbeGpuUserspace nodeName ->
     commandSpec
       HostDocker
@@ -2031,6 +2096,8 @@ renderClusterCommand resolveTool = \case
         ""
   NodeVersionProbe ->
     commandSpec HostNode ["--version"] ""
+  GitCheckoutCommit repositoryRoot ->
+    commandSpec HostGit ["-c", "safe.directory=" <> repositoryRoot, "-C", repositoryRoot, "rev-parse", "--verify", "HEAD"] ""
   NpmInstallWebDependencies toolchain ->
     fromRepositoryRoot $
       commandSpec HostNpm (webDependencyInstallArguments toolchain) ""
@@ -2391,7 +2458,12 @@ renderContainerInspectField inspectField =
       "{{range .Mounts}}{{if eq .Destination "
         <> show destinationPath
         <> "}}{{.Source}}{{end}}{{end}}"
+    ReadOnlyMountSourceAt destinationPath ->
+      "{{range .Mounts}}{{if and (eq .Destination "
+        <> show destinationPath
+        <> ") (not .RW)}}{{.Source}}{{end}}{{end}}"
     ContainerPaused -> "{{.State.Paused}}"
+    ContainerImageIdentity -> "{{.Image}}"
 
 dockerPullArguments :: Platform -> ImageRef -> [String]
 dockerPullArguments platform imageRef =

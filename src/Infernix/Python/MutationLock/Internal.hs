@@ -35,9 +35,10 @@ withPoetryProjectMutationLockInternal projectDirectory action =
     (action PoetryProjectMutationAuthority)
 
 -- | Shared runtime custody over the same kernel lock that excludes Poetry
--- project writers. The nominal authority can exist only inside this rank-2
--- region; a prepared-environment reader wraps it only after validating the
--- exact marker and interpreter while the lock remains held.
+-- project writers. The nominal index prevents direct region substitution;
+-- callback containment remains a runtime obligation of this private bracket.
+-- A prepared-environment reader validates the exact marker and interpreter
+-- under the lock and retains custody through subprocess cleanup.
 data PoetryProjectReadAuthority r
   = PoetryProjectReadAuthority
 

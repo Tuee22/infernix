@@ -54,7 +54,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Set qualified as Set
 import Infernix.HostTools qualified as HostTools
-import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryAvailableMib)
+import Infernix.Runtime.Enforcer.Internal (combineHostCgroupAvailabilityMib, readCgroupMemoryAvailableMib, renderCgroupObservationFailure)
 import System.Directory (listDirectory)
 import System.FilePath (takeFileName, (</>))
 import System.IO (readFile')
@@ -155,7 +155,8 @@ observeLinuxAvailableHostMemoryMib = do
       case parseLinuxMemAvailableMib contents of
         Left reason -> pure (Left reason)
         Right hostAvailableMib ->
-          Right . maybe hostAvailableMib (min hostAvailableMib)
+          either (Left . renderCgroupObservationFailure) Right
+            . combineHostCgroupAvailabilityMib hostAvailableMib
             <$> readCgroupMemoryAvailableMib
 
 -- | Available MiB from a @vm_stat@ payload.

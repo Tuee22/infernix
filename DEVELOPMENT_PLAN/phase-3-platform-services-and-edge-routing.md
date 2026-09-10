@@ -1,6 +1,6 @@
 # Phase 3: Platform Services and Edge Routing
 
-**Status**: Active — Sprints 3.18 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+**Status**: Active — Sprint 3.18 is active after validated Sprint 2.18 code-side closure. Wave R3 remains open.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
@@ -943,13 +943,13 @@ serving anonymously over HTTP with one routed operator prefix.
 
 None.
 
-## Sprint 3.18: Source-Bound Platform, Route, and Publication Evidence [Blocked]
+## Sprint 3.18: Source-Bound Platform, Route, and Publication Evidence [Active]
 
-**Status**: Blocked
-**Code-side closure**: Evidence audit and required regression verification pending.
+**Status**: Active
+**Code-side closure**: Live route-inventory validation, exact demo-off 404 checks, complete demo-route probes, strict admin backend outcomes, post-reschedule blob readback, and isolated missing/corrupt-blob controls are implemented. Governed build and common-gate validation remain pending.
 **Cohort gate**: Wave R3 — selected `linux-gpu` plus native `linux-cpu`.
-**Blocked by**: Sprint 2.18 code-side closure.
-**Implementation targets**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Routes.hs`, `chart/templates/httproutes.yaml`, `test/integration/Spec.hs`
+**Blocked by**: nothing — Sprint 2.18 code-side closure is validated.
+**Implementation targets**: `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Routes.hs`, `chart/templates/httproutes.yaml`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/tools/registry.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`, `documents/tools/postgresql.md`
 
 ### Objective
@@ -980,14 +980,35 @@ Close platform claims with retained observations of the deployed source-bound su
 - Recovered historical evidence can close only assertions it demonstrably executed; missing and
   newly strengthened assertions require new results.
 
+### Assertion Coverage
+
+This inventory names required execution; it is not a passing-run record. Common gates and Wave R3
+retain the corresponding source-bound results.
+
+| Surface | Executing check | Required observation |
+|---------|-----------------|----------------------|
+| Live HTTPRoutes | `assertDeployedRouteInventory`, demo-on and demo-off integration | Exact active names, prefixes, matches, backends, rewrites, and parent; current-generation `Accepted` and `ResolvedRefs` |
+| Route-observation drift | `runDeployedRouteInventoryAssertions`, unit | Missing/duplicate routes and independently changed match, backend, parent, visibility, or readiness refuse; matching inventory passes |
+| `/` and `/api` | `exerciseRuntimeMode`, integration | Real SPA, publication, presentation configuration, and active model catalog |
+| `/auth` | `exerciseRuntimeMode`, integration | Keycloak realm discovery returns 200 and its issuer |
+| `/ws` | `exerciseRuntimeMode`, integration | Real demo upgrade handler returns its authenticated-upgrade refusal |
+| `/api/objects` | `exerciseRuntimeMode`, integration | Object-list proxy returns application-level 401 without a token |
+| `/registry`, `/pulsar/admin`, `/pulsar/ws` | `exerciseRuntimeMode`, integration | Unauthenticated demo-on requests reach the protected operator route family |
+| Operator authorization | `admin sees cluster-wide surfaces` and `non-admin is denied cluster-wide surfaces`, routed browser | Admin obtains the real catalog and cluster list plus the expected producer-endpoint 405; valid non-admin receives 403 |
+| Demo-off routes and MinIO exclusion | `validateDemoUiDisabled`, integration | Every unpublished prefix receives actual Gateway 404; registry/Pulsar remain reachable; no MinIO backend is published |
+| Single-instance topology | `validateDemoUiDisabled`, integration | Exactly one coordinator and one engine in the generated single-machine deployment |
+| Populated registry and replacement pod | Registry reconcile/reschedule integration | Unchanged tags plus a fresh independent readback of the selected image's config and every layer |
+| Blob servability | `runRegistryBlobServabilityAssertions`, unit | Two fresh real Skopeo readbacks succeed; independently missing and corrupt layers fail while API/tag bytes remain unchanged |
+
 ### Remaining Work
 
-Audit check coverage, implement any missing behavioral controls, and retain Wave R3 evidence.
-Accelerator scheduling is a validation-only residual after code-side closure.
+Pass the governed build and common gates, then retain Wave R3 evidence for the deployed platform,
+routes, browser authorization, and registry readback. Accelerator scheduling is a validation-only
+residual after code-side closure.
 
 ## Remaining Work
 
-Implement Sprints 3.18, pass their governed machine-independent gates, and retain Wave R3's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Validate Sprint 3.18's route and registry repairs through the governed machine-independent gates, and retain Wave R3's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

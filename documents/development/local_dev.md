@@ -91,6 +91,12 @@ The first supported Apple host-native command that needs Kubernetes tooling, Nod
 Poetry reconciles those prerequisites automatically. Docker must already use the operator's native
 arm64 daemon; the workflow does not provision or switch Docker virtualization.
 
+The Apple bootstrap first builds a seed executable under the fixed stage-zero memory ceiling.
+That executable records the source input, then the bootstrap forces a second bounded compilation.
+The rebuilt executable checks that the source stayed unchanged and writes
+`./.build/native-build-identity.json`. Aggregate validation requires that identity to match both
+the current source and the running executable. A source edit requires another bootstrap build.
+
 ### Config Is Created by Explicit `init`
 
 The `infernix` binary is the sole generator of every `.dhall`, and none is version-controlled.
@@ -152,9 +158,21 @@ reference path uses the same `compose.yaml` service and prefixes the direct comm
 supported bootstrap installs the recommended Ubuntu compute driver, stops, and instructs the
 operator to reboot before rerunning the same command.
 
-The Linux `build` step is required for a clean clone and after source changes: Compose launches a
-baked snapshot and does not build it or mount the checkout. Validation binds the expected relevant
+The Linux wrappers reconcile the launcher build before entering its immutable image id. Compose
+launches a baked snapshot; the wrappers mount the checkout read-only at `/opt/infernix/checkout`
+so the binary can compare requested source with the image. The checkout is an observation input;
+compilation and execution use `/workspace`. Direct Compose validation must supply that same
+read-only mount with `--volume "$(pwd):/opt/infernix/checkout:ro"` on `run`. Validation binds the expected relevant
 source snapshot to the immutable image actually used, retaining dirty-source preimages when needed.
+
+Aggregate, integration, and browser validation require runtime and test configuration to select the
+same lane. A mismatch refuses before checks start. The selected lane is rechecked before each gate,
+and the initialized configuration must be restored unchanged when validation ends.
+
+For the `linux-gpu` suite, the binary dispatches the mandatory NVIDIA fixtures into a separate
+container using that immutable image and explicitly requested devices. The ordinary outer launcher
+does not require a device mount. Each selected device fixture fails when its required observation
+is unavailable; CPU and Apple machine-independent suites do not claim NVIDIA execution.
 A mutable local tag alone does not establish freshness. See
 [Docker policy](../engineering/docker_policy.md#source-and-image-identity) and
 [execution evidence](../engineering/testing.md#execution-evidence-and-trust-boundary).

@@ -46,12 +46,13 @@ import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Infernix.Cluster.Subprocess.Activity qualified as Activity
+import Infernix.Cluster.Subprocess.Pipe (closeOwnedPipe)
 import Infernix.ProcessIdentity
   ( ProcessBirthIdentity,
     readProcessBirthIdentity,
   )
 import Numeric (readHex, showHex)
-import System.IO (Handle, hClose, hFlush)
+import System.IO (Handle, hFlush)
 import System.Posix.Process (getProcessGroupIDOf)
 import System.Timeout (timeout)
 
@@ -119,7 +120,7 @@ encloseAnchorControl = AnchorControl
 -- | Close the control channel without exposing its handle.
 closeAnchorControl :: AnchorControl -> IO ()
 closeAnchorControl (AnchorControl handle) =
-  hClose handle
+  closeOwnedPipe handle
 
 -- | Decode the anchor's mandatory first request. A gate before configuration
 -- fails closed inside this module.

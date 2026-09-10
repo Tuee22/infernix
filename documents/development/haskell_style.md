@@ -74,6 +74,11 @@
   and use a closed indexed program where compile-time containment is required. Runtime brackets
   own liveness checks, cleanup, and child joining. Review and independently test each boundary
   with positive controls and negative cases that fail for the intended restriction.
+  Cluster callers compose the opaque linear `LifecycleProgram` through `Infernix.Cluster`;
+  authority-bearing callbacks and fixture path selection stay in the library-private implementation.
+  Public orchestration callbacks receive no lease or session.
+  Keep the public facade explicit when adding operations, and give every new instruction a
+  domain-owned interpretation under the held lock.
 - `Bounded provisioning:` Apple engine materialization may select only closed adapter/operation
   identities through the package-internal `Infernix.Engines.Provisioning` facade. Its opaque
   nominal `ProvisioningGrant s` and indexed `ProvisioningSession s result` remain inside

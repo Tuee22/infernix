@@ -1500,7 +1500,7 @@ threadDelayExemptedFiles =
     "src/Infernix/Runtime/CappedEngine/Internal.hs",
     -- Cluster lifecycle: retains genuine backoff sites (claim chmod retry, probe
     -- backoff, teardown-absence backoff) after the Sprint 6.41 wait migration.
-    "src/Infernix/Cluster.hs",
+    "src/Infernix/Cluster/Internal.hs",
     -- Runtime transport / service loop: producer + WebSocket connect retry backoff,
     -- dispatcher topic poll, and the idle runtime-loop park / heartbeat.
     "src/Infernix/Runtime/Pulsar.hs",
@@ -1605,6 +1605,9 @@ escapeTokenScopedFiles :: [FilePath]
 escapeTokenScopedFiles =
   [ "src/Infernix/Evidence/Readiness.hs",
     "src/Infernix/Evidence/Lease.hs",
+    "src/Infernix/Evidence/Lease/Internal.hs",
+    "src/Infernix/Cluster/Internal.hs",
+    "src/Infernix/Cluster/LifecycleProgram/Internal.hs",
     "src/Infernix/Cluster/Subprocess.hs",
     -- Sprint 3.15: mints the opaque 'BlobServable' evidence (hidden ctor);
     -- forbid the two escapes that could forge it.

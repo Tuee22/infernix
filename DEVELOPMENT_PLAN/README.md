@@ -14,11 +14,13 @@ govern this plan.
 ## Current execution gate
 
 Phase 0 remains `Done` and frozen at Sprint 0.36. Phases 1–9 are `Active` because each has
-explicit implementation or evidence obligations in its own scope. Start with Sprint 1.44; the
+explicit implementation or evidence obligations in its own scope. Continue with Sprint 3.18; the
 follow-on sprints proceed in natural phase order after their named code-side prerequisites.
 Closed sprint headings remain closed records of their original scope, not proof of the new work.
 
-No remediation implementation or new cohort validation is claimed by this documentation update.
+Sprints 1.44–1.46 have native Linux amd64 code-side closure, with source/image tuples and retained
+checks in Phase 1. Sprint 2.18 has native Linux amd64 code-side closure, with retained evidence in
+Phase 2. Sprint 3.18 is the next implementation gate. No new full-suite cohort result is claimed.
 [Open waves R1–R9](cohort-validation-waves.md#wave-table) each require one selected accelerator plus
 `linux-cpu`; their hardware sign-off does not block the next phase's code-side work. The
 [phase table](#current-phase-overview) is the sole phase-status summary.
@@ -111,11 +113,14 @@ leases do not prove nonescape through deferred effects or reminted markers; priv
 consumers limit exposure but do not justify the stronger type claim. Static adapter checks are
 heuristics, not a proof that arbitrary output came from inference.
 
-Current launcher reuse can select stale source, mandatory GPU fixtures can report success without
-executing their assertions, and retained phase evidence is incomplete. Until their owning work is
+Launcher source binding, mandatory GPU fixture execution, and retained phase evidence remain under
+validation in Sprint 1.44. Until their owning work is
 closed, an exit code, Markdown status, cache directory, prefix hash, or rendered DOM container is
 insufficient evidence of the corresponding behavior. Removal of the concrete shortcut surfaces is
 tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
+Beyond the application admin overview and personal dashboard, no general observability stack is
+deployed. Monitoring is not a supported first-class surface.
 
 ## Execution Contexts and Substrates
 
@@ -192,7 +197,7 @@ trust the phase document.
 | Phase | Current status | Current gate and retained implementation state |
 |-------|----------------|------------------------------------------------|
 | 0 | Done | Frozen at Sprint 0.36; no new Phase 0 work. |
-| 1 | Active | [Sprints 1.44–1.46](phase-1-repository-and-control-plane-foundation.md) and [Wave R1](cohort-validation-waves.md#wave-table): Source-bound validation and required-check runner, binary-owned seed generation, explicit Apple engine startup, fail-closed cgroup observation, and domain-owned lifecycle authority. |
+| 1 | Active | Sprints 1.44–1.46 have native Linux amd64 code-side closure; Wave R1 is validation-only. Wave R1 full-suite sign-off remains open. [Sprints 1.44–1.46](phase-1-repository-and-control-plane-foundation.md) and [Wave R1](cohort-validation-waves.md#wave-table): Source-bound validation and required-check runner, binary-owned seed generation, explicit Apple engine startup, fail-closed cgroup observation, and domain-owned lifecycle authority. |
 | 2 | Active | [Sprints 2.18](phase-2-kind-cluster-storage-and-lifecycle.md) and [Wave R2](cohort-validation-waves.md#wave-table): Lifecycle consumer containment and cleanup; recover or rerun missing retained lifecycle evidence. |
 | 3 | Active | [Sprints 3.18](phase-3-platform-services-and-edge-routing.md) and [Wave R3](cohort-validation-waves.md#wave-table): Recover or rerun source-bound platform, routed publication, and registry evidence. |
 | 4 | Active | [Sprints 4.50](phase-4-inference-service-and-durable-runtime.md) and [Wave R4](cohort-validation-waves.md#wave-table): Real engine-cache hydration and rebuild, complete artifact accounting, and behavioral realness checks. |

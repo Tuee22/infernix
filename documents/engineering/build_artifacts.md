@@ -30,6 +30,14 @@
 
 ## Artifact Layout
 
+The Linux image retains the binary-generated default seed at
+`/opt/infernix/dhall/ImageHostSeed.dhall` and the compiled source/executable association at
+`/opt/infernix/build-identity.json`. Validation retains source preimages, configuration inputs,
+check outcomes, stdout/stderr logs, and their integrity metadata under
+`./.data/runtime/validation/`. The Apple build handoff writes its pending source input to
+`./.build/native-build-start.json` and its verified source/executable association to
+`./.build/native-build-identity.json` after the bounded forced rebuild.
+
 The host path stages
 `./.build/infernix`, the Linux substrate images own
 `/usr/local/bin/infernix*` and image-local outer-container build state, generated frontend

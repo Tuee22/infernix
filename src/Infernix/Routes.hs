@@ -3,6 +3,7 @@
 module Infernix.Routes
   ( routeHelmValues,
     routeInventory,
+    validateDeployedRoutes,
     routePublicationUpstreams,
     renderChartRouteRegistryCommentSection,
     renderClusterBootstrapRouteChecksSection,
@@ -15,7 +16,11 @@ module Infernix.Routes
   )
 where
 
-import Data.List (intercalate)
+import Control.Monad (unless)
+import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.Types qualified as Aeson
+import Data.List (intercalate, sort)
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -39,6 +44,115 @@ routeInventory demoEnabled =
   [ RouteInfo (routePathPrefix routeSpec) (routePurpose routeSpec)
   | routeSpec <- publishedRoutes demoEnabled
   ]
+
+-- | Compare live Gateway API observations with the binary-owned route registry.
+-- Defaults inserted by the API server are accepted only when they preserve the
+-- exact parent, match, rewrite, and backend contract. Readiness must describe
+-- the current object generation, not a superseded route specification.
+validateDeployedRoutes :: Bool -> Aeson.Value -> Either String ()
+validateDeployedRoutes demoEnabled payload = do
+  observed <- Aeson.parseEither (Aeson.withObject "HTTPRouteList" (\objectValue -> objectValue Aeson..: "items" >>= mapM parseDeployedRoute)) payload
+  let expected =
+        [ (routeName spec, routePathPrefix spec, routeServiceName spec, routeServicePort spec, routeRewritePrefix spec)
+        | spec <- publishedRoutes demoEnabled
+        ]
+  unless (sort observed == sort expected) $
+    Left ("deployed HTTPRoute inventory differs from the route registry; expected " <> show (sort expected) <> "; observed " <> show (sort observed))
+
+type DeployedRoute = (Text, Text, Text, Int, Maybe Text)
+
+parseDeployedRoute :: Aeson.Value -> Aeson.Parser DeployedRoute
+parseDeployedRoute = Aeson.withObject "HTTPRoute" $ \objectValue -> do
+  metadata <- objectValue Aeson..: "metadata"
+  routeNameValue <- metadata Aeson..: "name"
+  namespaceValue <- metadata Aeson..: "namespace"
+  unless (namespaceValue == ("platform" :: Text)) (fail "HTTPRoute belongs to another namespace")
+  generation <- metadata Aeson..: "generation"
+  unless (generation > (0 :: Integer)) (fail "HTTPRoute generation is invalid")
+  deletion <- metadata Aeson..:? "deletionTimestamp"
+  unless (deletion == (Nothing :: Maybe Text)) (fail "HTTPRoute is being deleted")
+  spec <- objectValue Aeson..: "spec"
+  hostnames <- spec Aeson..:? "hostnames" Aeson..!= []
+  unless (null (hostnames :: [Text])) (fail "HTTPRoute unexpectedly restricts hostnames")
+  parent <- spec Aeson..: "parentRefs" >>= oneRouteValue "spec.parentRefs"
+  parseRouteParent parent
+  rule <- spec Aeson..: "rules" >>= oneRouteValue "spec.rules"
+  matchValue <- rule Aeson..: "matches" >>= oneRouteValue "rule.matches"
+  unless (KeyMap.keys matchValue == ["path"]) (fail "HTTPRoute has an unexpected match condition")
+  matchedPath <- matchValue Aeson..: "path"
+  matchType <- matchedPath Aeson..: "type"
+  unless (matchType == ("PathPrefix" :: Text)) (fail "HTTPRoute does not use a prefix match")
+  prefixValue <- matchedPath Aeson..: "value"
+  backend <- rule Aeson..: "backendRefs" >>= oneRouteValue "rule.backendRefs"
+  backendName <- backend Aeson..: "name"
+  backendPort <- backend Aeson..: "port"
+  backendNamespace <- backend Aeson..:? "namespace" Aeson..!= "platform"
+  backendGroup <- backend Aeson..:? "group" Aeson..!= ""
+  backendKind <- backend Aeson..:? "kind" Aeson..!= "Service"
+  backendWeight <- backend Aeson..:? "weight" Aeson..!= (1 :: Int)
+  backendFilters <- backend Aeson..:? "filters" Aeson..!= []
+  unless
+    ( backendNamespace == ("platform" :: Text)
+        && backendGroup == ("" :: Text)
+        && backendKind == ("Service" :: Text)
+        && backendWeight == 1
+        && null (backendFilters :: [Aeson.Value])
+    )
+    (fail "HTTPRoute backend has unexpected namespace, kind, weight, or filters")
+  filters <- rule Aeson..:? "filters" Aeson..!= []
+  rewriteValue <- parseRouteRewrite filters
+  statusValue <- objectValue Aeson..: "status"
+  parentStatus <- statusValue Aeson..: "parents" >>= oneRouteValue "status.parents"
+  parentStatus Aeson..: "parentRef" >>= parseRouteParent
+  controller <- parentStatus Aeson..: "controllerName"
+  unless (controller == ("gateway.envoyproxy.io/gatewayclass-controller" :: Text)) (fail "HTTPRoute is not reconciled by the Envoy Gateway controller")
+  conditions <- parentStatus Aeson..: "conditions"
+  mapM_ (requireRouteCondition generation conditions) ["Accepted", "ResolvedRefs"]
+  pure (routeNameValue, prefixValue, backendName, backendPort, rewriteValue)
+
+oneRouteValue :: String -> [value] -> Aeson.Parser value
+oneRouteValue _ [value] = pure value
+oneRouteValue label _ = fail ("HTTPRoute requires exactly one " <> label)
+
+parseRouteParent :: Aeson.Object -> Aeson.Parser ()
+parseRouteParent parent = do
+  parentName <- parent Aeson..: "name"
+  parentSection <- parent Aeson..: "sectionName"
+  parentNamespace <- parent Aeson..:? "namespace" Aeson..!= "platform"
+  parentGroup <- parent Aeson..:? "group" Aeson..!= "gateway.networking.k8s.io"
+  parentKind <- parent Aeson..:? "kind" Aeson..!= "Gateway"
+  parentPort <- parent Aeson..:? "port"
+  unless
+    ( parentName == ("infernix-edge" :: Text)
+        && parentSection == ("http" :: Text)
+        && parentNamespace == ("platform" :: Text)
+        && parentGroup == ("gateway.networking.k8s.io" :: Text)
+        && parentKind == ("Gateway" :: Text)
+        && parentPort == (Nothing :: Maybe Int)
+    )
+    (fail "HTTPRoute parent differs from the local infernix-edge HTTP listener")
+
+parseRouteRewrite :: [Aeson.Object] -> Aeson.Parser (Maybe Text)
+parseRouteRewrite [] = pure Nothing
+parseRouteRewrite [filterValue] = do
+  filterType <- filterValue Aeson..: "type"
+  unless (filterType == ("URLRewrite" :: Text)) (fail "HTTPRoute has an unexpected rule filter")
+  rewrite <- filterValue Aeson..: "urlRewrite"
+  unless (KeyMap.keys rewrite == ["path"]) (fail "HTTPRoute rewrite changes more than the path")
+  rewritePath <- rewrite Aeson..: "path"
+  rewriteType <- rewritePath Aeson..: "type"
+  unless (rewriteType == ("ReplacePrefixMatch" :: Text)) (fail "HTTPRoute has an unexpected rewrite type")
+  Just <$> rewritePath Aeson..: "replacePrefixMatch"
+parseRouteRewrite _ = fail "HTTPRoute has multiple rule filters"
+
+requireRouteCondition :: Integer -> [Aeson.Object] -> Text -> Aeson.Parser ()
+requireRouteCondition generation conditions wanted = do
+  typedConditions <- mapM (\condition -> (,) <$> condition Aeson..: "type" <*> pure condition) conditions
+  condition <- oneRouteValue ("condition " <> Text.unpack wanted) [value | (kind, value) <- typedConditions, kind == wanted]
+  statusValue <- condition Aeson..: "status"
+  observedGeneration <- condition Aeson..: "observedGeneration"
+  unless (statusValue == ("True" :: Text) && observedGeneration == generation) $
+    fail ("HTTPRoute " <> Text.unpack wanted <> " is not true for its current generation")
 
 routePublicationUpstreams :: Bool -> ApiUpstream -> Text -> [PublicationUpstream]
 routePublicationUpstreams demoEnabled apiUpstream inferenceDispatchMode =

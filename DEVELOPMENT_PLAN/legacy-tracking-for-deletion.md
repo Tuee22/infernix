@@ -22,10 +22,6 @@ surface that no longer exists is not something a reader of this plan needs told 
 
 | Existing surface | Location | Removal condition | Owning sprint |
 |------------------|----------|-------------------|---------------|
-| Mutable launcher tag trusted without source binding | `bootstrap/linux-cpu.sh`; `bootstrap/linux-gpu.sh`; `compose.yaml` | Require matching reconstructable source identity and immutable image provenance before validation. | 1.44 |
-| Hand-rendered Dhall image seed and its approving test | `docker/Dockerfile`; `test/unit/Spec.hs` | Generate every seed through the binary; replace string-presence acceptance with decoded generation/consumer tests. | 1.44 |
-| Missing cgroup usage treated as the whole limit available | `src/Infernix/Runtime/Enforcer/Internal.hs`; `src/Infernix/HostClaimants.hs` | Refuse unavailable or malformed required observations; retain no optimistic fallback. | 1.45 |
-| Generic authority mint/extract surface | `src/Infernix/Evidence/Lease.hs` | Remove public authority reminting; confine live resources and effects to the owning domain. | 1.46 |
 | Marker-only cache materialize/rebuild | `src/Infernix/Runtime/Cache.hs`; `src/Infernix/Demo/Api.hs` | Hydrate verified real engine artifacts on their owning machine; report only actual operations. | 4.50 |
 | First-file local checkpoint estimate | `src/Infernix/Runtime/Enforcer.hs` | Use the complete supported artifact layout consistently or explicitly refuse unsupported shards. | 4.50 |
 | Literal-return realness blind spot | `python/adapters/common.py` | Retain useful static heuristics but replace false proof with behavioral/mutation-negative acceptance. | 4.50 |

@@ -1,21 +1,10 @@
-{-# LANGUAGE RankNTypes #-}
-
 module Main (main) where
 
-import Infernix.Cluster
-  ( ClusterMutationLocked,
-    ClusterTeardownAuthority,
-    withClusterLifecycleLock,
-  )
-import Infernix.Config (Paths)
-import Infernix.Evidence.Lease (Lease)
+import Infernix.Cluster (ClusterTeardownAuthority)
 
-escapeAuthority ::
-  Paths ->
-  (forall s. Lease s ClusterMutationLocked -> IO (ClusterTeardownAuthority owner s)) ->
-  IO (ClusterTeardownAuthority owner ())
-escapeAuthority =
-  withClusterLifecycleLock
+-- Direct region erasure is forbidden independently of the effect-program tests.
+escapeAuthority :: ClusterTeardownAuthority owner region -> ClusterTeardownAuthority owner ()
+escapeAuthority authority = authority
 
 main :: IO ()
-main = pure ()
+main = escapeAuthority `seq` pure ()

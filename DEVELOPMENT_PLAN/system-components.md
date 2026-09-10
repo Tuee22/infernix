@@ -9,7 +9,7 @@
 ## Current Execution State
 
 [README.md](README.md#current-phase-overview) owns the single phase-status table.
-Follow-on work begins at Sprint 1.44; [Waves R1–R9](cohort-validation-waves.md#wave-table)
+Code-side work continues at Sprint 3.18; [Waves R1–R9](cohort-validation-waves.md#wave-table)
 hold the separate chosen-accelerator plus CPU sign-off obligations.
 Component existence is not proof that its target contract or new validation criteria are satisfied.
 
@@ -17,8 +17,7 @@ Component existence is not proof that its target contract or new validation crit
 
 The baseline CLI, cluster, runtime, browser, and access-control surfaces exist.
 Their scoped implementation and evidence gaps are recorded below by owning sprint, not by a
-second phase-status inventory. No remediation implementation or new validation result is claimed
-by this documentation refactor. The [deletion ledger](legacy-tracking-for-deletion.md) records
+second phase-status inventory. Sprints 1.44–1.46 and 2.18 have validated code-side closure; their source/image tuples and controls are recorded in Phases 1 and 2. No new cohort result is claimed. The [deletion ledger](legacy-tracking-for-deletion.md) records
 still-existing shortcuts; [governed documents](../documents/README.md) own the target contracts.
 
 ## Operator and Host Components
@@ -28,11 +27,12 @@ still-existing shortcuts; [governed documents](../documents/README.md) own the t
 | Apple host control plane | `bootstrap/apple-silicon.sh`; `./.build/infernix` | Native Apple build/lifecycle surface. Operator inference requires the separately started host engine; source-bound operator validation belongs to [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Apple headless Metal/Core ML materialization | `Infernix.Engines.AppleSilicon` and hidden provisioning modules | Materializes upstream engine payloads under `./.data/engines/<adapterId>/` through bounded candidate verification and activation. Domain lifetime proof precision belongs to [1.46](phase-1-repository-and-control-plane-foundation.md); no historical cohort statement substitutes for its new checks. |
 | Linux native engine materialization | `Infernix.Engines.LinuxNative`; `infernix internal materialize-linux-native-engines` | Image-owned targets under `/opt/infernix/engines/<adapterId>/`; hidden target catalog and manifests select direct upstream execution. Behavioral realness controls belong to [4.50](phase-4-inference-service-and-durable-runtime.md). |
-| Linux outer-container control plane | `compose.yaml`; `docker compose run --rm infernix infernix ...` | Baked launcher, Docker socket and `./.data/` mounts, no checkout mount or Compose build definition. Independent source/image binding belongs to [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Linux outer-container control plane | `compose.yaml`; `docker compose run --rm infernix infernix ...` | Baked launcher with Docker socket and `./.data/` mounts, plus an independent read-only checkout supplied by bootstrap. No Compose build definition. Source/image binding and validation belong to [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Bootstrap shell entrypoints | `bootstrap/*.sh` | Prerequisite/build/launcher handoff only; binary owns lifecycle and validation. Explicit Linux build and binary-generated seed obligations belong to [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Command registry | Haskell command registry | Owns parsing/help and generated references. Explicit initialization may select a substrate; ordinary operations consume initialized config. `service --config PATH` selects a config for that daemon, not a second configuration language. |
 | Runtime configuration | Repo-root `./infernix.dhall`; `Infernix.ProjectInit`, `Infernix.DemoConfig`, `Infernix.Models` | System contract owns substrate and pool/model facts; roles and member identity belong to machine/process scope. Seed generation belongs to [1.44](phase-1-repository-and-control-plane-foundation.md); consumer validation to [8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md). |
 | Machine contract | `./infernix-host.dhall` | `machine` union carries role, member identities, cache quota and system-contract digest; `ImageDefault` grants no daemon authority. Live availability and lifetime checks belong to [1.45–1.46](phase-1-repository-and-control-plane-foundation.md). |
+| Lifecycle authority | `Infernix.Cluster`; private lifecycle interpreter and lease kernel | Closed linear program owns configured path discovery and held-lock interpretation; code-side validation belongs to [1.46](phase-1-repository-and-control-plane-foundation.md). |
 | Route registry | Haskell route inventory | Prefix/backend/rewrite authority; source-bound routed evidence belongs to [3.18](phase-3-platform-services-and-edge-routing.md), backend containment to [5.13](phase-5-web-ui-and-shared-types.md). |
 | Automation entry documents | `AGENTS.md`, `CLAUDE.md` | Link to the canonical assistant workflow; do not own parallel workflow rules. |
 | Frontend contract generator | `infernix internal generate-purs-contracts` | Emits presentation contracts from Haskell browser ADTs into `web/src/Generated/`; source/bundle binding belongs to [5.13](phase-5-web-ui-and-shared-types.md). |
@@ -43,7 +43,7 @@ still-existing shortcuts; [governed documents](../documents/README.md) own the t
 
 | Component | Current location | Purpose | Scoped remaining work |
 |---|---|---|---|
-| Linux substrate image definition | `docker/Dockerfile` | Shared launcher/coordinator image build, toolchain, web bundle, browser runtime and baked source inventory | Hand-rendered host seed and source provenance: [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Linux substrate image definition | `docker/Dockerfile` | Shared launcher/coordinator image build, toolchain, web bundle, browser runtime and baked source inventory | Selected-cohort full-suite evidence: [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Playwright runtime | `docker/Dockerfile`; `web/playwright/` | In-image Linux browser execution; native Apple browser execution through the same typed fixture | Source-bound browser evidence: [5.13](phase-5-web-ui-and-shared-types.md); useful artifact rendering: [7.33](phase-7-demo-app-durable-context.md). |
 | Compose launcher | `compose.yaml` | One service, two mounts, explicit image selector; reuses a prebuilt image | Missing/stale image rejection and independent expected-source handoff: [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Shared Python adapter project | `python/pyproject.toml`; `python/adapters/` | Framework-free adapter quality/protobuf project | AST heuristics cannot prove semantic realness; behavioral controls: [4.50](phase-4-inference-service-and-durable-runtime.md). |

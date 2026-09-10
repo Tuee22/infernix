@@ -14,6 +14,7 @@ module Infernix.Cluster.PublishImages
     prioritizePublishableImages,
     publishChartImagesFile,
     skopeoTargetRefForRegistryApiHost,
+    verifyRegistryImage,
     withRegistryAuthFile,
     writeRegistryOverridesFile,
   )
@@ -21,7 +22,7 @@ where
 
 import Control.Applicative ((<|>))
 import Control.Exception (SomeException, displayException, mask_, throwIO, try)
-import Control.Monad (unless, when)
+import Control.Monad (unless, void, when)
 import Data.Aeson
   ( FromJSON (parseJSON),
     Value,
@@ -131,8 +132,7 @@ type PublishPhaseHook = String -> IO ()
 -- registry-only @skopeo copy@ from the in-cluster registry returned every
 -- selected blob. This is strictly stronger than 'observeRegistryApi' (the
 -- registry's @/v2/@ answered) and than @registryTagMetadataPresent@ (a tag row
--- exists in the registry's
--- retained-state-replayed Postgres). The constructor is hidden and
+-- exists in the registry's retained backing metadata). The constructor is hidden and
 -- 'probeRegistryPull' is the sole minter, so "the tag metadata exists ⇒ the
 -- blob is servable" is not a constructible term — this closes the
 -- retained-state second-cluster-up race where the ~40 GB MinIO backing has not
@@ -546,6 +546,14 @@ prioritizePublishableImages imageRefs =
       isRepoOwned imageRef = imageRef `elem` repoOwnedImages || "infernix-engine-" `List.isPrefixOf` imageRef
       (localImages, otherImages) = partition isRepoOwned imageRefs
    in localImages <> otherImages
+
+-- | Read back a complete image through the production registry-only verifier.
+-- The fresh destination and bounded command are owned here; callers receive
+-- no publication authority or reusable servability witness.
+verifyRegistryImage :: RegistryPublishOptions -> String -> IO ()
+verifyRegistryImage options targetRef = do
+  manager <- newManager tlsManagerSettings
+  void (verifyRegistryPull manager options (const (pure ())) targetRef)
 
 -- | Sprint 3.15: probe whether @targetRef@'s blob is servable from the local
 -- in-cluster registry, minting 'BlobServable' evidence only after a bounded

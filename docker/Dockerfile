@@ -259,17 +259,17 @@ RUN set -eu; \
       /opt/infernix/native-payloads/whisper.cpp \
       /opt/infernix/native-payloads/basic-pitch \
       /opt/infernix/audiveris-jre; \
-    curl -fsSL -o "${native_tmp}/llama.tar.gz" \
+    curl -fsSL --retry 3 --retry-max-time 120 -o "${native_tmp}/llama.tar.gz" \
       "https://github.com/ggml-org/llama.cpp/releases/download/b9704/llama-b9704-bin-ubuntu-${native_asset_arch}.tar.gz"; \
     tar -xzf "${native_tmp}/llama.tar.gz" -C /opt/infernix/native-payloads/llama.cpp; \
-    curl -fsSL -o "${native_tmp}/whisper.tar.gz" \
+    curl -fsSL --retry 3 --retry-max-time 120 -o "${native_tmp}/whisper.tar.gz" \
       "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.0/whisper-bin-ubuntu-${native_asset_arch}.tar.gz"; \
     tar -xzf "${native_tmp}/whisper.tar.gz" -C /opt/infernix/native-payloads/whisper.cpp; \
-    curl -fsSL -o /opt/infernix/native-payloads/basic-pitch/nmp.onnx \
+    curl -fsSL --retry 3 --retry-max-time 120 -o /opt/infernix/native-payloads/basic-pitch/nmp.onnx \
       https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx; \
-    curl -fsSL -o "${native_tmp}/audiveris.deb" \
+    curl -fsSL --retry 3 --retry-max-time 120 -o "${native_tmp}/audiveris.deb" \
       https://github.com/Audiveris/audiveris/releases/download/5.10.2/Audiveris-5.10.2-ubuntu24.04-x86_64.deb; \
-    curl -fsSL -o "${native_tmp}/temurin-jre.tar.gz" \
+    curl -fsSL --retry 3 --retry-max-time 120 -o "${native_tmp}/temurin-jre.tar.gz" \
       "https://api.adoptium.net/v3/binary/latest/25/ga/linux/${temurin_arch}/jre/hotspot/normal/eclipse"; \
     tar -xzf "${native_tmp}/temurin-jre.tar.gz" -C /opt/infernix/audiveris-jre --strip-components=1; \
     apt-get update; \
@@ -319,114 +319,6 @@ RUN mkdir -p /workspace/.build /opt/infernix /opt/infernix/dhall \
          -print \
        | sed 's#^\\./##' | LC_ALL=C sort > /opt/infernix/source-snapshot-files.txt
 
-# Phase 1 Sprint 1.11 — bake the supported Linux outer-container host
-# manifest into the image at the canonical mount path. The Haskell
-# binary's `discoverPaths` reads this file via `tryLoadHostManifest`
-# at startup so it can resolve `buildRoot = /workspace/.build/outer-container/build`
-# (the supported outer-container path) instead of falling back to
-# `/workspace/.build` (the host-native fallback default that
-# mis-classifies the container as `HostNative`). Operators override
-# per-host by editing this file before the binary needs it.
-RUN printf '%s\n' \
-    '{ hostExecutionContext = < AppleHostNative | LinuxOuterContainer >.LinuxOuterContainer' \
-    ", hostArchitecture = \"${TARGETARCH:-$(dpkg --print-architecture)}\"" \
-    ', toolPaths =' \
-    '    { docker = "/usr/bin/docker"' \
-    '    , kubectl = "/usr/local/bin/kubectl"' \
-    '    , helm = "/usr/local/bin/helm"' \
-    '    , kind = "/usr/local/bin/kind"' \
-    '    , cabal = "/root/.ghcup/bin/cabal"' \
-    '    , ghc = "/root/.ghcup/bin/ghc"' \
-    '    , ghcup = ""' \
-    '    , npm = "/usr/bin/npm"' \
-    '    , node = "/usr/bin/node"' \
-    '    , python3 = "/usr/bin/python3"' \
-    '    , python311 = ""' \
-    '    , llamaCompletion = ""' \
-    '    , whisperCli = ""' \
-    '    , poetry = "/opt/poetry/bin/poetry"' \
-    '    , git = "/usr/bin/git"' \
-    '    , tar = "/usr/bin/tar"' \
-    '    , curl = "/usr/bin/curl"' \
-    '    , aptGet = "/usr/bin/apt-get"' \
-    '    , brew = ""' \
-    '    , sudo = "/usr/bin/sudo"' \
-    '    , systemctl = "/usr/bin/systemctl"' \
-    '    , mkdir = "/usr/bin/mkdir"' \
-    '    , chmod = "/usr/bin/chmod"' \
-    '    , ln = "/usr/bin/ln"' \
-    '    , install = "/usr/bin/install"' \
-    '    , id = "/usr/bin/id"' \
-    '    , getent = "/usr/bin/getent"' \
-    '    , cut = "/usr/bin/cut"' \
-    '    , dirname = "/usr/bin/dirname"' \
-    '    , bash = "/usr/bin/bash"' \
-    '    , crictl = "/usr/local/bin/crictl"' \
-    '    , chown = "/usr/bin/chown"' \
-    '    , nvidiaSmi = "/usr/bin/nvidia-smi"' \
-    '    , nvkind = "/usr/local/bin/nvkind"' \
-    '    , skopeo = "/usr/bin/skopeo"' \
-    '    , hostname = "/usr/bin/hostname"' \
-    '    , sysctl = "/sbin/sysctl"' \
-    '    }' \
-    ', filesystem =' \
-    '    { repoRoot = "/workspace"' \
-    '    , buildRoot = "/workspace/.build/outer-container/build"' \
-    '    , dataRoot = "/workspace/.data"' \
-    '    , runtimeRoot = "/workspace/.data/runtime"' \
-    '    , kubeconfigPath = "/workspace/.data/runtime/infernix.kubeconfig"' \
-    '    , secretsRoot = "/workspace/.data/runtime/secrets"' \
-    '    , homeDirectory = "/root"' \
-    '    , kindRoot = "/workspace/.data/runtime/kind"' \
-    '    }' \
-    ', memory =' \
-    '    { physicalMemoryMib = 0' \
-    '    , effectiveMemoryMib = 0' \
-    '    }' \
-    ', machine = < ImageDefault | Machine : { role : < Coordinator | Engine | Webapp >, members : List Text, modelCacheQuotaBytes : Natural, systemContractDigest : Text } >.ImageDefault' \
-    ', commandPolicies =' \
-    '    { kindRead = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , kindCreate = { timeoutMicros = 1800000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , kindDelete = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 3, backoffMicros = 2000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.IdempotentAbsence }' \
-    '    , nvkindCreate = { timeoutMicros = 1800000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , kubectlRead = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , kubectlApply = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , kubectlDelete = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.IdempotentAbsence }' \
-    '    , kubectlWait = { timeoutMicros = 1500000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , kubectlExec = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , helmUpgrade = { timeoutMicros = 2100000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , helmDependency = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , helmRepository = { timeoutMicros = 300000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , helmRender = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , dockerExec = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , dockerProbe = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , dockerBuild = { timeoutMicros = 2700000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , dockerInspect = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , dockerPull = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , dockerTag = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , dockerCopy = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , dockerStreamImport = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , dockerNetwork = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.IdempotentAbsence }' \
-    '    , containerRuntimePull = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , hostProbe = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , hostMutation = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , curlProbe = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , archiveRead = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , gpuUserspaceSync = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , imagePublicationLogin = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 6, backoffMicros = 6000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.TransientThenFatal }' \
-    '    , imagePublicationInspect = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , imagePublicationPull = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , imagePublicationVerify = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 6, backoffMicros = 6000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.TransientThenFatal }' \
-    '    , imagePublicationTag = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
-    '    , imagePublicationPush = { timeoutMicros = 2400000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 30, backoffMicros = 50000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.TransientThenFatal }' \
-    '    , imagePublicationRemove = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.IdempotentAbsence }' \
-    '    , imagePublicationCopy = { timeoutMicros = 2400000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 30, backoffMicros = 50000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.TransientThenFatal }' \
-    '    }' \
-    ', playwrightHost = "127.0.0.1"' \
-    ', controlPlaneContext = "outer-container"' \
-    '}' \
-    > /opt/infernix/dhall/InfernixHost.dhall
-
 # Wave I: huggingface_hub installs `hf_xet`, whose Xet large-file transport
 # routes weight downloads through HF's `xet-read-token` API, which the Hub
 # rate-limits aggressively per source IP (HTTP 429) under a busy cohort run —
@@ -457,7 +349,10 @@ RUN mkdir -p /workspace/tools/generated_proto \
          all:exes \
          --jobs=1 \
          '--ghc-options=+RTS -M4096M -xr12288M -RTS' \
-    && install /workspace/.build/infernix /usr/local/bin/infernix
+    && install /workspace/.build/infernix /usr/local/bin/infernix \
+    && /usr/local/bin/infernix internal linux-host-seed > /opt/infernix/dhall/ImageHostSeed.dhall \
+    && cp /opt/infernix/dhall/ImageHostSeed.dhall /opt/infernix/dhall/InfernixHost.dhall \
+    && /usr/local/bin/infernix internal image-build-identity > /opt/infernix/build-identity.json
 
 # Phase 3 Sprint 3.10 — install Playwright's system dependencies before native
 # artifact observation. The installer legitimately regenerates
@@ -471,7 +366,10 @@ RUN apt-get update \
 # fail-closed loader and provenance checks are intentionally stricter than
 # compilation, and a failed observation must be diagnosable and retryable
 # without rebuilding the binary.
-RUN infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} --empty-models \
+# Only upstream download archives persist across failed materialization attempts.
+# Environments and native artifact roots are rebuilt and verified in the image.
+RUN --mount=type=cache,id=infernix-poetry-artifacts-${TARGETARCH},target=/root/.cache/pypoetry/artifacts,sharing=locked \
+    infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} --empty-models \
     && infernix test init --runtime-mode ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
     && npm --prefix web run build \
     && poetry --directory python run check-code \

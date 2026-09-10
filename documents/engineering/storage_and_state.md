@@ -108,6 +108,11 @@ below. Calling a daemon stateless does not make every repo-local file disposable
 
 ## Cleanup Rules
 
+- Harness runtime cleanup preserves `./.data/runtime/validation/`, including source preimages,
+  receipts, logs, and retained executable images. It also preserves bounded-command activity
+  evidence, lifecycle locks, and secret transport state. Removing ordinary runtime metadata must
+  not erase the evidence needed to verify the cleanup or the enclosing validation run.
+
 - Delete durable state only through explicit operator intent such as a targeted data reset or
   manual local cleanup that accepts data loss. Ordinary supported cluster teardown preserves the
   durable retained rows and may remove only the rebuildable platform-bootstrap exception above.

@@ -413,7 +413,11 @@ The shell never reads a `.dhall` file directly. The Haskell binary is the only D
 
 The first binary is built through a fixed bounded seed invocation that does not require a generated
 host manifest. It then emits the image's host manifest from the same decoder-owned defaults used by
-normal initialization. Dockerfile and bootstrap shell do not render Dhall records, schemas, or
+normal initialization. Initialization discovers its supported execution context independently of
+the host manifest it replaces: the Linux image uses its fixed workspace and build handoff, and
+Apple uses native path discovery. A missing or obsolete host manifest does not prevent explicit
+reinitialization from measuring the active memory envelope and regenerating the compiler plan.
+Dockerfile and bootstrap shell do not render Dhall records, schemas, or
 command-policy copies. Image-default configuration identifies a build execution context; it does
 not fabricate live machine capacity or authorize an engine daemon. Clean-start tests prove this
 sequence with no preexisting binary-generated manifest.

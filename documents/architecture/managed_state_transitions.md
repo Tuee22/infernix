@@ -89,6 +89,49 @@ mint observes the required condition and that its interpreter maintains it. A lo
 after release cannot mint new lock authority, and a successful compile-fail test proves only its
 specific rejected program.
 
+### Lifecycle authority boundary
+
+`Infernix.Cluster` exposes `runClusterLifecycle` and opaque nominal `LifecycleSession s` /
+`LifecycleProgram s result` types. The runner discovers the configured resource paths itself,
+acquires the actual lifecycle lock, and interprets the whole program before releasing it. Each
+operation consumes its session linearly and supplies the next session to a pure continuation.
+Apply continuations directly: ordinary `($)` cannot carry a partially applied operation that
+captures a linear session. `finishLifecycle` takes the ordinary returned value before its linear
+session, so it also serves directly as an observation continuation.
+The vocabulary contains state observation, operator/harness up and down, and harness GPU engine
+rotation over the generated deployment inventory. Constructors, arbitrary `IO` lifting, mutable
+reference operations, child spawning, and caller-selected lock paths are absent from this API.
+A returned ordinary value or action carries no held authority; another protected operation must
+enter a fresh runner and repeat its ownership and liveness checks.
+
+The implementation and interpreter live in library-private `Infernix.Cluster.Internal` and
+`Infernix.Cluster.LifecycleProgram.Internal`. Generic lease acquisition and payload projection are
+confined to `Infernix.Evidence.Lease.Internal`; the public lease module exports only the opaque
+type. Private ordinary-`IO` callbacks are trusted implementation boundaries with runtime bracket
+obligations, not independent compile-time nonescape proofs. Unit home modules may access these
+private boundaries for fault injection; external compile fixtures use the public library API.
+
+| Lease consumer | Type boundary | Runtime obligation |
+|---|---|---|
+| Cluster up/down and GPU rotation | Closed public program; nominal owner/region authority inside the private interpreter | Hold the real lock and reread owner, reservation, checkout identity, and live inventory adjacent to effects |
+| Other configured lifecycle operations | Closed domain operation with a private held-lock bracket; no lease returned | Discover canonical paths and hold the actual lock across protected effects |
+| Retained snapshot source | Private frozen-source lease and hidden copy primitives | Pause the actual workers, recheck claim bindings, retain cleanup custody, and unpause on exit |
+| Detached copy target and quiesced writers | Private leases tied to the current mutation operation | Observe mount isolation or writer absence under the same held lock; a phantom tag cannot establish either fact |
+| Keycloak administration | Private token acquisition and closed realm reconciliation | Request a fresh bearer per attempt; remote expiry or revocation fails the operation, and a region tag does not prove remote validity |
+| Bounded-command activity recovery | Private nominal quiescence evidence | Hold the exclusive lifetime lock through recovery and retirement; an ordinary-IO callback requires runtime containment |
+| Engine provisioning and artifact writers | Closed indexed programs with private grants, writer indices, and interpreters | Hold the actual materialization/project/cache locks through every writer effect and cleanup |
+| Prepared Python environment readers | Private nominal read authority and checked runtime/binding pair | Validate the marker and interpreter while holding the shared project lock; retain it through capped-engine completion and cleanup |
+| Artifact launch callback | Paths and closed arguments without capability or lock authority | Join and reap children before returning; withholding authority does not prevent retaining paths or launching an unjoined child |
+| Toolchain child lifecycles | Opaque nominal authority retaining observations and a single-flight token | Recheck settings and live admission for each child; hold serialization and any installed ceiling through cleanup. The mint's ordinary-IO callback is not a lifetime proof |
+
+Public configuration and harness orchestration callbacks receive no lease or lifecycle session.
+They cannot lift arbitrary effects into a lifecycle program; protected operations they invoke
+acquire their own authority. Helpers accepting caller-selected mutation paths remain private.
+
+The closed program itself cannot fork a child. Domain operations use the bounded subprocess
+kernel, which owns terminal observation, reaping, pipe closure, and exceptional cleanup before a
+step can complete. This is a runtime custody obligation distinct from session linearity.
+
 The raw destructive, commit, and spawn primitives are **not exported**; the only public path takes
 evidence:
 
@@ -107,7 +150,7 @@ evidence:
 - the owner index prevents substituting one owner's authority for another; it does not decide who
   owns a live cluster. `requireClusterOwnership` is the sole mint and discovers ownership by
   rereading the persisted record, global Kind inventory, and slot identity under the held lease.
-  `withPersistedClusterMutation` uses rank-2 `withClusterOwnerSingleton` to select the singleton
+  The private `withPersistedClusterMutationUnderLock` uses rank-2 `withClusterOwnerSingleton` to select the singleton
   from the owner read inside that critical section, so no index is fabricated. A harness teardown
   of an `OperatorOwned` cluster fails by checked refusal at that evidence boundary;
 - checkout identity travels with the protected machine-global Kind slot. Repo-local lifecycle
@@ -614,7 +657,8 @@ retires only after the anchor, supervisor, and target groups are proven absent.
   `ClusterTeardownAuthority owner s` or `Lease s` cannot be coerced across regions and authority cannot
   escape or be reused with another lifecycle-lock region.
 - Compile-fail fixtures must reject external imports of `Infernix.Cluster.Command`,
-  `Infernix.Cluster.Subprocess`, `Infernix.Cluster.LifecycleLock`, and raw protocol constructors.
+  `Infernix.Cluster.Subprocess`, `Infernix.Cluster.LifecycleLock`, `Infernix.Cluster.Internal`,
+  `Infernix.Cluster.LifecycleProgram.Internal`, `Infernix.Evidence.Lease.Internal`, and raw protocol constructors.
   Separate fixtures reject skipping the durable-lease phase, escaping the rank-2 session, and
   reusing the linear start authority. Direct positive kernel coverage belongs to the unit
   component's home-module build, not the public library surface.

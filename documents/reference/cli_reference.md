@@ -70,6 +70,12 @@
 - `infernix internal demo-config load PATH` - loads one generated demo config and prints the rendered model listing
 - `infernix internal demo-config validate PATH` - validates one generated demo config file
 - `infernix internal dhall-schema host|cluster|secrets|substrate` - prints the Dhall type expression reflected from the binary's decoder for one packaged schema
+- `infernix internal linux-host-seed` - prints the decoder-owned Linux image host defaults without reading existing configuration
+- `infernix internal image-build-identity` - prints the compiled image source inventory and executable digest for the build handoff
+- `infernix internal native-build-begin` - records the source input before the bounded native launcher rebuild
+- `infernix internal native-build-finish` - binds the rebuilt native executable to its unchanged build input
+- `infernix internal validate-nvidia PATH` - executes the closed NVIDIA fixture inventory in an explicit device context
+- `infernix internal verify-validation-receipt SCOPE PATH` - verifies a retained receipt against the independent checkout, executable, configuration, and required check scope
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result
 - `infernix internal playwright prepare-engine MODEL_ID` - selects the generated model's closed engine deployment under harness ownership
 <!-- infernix:command-registry:end -->

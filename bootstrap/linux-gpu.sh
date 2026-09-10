@@ -102,24 +102,34 @@ EOF
 # environment: block, and no substrate-selection env var. The script
 # selects the project and compose files with explicit CLI arguments.
 compose_run() {
-  bootstrap::run "${BOOTSTRAP_ENV}" "LAUNCHER_IMAGE=${COMPOSE_IMAGE}" "${BOOTSTRAP_DOCKER}" compose --project-name "${COMPOSE_PROJECT}" "${COMPOSE_FILES[@]}" run --rm infernix infernix "$@"
+  bootstrap::run "${BOOTSTRAP_ENV}" "LAUNCHER_IMAGE=${COMPOSE_IMAGE}" "${BOOTSTRAP_DOCKER}" compose --project-name "${COMPOSE_PROJECT}" "${COMPOSE_FILES[@]}" run --rm --volume "${SCRIPT_DIR}/..:/opt/infernix/checkout:ro" infernix infernix "$@"
 }
 
 # Phase 1 Sprint 1.11 — explicit @docker build@ replaces the previous
 # compose.yaml @build: args:@ block (forbidden by the
 # configuration-doctrine standards). Build args feed the Dockerfile;
-# the resulting image is referenced from compose.yaml by name only.
+# the resulting immutable image id selects the Compose launcher.
 # BuildKit provenance is disabled so registry publication sees a plain
 # single-platform image rather than an OCI index with attestation metadata.
 build_launcher_image() {
-  bootstrap::run "${BOOTSTRAP_DOCKER}" build \
+  local launcher_iidfile launcher_identity
+  launcher_iidfile="$("${BOOTSTRAP_MKTEMP}")"
+  if ! bootstrap::run "${BOOTSTRAP_DOCKER}" build \
     --file docker/Dockerfile \
     --provenance=false \
+    --iidfile "${launcher_iidfile}" \
     --tag "${COMPOSE_IMAGE}" \
     --build-arg "RUNTIME_MODE=${COMPOSE_SUBSTRATE}" \
     --build-arg "BASE_IMAGE=${COMPOSE_BASE_IMAGE}" \
     --build-arg "DEMO_UI=true" \
-    .
+    .; then
+    "${BOOTSTRAP_RM}" -f "${launcher_iidfile}"
+    bootstrap::die "Launcher build failed."
+  fi
+  launcher_identity="$(<"${launcher_iidfile}")"
+  "${BOOTSTRAP_RM}" -f "${launcher_iidfile}"
+  [[ "${launcher_identity}" == sha256:* ]] || bootstrap::die "Launcher build identity is unavailable."
+  COMPOSE_IMAGE="${launcher_identity}"
 }
 
 ensure_platform_shape() {
@@ -288,6 +298,9 @@ ensure_gpu_runtime_prerequisites() {
 
 run_infernix() {
   ensure_host_prerequisites
+  # BuildKit checks the complete context before an immutable image is selected.
+  # A cached build is the positive reuse path; tag existence is insufficient.
+  build_launcher_image
   compose_run "$@"
 }
 
@@ -298,7 +311,6 @@ command_doctor() {
 
 command_build() {
   ensure_gpu_runtime_prerequisites
-  build_launcher_image
   run_infernix --help
   bootstrap::info "Linux GPU launcher image is ready."
 }

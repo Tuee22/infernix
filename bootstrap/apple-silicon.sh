@@ -84,7 +84,7 @@ Operator/demo reference commands (use this script's \`build\` command for every 
   ${SCRIPT_LABEL} build
   ./.build/infernix init
   ./.build/infernix cluster up
-  ./.build/infernix service
+  ./.build/infernix service --role engine
   ./.build/infernix cluster status
   ./.build/infernix cluster down
 
@@ -274,10 +274,9 @@ require_stage0_build_memory() {
   bootstrap::info "Stage-0 build-memory preflight: ${physical_mib} MiB physical - ${pledged_mib} MiB active Colima pledge = ${effective_mib} MiB effective; using 1 compiler x 4096 MiB plus 2 control claims x 1024 MiB (6144 MiB total)."
 }
 
-build_launcher() {
+compile_launcher() {
   local home_dir
-  ensure_build_prerequisites
-  require_stage0_build_memory
+  local compiler_options="$1"
   home_dir="$(bootstrap::effective_home)"
   # No build-only GHCRTS here. The environment form does not cap an RTS image
   # linked without runtime options — it makes that image refuse to start — so a
@@ -296,7 +295,16 @@ build_launcher() {
     --overwrite-policy=always \
     all:exes \
     --jobs=1 \
-    '--ghc-options=+RTS -M4096M -xr12288M -RTS'
+    "--ghc-options=${compiler_options}"
+}
+
+build_launcher() {
+  ensure_build_prerequisites
+  require_stage0_build_memory
+  compile_launcher '+RTS -M4096M -xr12288M -RTS'
+  run_launcher internal native-build-begin
+  compile_launcher '-fforce-recomp +RTS -M4096M -xr12288M -RTS'
+  run_launcher internal native-build-finish
 }
 
 ensure_launcher_ready() {
@@ -321,7 +329,7 @@ command_up() {
 
 command_run_daemon() {
   ensure_launcher_ready
-  run_launcher service
+  run_launcher service --role engine
 }
 
 command_status() {

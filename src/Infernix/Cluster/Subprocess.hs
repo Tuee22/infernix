@@ -203,6 +203,7 @@ import Infernix.Cluster.LifecycleLock
     withKernelSharedFileLock,
   )
 import Infernix.Cluster.Subprocess.Activity qualified as Activity
+import Infernix.Cluster.Subprocess.Pipe (closeOwnedPipe, newOwnedDescriptorCloser, requireOwnedPipeClosed)
 import Infernix.Cluster.Subprocess.Protocol qualified as Protocol
 import Infernix.Config (Paths (..))
 import Infernix.DescriptorSpace (requireBoundedDescriptorSpace)
@@ -217,7 +218,8 @@ import Infernix.Engines.MaterializationLock
   )
 import Infernix.Engines.Provisioning.Internal qualified as Provisioning
 import Infernix.Error
-  ( finallyPreservingPrimary,
+  ( bracketPreservingPrimary,
+    finallyPreservingPrimary,
     onExceptionPreservingPrimary,
     runCleanupsPreservingFailures,
   )
@@ -2300,6 +2302,7 @@ commandPolicyFor plan operation =
     DockerExecOperation -> planDockerExec plan
     DockerProbeOperation -> planDockerProbe plan
     DockerBuildOperation -> planDockerBuild plan
+    DeviceValidationOperation -> planDockerBuild plan
     DockerInspectOperation -> planDockerInspect plan
     DockerPullOperation -> planDockerPull plan
     DockerTagOperation -> planDockerTag plan
@@ -7756,8 +7759,9 @@ readCommandActivityDocument activityPath = mask $ \restore -> do
 -- | Hold the fixed activity-lifetime lock exclusively while proving and
 -- consuming quiescence evidence for one owner process group. Every current
 -- anchor, supervisor, and retained target-group pin holds the same lock in
--- shared mode. The rank-2 region prevents the evidence from escaping the lock
--- that makes foreign-namespace retirement sound.
+-- shared mode. The nominal index prevents direct region substitution. This
+-- private ordinary-IO callback still relies on runtime custody: consumers must
+-- finish recovery and retirement before the exclusive lock is released.
 withBoundedCommandActivitiesQuiescent ::
   Paths ->
   Integer ->
@@ -10467,7 +10471,7 @@ spawnSelfExecHelperMasked helperGroup explicitEnvironment activityLifetimeLockPa
       closeCreatedHandles =
         runCleanupsPreservingFailures
           ( map
-              (maybe (pure ()) (ignoreIOException . hClose))
+              (maybe (pure ()) closeOwnedPipe)
               [maybeInput, maybeOutput, maybeError]
           )
       terminateCreated =
@@ -10702,9 +10706,9 @@ awaitUnregisteredKernelIdentityAbsent label probeAction attemptsRemaining = do
 closeSpawnedHelperHandles :: SpawnedHelper -> IO ()
 closeSpawnedHelperHandles helper =
   runCleanupsPreservingFailures
-    [ ignoreIOException (hClose (spawnedHelperInput helper)),
-      ignoreIOException (hClose (spawnedHelperOutput helper)),
-      ignoreIOException (hClose (spawnedHelperError helper))
+    [ closeOwnedPipe (spawnedHelperInput helper),
+      closeOwnedPipe (spawnedHelperOutput helper),
+      closeOwnedPipe (spawnedHelperError helper)
     ]
 
 -- | Drive 'signalActivityProcessGroupWith' against a recorded identity built
@@ -11258,7 +11262,7 @@ acquireSupervisedSession command = mask $ \restore -> do
                   trackedAnchor
                   (trackedHelperIdentity trackedAnchor)
               ),
-            ignoreIOException (hClose (spawnedHelperInput anchor)),
+            closeOwnedPipe (spawnedHelperInput anchor),
             void (waitForTrackedHelperBounded trackedAnchor),
             awaitRecordedProcessGroupAbsent
               "acquisition anchor"
@@ -12162,9 +12166,7 @@ cleanupSupervisedProcesses command session anchorShutdown = mask_ $ do
           )
       tryCloseAnchorControl =
         try @SomeException
-          ( ignoreIOException
-              (Protocol.closeAnchorControl (supervisedAnchorControl session))
-          )
+          (Protocol.closeAnchorControl (supervisedAnchorControl session))
   supervisorProvisionalResult <-
     try @SomeException
       (readMVar (supervisedSupervisorProvisional session))
@@ -12292,6 +12294,14 @@ cleanupSupervisedProcesses command session anchorShutdown = mask_ $ do
       _ -> pure (Right ())
   publishedResult <-
     try @SomeException (readMVar (supervisedPublishedActivity session))
+  diagnosticCleanup <- try @SomeException $ do
+    diagnostic <- readMVarBounded "anchor stderr cleanup" (supervisedAnchorErrorResult session)
+    either (ioError . userError) (either throwIO (const (pure ()))) diagnostic
+  closeResults <-
+    mapM
+      (try @SomeException)
+      [ closeOwnedPipe (supervisedAnchorOutput session)
+      ]
   retirementProofHook <-
     case ( publishedResult,
            anchorReap,
@@ -12311,16 +12321,14 @@ cleanupSupervisedProcesses command session anchorShutdown = mask_ $ do
            supervisorAbsence,
            targetAbsence,
            snapshotRecovery,
-           retirementProofHook
+           retirementProofHook,
+           anchorControlClose,
+           diagnosticCleanup,
+           sequence_ closeResults
          ) of
-      (Right (Just activity), Right _, Right (), Right (), Right (), Right (), Right ()) ->
+      (Right (Just activity), Right _, Right (), Right (), Right (), Right (), Right (), Right (), Right (), Right ()) ->
         try @SomeException (retirePublishedCommandActivity activity)
       _ -> pure (Right ())
-  closeResults <-
-    mapM
-      (try @SomeException)
-      [ ignoreIOException (hClose (supervisedAnchorOutput session))
-      ]
   -- EPERM is not absence evidence. Discharge it only after the designated
   -- reap and exact group-absence proof have both completed.
   let verifiedAnchorKill =
@@ -12336,6 +12344,7 @@ cleanupSupervisedProcesses command session anchorShutdown = mask_ $ do
         initialCleanupResults
           <> [ verifiedAnchorKill,
                anchorControlClose,
+               diagnosticCleanup,
                voidResult gracefulAnchorExit
              ]
           <> forcedCleanupResults
@@ -12449,6 +12458,11 @@ awaitHelperProtocolClose handle = do
 
 helperShutdownGraceMicros :: Int
 helperShutdownGraceMicros = 1000000
+
+readMVarBounded :: String -> MVar a -> IO (Either String a)
+readMVarBounded label value = do
+  observed <- timeout (5 * 1000 * 1000) (readMVar value)
+  pure (maybe (Left (label <> " did not finish within cleanup deadline")) Right observed)
 
 takeMVarBounded ::
   String ->
@@ -18486,40 +18500,37 @@ awaitAnchorSupervisorEvent ::
   IO (Maybe SupervisorEvent)
 awaitAnchorSupervisorEvent supervisor = mask $ \restore -> do
   wake <- newEmptyMVar
-  supervisorDone <- newEmptyMVar
-  parentDone <- newEmptyMVar
-  supervisorWatcher <-
-    forkIO
-      ( finally
-          ( try @IOException
-              ( readJsonFrameHandle
-                  "supervisor event"
-                  (spawnedHelperOutput supervisor)
+  let startWatcher action = do
+        done <- newEmptyMVar
+        thread <- forkIO (finally action (putMVar done ()))
+        pure (thread, done)
+      stopWatcher (thread, done) =
+        finallyPreservingPrimary (killThread thread) (readMVar done)
+  bracketPreservingPrimary
+    ( startWatcher
+        ( try @IOException
+            (restore (readJsonFrameHandle "supervisor event" (spawnedHelperOutput supervisor)))
+            >>= putMVar wake . AnchorPreparationSupervisor
+        )
+    )
+    stopWatcher
+    ( \_ ->
+        bracketPreservingPrimary
+          ( startWatcher
+              ( try @IOException (restore (awaitHandleEof stdin))
+                  >>= putMVar wake . AnchorPreparationParentClosed
               )
-              >>= putMVar wake . AnchorPreparationSupervisor
           )
-          (putMVar supervisorDone ())
-      )
-  parentWatcher <-
-    forkIO
-      ( finally
-          ( try @IOException (restore (awaitHandleEof stdin))
-              >>= putMVar wake . AnchorPreparationParentClosed
+          stopWatcher
+          ( \_ -> do
+              observed <- restore (takeMVar wake)
+              case observed of
+                AnchorPreparationParentClosed parentResult ->
+                  either ioError (const (pure Nothing)) parentResult
+                AnchorPreparationSupervisor eventResult ->
+                  Just <$> either ioError pure eventResult
           )
-          (putMVar parentDone ())
-      )
-  observed <- restore (takeMVar wake)
-  case observed of
-    AnchorPreparationParentClosed parentResult -> do
-      killThread supervisorWatcher
-      takeMVar supervisorDone
-      takeMVar parentDone
-      either ioError (const (pure Nothing)) parentResult
-    AnchorPreparationSupervisor eventResult -> do
-      killThread parentWatcher
-      takeMVar parentDone
-      takeMVar supervisorDone
-      Just <$> either ioError pure eventResult
+    )
 
 validateAnchorSelfIdentity :: ActivityProcessIdentity -> IO ()
 validateAnchorSelfIdentity expectedIdentity = do
@@ -18577,13 +18588,15 @@ cleanupAnchorOwnedSupervisor
                 []
                 (pure . signalProvisionalProcessWith sigCONT)
                 pinProvisional
-    runCleanupsPreservingFailures
-      ( [ ignoreIOException (hClose (spawnedHelperInput supervisor)),
-          ignoreIOException supervisorContinue
-        ]
-          <> map ignoreIOException pinContinue
-      )
-    awaitHelperProtocolClose (spawnedHelperOutput supervisor)
+    initialCleanup <-
+      try @SomeException $
+        runCleanupsPreservingFailures
+          ( [ closeOwnedPipe (spawnedHelperInput supervisor),
+              ignoreIOException supervisorContinue
+            ]
+              <> map ignoreIOException pinContinue
+          )
+    protocolClose <- try @SomeException (awaitHelperProtocolClose (spawnedHelperOutput supervisor))
     let forceNestedGroups = do
           case targetGroupLeader of
             Just identity ->
@@ -18603,56 +18616,55 @@ cleanupAnchorOwnedSupervisor
                   trackedSupervisor
             )
             supervisorFinal
-    forceNestedGroups
-    forceLiveSupervisor
-    supervisorExit <-
-      waitForTrackedHelperBounded trackedSupervisor
+    nestedCleanup <- try @SomeException forceNestedGroups
+    forcedCleanup <- try @SomeException forceLiveSupervisor
+    reapResult <- try @SomeException (waitForTrackedHelperBounded trackedSupervisor)
     let supervisorEvidenceIdentity =
           fromMaybe
             (trackedHelperIdentity trackedSupervisor)
             supervisorFinal
-    mapM_
-      ( \evidencePrefix ->
-          recordReapEvidence
-            (evidencePrefix <> ".anchor.json")
-            anchorIdentity
-            [ ( "supervisor",
-                ReapedRegisteredChild supervisorEvidenceIdentity,
-                show supervisorExit
-              )
-            ]
+    reapEvidence <- try @SomeException $
+      case reapResult of
+        Left _ -> pure ()
+        Right supervisorExit ->
+          mapM_
+            ( \evidencePrefix ->
+                recordReapEvidence
+                  (evidencePrefix <> ".anchor.json")
+                  anchorIdentity
+                  [("supervisor", ReapedRegisteredChild supervisorEvidenceIdentity, show supervisorExit)]
+            )
+            reapEvidencePrefix
+    outputClose <- try @SomeException (closeOwnedPipe (spawnedHelperOutput supervisor))
+    targetAbsent <- try @SomeException $
+      case targetGroupLeader of
+        Just identity -> awaitRecordedProcessGroupAbsent "anchor-owned target" identity 500
+        Nothing -> mapM_ (awaitProvisionalProcessQuiescent "anchor-owned provisional pin") pinProvisional
+    supervisorAbsent <- try @SomeException $
+      case supervisorFinal of
+        Just identity -> awaitRecordedProcessGroupAbsent "anchor-owned supervisor" identity 500
+        Nothing -> awaitProvisionalProcessQuiescent "anchor-owned provisional supervisor" provisionalSupervisor
+    diagnosticResult <- try @SomeException $ do
+      captured <- readMVarBounded "supervisor stderr capture" supervisorErrorResult
+      contents <- either (ioError . userError) (either throwIO pure) captured
+      requireOwnedPipeClosed (spawnedHelperError supervisor)
+      pure contents
+    runCleanupsPreservingFailures
+      ( map
+          (either throwIO pure)
+          [ initialCleanup,
+            protocolClose,
+            nestedCleanup,
+            forcedCleanup,
+            voidResult reapResult,
+            reapEvidence,
+            outputClose,
+            targetAbsent,
+            supervisorAbsent,
+            voidResult diagnosticResult
+          ]
       )
-      reapEvidencePrefix
-    ignoreIOException (hClose (spawnedHelperOutput supervisor))
-    case targetGroupLeader of
-      Just identity ->
-        awaitRecordedProcessGroupAbsent
-          "anchor-owned target"
-          identity
-          500
-      Nothing ->
-        mapM_
-          (awaitProvisionalProcessQuiescent "anchor-owned provisional pin")
-          pinProvisional
-    case supervisorFinal of
-      Just identity ->
-        awaitRecordedProcessGroupAbsent
-          "anchor-owned supervisor"
-          identity
-          500
-      Nothing ->
-        awaitProvisionalProcessQuiescent
-          "anchor-owned provisional supervisor"
-          provisionalSupervisor
-    diagnosticResult <-
-      takeMVarBounded "supervisor stderr capture" supervisorErrorResult
-    diagnostic <-
-      case diagnosticResult of
-        Left failure -> pure (ByteString8.pack failure)
-        Right (Left failure) ->
-          pure (ByteString8.pack (displayException failure))
-        Right (Right contents) -> pure contents
-    pure (supervisorExit, diagnostic)
+    (,) <$> either throwIO pure reapResult <*> either throwIO pure diagnosticResult
 
 drainHandle ::
   Int ->
@@ -18664,7 +18676,7 @@ drainHandle maximumBytes handle result = do
     try @SomeException
       ( finallyPreservingPrimary
           (readHandleToEnd maximumBytes handle)
-          (ignoreIOException (hClose handle))
+          (closeOwnedPipe handle)
       )
   putMVar result captured
 
@@ -19921,7 +19933,7 @@ superviseTarget activityLifetimeLockPath = mask $ \restore -> do
         validateObservedActivityLeader
           "retained target-group pin"
           detachedPinIdentity
-        ignoreIOException (hClose (spawnedHelperInput pin))
+        closeOwnedPipe (spawnedHelperInput pin)
     )
     cleanupPin
   retainedPinIdentity <-
@@ -19972,6 +19984,7 @@ superviseTarget activityLifetimeLockPath = mask $ \restore -> do
             cleanupPin
           ]
       )
+  closeGateWriter <- newOwnedDescriptorCloser gateWriter
   let cleanupTarget =
         finallyPreservingPrimary
           ( finallyPreservingPrimary
@@ -19983,7 +19996,7 @@ superviseTarget activityLifetimeLockPath = mask $ \restore -> do
                       retainedPinIdentity
                       pinErrorResult
                       target
-                      gateWriter
+                      closeGateWriter
                       execReader
                   mapM_
                     validateRetainedProvisioningMutationWorkingDirectory
@@ -20063,7 +20076,7 @@ superviseTarget activityLifetimeLockPath = mask $ \restore -> do
             (void cleanupTargetAndWorkers)
         if not (ByteString.null execReport)
           then do
-            closeFd gateWriter
+            closeGateWriter
             void (waitForTrackedProcessBounded target)
             cleanupTarget
           else do
@@ -20078,7 +20091,7 @@ superviseTarget activityLifetimeLockPath = mask $ \restore -> do
             wake <-
               onExceptionPreservingPrimary
                 ( do
-                    closeFd gateWriter
+                    closeGateWriter
                     if supervisorPlanForceControlFailure plan
                       then do
                         void (waitForTrackedProcessBounded target)
@@ -20918,7 +20931,7 @@ cleanupSelfExecPin pin finalIdentityState errorResult = mask_ $ do
   initialResults <-
     mapM
       (try @SomeException)
-      ( [ignoreIOException (hClose (spawnedHelperInput pin))]
+      ( [closeOwnedPipe (spawnedHelperInput pin)]
           <> maybe
             [signalProvisionalProcessWith sigCONT provisionalPin]
             ( \identity ->
@@ -20965,10 +20978,10 @@ cleanupSelfExecPin pin finalIdentityState errorResult = mask_ $ do
         )
         finalIdentity
   outputCloseResult <-
-    try @SomeException (ignoreIOException (hClose (spawnedHelperOutput pin)))
+    try @SomeException (closeOwnedPipe (spawnedHelperOutput pin))
   diagnosticResult <-
     try @SomeException
-      (takeMVarBounded "pin stderr capture" errorResult)
+      (readMVarBounded "pin stderr capture" errorResult)
   let diagnosticFailures =
         case diagnosticResult of
           Left failure -> [failure]
@@ -20991,7 +21004,7 @@ cleanupSupervisorTarget ::
   ActivityProcessIdentity ->
   MVar (Either SomeException ByteString.ByteString) ->
   TrackedProcess ->
-  Fd ->
+  IO () ->
   Fd ->
   IO TargetTerminal
 cleanupSupervisorTarget
@@ -21000,7 +21013,7 @@ cleanupSupervisorTarget
   pinIdentity
   pinErrorResult
   target
-  gateWriter
+  closeGateWriter
   execReader =
     finallyPreservingPrimary
       ( cleanupSupervisorTargetResult
@@ -21011,7 +21024,7 @@ cleanupSupervisorTarget
           target
           execReader
       )
-      (ignoreIOException (closeFd gateWriter))
+      closeGateWriter
 
 cleanupSupervisorTargetResult ::
   SupervisorPlan ->
@@ -21083,7 +21096,7 @@ cleanupSupervisorTargetResult
         (waitForTrackedHelperBounded (spawnedHelperTracked pin))
     pinOutputCloseResult <-
       try @SomeException
-        (ignoreIOException (hClose (spawnedHelperOutput pin)))
+        (closeOwnedPipe (spawnedHelperOutput pin))
     terminationProof <-
       try @SomeException
         ( awaitRecordedProcessGroupAbsent
@@ -21099,9 +21112,10 @@ cleanupSupervisorTargetResult
         Left _ -> pure (Right ByteString.empty)
     execReportCloseResult <-
       try @SomeException (closeFd execReader)
-    pinDiagnosticResult <-
-      try @SomeException
-        (takeMVarBounded "pin stderr capture" pinErrorResult)
+    pinDiagnosticResult <- try @SomeException $ do
+      captured <- readMVarBounded "pin stderr capture" pinErrorResult
+      _ <- either (ioError . userError) (either throwIO pure) captured
+      requireOwnedPipeClosed (spawnedHelperError pin)
     -- EPERM from the group kill is not absence evidence on its own, so it is
     -- discharged only once two independent exact-identity facts hold: the
     -- designated reap of the pin completed, and the recorded group was proven
@@ -21195,7 +21209,7 @@ writeTargetInputFd descriptor input result = do
     try @SomeException
       ( finallyPreservingPrimary
           (writeFdFully descriptor input)
-          (ignoreIOException (closeFd descriptor))
+          (closeFd descriptor)
       )
   putMVar result writeResult
 
@@ -21208,7 +21222,7 @@ drainTargetFd descriptor result = do
     try @SomeException
       ( finallyPreservingPrimary
           (readFdToEnd maximumCapturedOutputBytes descriptor)
-          (ignoreIOException (closeFd descriptor))
+          (closeFd descriptor)
       )
   putMVar result readResult
 

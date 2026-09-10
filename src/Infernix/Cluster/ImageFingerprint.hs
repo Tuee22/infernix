@@ -10,24 +10,27 @@ module Infernix.Cluster.ImageFingerprint
     clusterImageSourceFingerprint,
     dockerIgnorePathIgnored,
     parseDockerIgnorePatterns,
+    sourceSnapshot,
+    retainSourceSnapshot,
   )
 where
 
-import Control.Monad (forM, unless)
+import Control.Exception (evaluate)
+import Control.Monad (forM, unless, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Bits ((.&.))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
-import Data.List (intercalate, sort, tails)
+import Data.List (intercalate, isInfixOf, nub, sort, tails)
 import Data.Maybe (catMaybes)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Infernix.Config (Paths (..))
 import Infernix.Types (RuntimeMode, runtimeModeId)
-import System.Directory (doesFileExist, listDirectory)
-import System.FilePath ((</>))
+import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, listDirectory)
+import System.FilePath (takeDirectory, (</>))
 import System.Posix.Files qualified as Posix
 
 data ClusterImageBuildInputs = ClusterImageBuildInputs
@@ -39,11 +42,7 @@ data ClusterImageBuildInputs = ClusterImageBuildInputs
   }
   deriving (Eq, Show)
 
-data DockerIgnorePattern = DockerIgnorePattern
-  { dockerIgnoreRawPattern :: String,
-    dockerIgnorePatternHasSlash :: Bool,
-    dockerIgnorePatternSegments :: [String]
-  }
+newtype DockerIgnorePattern = DockerIgnorePattern {dockerIgnorePatternSegments :: [String]}
   deriving (Eq, Show)
 
 clusterImageFingerprintLabel :: String
@@ -69,8 +68,56 @@ clusterImageSourceFingerprint paths inputs = do
       digest = SHA256.hashlazy digestInput
   pure (ByteString8.unpack (Base16.encode digest))
 
+-- | Each row binds a path, entry kind, permission bits and payload digest.
+-- The caller compares independently observed trees; a tree hashing itself
+-- cannot establish which checkout an operator requested.
+sourceSnapshot :: FilePath -> IO [(FilePath, String, Int, String)]
+sourceSnapshot root = do
+  patterns <- loadDockerIgnorePatterns root
+  contextEntries <- dockerContextEntries patterns root
+  ignorePresent <- doesFileExist (root </> ".dockerignore")
+  let entries = sort (nub (contextEntries <> [".dockerignore" | ignorePresent]))
+  forM entries $ \relativePath -> do
+    status <- Posix.getSymbolicLinkStatus (root </> relativePath)
+    chunks <- fingerprintEntryChunks root relativePath
+    let digest = ByteString8.unpack (Base16.encode (SHA256.hashlazy (LazyByteString.fromChunks chunks)))
+    _ <- evaluate (length digest)
+    pure
+      ( relativePath,
+        if Posix.isSymbolicLink status then "symlink" else "file",
+        fromIntegral (Posix.fileMode status .&. 0o777),
+        digest
+      )
+
+-- | Preserve the actual preimage, including relevant untracked inputs. A
+-- second walk of both the source and retained copy detects changes during
+-- capture. This is a sampled consistency check, not an atomic filesystem
+-- snapshot or a defence against an executor rewriting its own validator.
+retainSourceSnapshot :: FilePath -> FilePath -> IO [(FilePath, String, Int, String)]
+retainSourceSnapshot root destination = do
+  before <- sourceSnapshot root
+  mapM_ retainEntry before
+  after <- sourceSnapshot root
+  retained <- sourceSnapshot destination
+  unless (before == after && before == retained) $
+    ioError (userError "validation source changed while retaining its preimage")
+  pure before
+  where
+    retainEntry (relativePath, entryKind, mode, _) = do
+      let source = root </> relativePath
+          target = destination </> relativePath
+      createDirectoryIfMissing True (takeDirectory target)
+      if entryKind == "symlink"
+        then Posix.readSymbolicLink source >>= (`Posix.createSymbolicLink` target)
+        else do
+          copyFile source target
+          Posix.setFileMode target (fromIntegral mode)
+
 loadDockerIgnorePatterns :: FilePath -> IO [DockerIgnorePattern]
 loadDockerIgnorePatterns root = do
+  overridePresent <- doesFileExist (root </> "docker" </> "Dockerfile.dockerignore")
+  when overridePresent $
+    ioError (userError "source inventory requires the governed root .dockerignore; a Dockerfile-specific override is unsupported")
   let ignorePath = root </> ".dockerignore"
   ignoreFilePresent <- doesFileExist ignorePath
   if ignoreFilePresent
@@ -103,17 +150,13 @@ parseDockerIgnoreLine (lineNumber, rawLine) =
 parseDockerIgnorePattern :: String -> Either String (Maybe DockerIgnorePattern)
 parseDockerIgnorePattern line =
   let normalized = dropTrailingSlashes (dropLeadingSlashes line)
-   in if null normalized
+      segments = splitPathSegments normalized
+   in if null normalized || normalized == "."
         then Right Nothing
         else
-          Right
-            ( Just
-                DockerIgnorePattern
-                  { dockerIgnoreRawPattern = normalized,
-                    dockerIgnorePatternHasSlash = '/' `elem` normalized,
-                    dockerIgnorePatternSegments = splitPathSegments normalized
-                  }
-            )
+          if any (`elem` ("[]\\" :: String)) normalized || any (`elem` [".", ".."]) segments || any (\segment -> "**" `isInfixOf` segment && segment /= "**") segments
+            then Left ("unsupported .dockerignore pattern in source inventory: " <> normalized)
+            else Right (Just (DockerIgnorePattern segments))
 
 dockerContextEntries :: [DockerIgnorePattern] -> FilePath -> IO [FilePath]
 dockerContextEntries patterns root = sort <$> walk ""
@@ -191,11 +234,11 @@ dockerIgnorePathIgnored patterns relativePath =
   any (`dockerIgnorePatternMatches` splitPathSegments relativePath) patterns
 
 dockerIgnorePatternMatches :: DockerIgnorePattern -> [String] -> Bool
-dockerIgnorePatternMatches patternValue pathSegments
-  | dockerIgnorePatternHasSlash patternValue =
-      globSegmentsMatchPrefix (dockerIgnorePatternSegments patternValue) pathSegments
-  | otherwise =
-      any (globSegmentMatches (dockerIgnoreRawPattern patternValue)) pathSegments
+dockerIgnorePatternMatches patternValue =
+  -- Docker anchors ordinary patterns at the context root. Only an explicit
+  -- \** spans arbitrary directory depth; matching any segment would hide
+  -- inputs such as test/build/Spec.hs behind the root-only build exclusion.
+  globSegmentsMatchPrefix (dockerIgnorePatternSegments patternValue)
 
 globSegmentsMatchPrefix :: [String] -> [String] -> Bool
 globSegmentsMatchPrefix [] _ = True
@@ -214,6 +257,10 @@ globSegmentMatches patternValue segmentValue =
   case patternValue of
     "" -> null segmentValue
     '*' : patternRest -> any (globSegmentMatches patternRest) (tails segmentValue)
+    '?' : patternRest ->
+      case segmentValue of
+        _ : segmentRest -> globSegmentMatches patternRest segmentRest
+        [] -> False
     patternChar : patternRest ->
       case segmentValue of
         segmentChar : segmentRest
