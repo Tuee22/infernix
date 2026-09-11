@@ -18,8 +18,14 @@ function renderDispositionTag(disposition) {
 // renderer libraries are loaded with dynamic import() so they are only
 // resolved at bundle time (esbuild code-splits each into its own chunk) and
 // never at module-load time, keeping the unit suite free of the runtime deps.
-// Self-hosted assets (smplr samples) are served from the app origin.
-const SMPLR_SAMPLE_BASE = "/samples/smplr";
+
+// Phase 7 Sprint 7.33: the preview budget, and it is the backend's number.
+//
+// A bound that the two sides pick separately is not a bound — whichever is
+// larger is the real limit. This mirrors
+// Infernix.Web.Contracts.boundedTextPreviewBytes, and the backend refuses to
+// send more than it regardless, so the browser cap is the second of two.
+const BOUNDED_TEXT_PREVIEW_BYTES = 64 * 1024;
 
 async function authedBytes(url, token) {
   const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -29,12 +35,63 @@ async function authedBytes(url, token) {
   return response.arrayBuffer();
 }
 
+// Phase 7 Sprint 7.33: read at most the preview budget, stopping the stream
+// rather than buffering the object and slicing it afterwards.
+//
+// Decoding is incremental and stops at the same bound, so a multi-gigabyte text
+// artifact costs a bounded read and a bounded decode instead of a tab. The
+// decoder is given the chunks in order with `stream: true`, which is what keeps
+// a multi-byte character split across a chunk boundary from decoding as
+// replacement characters.
 async function authedText(url, token) {
   const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok) {
     throw new Error(`object download failed with HTTP ${response.status}: ${await response.text()}`);
   }
   return response.text();
+}
+
+async function authedBoundedText(url, token, byteBudget) {
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) {
+    throw new Error(`object download failed with HTTP ${response.status}: ${await response.text()}`);
+  }
+  const declaredTruncation = response.headers.get("X-Infernix-Preview-Truncated") === "true";
+  if (!response.body) {
+    // No streaming body available: fall back to a bounded slice of the text the
+    // backend already bounded.
+    const whole = await response.text();
+    return { text: whole.slice(0, byteBudget), truncated: declaredTruncation };
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let consumed = 0;
+  let text = "";
+  let truncated = declaredTruncation;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    const remaining = byteBudget - consumed;
+    if (remaining <= 0) {
+      truncated = true;
+      await reader.cancel();
+      break;
+    }
+    const chunk = value.length > remaining ? value.subarray(0, remaining) : value;
+    if (chunk.length < value.length) {
+      truncated = true;
+    }
+    consumed += chunk.length;
+    text += decoder.decode(chunk, { stream: true });
+    if (consumed >= byteBudget) {
+      await reader.cancel();
+      break;
+    }
+  }
+  text += decoder.decode();
+  return { text, truncated };
 }
 
 function renderGuard(mount) {
@@ -78,24 +135,59 @@ async function renderMidiInto(mount, token, bytesUrl) {
       const y = canvas.height - ((note.midi - 21) / 88) * canvas.height;
       context.fillRect(x, y, w, 3);
     }
+    // Phase 7 Sprint 7.33: playback is synthesized from the decoded MIDI.
+    //
+    // The retired form loaded a sampled piano from "/samples/smplr", which the
+    // served bundle never carried, and swallowed the resulting failure — so the
+    // Play button existed, did nothing, and reported nothing, and a test that
+    // asserted the button was present passed against silence. Scheduling
+    // oscillators from the notes this renderer already decoded removes the
+    // missing asset rather than shipping tens of megabytes of samples to
+    // restore it, and makes the observable signal the note events themselves.
+    //
+    // Browser autoplay policy means a context may start suspended; the click
+    // that triggers this is the user gesture that resumes it, and a context
+    // that will not resume is reported rather than hidden.
     const play = document.createElement("button");
     play.type = "button";
     play.className = "artifact-midi-play";
     play.textContent = "Play";
+    play.dataset.playbackStatus = "idle";
     play.addEventListener("click", () => {
       (async () => {
-        const smplr = await import("smplr");
+        play.dataset.playbackStatus = "starting";
         const audioContext = new AudioContext();
-        const piano = new smplr.SplendidGrandPiano(audioContext, { baseUrl: SMPLR_SAMPLE_BASE });
-        await piano.loaded();
-        for (const note of notes) {
-          piano.start({ note: note.midi, time: audioContext.currentTime + note.time, duration: note.duration, velocity: Math.round(note.velocity * 127) });
+        if (audioContext.state === "suspended") {
+          await audioContext.resume();
         }
-      })().catch(() => {});
+        if (audioContext.state !== "running") {
+          throw new Error(`audio context did not start: ${audioContext.state}`);
+        }
+        let scheduled = 0;
+        for (const note of notes) {
+          const oscillator = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          oscillator.type = "triangle";
+          oscillator.frequency.value = 440 * Math.pow(2, (note.midi - 69) / 12);
+          gain.gain.value = Math.min(Math.max(note.velocity, 0), 1) * 0.2;
+          oscillator.connect(gain);
+          gain.connect(audioContext.destination);
+          const startAt = audioContext.currentTime + note.time;
+          oscillator.start(startAt);
+          oscillator.stop(startAt + Math.max(note.duration, 0.05));
+          scheduled += 1;
+        }
+        play.dataset.playbackScheduledNotes = String(scheduled);
+        play.dataset.playbackStatus = scheduled > 0 ? "playing" : "empty";
+      })().catch((error) => {
+        play.dataset.playbackStatus = "error";
+        play.dataset.playbackError = String(error && error.message ? error.message : error);
+      });
     });
     mount.appendChild(canvas);
     mount.appendChild(play);
-    mount.dataset.previewStatus = "ready";
+    mount.dataset.previewRenderedNotes = String(notes.length);
+    mount.dataset.previewStatus = notes.length > 0 ? "ready" : "empty";
   } catch (error) {
     markRenderFailed(mount, "Unable to render MIDI in the browser.");
   }
@@ -200,6 +292,13 @@ function objectBytesUrl(objectKey, mimeType) {
   );
 }
 
+// Phase 7 Sprint 7.33: the preview intent is named in the request rather than
+// inferred, so the full-download intent is the same route without it and a
+// truncated preview always has an unbounded counterpart to offer.
+function objectPreviewUrl(objectKey, mimeType) {
+  return objectBytesUrl(objectKey, mimeType) + "&intent=preview";
+}
+
 function currentArtifactCards(card, objectKey) {
   const documentValue = card?.ownerDocument || document;
   const cards = Array.from(documentValue.querySelectorAll(".artifact-entry")).filter(
@@ -301,12 +400,20 @@ async function handleDownload(button) {
   const bytesUrl = objectBytesUrl(objectKey, mimeType);
 
   if (disposition === "BoundedTextPreview") {
-    const text = await authedText(bytesUrl, token);
+    const { text, truncated } = await authedBoundedText(
+      objectPreviewUrl(objectKey, mimeType),
+      token,
+      BOUNDED_TEXT_PREVIEW_BYTES,
+    );
     const cards = currentArtifactCards(card, objectKey);
     for (const currentCard of cards) {
       const preview = currentCard.querySelector(".artifact-preview-text");
       if (preview) {
         preview.textContent = text;
+        // Truncation is stated rather than left for the reader to notice. The
+        // full object is still one click away on the same authorized route.
+        preview.dataset.previewTruncated = truncated ? "true" : "false";
+        preview.dataset.previewByteBudget = String(BOUNDED_TEXT_PREVIEW_BYTES);
         preview.dataset.previewStatus = "ready";
       }
     }

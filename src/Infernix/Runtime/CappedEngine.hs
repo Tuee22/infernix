@@ -25,7 +25,9 @@ module Infernix.Runtime.CappedEngine
     verifyNvidiaVramSampler,
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
+    engineExecutionCancellations,
     withEngineExecutionPlan,
+    withIdentifiedEngineExecution,
   )
 where
 
@@ -37,6 +39,7 @@ import Infernix.Runtime.CappedEngine.Internal
     NativeArtifactInvocation,
     NativeArtifactLaunchOutcome (..),
     PythonWorkerLaunchOutcome (..),
+    engineExecutionCancellations,
     engineExecutionRuntimePlan,
     executableEngineCeiling,
     executableWatchdogCeilingsForTest,
@@ -52,4 +55,5 @@ import Infernix.Runtime.CappedEngine.Internal
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
     withEngineExecutionPlan,
+    withIdentifiedEngineExecution,
   )

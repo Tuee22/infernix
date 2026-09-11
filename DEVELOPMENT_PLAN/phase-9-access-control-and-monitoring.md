@@ -1,6 +1,6 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Active — Sprints 9.12 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+**Status**: Active — Sprint 9.12 has validated code-side closure. Wave R9 is the remaining cohort gate.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
 
@@ -11,11 +11,11 @@
 
 ## Phase Status
 
-Sprints 9.1–9.11 retain their closed headings and only their established scope. Authenticated cache mutations can broaden malformed JSON or an invalid modelId to all local entries. Existing admin checks do not make that request decoding safe, and cache status reflects the marker-based cache implementation.
+Sprints 9.1–9.11 retain their closed headings and only their established scope. Sprint 9.12 decodes a cache mutation into an explicit scope before any effect: an empty object selects every configured model because the caller said so, one nonempty string `modelId` selects one, and every other body is HTTP 400 before selection. Cache status now reports the verified engine-consumed cache that Sprint 4.50 established.
 
 The existing Phase 9 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R9 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 9.12 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R9 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
@@ -336,12 +336,12 @@ None.
 
 ---
 
-## Sprint 9.12: Reject Malformed Cache Mutations and Verify Actual Cache Authorization [Blocked]
+## Sprint 9.12: Reject Malformed Cache Mutations and Verify Actual Cache Authorization [Active]
 
-**Status**: Blocked
-**Code-side closure**: Strict request decoding and real-cache authorization regressions pending.
+**Status**: Active
+**Code-side closure**: The mutation body decodes into an explicit typed scope before the runtime mode is read or any model is selected; every malformed, wrongly typed, empty, or unknown-field body is refused with a typed HTTP 400 and touches nothing. Mutations apply to the verified engine-consumed cache from Sprint 4.50 and report per-model outcomes rather than a count.
 **Cohort gate**: Wave R9 — selected `linux-gpu` plus native `linux-cpu`.
-**Blocked by**: Sprint 8.15 code-side closure; Sprint 4.50 provides actual cache lifecycle behavior.
+**Blocked by**: nothing — Sprint 8.15 code-side closure is validated; Sprint 4.50 provides actual cache lifecycle behavior.
 **Implementation targets**: `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Auth/Jwt.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/architecture/access_control_doctrine.md`, `documents/architecture/tenant_isolation_doctrine.md`, `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/reference/api_surface.md`, `documents/engineering/model_lifecycle.md`
 
@@ -382,11 +382,15 @@ explicit targets.
 
 ### Remaining Work
 
-Implement strict typed selection and actual-cache regressions, then retain Wave R9 evidence.
+Cohort gate only: retain Wave R9's selected `linux-gpu` plus native `linux-cpu` full-suite results
+against one frozen implementation, including the routed admin and non-admin cache operations and the
+cross-user denial checks against the real backend. No new full-suite result is claimed.
+
+**Code-side evidence**: source `dd835d5170057871c1058f2c84eb60f281832b302bd0b8dfb707a1ff2d789bc3`; image `sha256:997585164b5c53ee5fc28f83e71145dd7c838ad12fd3eae359c04e3fd6021db5`; lint `.data/runtime/validation/run-C9tRnL/receipt.json`; unit `.data/runtime/validation/run-QiJT3A/receipt.json`. Sprints 7.30–7.33, 8.15, and 9.12 share this validated snapshot.
 
 ## Remaining Work
 
-Implement Sprints 9.12, pass their governed machine-independent gates, and retain Wave R9's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R9's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 9.12 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

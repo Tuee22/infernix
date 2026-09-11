@@ -45,6 +45,7 @@ library
         Infernix.Conversation.Hash
         Infernix.Conversation.Idempotency
         Infernix.Conversation.Reducer
+        Infernix.Conversation.Prefix
         Infernix.Conversation.Topic
         Infernix.Dispatch.ContextModelMap
         Infernix.Dispatch.SingleFlight
@@ -88,12 +89,14 @@ library
         Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
+        Infernix.Runtime.Cancellation
         Infernix.Runtime.Daemon
         Infernix.Runtime.Enforcer
         Infernix.Runtime.Enforcer.Properties
         Infernix.Runtime.KVCache
         Infernix.Runtime.Pulsar
         Infernix.Runtime.Pulsar.Failover
+        Infernix.Runtime.Realness
         Infernix.Runtime.Worker
         Infernix.Service
         Infernix.Storage
@@ -248,6 +251,7 @@ test-suite infernix-unit
         Infernix.Conversation.Hash
         Infernix.Conversation.Idempotency
         Infernix.Conversation.Reducer
+        Infernix.Conversation.Prefix
         Infernix.Conversation.Topic
         Infernix.Demo.Api
         Infernix.Demo.Auth
@@ -318,6 +322,7 @@ test-suite infernix-unit
         Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
+        Infernix.Runtime.Cancellation
         Infernix.Runtime.CappedEngine
         Infernix.Runtime.CappedEngine.Cleanup
         Infernix.Runtime.CappedEngine.Ceiling
@@ -332,6 +337,7 @@ test-suite infernix-unit
         Infernix.Runtime.KVCache
         Infernix.Runtime.Pulsar
         Infernix.Runtime.Pulsar.Failover
+        Infernix.Runtime.Realness
         Infernix.Runtime.Worker
         Infernix.SecretsConfig
         Infernix.Service
@@ -597,6 +603,7 @@ test-suite infernix-integration
         Infernix.Conversation.Hash
         Infernix.Conversation.Idempotency
         Infernix.Conversation.Reducer
+        Infernix.Conversation.Prefix
         Infernix.Conversation.Topic
         Infernix.Demo.Api
         Infernix.Demo.Auth
@@ -667,6 +674,7 @@ test-suite infernix-integration
         Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
+        Infernix.Runtime.Cancellation
         Infernix.Runtime.CappedEngine
         Infernix.Runtime.CappedEngine.Cleanup
         Infernix.Runtime.CappedEngine.Ceiling
@@ -681,6 +689,7 @@ test-suite infernix-integration
         Infernix.Runtime.KVCache
         Infernix.Runtime.Pulsar
         Infernix.Runtime.Pulsar.Failover
+        Infernix.Runtime.Realness
         Infernix.Runtime.Worker
         Infernix.SecretsConfig
         Infernix.Service

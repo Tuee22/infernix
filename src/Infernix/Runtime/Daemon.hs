@@ -6,7 +6,7 @@ module Infernix.Runtime.Daemon
 where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Monad (forM_, forever, when)
+import Control.Monad (forM_, forever, void, when)
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
@@ -65,6 +65,7 @@ import Infernix.Runtime.Pulsar
     reconcileSupportedNamespacesForPlanWithRetry,
     renderPulsarWebSocketBase,
     runDispatcherLoop,
+    runEngineCancellationConsumer,
     runModelBootstrapLoop,
     runResultBridgeLoop,
     sweepEagerModelCacheForPlan,
@@ -262,6 +263,21 @@ runWebSocketPulsarDaemon paths daemonPlan topicCapabilities engineKVCache transp
     writeServiceReadinessMarker paths
     putStrLn "serviceSubscriptionMode: websocket-pulsar"
     putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
+    -- Phase 7 Sprint 7.32: an engine also reads the substrate's cancel topic,
+    -- because a cancellation is a conversation event the coordinator owns and an
+    -- execution this machine owns. Without this consumer a cancelled prompt
+    -- stopped only in the projection while the engine ran it to completion.
+    case daemonPlan of
+      ExecutingDaemonPlan _ executionPlan ->
+        void
+          ( forkIO
+              ( runEngineCancellationConsumer
+                  transport
+                  (compiledPlanRuntimeMode compiledPlan)
+                  executionPlan
+              )
+          )
+      RoutingDaemonPlan _ -> pure ()
     case (daemonPlan, compiledPlanRuntimeMode compiledPlan, topicCapabilities) of
       (ExecutingDaemonPlan {}, AppleSilicon, primaryCapability : extraCapabilities) -> do
         forM_

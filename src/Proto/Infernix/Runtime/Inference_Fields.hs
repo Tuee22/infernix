@@ -114,6 +114,20 @@ conversationLogOffset ::
   Lens.Family2.LensLike' f s a
 conversationLogOffset
   = Data.ProtoLens.Field.field @"conversationLogOffset"
+conversationPrefix ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "conversationPrefix" a) =>
+  Lens.Family2.LensLike' f s a
+conversationPrefix
+  = Data.ProtoLens.Field.field @"conversationPrefix"
+conversationPrefixHash ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "conversationPrefixHash" a) =>
+  Lens.Family2.LensLike' f s a
+conversationPrefixHash
+  = Data.ProtoLens.Field.field @"conversationPrefixHash"
 createdAt ::
   forall f s a.
   (Prelude.Functor f,
@@ -266,6 +280,13 @@ inputText ::
    Data.ProtoLens.Field.HasField s "inputText" a) =>
   Lens.Family2.LensLike' f s a
 inputText = Data.ProtoLens.Field.field @"inputText"
+kvCacheDisposition ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "kvCacheDisposition" a) =>
+  Lens.Family2.LensLike' f s a
+kvCacheDisposition
+  = Data.ProtoLens.Field.field @"kvCacheDisposition"
 label ::
   forall f s a.
   (Prelude.Functor f, Data.ProtoLens.Field.HasField s "label" a) =>
@@ -565,6 +586,11 @@ resultTopic ::
    Data.ProtoLens.Field.HasField s "resultTopic" a) =>
   Lens.Family2.LensLike' f s a
 resultTopic = Data.ProtoLens.Field.field @"resultTopic"
+role ::
+  forall f s a.
+  (Prelude.Functor f, Data.ProtoLens.Field.HasField s "role" a) =>
+  Lens.Family2.LensLike' f s a
+role = Data.ProtoLens.Field.field @"role"
 runtimeLane ::
   forall f s a.
   (Prelude.Functor f,
@@ -606,6 +632,11 @@ streamWeightsToDevice ::
   Lens.Family2.LensLike' f s a
 streamWeightsToDevice
   = Data.ProtoLens.Field.field @"streamWeightsToDevice"
+text ::
+  forall f s a.
+  (Prelude.Functor f, Data.ProtoLens.Field.HasField s "text" a) =>
+  Lens.Family2.LensLike' f s a
+text = Data.ProtoLens.Field.field @"text"
 userId ::
   forall f s a.
   (Prelude.Functor f, Data.ProtoLens.Field.HasField s "userId" a) =>
@@ -618,6 +649,13 @@ userPromptMessageId ::
   Lens.Family2.LensLike' f s a
 userPromptMessageId
   = Data.ProtoLens.Field.field @"userPromptMessageId"
+vec'conversationPrefix ::
+  forall f s a.
+  (Prelude.Functor f,
+   Data.ProtoLens.Field.HasField s "vec'conversationPrefix" a) =>
+  Lens.Family2.LensLike' f s a
+vec'conversationPrefix
+  = Data.ProtoLens.Field.field @"vec'conversationPrefix"
 vec'engines ::
   forall f s a.
   (Prelude.Functor f,

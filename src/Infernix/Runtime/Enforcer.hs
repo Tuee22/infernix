@@ -6,6 +6,7 @@ module Infernix.Runtime.Enforcer
 where
 
 import Control.Exception (bracket)
+import Control.Monad (filterM)
 import Data.ByteString qualified as ByteString
 import Data.List (sort)
 import Data.Map.Strict qualified as Map
@@ -69,7 +70,7 @@ import System.Directory
     listDirectory,
     removeFile,
   )
-import System.FilePath (takeExtension, (</>))
+import System.FilePath ((</>))
 import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 
 -- | Probe the enforcement mechanisms named by a compiled plan and refine it
@@ -190,17 +191,24 @@ observeModelRequirements paths compiledPlan = do
   where
     observeOne cacheRoot maybeCacheConfig placement = do
       let model = placementDescriptor placement
-      maybeArtifact <- resolveStagedArtifact cacheRoot (Text.unpack (modelId model))
+      selection <- resolveStagedArtifact cacheRoot (Text.unpack (modelId model))
       derived <-
-        case maybeArtifact of
+        case selection of
           -- The local cache is hydrated per request, so at daemon start it is
           -- usually empty. The coordinator has already staged the object,
           -- though, and a tensor table lives in the artifact's first few
           -- kilobytes, so the requirement is derived from a ranged read of the
           -- staged object rather than by downloading a checkpoint this machine
           -- may never run.
-          Nothing -> deriveFromStagedObject maybeCacheConfig model
-          Just artifactPath -> deriveModelRequirement model artifactPath
+          StagedArtifactAbsent -> deriveFromStagedObject maybeCacheConfig model
+          StagedArtifactSelected artifactPath -> deriveModelRequirement model artifactPath
+          -- Phase 4 Sprint 4.50: the local and remote paths now refuse the same
+          -- layouts for the same reasons. A warm cache holding several shards
+          -- used to select the first one by sort order and report its tensor
+          -- table as the whole requirement, so the same model admitted against a
+          -- smaller number once its cache was populated than it did cold — the
+          -- one condition under which the admission mattered least.
+          StagedArtifactRefused reason -> pure (Left reason)
       pure
         ( ModelRequirementObservation
             (modelId model)
@@ -282,7 +290,7 @@ observeModelRequirements paths compiledPlan = do
 -- silently under-derived.
 selectStagedCheckpointKey :: [Text.Text] -> Either Text.Text Text.Text
 selectStagedCheckpointKey stagedKeys =
-  case checkpointKeys of
+  case checkpointCandidates stagedKeys of
     [checkpointKey] -> Right checkpointKey
     [] ->
       Left
@@ -292,23 +300,36 @@ selectStagedCheckpointKey stagedKeys =
               Text.pack
                 "the coordinator's staged objects hold no checkpoint this reader understands"
         )
-    _ ->
-      Left
-        ( Text.pack "the model is staged as "
-            <> Text.pack (show (length checkpointKeys))
-            <> Text.pack
-              " checkpoint shards, and a requirement summed from one shard understates the rest"
-        )
-  where
-    checkpointKeys =
-      [ stagedKey
-      | stagedKey <- stagedKeys,
-        any (`Text.isSuffixOf` stagedKey) stagedCheckpointSuffixes
-      ]
+    shards -> Left (shardedSnapshotRefusal shards)
 
--- | The suffixes the two landed readers understand. @payload@ carries no
--- extension because the single-file bootstrap names it that regardless of what
--- the upstream file was called.
+-- | The one shard-count refusal both the staged-object path and the local cache
+-- report. A sharded snapshot has no complete inventory this reader can prove, so
+-- it is refused by name on either path rather than summed from whichever shard
+-- happened to be looked at first.
+shardedSnapshotRefusal :: [Text.Text] -> Text.Text
+shardedSnapshotRefusal shards =
+  Text.pack "the model is staged as "
+    <> Text.pack (show (length shards))
+    <> Text.pack
+      " checkpoint shards, and a requirement summed from one shard understates the rest"
+
+-- | The checkpoint names among a set of staged keys or cached file names.
+checkpointCandidates :: [Text.Text] -> [Text.Text]
+checkpointCandidates candidates =
+  [ candidate
+  | candidate <- candidates,
+    isStagedCheckpointName candidate
+  ]
+
+-- | The names the two landed readers understand. @payload@ carries no extension
+-- because the single-file bootstrap names it that regardless of what the
+-- upstream file was called; it is matched both as a bare cached file name and as
+-- the last segment of an object key.
+isStagedCheckpointName :: Text.Text -> Bool
+isStagedCheckpointName candidate =
+  candidate == Text.pack "payload"
+    || any (`Text.isSuffixOf` candidate) stagedCheckpointSuffixes
+
 stagedCheckpointSuffixes :: [Text.Text]
 stagedCheckpointSuffixes =
   [ Text.pack "/payload",
@@ -334,34 +355,37 @@ withArtifactPrefixFile prefixBytes action =
       pure (prefixPath, ())
     release (prefixPath, _) = removeFile prefixPath
 
--- | The staged checkpoint for one model, if this machine holds one.
+-- | What this machine's own cache offers for one model.
 --
 -- The single-payload layout writes @\<cacheRoot>\/\<modelId>\/payload@; the
 -- snapshot layout writes the upstream repository's own file names into the same
--- directory. Both are searched, and a directory holding no checkpoint this
--- reader understands yields nothing rather than a guess.
-resolveStagedArtifact :: FilePath -> FilePath -> IO (Maybe FilePath)
+-- directory. Both are read through the same selection policy the staged-object
+-- path uses, so a layout that is refused cold is refused warm.
+data StagedArtifactSelection
+  = -- | This machine holds no checkpoint for the model; the coordinator's
+    -- staged object is the place to look.
+    StagedArtifactAbsent
+  | -- | Exactly one checkpoint, which is the artifact the requirement is
+    -- derived from.
+    StagedArtifactSelected FilePath
+  | -- | A layout the shared policy refuses, carrying the same reason the
+    -- staged-object path would give.
+    StagedArtifactRefused Text.Text
+  deriving (Eq, Show)
+
+resolveStagedArtifact :: FilePath -> FilePath -> IO StagedArtifactSelection
 resolveStagedArtifact cacheRoot modelIdValue = do
   let modelRoot = cacheRoot </> modelIdValue
-      payloadPath = modelRoot </> "payload"
-  payloadPresent <- doesFileExist payloadPath
-  if payloadPresent
-    then pure (Just payloadPath)
+  modelRootPresent <- doesDirectoryExist modelRoot
+  if not modelRootPresent
+    then pure StagedArtifactAbsent
     else do
-      modelRootPresent <- doesDirectoryExist modelRoot
-      if not modelRootPresent
-        then pure Nothing
-        else do
-          entries <- listDirectory modelRoot
-          let checkpoints =
-                sort
-                  [ entry
-                  | entry <- entries,
-                    takeExtension entry `elem` [".safetensors", ".gguf"]
-                  ]
-          case checkpoints of
-            checkpoint : _ -> pure (Just (modelRoot </> checkpoint))
-            [] -> pure Nothing
+      entries <- listDirectory modelRoot
+      presentEntries <- filterM (doesFileExist . (modelRoot </>)) entries
+      case checkpointCandidates (sort (map Text.pack presentEntries)) of
+        [checkpoint] -> pure (StagedArtifactSelected (modelRoot </> Text.unpack checkpoint))
+        [] -> pure StagedArtifactAbsent
+        shards -> pure (StagedArtifactRefused (shardedSnapshotRefusal shards))
 
 isHostShape :: PlacementEnforcementShape -> Bool
 isHostShape shape =

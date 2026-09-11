@@ -23,15 +23,18 @@ import Control.Concurrent (ThreadId, forkFinally, killThread)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, tryReadMVar)
 import Control.Exception (IOException, SomeException, catch, displayException, evaluate, mask, throwIO, try)
 import Control.Monad (unless, void, when)
+import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
+import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, isInfixOf, isPrefixOf)
 import Data.List qualified as List
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
@@ -112,7 +115,17 @@ import Infernix.Python
     pythonAdaptersPresent,
     pythonProjectDirectory,
   )
-import Infernix.Runtime (evictCache, listCacheManifests, rebuildCache)
+import Infernix.Routes qualified as Routes
+import Infernix.Runtime
+  ( CacheEntryReport (..),
+    CacheOperationOutcome (..),
+    cacheEntryStateDetail,
+    cacheEntryStateIsReady,
+    cacheEntryStateLabel,
+    evictCache,
+    listCacheEntryReports,
+    rebuildCache,
+  )
 import Infernix.Runtime.CappedEngine.FixedObserver qualified as FixedObserver
 import Infernix.Runtime.Pulsar (publishInferenceRequest, readPublishedInferenceResultMaybe)
 import Infernix.Service
@@ -126,6 +139,7 @@ import Infernix.Types
     InferenceResult (..),
     PersistentClaim (..),
     ResultPayload (..),
+    RouteInfo (path),
     RuntimeMode (AppleSilicon),
     engineMembers,
     runtimeModeId,
@@ -759,6 +773,14 @@ runPlaywrightWithFixture ::
 runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
   waitForPlaywrightSurface paths playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode
   infernixExecutable <- getExecutablePath
+  -- Phase 5 Sprint 5.13: the browser gate is bound to the source under test.
+  -- The launcher already refuses a stale image, but that binding stopped at the
+  -- binary: the bundle the browser loads is a separate artifact, built by the
+  -- same image step, and nothing compared the bytes the edge served with the
+  -- bytes this checkout produced. The fixture therefore carries this run's
+  -- digest of the built bundle and the route inventory the binary owns, and the
+  -- browser suite re-derives both from the routed surface.
+  expectedBundleDigestValue <- servedBundleDigest paths
   let fixturePath = runtimeRoot paths </> "playwright-fixture.json"
       fixturePayload =
         encode
@@ -770,12 +792,38 @@ runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expecte
                 Key.fromText "expectedDaemonLocation" .= expectedDaemonLocation,
                 Key.fromText "expectedInferenceExecutorLocation" .= expectedInferenceExecutorLocation,
                 Key.fromText "expectedInferenceDispatchMode" .= expectedInferenceDispatchMode,
-                Key.fromText "expectedApiUpstreamMode" .= expectedApiUpstreamMode
+                Key.fromText "expectedApiUpstreamMode" .= expectedApiUpstreamMode,
+                Key.fromText "expectedBundlePath" .= servedBundleRelativePath,
+                Key.fromText "expectedBundleDigest" .= expectedBundleDigestValue,
+                Key.fromText "expectedRoutePrefixes" .= map path (Routes.routeInventory True)
               ]
           )
   createDirectoryIfMissing True (runtimeRoot paths)
   LazyChar8.writeFile fixturePath fixturePayload
   runWebNpmCommand (Just runtimeMode) ["--prefix", "web", "exec", "--", "playwright", "test", "--config", "web/playwright.config.js"]
+
+-- | The application bundle the routed edge serves, relative to the site root.
+servedBundleRelativePath :: String
+servedBundleRelativePath = "/app.js"
+
+-- | This run's digest of the bundle this checkout built.
+--
+-- Read from the built tree rather than from the served response, because the
+-- point of the comparison is that the two agree: the browser suite fetches the
+-- same path through the Gateway and digests what arrives.
+servedBundleDigest :: Paths -> IO Text.Text
+servedBundleDigest paths = do
+  let bundlePath = repoRoot paths </> "web" </> "dist" </> "app.js"
+  present <- doesFileExist bundlePath
+  unless present $
+    ioError
+      ( userError
+          ( "the routed browser gate requires the built application bundle at "
+              <> bundlePath
+          )
+      )
+  bundleBytes <- ByteString.readFile bundlePath
+  pure (TextEncoding.decodeUtf8 (Base16.encode (SHA256.hash bundleBytes)))
 
 -- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
 -- 'Readiness' kernel under the legacy 60-attempt × 1 s budget. A routed surface
@@ -821,40 +869,73 @@ runCacheStatus :: Maybe RuntimeMode -> IO ()
 runCacheStatus maybeRuntimeMode = do
   paths <- discoverPaths
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
-  manifests <- listCacheManifests paths runtimeMode
+  reports <- listCacheEntryReports paths runtimeMode
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("cacheRoot: " <> modelCacheRoot paths </> Text.unpack (runtimeModeId runtimeMode))
-  putStrLn ("cacheManifestCount: " <> show (length manifests))
-  mapM_ printCacheManifest manifests
+  putStrLn ("cacheManifestCount: " <> show (length reports))
+  putStrLn
+    ( "verifiedReadyCount: "
+        <> show (length (filter (cacheEntryStateIsReady . cacheReportState) reports))
+    )
+  mapM_ printCacheEntryReport reports
 
 runCacheEvict :: Maybe RuntimeMode -> Maybe Text.Text -> IO ()
 runCacheEvict maybeRuntimeMode maybeModelId = do
   paths <- discoverPaths
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
-  evictedCount <- evictCache paths runtimeMode maybeModelId
+  outcomes <- evictCache paths runtimeMode maybeModelId
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
-  putStrLn ("evictedCacheEntries: " <> show evictedCount)
+  printCacheOutcomes "evicted" outcomes
 
 runCacheRebuild :: Maybe RuntimeMode -> Maybe Text.Text -> IO ()
 runCacheRebuild maybeRuntimeMode maybeModelId = do
   paths <- discoverPaths
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
-  rebuiltEntries <- rebuildCache paths runtimeMode maybeModelId
+  outcomes <- rebuildCache paths runtimeMode maybeModelId
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
-  putStrLn ("rebuiltCacheEntries: " <> show (length rebuiltEntries))
-  mapM_ printCacheManifest rebuiltEntries
+  printCacheOutcomes "rebuilt" outcomes
 
-printCacheManifest :: CacheManifest -> IO ()
-printCacheManifest manifest =
+-- Phase 4 Sprint 4.50: a count of selected models is not a count of successful
+-- operations, so both are printed and every non-ready outcome names itself.
+printCacheOutcomes :: String -> [CacheOperationOutcome] -> IO ()
+printCacheOutcomes label outcomes = do
+  putStrLn ("selectedCacheEntries: " <> show (length outcomes))
+  putStrLn
+    ( label
+        <> "CacheEntries: "
+        <> show (length (filter cacheOutcomeChanged outcomes))
+    )
+  mapM_ printCacheOutcome outcomes
+
+printCacheOutcome :: CacheOperationOutcome -> IO ()
+printCacheOutcome outcome =
+  putStrLn
+    ( "cacheEntry: "
+        <> Text.unpack (cacheOutcomeModelId outcome)
+        <> " -> "
+        <> Text.unpack (cacheEntryStateLabel (cacheOutcomeState outcome))
+        <> " ("
+        <> Text.unpack (cacheEntryStateDetail (cacheOutcomeState outcome))
+        <> ")"
+    )
+
+printCacheEntryReport :: CacheEntryReport -> IO ()
+printCacheEntryReport report =
   putStrLn
     ( "cacheEntry: "
         <> Text.unpack (cacheModelId manifest)
         <> " -> "
         <> Text.unpack (cacheSelectedEngine manifest)
-        <> " ("
+        <> " ["
+        <> Text.unpack (cacheEntryStateLabel (cacheReportState report))
+        <> ": "
+        <> Text.unpack (cacheEntryStateDetail (cacheReportState report))
+        <> "] ("
         <> Text.unpack (cacheDurableSourceUri manifest)
         <> ")"
     )
+  where
+    manifest = cacheReportManifest report
 
 withRuntimeServiceDaemonIfNeeded :: Paths -> RuntimeMode -> IO a -> IO a
 withRuntimeServiceDaemonIfNeeded paths runtimeMode action =

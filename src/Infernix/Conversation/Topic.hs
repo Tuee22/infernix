@@ -9,6 +9,7 @@ module Infernix.Conversation.Topic
     contextsMetadataTopicName,
     draftsMetadataTopicName,
     topicBelongsToUser,
+    inferenceCancelTopicName,
     inferenceRequestTopicName,
     inferenceResultTopicName,
     inferenceBatchTopicName,
@@ -95,6 +96,18 @@ topicBelongsToUser ns uid topic =
 inferenceRequestTopicName :: TopicNamespace -> Text -> Text
 inferenceRequestTopicName ns substrateId =
   qualifiedTopic ns ("inference.request." <> substrateId)
+
+-- | Substrate-scoped inference cancellation topic.
+--
+-- Phase 7 Sprint 7.32: a cancel is a conversation event, which the coordinator
+-- owns, and an execution that has to stop, which the engine owns. The engine
+-- does not consume conversation topics, so the coordinator forwards the typed
+-- cancellation here and every engine on the substrate reads it: the machine
+-- running that request acts, and the ones that are not report that they hold
+-- nothing by that identity.
+inferenceCancelTopicName :: TopicNamespace -> Text -> Text
+inferenceCancelTopicName ns substrateId =
+  qualifiedTopic ns ("inference.cancel." <> substrateId)
 
 -- | Substrate-scoped inference result topic. The coordinator role consumes
 -- this and writes the typed @InferenceResult@ back to the conversation log.

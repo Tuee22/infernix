@@ -70,6 +70,7 @@ import Infernix.Runtime.Pulsar
     serviceConsumerName,
     serviceReadinessMarkerPath,
   )
+import Infernix.Runtime.Realness qualified as Realness
 import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
@@ -204,6 +205,7 @@ exerciseRuntimeMode paths runtimeMode = do
       (pulsarAdminStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/admin/admin/v2/clusters")
       (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
       assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
+      assertRoutedStaticContainment paths state baseUrl
       assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` publicationResponse) "publication reports the active runtime mode"
       assert ("\"clusterpresent\": true" `isInfixOf` mapToLowerAscii publicationResponse) "publication reports cluster presence"
       assert
@@ -490,6 +492,7 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
                 <> modelIdValue
                 <> failurePayloadSuffix (payload resultValue)
             )
+
           -- Phase 6 Sprint 6.2: assert the per-family real-output result
           -- contract, dispatched on ResultFamily (shape + type, never golden
           -- strings). One DRY suite reads the active substrate's catalog and
@@ -503,24 +506,186 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
           -- light existence/non-empty fetch of the returned object reference via
           -- the live MinIO port-forward (plus a magic-bytes container probe), but
           -- never assert dimensions / stem count / sample rate.
-          assertResultObjectRefFetchable
+          measuredArtifactBytes <-
+            assertResultObjectRefFetchable
+              paths
+              state
+              (resultFamilyForDescriptor model)
+              modelIdValue
+              (Just (requestUserIdValue, requestContextIdValue))
+              (payload resultValue)
+          -- Phase 4 Sprint 4.50: the behavioral acceptance. A completed status
+          -- with a well-shaped payload is what a constant-returning transform
+          -- also produces, so the success is put to
+          -- 'Infernix.Runtime.Realness' with the run's own evidence: the model
+          -- identity the result carried, the artifact extent this run measured,
+          -- and — for the families whose output is a function of the prompt — a
+          -- second independently chosen prompt whose answer must differ.
+          assertRealInferenceSuccess
             paths
-            state
-            (resultFamilyForDescriptor model)
+            compiledPlan
+            model
             modelIdValue
-            (Just (requestUserIdValue, requestContextIdValue))
-            (payload resultValue)
+            maybeInputObjectRef
+            (requestUserIdValue, requestContextIdValue)
+            measuredArtifactBytes
+            resultValue
+
+-- | Phase 4 Sprint 4.50 — put one claimed success to the behavioral acceptance.
+--
+-- For a prompt-sensitive family this issues a second request with an
+-- independently chosen prompt and requires the two answers to differ, which is
+-- the one condition a plausible constant cannot satisfy. For an artifact family
+-- the output is bytes rather than a function of the prompt, so the acceptance
+-- drops input sensitivity and keeps identity, observed execution, and a
+-- positive extent.
+assertRealInferenceSuccess ::
+  Paths ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  ModelDescriptor ->
+  String ->
+  Maybe Text.Text ->
+  (Text.Text, Text.Text) ->
+  Maybe Integer ->
+  InferenceResult ->
+  IO ()
+assertRealInferenceSuccess paths compiledPlan model modelIdValue maybeInputObjectRef (requestUserIdValue, requestContextIdValue) measuredArtifactBytes resultValue
+  | resultFamilyForDescriptor model == LlmText = do
+      let secondPrompt =
+            Text.pack
+              ( "name one distinct property of the number seventeen for "
+                  <> modelIdValue
+              )
+      secondRequestId <-
+        publishInferenceRequest
+          paths
+          compiledPlan
+          InferenceRequest
+            { requestModelId = Text.pack modelIdValue,
+              inputText = secondPrompt,
+              inputObjectRef = maybeInputObjectRef,
+              requestUserId = Just requestUserIdValue,
+              requestContextId = Just requestContextIdValue
+            }
+      maybeSecond <- waitForPublishedResult paths compiledPlan secondRequestId
+      secondResult <-
+        maybe
+          ( fail
+              ( "the second independently chosen prompt for "
+                  <> modelIdValue
+                  <> " published no result, so input sensitivity is unproven"
+              )
+          )
+          pure
+          maybeSecond
+      let realCase =
+            Realness.RealInferenceCase
+              { Realness.realCaseModelId = Text.pack modelIdValue,
+                Realness.realCaseObservations =
+                  [ observationFrom firstPrompt resultValue,
+                    observationFrom secondPrompt secondResult
+                  ]
+              }
+      case Realness.acceptInputSensitiveInference realCase of
+        Right () -> pure ()
+        Left refusal ->
+          fail
+            ( "the claimed inference success for "
+                <> modelIdValue
+                <> " is not evidence of a real inference: "
+                <> Text.unpack (Realness.realnessRefusalText refusal)
+            )
+  | otherwise =
+      case Realness.acceptArtifactInference singleCase of
+        Right () -> pure ()
+        Left refusal ->
+          fail
+            ( "the claimed inference success for "
+                <> modelIdValue
+                <> " is not evidence of a real inference: "
+                <> Text.unpack (Realness.realnessRefusalText refusal)
+            )
+  where
+    firstPrompt = Text.pack ("integration coverage for " <> modelIdValue)
+    singleCase =
+      Realness.RealInferenceCase
+        { Realness.realCaseModelId = Text.pack modelIdValue,
+          Realness.realCaseObservations = [observationFrom firstPrompt resultValue]
+        }
+    -- The published result is the run's execution observation: the daemon
+    -- publishes a terminal result only after the engine invocation it made
+    -- returned, and a request whose engine never ran reaches the missing-result
+    -- branch above rather than this one. The artifact extent is the number this
+    -- run measured by fetching the object, never a stand-in derived from the
+    -- reference existing.
+    observationFrom promptValue observed =
+      Realness.InferenceExecutionObservation
+        { Realness.observationInput = promptValue,
+          Realness.observationResultModelId = resultModelId observed,
+          Realness.observationStatus = status observed,
+          Realness.observationEngineExecuted = True,
+          Realness.observationInlineOutput = inlineOutput (payload observed),
+          Realness.observationArtifactBytes = measuredArtifactBytes
+        }
+
+-- | Phase 5 Sprint 5.13 — the routed half of static containment.
+--
+-- The backend refusal is proved by its own unit fixtures; what cannot be proved
+-- there is what the deployed Gateway forwards. Envoy may normalize, reject, or
+-- pass an encoded traversal through, and which one it does decides whether the
+-- backend check is the only thing standing between a request and a file. So the
+-- outcome is measured here rather than assumed: whatever the Gateway does with
+-- each payload, the response must not carry the contents of a file outside the
+-- served root, and a published asset must still be served.
+assertRoutedStaticContainment :: Paths -> ClusterState -> String -> IO ()
+assertRoutedStaticContainment _paths _state baseUrl = do
+  forM_ traversalPayloads $ \payload -> do
+    (statusCodeValue, body) <- httpGetWithStatus (baseUrl <> payload)
+    assert
+      (statusCodeValue /= 200 || not (bodyLooksLikeHostFile body))
+      ( "the routed edge does not return a file outside the served root for "
+          <> payload
+          <> " (status "
+          <> show statusCodeValue
+          <> ")"
+      )
+    putStrLn
+      ( "routed-static-containment: "
+          <> payload
+          <> " -> status="
+          <> show statusCodeValue
+      )
+  (assetStatus, assetBody) <- httpGetWithStatus (baseUrl <> "/app.js")
+  assert
+    (assetStatus == 200 && not (null assetBody))
+    "the published application bundle remains servable through the routed edge"
+  where
+    -- Percent-encoded separators and dot segments, single and double encoded,
+    -- plus a lookalike sibling of the served root.
+    traversalPayloads =
+      [ "/../../../../etc/passwd",
+        "/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd",
+        "/%2f%2fetc%2fpasswd",
+        "/%252e%252e%252fetc%252fpasswd",
+        "/..%2f..%2f..%2f..%2fetc%2fpasswd",
+        "/dist-operator/operator.txt"
+      ]
+    bodyLooksLikeHostFile body =
+      "root:x:" `isInfixOf` body || "/bin/bash" `isInfixOf` body
 
 -- | Phase 4 Sprint 4.23 — for artifact result families, fetch the returned
 -- object reference through the live MinIO port-forward and assert it exists
 -- and is non-empty, with a best-effort container magic-bytes probe. The text
 -- families carry no object reference and are skipped. We never inspect the
 -- artifact's internal shape (that is the engine's realness contract).
-assertResultObjectRefFetchable :: Paths -> ClusterState -> ResultFamily -> String -> Maybe (Text.Text, Text.Text) -> ResultPayload -> IO ()
+-- Phase 4 Sprint 4.50: the measured extent is returned rather than discarded,
+-- because the behavioral acceptance needs the number this run observed and not
+-- a second, independent claim that the object exists.
+assertResultObjectRefFetchable :: Paths -> ClusterState -> ResultFamily -> String -> Maybe (Text.Text, Text.Text) -> ResultPayload -> IO (Maybe Integer)
 assertResultObjectRefFetchable paths state resultFamily modelIdValue expectedOwnership payloadValue
   | resultFamily == SpeechTranscription =
       case inlineOutput payloadValue of
-        Just text ->
+        Just text -> do
           assert
             ( expectedSpeechTranscript `Text.isInfixOf` normalizeSpeechTranscript text
                 && isNothing (objectRef payloadValue)
@@ -530,9 +695,10 @@ assertResultObjectRefFetchable paths state resultFamily modelIdValue expectedOwn
                 <> " does not match the spoken fixture: "
                 <> Text.unpack text
             )
+          pure Nothing
         Nothing ->
           fail ("speech transcription must return inline output for " <> modelIdValue)
-  | not (resultFamilyIsArtifact resultFamily) = pure ()
+  | not (resultFamilyIsArtifact resultFamily) = pure Nothing
   | otherwise =
       case objectRef payloadValue of
         Nothing ->
@@ -546,6 +712,7 @@ assertResultObjectRefFetchable paths state resultFamily modelIdValue expectedOwn
           assert
             (objectMagicBytesPlausible ref fetched)
             ("returned object ref " <> Text.unpack ref <> " for " <> modelIdValue <> " starts with a plausible container signature")
+          pure (Just (toInteger (ByteString.length fetched)))
 
 assertGeneratedObjectRefOwnership :: Maybe (Text.Text, Text.Text) -> Text.Text -> IO ()
 assertGeneratedObjectRefOwnership Nothing _ = pure ()

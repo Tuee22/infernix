@@ -7,7 +7,9 @@ module Infernix.Runtime.Worker
   ( WorkerFailure (..),
     WorkerModelCacheConfig (..),
     buildWorkerRequest,
+    ensureNativeRunnerContractCacheReady,
     loadWorkerModelCacheConfig,
+    nativeModelCacheRelativeKeys,
     modelCeilingBreachError,
     nativeArtifactMarkerPathsForTest,
     nativeModelCacheObjectKeys,
@@ -42,6 +44,8 @@ import Data.Word (Word64)
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths (..))
+import Infernix.Conversation.Hash (unPrefixHash)
+import Infernix.Conversation.Prefix qualified as Prefix
 import Infernix.Error (InfernixError (ClusterStateDecodeFailure))
 import Infernix.ExecutionPlan
   ( ExecutableModel,
@@ -145,8 +149,9 @@ runExecutableInferenceWorker ::
   ExecutableModel ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
+  Maybe Prefix.VerifiedConversationPrefix ->
   IO (Either WorkerFailure Text)
-runExecutableInferenceWorker paths executableModel request cacheObservation
+runExecutableInferenceWorker paths executableModel request cacheObservation maybeVerifiedPrefix
   | requestModelId request /= executableModelId executableModel =
       pure (workerFailed (requestModelMismatchError executableModel request))
   | otherwise =
@@ -157,9 +162,9 @@ runExecutableInferenceWorker paths executableModel request cacheObservation
       case engineBindingAdapterType engineBinding of
         PythonStdio ->
           withPythonEngineSetupReady paths modelRuntimeMode engineBinding $ \readAuthority ->
-            runPythonWorker readAuthority paths executableModel request cacheObservation
+            runPythonWorker readAuthority paths executableModel request cacheObservation maybeVerifiedPrefix
         NativeProcessRunner ->
-          runNativeWorker paths executableModel request cacheObservation
+          runNativeWorker paths executableModel request cacheObservation maybeVerifiedPrefix
   where
     model = executableModelDescriptor executableModel
     engineBinding = executableModelEngine executableModel
@@ -313,10 +318,11 @@ runPythonWorker ::
   ExecutableModel ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
+  Maybe Prefix.VerifiedConversationPrefix ->
   IO (Either WorkerFailure Text)
-runPythonWorker readAuthority paths executableModel request _cacheObservation = do
+runPythonWorker readAuthority paths executableModel request cacheObservation maybeVerifiedPrefix = do
   maybeModelCacheConfig <- loadWorkerModelCacheConfig paths modelRuntimeMode
-  let workerRequest = encodeMessage (buildWorkerRequest paths maybeModelCacheConfig executableModel request)
+  let workerRequest = encodeMessage (buildWorkerRequest paths maybeModelCacheConfig executableModel request cacheObservation maybeVerifiedPrefix)
   workerResult <- runWorkerInvocation readAuthority paths executableModel model workerRequest
   pure (workerResultToOutput executableModel workerResult)
   where
@@ -445,8 +451,14 @@ pythonEngineBootstrapManifestRequiredForTest =
 -- output is exercised on cohort hardware (Wave I Stage 2); here the
 -- dispatch wiring and the binary-by-absolute-path contract compile and
 -- unit-check.
-runNativeWorker :: Paths -> ExecutableModel -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either WorkerFailure Text)
-runNativeWorker paths executableModel request _cacheObservation = do
+runNativeWorker ::
+  Paths ->
+  ExecutableModel ->
+  InferenceRequest ->
+  Maybe KVCache.KVCacheObservation ->
+  Maybe Prefix.VerifiedConversationPrefix ->
+  IO (Either WorkerFailure Text)
+runNativeWorker paths executableModel request _cacheObservation _maybeVerifiedPrefix = do
   preparation <- prepareNativeArtifactInvocation
   case preparation of
     Left preparationError -> pure (workerFailed preparationError)
@@ -647,8 +659,19 @@ ensureNativeRunnerContractCacheReady model (Just modelCacheConfig) = do
     when upstreamReady $ do
       createDirectoryIfMissing True (takeDirectory readyPath)
       hydrateNativeModelCache model modelCacheConfig
-      writeFile readyPath "native-model-cache-ready\n"
-  requireHydratedNativeModelCache model modelCacheConfig
+  -- Phase 4 Sprint 4.50: readiness is published only after the hydrated files
+  -- verify. The retired order stamped the sentinel immediately after hydration
+  -- returned, so a download that produced a short or empty file left a cache
+  -- that reported itself ready forever: the next call saw the sentinel, skipped
+  -- hydration, and failed the same verification with no path back to a repair.
+  verified <- requireHydratedNativeModelCache model modelCacheConfig
+  case verified of
+    Left failure -> pure (Left failure)
+    Right () -> do
+      unless localReady $ do
+        createDirectoryIfMissing True (takeDirectory readyPath)
+        writeFile readyPath "native-model-cache-ready\n"
+      pure (Right ())
 
 -- | Prove every local file this model's native runner will open is present and
 -- non-empty, or report the classified cache miss naming exactly what is absent.
@@ -661,7 +684,7 @@ requireHydratedNativeModelCache ::
   WorkerModelCacheConfig ->
   IO (Either ErrorResponse ())
 requireHydratedNativeModelCache model modelCacheConfig = do
-  requiredKeys <- requiredNativeModelCacheKeys model modelCacheConfig
+  requiredKeys <- nativeModelCacheRelativeKeys model modelCacheConfig
   missing <- filterM (fmap not . nativeModelCacheEntryPresent) (map localPath requiredKeys)
   pure $
     if null missing
@@ -690,11 +713,11 @@ requireHydratedNativeModelCache model modelCacheConfig = do
 -- required first and its contents are required with it; a present index whose
 -- listed files are absent is exactly the half-hydrated state this check exists
 -- to catch. A model that declares no cache objects requires none.
-requiredNativeModelCacheKeys ::
+nativeModelCacheRelativeKeys ::
   ModelDescriptor ->
   WorkerModelCacheConfig ->
   IO [Text]
-requiredNativeModelCacheKeys model modelCacheConfig
+nativeModelCacheRelativeKeys model modelCacheConfig
   | modelId model `elem` nativeSnapshotModelIds = do
       let indexPath =
             Text.unpack (workerModelCacheRoot modelCacheConfig)
@@ -1301,8 +1324,15 @@ capturedStreamSuffix label captured =
         (bounded, []) -> "\n" <> label <> ":\n" <> bounded
         (bounded, _) -> "\n" <> label <> " (truncated):\n" <> bounded
 
-buildWorkerRequest :: Paths -> Maybe WorkerModelCacheConfig -> ExecutableModel -> InferenceRequest -> ProtoInference.WorkerRequest
-buildWorkerRequest paths maybeModelCacheConfig executableModel request =
+buildWorkerRequest ::
+  Paths ->
+  Maybe WorkerModelCacheConfig ->
+  ExecutableModel ->
+  InferenceRequest ->
+  Maybe KVCache.KVCacheObservation ->
+  Maybe Prefix.VerifiedConversationPrefix ->
+  ProtoInference.WorkerRequest
+buildWorkerRequest paths maybeModelCacheConfig executableModel request cacheObservation maybeVerifiedPrefix =
   set (field @"requestModelId") (modelId model) $
     set (field @"inputText") (inputText request) $
       set (field @"runtimeMode") (runtimeModeId (runtimeMode model)) $
@@ -1317,10 +1347,52 @@ buildWorkerRequest paths maybeModelCacheConfig executableModel request =
                         set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) $
                           set (field @"memoryBudget") (workerMemoryBudget executableModel) $
                             set (field @"executionShape") (workerExecutionShape model) $
-                              setWorkerModelCacheFields maybeModelCacheConfig defMessage
+                              set (field @"conversationPrefix") verifiedTurns $
+                                set (field @"conversationPrefixHash") verifiedHash $
+                                  set (field @"kvCacheDisposition") dispositionLabel $
+                                    setWorkerModelCacheFields maybeModelCacheConfig defMessage
   where
     model = executableModelDescriptor executableModel
     engineBinding = executableModelEngine executableModel
+    verifiedTurns = maybe [] (map workerConversationTurn . Prefix.verifiedPrefixTurns) maybeVerifiedPrefix
+    verifiedHash =
+      maybe "" (unPrefixHash . Prefix.verifiedPrefixHash) maybeVerifiedPrefix
+    -- Phase 7 Sprint 7.31: a backend with no reusable state is told to replay
+    -- and reports replay. Reuse is claimed only when the daemon observed that
+    -- this engine already holds state for exactly this identity and prefix.
+    dispositionLabel =
+      KVCache.kvCacheDispositionLabel
+        (workerCacheDisposition engineBinding cacheObservation)
+
+-- | Reuse is claimed only when this binding can hold state at all and the
+-- daemon observed that it already holds this exact prefix.
+workerCacheDisposition ::
+  EngineBinding ->
+  Maybe KVCache.KVCacheObservation ->
+  KVCache.KVCacheDisposition
+workerCacheDisposition engineBinding cacheObservation =
+  case cacheObservation of
+    Just observation
+      | engineBindingReusesKVState engineBinding,
+        KVCache.ReuseKVCache _ <- KVCache.kvCacheObservationDecision observation ->
+          KVCache.ReuseConstructedState
+    _ -> KVCache.ReplayVerifiedPrefix
+
+workerConversationTurn :: Prefix.ConversationTurn -> ProtoInference.ConversationTurn
+workerConversationTurn turn =
+  set (field @"role") (Prefix.conversationTurnRole turn) $
+    set (field @"text") (Prefix.conversationTurnText turn) defMessage
+
+-- | Whether this engine binding can hold KV state across requests at all.
+--
+-- The stdio worker protocol starts a fresh adapter process per request, so no
+-- Python-backed binding retains anything between them; a native runner is the
+-- same. Claiming reuse for those would be claiming an effect the transport
+-- makes impossible, so they are told to replay and the replay is reported.
+-- The predicate exists to be widened by a binding that actually keeps a
+-- resident engine, not to be assumed true.
+engineBindingReusesKVState :: EngineBinding -> Bool
+engineBindingReusesKVState _ = False
 
 -- | Phase 4 Sprint 4.42 — the admitted quantities, exactly one device route
 -- populated.

@@ -125,7 +125,13 @@ def transform(context: AdapterContext) -> str:
     try:
         engine = LLM(**llm_options)
         sampling = SamplingParams(max_tokens=context.generation_bound)
-        outputs = engine.generate([context.input_text], sampling)
+        # Phase 7 Sprint 7.31: the engine is constructed per request, so the
+        # verified prefix is replayed in full. A reuse is never claimed for a
+        # backend whose state does not outlive the process that built it.
+        replayed = "\n".join(
+            f"{turn.role}: {turn.text}" for turn in context.prompt_turns()
+        )
+        outputs = engine.generate([replayed], sampling)
         continuation: str = outputs[0].outputs[0].text
         return continuation
     finally:

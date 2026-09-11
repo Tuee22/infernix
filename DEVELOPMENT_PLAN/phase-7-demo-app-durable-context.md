@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active — Sprints 7.30–7.33 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+**Status**: Active — Sprints 7.30–7.33 have validated code-side closure. Wave R7 is the remaining cohort gate.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -17,11 +17,11 @@
 
 ## Phase Status
 
-Sprints 7.1–7.29 retain their closed headings and only their established scope. Durable dispatch, context reconstruction, cancellation, and media rendering require implementation work. An empty dispatcher reducer resumes an existing durable cursor; KV bookkeeping stores hashes without rebuilding or using engine state; cancellation releases a queue slot without stopping inference; text preview buffers whole objects; MIDI samples are absent. A retained Phase 7 accelerator attestation is missing.
+Sprints 7.1–7.29 retain their closed headings and only their established scope. Sprints 7.30–7.33 restore the dispatcher reducer from retained history before its subscription resumes, verify the request's conversation prefix against the durable log and carry it to the engine, deliver cancellation to the running execution and hold its authority until cleanup is terminal, and bound the preview at one budget shared by both sides. A retained Phase 7 accelerator attestation is missing.
 
 The missing Phase 7 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R7 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprints 7.30–7.33 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R7 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
@@ -1839,12 +1839,12 @@ None.
 
 ---
 
-## Sprint 7.30: Restore Durable Dispatcher State Before Cursor Resume [Blocked]
+## Sprint 7.30: Restore Durable Dispatcher State Before Cursor Resume [Active]
 
-**Status**: Blocked
-**Code-side closure**: Dispatcher restoration and restart regressions pending.
+**Status**: Active
+**Code-side closure**: The dispatcher folds the context's retained history from the earliest position before its subscription resumes, and deduplicates the replay/live overlap by durable message identity. An unreadable history refuses visibly rather than resuming empty.
 **Cohort gate**: Wave R7 — selected `linux-gpu` plus native `linux-cpu`.
-**Blocked by**: Sprint 6.55 code-side closure.
+**Blocked by**: nothing — Sprint 6.55 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Dispatch/SingleFlight.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/durable_context_design.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/development/testing_strategy.md`
 
@@ -1880,15 +1880,18 @@ subscription.
 
 ### Remaining Work
 
-Implement restoration and real-broker regressions; retain Wave R7 evidence. Pending hardware
-sign-off alone does not block code-side progress.
+Cohort gate only: retain Wave R7's selected `linux-gpu` plus native `linux-cpu` full-suite results
+against one frozen implementation, including the real-broker restart with queued work outstanding.
+No new full-suite result is claimed.
 
-## Sprint 7.31: Reconstruct Conversation Context and Use Verified Engine KV State [Blocked]
+**Code-side evidence**: source `dd835d5170057871c1058f2c84eb60f281832b302bd0b8dfb707a1ff2d789bc3`; image `sha256:997585164b5c53ee5fc28f83e71145dd7c838ad12fd3eae359c04e3fd6021db5`; lint `.data/runtime/validation/run-C9tRnL/receipt.json`; unit `.data/runtime/validation/run-QiJT3A/receipt.json`. Sprints 7.30–7.33, 8.15, and 9.12 share this validated snapshot.
 
-**Status**: Blocked
-**Code-side closure**: Real context reconstruction and engine-cache use pending.
+## Sprint 7.31: Reconstruct Conversation Context and Use Verified Engine KV State [Active]
+
+**Status**: Active
+**Code-side closure**: The daemon reconstructs the ordered prefix from durable history through the request's own offset, requires the recomputed projection hash to match before the engine is reached, carries the verified turns on the worker envelope, and publishes cache validity only from a completed execution. Cache identity binds tenant, context, model, artifact, template, and execution shape.
 **Cohort gate**: Wave R7.
-**Blocked by**: Sprint 7.30 code-side closure.
+**Blocked by**: nothing — Sprint 7.30 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Runtime/KVCache.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Dispatch/SingleFlight.hs`, `python/adapters/`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/durable_context_design.md`, `documents/architecture/bounded_inference_memory.md`, `documents/engineering/model_lifecycle.md`, `documents/development/python_policy.md`
 
@@ -1933,15 +1936,17 @@ constructed engine state.
 
 ### Remaining Work
 
-Implement durable prefix reconstruction, supported engine KV integration, bounded accounting,
-and independent behavioral proofs.
+Cohort gate only: retain Wave R7's selected pair, including the multi-turn request whose second
+answer depends on a fact in the first. No engine binding in the supported set holds KV state across
+requests, so every backend is told to replay and reports replay; the reuse arm is exercised by the
+identity and publication assertions rather than by a backend that cannot honour it.
 
-## Sprint 7.32: Cancel Engine Execution Before Releasing Execution Authority [Blocked]
+## Sprint 7.32: Cancel Engine Execution Before Releasing Execution Authority [Active]
 
-**Status**: Blocked
-**Code-side closure**: Engine cancellation propagation and race coverage pending.
+**Status**: Active
+**Code-side closure**: The coordinator forwards a typed cancellation to the substrate's cancel topic, every engine consumes it, and the machine running that request interrupts it. The execution registers under its durable identity inside the execution authority, so the authority is released only after the interrupted execution's own cleanup is terminal.
 **Cohort gate**: Wave R7.
-**Blocked by**: Sprint 7.31 code-side closure.
+**Blocked by**: nothing — Sprint 7.31 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/Dispatch/SingleFlight.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/architecture/durable_context_design.md`, `documents/architecture/daemon_topology.md`, `documents/architecture/managed_state_transitions.md`
 
@@ -1977,15 +1982,15 @@ execution's verified cleanup before that successor starts.
 
 ### Remaining Work
 
-Implement cancellation through the engine and durable terminal boundary; prove race and cleanup
-behavior on the selected phase pair.
+Cohort gate only: retain Wave R7's selected pair, including the routed browser cancel flow and the
+completion-versus-cancellation race against a real engine. No new full-suite result is claimed.
 
-## Sprint 7.33: Bound Artifact Preview and Verify MIDI and Media Rendering [Blocked]
+## Sprint 7.33: Bound Artifact Preview and Verify MIDI and Media Rendering [Active]
 
-**Status**: Blocked
-**Code-side closure**: Bounded transfer/rendering and MIDI asset/playback work pending.
+**Status**: Active
+**Code-side closure**: One preview budget is shared by the backend and the browser; the backend issues a ranged read with a single lookahead byte, bounds the body on arrival whether or not the upstream honoured the range, and states truncation in a header. The browser stops its stream and its decode at the same budget and exposes truncation. MIDI playback is synthesized from the decoded notes and reports its own failures.
 **Cohort gate**: Wave R7.
-**Blocked by**: Sprint 7.32 code-side closure.
+**Blocked by**: nothing — Sprint 7.32 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Demo/Api.hs`, `src/Infernix/Web/Contracts.hs`, `web/src/Infernix/Web/ArtifactTransport.js`, `web/playwright/inference.spec.js`, `web/package.json`, `docker/Dockerfile`
 **Docs to update**: `documents/architecture/object_access_doctrine.md`, `documents/architecture/durable_context_design.md`, `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/engineering/object_storage.md`
 
@@ -2023,12 +2028,16 @@ produce observable rendering or playback.
 
 ### Remaining Work
 
-Implement bounds and sample provisioning, replace superficial browser assertions, and retain
-Wave R7 evidence for all four follow-on sprints.
+Cohort gate only: retain Wave R7's selected pair for the routed bounded preview and the MIDI
+render-and-playback assertions. The self-hosted sampled-instrument route is not taken: the retired
+renderer loaded a sampled piano from a path the bundle never carried and swallowed the failure, and
+scheduling audio from the decoded notes removes the missing asset rather than shipping tens of
+megabytes of samples to restore it. The observable signal is the note events the renderer decoded,
+which a renderer that failed to load an instrument could not produce.
 
 ## Remaining Work
 
-Implement Sprints 7.30–7.33, pass their governed machine-independent gates, and retain Wave R7's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R7's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. Sprints 7.30–7.33 have code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

@@ -43,6 +43,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised before proto generat
 __all__ = [
     "AdapterContext",
     "ArtifactResult",
+    "ConversationTurn",
     "DEMO_OBJECTS_BUCKET",
     "download_demo_object",
     "inference_pb2",
@@ -100,6 +101,18 @@ def run_setup_from_argv(adapter_id: str) -> int:
 
 
 @dataclass(frozen=True)
+class ConversationTurn:
+    """One turn of the verified conversation prefix.
+
+    The role is assigned by the daemon from the durable event type; an adapter
+    does not infer it from content.
+    """
+
+    role: str
+    text: str
+
+
+@dataclass(frozen=True)
 class AdapterContext:
     adapter_id: str
     runtime_mode: str
@@ -130,6 +143,29 @@ class AdapterContext:
     generation_bound: int
     cache_element_width: int
     stream_weights_to_device: bool
+    # Phase 7 Sprint 7.31: the verified conversation prefix this request runs
+    # against, in order, and what the daemon decided about engine state for it.
+    # The retired context carried only input_text, so a multi-turn conversation
+    # reached the model as a series of unrelated single-turn prompts.
+    conversation_prefix: tuple[ConversationTurn, ...]
+    conversation_prefix_hash: str
+    kv_cache_disposition: str
+
+    def prompt_turns(self) -> list[ConversationTurn]:
+        """The turns to feed the model, newest last.
+
+        Falls back to the request's own prompt only when the daemon supplied no
+        prefix at all, which is the manual single-turn path. A context-carrying
+        request always arrives with its verified prefix, and a prefix that could
+        not be verified never reaches an adapter.
+        """
+        if self.conversation_prefix:
+            return list(self.conversation_prefix)
+        return [ConversationTurn(role="user", text=self.input_text)]
+
+    def replays_prefix(self) -> bool:
+        """Whether this engine must re-feed the prefix rather than reuse state."""
+        return self.kv_cache_disposition != "reuse"
 
     def require_device_mib(self) -> int:
         """Phase 4 Sprint 4.42 — the admitted device quantity, or a refusal.
@@ -595,9 +631,17 @@ def _run_realness_ast_check(adapters_dir: Path) -> None:
     Rejects the fabrication patterns that would let a per-family adapter
     return a non-real result: a ``return`` inside an ``except`` (masking a
     failure as a fabricated success), a fabrication-named helper definition,
-    or artifact bytes built from a literal ``bytes([...])`` or a decoded
-    constant. Scoped to the ``*_python.py`` transform modules; the ``common``
-    harness legitimately returns an error response from ``except``.
+    artifact bytes built from a literal ``bytes([...])`` or a decoded
+    constant, and — Phase 4 Sprint 4.50 — a result-producing function that
+    returns a literal. Scoped to the ``*_python.py`` transform modules; the
+    ``common`` harness legitimately returns an error response from
+    ``except``.
+
+    This is a syntactic guard and nothing more. It reads source, so it bounds
+    what an adapter may be written to say, not what a run observed. A
+    transform that computes a plausible constant rather than writing one
+    passes every rule here, which is why the claim that an inference was real
+    is made from run evidence by ``Infernix.Runtime.Realness`` instead.
     """
     violations: list[str] = []
     for path in sorted(adapters_dir.glob(_REALNESS_ADAPTER_GLOB)):
@@ -638,8 +682,66 @@ def _run_realness_ast_check(adapters_dir: Path) -> None:
                         f"{path.name}:{node.lineno}: decoding a literal constant "
                         "fabricates artifact bytes"
                     )
+                if name == "ArtifactResult":
+                    violations.extend(_literal_artifact_data_violations(path, node))
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                if _produces_adapter_result(node):
+                    violations.extend(_literal_result_return_violations(path, node))
     if violations:
         raise RuntimeError("realness check failed:\n" + "\n".join(violations))
+
+
+def _produces_adapter_result(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether this function is one whose return value becomes the result.
+
+    The device-selection helpers in these modules legitimately return the
+    string ``"cpu"``; the transform and the artifact renderers do not
+    legitimately return anything written into the source.
+    """
+    if node.name == "transform":
+        return True
+    annotation = node.returns
+    if isinstance(annotation, ast.Name):
+        return annotation.id in {"ArtifactResult", "TextResult"}
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        return annotation.value in {"ArtifactResult", "TextResult"}
+    return False
+
+
+def _literal_result_return_violations(
+    path: Path, node: ast.FunctionDef | ast.AsyncFunctionDef
+) -> list[str]:
+    violations: list[str] = []
+    for inner in ast.walk(node):
+        if not isinstance(inner, ast.Return) or inner.value is None:
+            continue
+        if _is_authored_literal(inner.value):
+            violations.append(
+                f"{path.name}:{inner.lineno}: '{node.name}' returns a literal as "
+                "model output; a result is computed by the engine or the call "
+                "raises"
+            )
+    return violations
+
+
+def _literal_artifact_data_violations(path: Path, node: ast.Call) -> list[str]:
+    violations: list[str] = []
+    for keyword in node.keywords:
+        if keyword.arg == "data" and _is_authored_literal(keyword.value):
+            violations.append(
+                f"{path.name}:{node.lineno}: ArtifactResult data is a literal; "
+                "artifact bytes come from the engine"
+            )
+    return violations
+
+
+def _is_authored_literal(value: ast.expr) -> bool:
+    """A value written into the source rather than computed from a run."""
+    if isinstance(value, ast.Constant):
+        return isinstance(value.value, str | bytes)
+    if isinstance(value, ast.JoinedStr):
+        return all(isinstance(part, ast.Constant) for part in value.values)
+    return False
 
 
 def _run_native_runner_realness_check(runners_dir: Path) -> None:
@@ -1021,6 +1123,12 @@ def load_adapter_context(request: inference_pb2.WorkerRequest) -> AdapterContext
         bootstrap_manifest_path=str(bootstrap_path),
         host_residency_mib=_request_host_residency_mib(request),
         device_mib=_request_device_mib(request),
+        conversation_prefix=tuple(
+            ConversationTurn(role=cast(str, turn.role), text=cast(str, turn.text))
+            for turn in request.conversation_prefix
+        ),
+        conversation_prefix_hash=cast(str, request.conversation_prefix_hash),
+        kv_cache_disposition=cast(str, request.kv_cache_disposition),
         context_length=int(request.execution_shape.context_length),
         batch_size=int(request.execution_shape.batch_size),
         generation_bound=int(request.execution_shape.generation_bound),

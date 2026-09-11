@@ -56,6 +56,9 @@ module Infernix.Web.Contracts
     -- Sprint 5.12 shared model-bootstrap readiness deadline
     modelBootstrapReadyServerCeilingSeconds,
     clientModelBootstrapDeadlineSeconds,
+    boundedTextPreviewBytes,
+    boundedTextPreviewLookaheadBytes,
+    boundedTextPreviewRangeEnd,
     clientModelBootstrapDeadlineMarginSeconds,
   )
 where
@@ -702,6 +705,34 @@ clientModelBootstrapDeadlineSeconds marginSeconds =
 -- ceiling when deriving their client deadline.
 clientModelBootstrapDeadlineMarginSeconds :: Int
 clientModelBootstrapDeadlineMarginSeconds = 900
+
+-- | Phase 7 Sprint 7.33 — one preview budget, shared by the backend and the
+-- browser.
+--
+-- The bound has to be the same number on both sides or it is not a bound: a
+-- backend that stops at one size and a browser that stops at another leaves
+-- whichever is larger as the real limit, and previously neither stopped at all.
+-- The backend reads this many bytes from the object store and no more; the
+-- browser caps what it streams, decodes, and inserts at the same figure.
+--
+-- 64 KiB is large enough that an ordinary text or JSON artifact previews whole
+-- and small enough that a multi-gigabyte one cannot be pulled through a
+-- browser tab by asking to look at it.
+boundedTextPreviewBytes :: Int
+boundedTextPreviewBytes = 64 * 1024
+
+-- | The one extra byte the backend asks for beyond the budget.
+--
+-- Truncation cannot be decided from a full buffer without having read one. A
+-- single byte past the bound answers "is there more" without turning a bounded
+-- read into an unbounded one, and it is discarded rather than rendered.
+boundedTextPreviewLookaheadBytes :: Int
+boundedTextPreviewLookaheadBytes = 1
+
+-- | The inclusive end of the ranged read a bounded preview issues.
+boundedTextPreviewRangeEnd :: Int
+boundedTextPreviewRangeEnd =
+  boundedTextPreviewBytes + boundedTextPreviewLookaheadBytes - 1
 
 renderPursContractFooter :: Types.RuntimeMode -> String
 renderPursContractFooter activeRuntimeMode =

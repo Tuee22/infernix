@@ -11,7 +11,9 @@ module Infernix.Runtime.CappedEngine.Internal
   ( EngineOutputStream (..),
     EngineOutcome (..),
     EngineExecutionPlan,
+    engineExecutionCancellations,
     newEngineExecutionPlan,
+    withIdentifiedEngineExecution,
     engineExecutionRuntimePlan,
     withEngineExecutionPlan,
     NativeArtifactCache,
@@ -111,6 +113,7 @@ import Infernix.ExecutionPlan.Internal
 -- Darwin, the NVIDIA VRAM pair elsewhere.
 
 import Infernix.Python qualified as Python
+import Infernix.Runtime.Cancellation qualified as Cancellation
 import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
 import Infernix.Runtime.CappedEngine.Cleanup qualified as CappedCleanup
 import Infernix.Runtime.CappedEngine.FixedObserver qualified as FixedObserver
@@ -426,25 +429,49 @@ data EnforcementTermination
 -- single admitted grant at a time; per-executable tokens would let two admitted
 -- models run concurrently and exceed the host or pod budget the admission
 -- decision was made against.
-data EngineExecutionPlan = EngineExecutionPlan RuntimePlan (MVar ())
+-- Phase 7 Sprint 7.32: the cancellation registry lives inside the same value as
+-- the execution authority, because they are the same authority seen twice. A
+-- cancellation must reach the execution that holds the token, and the token
+-- must not be released until that execution's cleanup is terminal; splitting
+-- the two across separate values would let a caller hold one without the other.
+data EngineExecutionPlan
+  = EngineExecutionPlan RuntimePlan (MVar ()) Cancellation.CancellationRegistry
 
 -- | Package-internal mint used only by the live refinement boundary (and the
 -- property module that exercises the capability graph without host probes).
 newEngineExecutionPlan :: RuntimePlan -> IO EngineExecutionPlan
 newEngineExecutionPlan runtimePlan =
-  EngineExecutionPlan runtimePlan <$> newMVar ()
+  EngineExecutionPlan runtimePlan <$> newMVar () <*> Cancellation.newCancellationRegistry
 
 -- | Read the immutable refined plan. The execution lock remains enclosed in the
 -- same value and cannot be recovered or replaced.
 engineExecutionRuntimePlan :: EngineExecutionPlan -> RuntimePlan
-engineExecutionRuntimePlan (EngineExecutionPlan runtimePlan _) = runtimePlan
+engineExecutionRuntimePlan (EngineExecutionPlan runtimePlan _ _) = runtimePlan
+
+-- | The registry of executions this plan's authority is currently running.
+engineExecutionCancellations :: EngineExecutionPlan -> Cancellation.CancellationRegistry
+engineExecutionCancellations (EngineExecutionPlan _ _ registry) = registry
 
 -- | Run one engine execution under its plan's enclosed authority. Exceptions
 -- propagate with the token released, so a failed execution cannot wedge the
 -- daemon.
 withEngineExecutionPlan :: EngineExecutionPlan -> IO a -> IO a
-withEngineExecutionPlan (EngineExecutionPlan _ token) action =
+withEngineExecutionPlan (EngineExecutionPlan _ token _) action =
   withMVar token (const action)
+
+-- | Run one identified engine execution under the plan's authority, registered
+-- so a cancellation can reach it.
+--
+-- The registration is inside the token, so the successor a cancelled prompt
+-- unblocks cannot start until this execution's cleanup has run: the projection
+-- resolving is not what releases the authority, this returning is.
+withIdentifiedEngineExecution ::
+  EngineExecutionPlan ->
+  Cancellation.ExecutionIdentity ->
+  IO a ->
+  IO a
+withIdentifiedEngineExecution plan@(EngineExecutionPlan _ _ registry) identity action =
+  withEngineExecutionPlan plan (Cancellation.withCancellableExecution registry identity action)
 
 -- | Phase 6 Sprint 6.51 — whether the admitted device arena can actually be
 -- taken right now.

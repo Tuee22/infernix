@@ -1,6 +1,6 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Active — Sprints 8.15 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+**Status**: Active — Sprint 8.15 has validated code-side closure. Wave R8 is the remaining cohort gate.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
@@ -13,11 +13,11 @@
 
 ## Phase Status
 
-Sprints 8.1–8.14 retain their closed headings and only their established scope. Zero tracked Dhall and role-projected configuration do not establish that every generated value is binary-owned. The Linux Dockerfile's handwritten host seed violates that broader guarantee.
+Sprints 8.1–8.14 retain their closed headings and only their established scope. Sprint 8.15 exercises the binary-owned configuration contract against independent controls: a reintroduced handwritten seed record, a payload generated from superseded defaults, and a machine pinned to a system contract it was not generated against are each rejected by the check that targets them.
 
 The existing Phase 8 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R8 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 8.15 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R8 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
@@ -1143,12 +1143,12 @@ role's authority.
 
 None.
 
-## Sprint 8.15: Verify Binary-Owned Configuration Across All Consumers [Blocked]
+## Sprint 8.15: Verify Binary-Owned Configuration Across All Consumers [Active]
 
-**Status**: Blocked
-**Code-side closure**: Consumer proof and generated-config regression coverage pending.
+**Status**: Active
+**Code-side closure**: The image-seed predicate is exercised against a reintroduced handwritten record, a payload generated from different defaults is compared by decode against the current producer, and a machine pinned to another system contract is refused rather than adopting the one it found. Marker-only local cache directories cannot supply readiness, which Sprint 4.50's observation establishes.
 **Cohort gate**: Wave R8 — selected `linux-gpu` plus native `linux-cpu`.
-**Blocked by**: Sprint 7.33 code-side closure; Sprint 1.44 supplies the sole seed generator and Sprint 4.50 supplies verified local cache behavior.
+**Blocked by**: nothing — Sprint 7.33 code-side closure is validated; Sprint 1.44 supplies the sole seed generator and Sprint 4.50 supplies verified local cache behavior.
 **Implementation targets**: `docker/Dockerfile`, `src/Infernix/HostConfig.hs`, `src/Infernix/ProjectInit.hs`, `src/Infernix/ClusterConfig.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/cluster_config_manifest.md`, `documents/development/no_env_vars.md`
 
@@ -1184,12 +1184,15 @@ configuration contract.
 
 ### Remaining Work
 
-Prove every generated consumer and deploy-time mirror against the sole binary producer; retain
-Wave R8. Hardware sign-off alone is not an implementation prerequisite for the next phase.
+Cohort gate only: retain Wave R8's selected `linux-gpu` plus native `linux-cpu` full-suite results
+against one frozen implementation, including the clean launcher build and the deployed role mirrors.
+No new full-suite result is claimed.
+
+**Code-side evidence**: source `dd835d5170057871c1058f2c84eb60f281832b302bd0b8dfb707a1ff2d789bc3`; image `sha256:997585164b5c53ee5fc28f83e71145dd7c838ad12fd3eae359c04e3fd6021db5`; lint `.data/runtime/validation/run-C9tRnL/receipt.json`; unit `.data/runtime/validation/run-QiJT3A/receipt.json`. Sprints 7.30–7.33, 8.15, and 9.12 share this validated snapshot.
 
 ## Remaining Work
 
-Implement Sprints 8.15, pass their governed machine-independent gates, and retain Wave R8's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R8's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 8.15 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

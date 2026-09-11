@@ -15,8 +15,7 @@
   "dependencies": {
     "@tonejs/midi": "2.0.28",
     "fflate": "0.8.2",
-    "opensheetmusicdisplay": "1.9.0",
-    "smplr": "0.16.2"
+    "opensheetmusicdisplay": "1.9.0"
   },
   "devDependencies": {
     "esbuild": "0.28.0",

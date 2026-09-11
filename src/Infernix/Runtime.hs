@@ -1,9 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.Runtime
-  ( buildPayload,
+  ( CacheEntryFacts (..),
+    CacheEntryReport (..),
+    CacheEntryState (..),
+    CacheOperationOutcome (..),
+    buildPayload,
+    cacheEntryStateDetail,
+    cacheEntryStateIsReady,
+    cacheEntryStateLabel,
     evictCache,
     executeExecutableInferenceWithKVCache,
+    inspectCacheEntry,
+    listCacheEntryReports,
     listCacheManifests,
     loadInferenceResult,
     persistInferenceResult,
@@ -16,13 +25,30 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
 import Infernix.Config (Paths (..))
+import Infernix.Conversation.Prefix qualified as Prefix
 import Infernix.ExecutionPlan
   ( ExecutableModel,
     executableModelDescriptor,
+    executableModelEngine,
     executableModelId,
   )
 import Infernix.Models (resultFamilyForDescriptor)
-import Infernix.Runtime.Cache (evictCache, listCacheManifests, materializeCache, rebuildCache)
+import Infernix.Runtime.Cache
+  ( CacheEntryFacts (..),
+    CacheEntryReport (..),
+    CacheEntryState (..),
+    CacheOperationOutcome (..),
+    cacheEntryStateDetail,
+    cacheEntryStateIsReady,
+    cacheEntryStateLabel,
+    evictCache,
+    inspectCacheEntry,
+    listCacheEntryReports,
+    listCacheManifests,
+    materializeCache,
+    rebuildCache,
+    withModelCacheExecutionLease,
+  )
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Worker
   ( WorkerFailure (WorkerError, WorkerTypedInferenceFailure),
@@ -41,11 +67,12 @@ import System.FilePath ((</>))
 executeExecutableInferenceWithKVCache ::
   Paths ->
   Maybe KVCache.EngineKVCache ->
-  Maybe KVCache.KVCacheRequest ->
+  Maybe KVCache.KVCacheRequestSeed ->
+  Maybe Prefix.VerifiedConversationPrefix ->
   ExecutableModel ->
   InferenceRequest ->
   IO (Either ErrorResponse InferenceResult)
-executeExecutableInferenceWithKVCache paths maybeEngineCache maybeCacheRequest executableModel request
+executeExecutableInferenceWithKVCache paths maybeEngineCache maybeCacheSeed maybeVerifiedPrefix executableModel request
   | requestModelId request /= executableModelId executableModel =
       pure (Left (requestModelMismatchError executableModel request))
   | Text.all isSpace (inputText request) =
@@ -61,17 +88,35 @@ executeExecutableInferenceWithKVCache paths maybeEngineCache maybeCacheRequest e
       let model = executableModelDescriptor executableModel
           modelRuntimeMode = runtimeMode model
           requestIdValue = Text.pack (formatTime defaultTimeLocale "req-%Y%m%d%H%M%S%q" now)
-      materializeCache paths modelRuntimeMode model
+      -- Phase 4 Sprint 4.50: recording the manifest and observing the derived
+      -- cache is bookkeeping; the engine's own hydration precondition remains
+      -- the gate on whether those bytes are loadable. The shared lease held
+      -- across the worker invocation is what keeps an operator eviction or
+      -- rebuild from replacing the generation this execution is reading.
+      _ <- materializeCache paths modelRuntimeMode model
+      -- Phase 7 Sprint 7.31: the identity the engine's state is keyed on is
+      -- completed here, where the admitted execution is in hand. The transport
+      -- boundary knows the tenant, context, model, and verified prefix; the
+      -- artifact, template, and execution shape are properties of this
+      -- placement and are not guesses a decoder could make.
+      let maybeCacheRequest = fmap (completeCacheRequest executableModel) maybeCacheSeed
       cacheObservation <-
         case (maybeEngineCache, maybeCacheRequest) of
           (Just engineCache, Just cacheRequest) -> Just <$> KVCache.observeKVCachePrefix engineCache cacheRequest
           _ -> pure Nothing
       workerResult <-
-        runExecutableInferenceWorker
-          paths
-          executableModel
-          request
-          cacheObservation
+        withModelCacheExecutionLease paths modelRuntimeMode (modelId model) $
+          runExecutableInferenceWorker
+            paths
+            executableModel
+            request
+            cacheObservation
+            maybeVerifiedPrefix
+      -- Validity is published only by a completed execution, and withdrawn by
+      -- one that failed. The retired form wrote the requested hash at
+      -- observation time, so a request that never reached an engine still left
+      -- a hit behind for the next one.
+      recordKVCacheOutcome maybeEngineCache maybeCacheRequest workerResult
       case workerResult of
         -- Phase 4 Sprint 4.37: the worker's own measurement is consumed, not
         -- re-derived. The retired arm matched a reserved error code and then
@@ -101,6 +146,52 @@ executeExecutableInferenceWithKVCache paths maybeEngineCache maybeCacheRequest e
                   }
           persistInferenceResult paths result
           pure (Right result)
+
+-- | Complete the transport-supplied seed with this placement's own identity.
+completeCacheRequest :: ExecutableModel -> KVCache.KVCacheRequestSeed -> KVCache.KVCacheRequest
+completeCacheRequest executableModel seed =
+  KVCache.completeKVCacheRequest
+    seed
+    (artifactType model <> ":" <> modelId model)
+    (engineBindingAdapterId (executableModelEngine executableModel))
+    (renderExecutionShapeIdentity (modelExecutionShape model))
+  where
+    model = executableModelDescriptor executableModel
+
+-- | The admitted shape, rendered so two different shapes cannot collide on one
+-- cache entry.
+renderExecutionShapeIdentity :: ModelExecutionShape -> Text
+renderExecutionShapeIdentity shape =
+  Text.intercalate
+    "/"
+    ( map
+        (Text.pack . show)
+        [ executionContextLength shape,
+          executionBatchSize shape,
+          executionGenerationBound shape,
+          executionCacheElementWidth shape
+        ]
+    )
+
+-- | Publish or withdraw the engine's claim on this identity from the execution
+-- that just happened.
+recordKVCacheOutcome ::
+  Maybe KVCache.EngineKVCache ->
+  Maybe KVCache.KVCacheRequest ->
+  Either WorkerFailure Text ->
+  IO ()
+recordKVCacheOutcome (Just engineCache) (Just cacheRequest) workerResult =
+  case workerResult of
+    Right _ ->
+      KVCache.publishKVCacheState
+        engineCache
+        (KVCache.kvCacheRequestIdentity cacheRequest)
+        (KVCache.kvCacheRequestPrefixHash cacheRequest)
+    Left _ ->
+      KVCache.invalidateKVCacheState
+        engineCache
+        (KVCache.kvCacheRequestIdentity cacheRequest)
+recordKVCacheOutcome _ _ _ = pure ()
 
 requestModelMismatchError :: ExecutableModel -> InferenceRequest -> ErrorResponse
 requestModelMismatchError executableModel request =

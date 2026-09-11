@@ -9,7 +9,7 @@ module Main (main) where
 
 import Control.Concurrent (forkIO, forkIOWithUnmask, killThread, threadDelay, yield)
 import Control.Concurrent.MVar qualified as MVar
-import Control.Exception (AsyncException (ThreadKilled), IOException, SomeAsyncException, SomeException, displayException, evaluate, finally, fromException, throwIO, throwTo, toException, try, uninterruptibleMask_)
+import Control.Exception (AsyncException (ThreadKilled), IOException, SomeAsyncException, SomeException, catch, displayException, evaluate, finally, fromException, throwIO, throwTo, toException, try, uninterruptibleMask_)
 import Control.Monad (forM, forM_, unless, void, when)
 import Crypto.Hash.Algorithms qualified
 import Crypto.Hash.SHA256 qualified as SHA256
@@ -177,6 +177,7 @@ import Infernix.Config qualified as Config
 import Infernix.Conversation.Event qualified as ConversationEvent
 import Infernix.Conversation.Hash qualified as ConversationHash
 import Infernix.Conversation.Idempotency qualified as ConversationIdempotency
+import Infernix.Conversation.Prefix qualified as Prefix
 import Infernix.Conversation.Reducer qualified as ConversationReducer
 import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.Demo.Api qualified as DemoApi
@@ -313,6 +314,8 @@ import Infernix.Routes
   )
 import Infernix.Routes qualified as Routes
 import Infernix.Runtime
+import Infernix.Runtime.Cache qualified as Cache
+import Infernix.Runtime.Cancellation qualified as Cancellation
 import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
 import Infernix.Runtime.CappedEngine.Internal qualified as CappedEngineInternal
 import Infernix.Runtime.CappedEngine.Projection qualified as Projection
@@ -366,6 +369,7 @@ import Infernix.Runtime.Pulsar
   )
 import Infernix.Runtime.Pulsar qualified as Pulsar
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
+import Infernix.Runtime.Realness qualified as Realness
 import Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (..),
     loadWorkerModelCacheConfig,
@@ -413,14 +417,12 @@ import System.Posix.Signals (nullSignal, sigKILL, sigSTOP, signalProcess, signal
 import System.Posix.Types (CPid)
 import System.Process
   ( CreateProcess (create_group, env, std_out),
-    ProcessHandle,
     StdStream (CreatePipe),
     createPipe,
     createProcess,
     getPid,
     proc,
     readCreateProcessWithExitCode,
-    terminateProcess,
     waitForProcess,
   )
 import System.Timeout (timeout)
@@ -2365,6 +2367,44 @@ reapCappedEngineFixture fixtureLabel processId = poll 80
               threadDelay 50000
               poll (retriesRemaining - 1)
 
+-- | Phase 6 Sprint 6.55 — own a forked fixture group for exactly the duration
+-- of the action.
+--
+-- The forked fixtures reaped on their own success path and nowhere else, so an
+-- assertion that raised between the fork and the reap left a live process group
+-- behind. The reaping is idempotent, so the ordinary path still collects the
+-- child's own status and the release finds nothing to do.
+data OwnedFixtureGroup = OwnedFixtureGroup
+  { ownedGroupPid :: CPid,
+    -- | Reap this group. Idempotent, so the ordinary path collects the child's
+    -- own status and the release then finds nothing to do.
+    ownedGroupReap :: IO ProcessStatus
+  }
+
+withGroupedCappedEngineFixture :: String -> IO () -> (OwnedFixtureGroup -> IO a) -> IO a
+withGroupedCappedEngineFixture fixtureLabel fixtureAction action = do
+  reapedRef <- IORef.newIORef Nothing
+  bracketPreservingPrimary
+    (startGroupedCappedEngineFixture fixtureLabel fixtureAction)
+    (releaseGroupedFixture reapedRef fixtureLabel)
+    ( \childPid ->
+        action
+          ( OwnedFixtureGroup
+              childPid
+              (reapOwnedFixtureOnce reapedRef fixtureLabel childPid)
+          )
+    )
+
+releaseGroupedFixture :: IORef.IORef (Maybe ProcessStatus) -> String -> CPid -> IO ()
+releaseGroupedFixture reapedRef fixtureLabel childPid = do
+  alreadyReaped <- IORef.readIORef reapedRef
+  case alreadyReaped of
+    Just _ -> pure ()
+    Nothing -> do
+      terminateOwnedFixtureGroup childPid
+      _ <- reapOwnedFixtureOnce reapedRef fixtureLabel childPid
+      pure ()
+
 startGroupedCappedEngineFixture :: String -> IO () -> IO CPid
 startGroupedCappedEngineFixture fixtureLabel fixtureAction = do
   (readyReader, readyWriter) <- PosixIO.createPipe
@@ -2388,33 +2428,27 @@ startGroupedCappedEngineFixture fixtureLabel fixtureAction = do
 runLinuxWatchdogBreachAssertions :: IO ()
 runLinuxWatchdogBreachAssertions =
   unless (System.Info.os == "darwin") $ do
-    breachPid <-
-      startGroupedCappedEngineFixture
-        "memory-breach fixture"
-        runLinuxMemoryBreachFixture
-    breachOutcome <-
-      CappedEngineInternal.linuxWatchdogOutcomeForTest
-        16
-        breachPid
-    breachExit <- reapCappedEngineFixture "memory-breach fixture" breachPid
-    assert
-      ( breachOutcomeExceeds PodRam 16 breachOutcome
-          && breachExit /= Exited ExitSuccess
-      )
-      "Sprint 4.32: Linux live RSS breach returns the typed ceiling outcome, names the observed footprint, and reaps the grouped engine"
+    withGroupedCappedEngineFixture "memory-breach fixture" runLinuxMemoryBreachFixture $ \breachChild -> do
+      breachOutcome <-
+        CappedEngineInternal.linuxWatchdogOutcomeForTest
+          16
+          (ownedGroupPid breachChild)
+      breachExit <- ownedGroupReap breachChild
+      assert
+        ( breachOutcomeExceeds PodRam 16 breachOutcome
+            && breachExit /= Exited ExitSuccess
+        )
+        "Sprint 4.32: Linux live RSS breach returns the typed ceiling outcome, names the observed footprint, and reaps the grouped engine"
 
-    smallPid <-
-      startGroupedCappedEngineFixture
-        "small-memory fixture"
-        runSmallMemoryFixture
-    smallOutcome <-
-      CappedEngineInternal.linuxWatchdogOutcomeForTest
-        512
-        smallPid
-    smallExit <- reapCappedEngineFixture "small-memory fixture" smallPid
-    assert
-      (isNothing smallOutcome && smallExit == Exited ExitSuccess)
-      "Sprint 4.32: a smaller execution succeeds after a live Linux ceiling breach"
+    withGroupedCappedEngineFixture "small-memory fixture" runSmallMemoryFixture $ \smallChild -> do
+      smallOutcome <-
+        CappedEngineInternal.linuxWatchdogOutcomeForTest
+          512
+          (ownedGroupPid smallChild)
+      smallExit <- ownedGroupReap smallChild
+      assert
+        (isNothing smallOutcome && smallExit == Exited ExitSuccess)
+        "Sprint 4.32: a smaller execution succeeds after a live Linux ceiling breach"
 
 -- | Phase 4 Sprint 4.35 — a native runner never reaches its engine with an
 -- unhydrated cache.
@@ -2631,21 +2665,18 @@ runNvidiaWatchdogAssertions =
         fail
           "required live NVIDIA VRAM watchdog assertions: /usr/bin/nvidia-smi is absent on this host"
       else do
-        childPid <-
-          startGroupedCappedEngineFixture
-            "NVIDIA no-context fixture"
-            runSmallMemoryFixture
-        outcome <-
-          CappedEngineInternal.nvidiaWatchdogOutcomeForTest
-            512
-            childPid
-        childExit <- reapCappedEngineFixture "NVIDIA no-context fixture" childPid
-        assert
-          (isNothing outcome && childExit == Exited ExitSuccess)
-          ( "Sprint 6.44: a live NVIDIA VRAM sample of a group holding no CUDA context "
-              <> "completes without a breach or an enforcement failure; observed "
-              <> show outcome
-          )
+        withGroupedCappedEngineFixture "NVIDIA no-context fixture" runSmallMemoryFixture $ \noContextChild -> do
+          outcome <-
+            CappedEngineInternal.nvidiaWatchdogOutcomeForTest
+              512
+              (ownedGroupPid noContextChild)
+          childExit <- ownedGroupReap noContextChild
+          assert
+            (isNothing outcome && childExit == Exited ExitSuccess)
+            ( "Sprint 6.44: a live NVIDIA VRAM sample of a group holding no CUDA context "
+                <> "completes without a breach or an enforcement failure; observed "
+                <> show outcome
+            )
         deviceVram <- CappedEngineInternal.observeNvidiaDeviceVramMib
         assert
           (maybe False (> 0) deviceVram)
@@ -2757,58 +2788,145 @@ cudaHostCeilingCalibrationProgram =
 --
 -- Returns the process handle, its process-group pid, and the gate line. The
 -- caller requires the allocation gate before making a device assertion.
-startCudaAllocationFixture :: Int -> Double -> IO (Maybe (ProcessHandle, CPid, String))
-startCudaAllocationFixture requestedMib holdSeconds = do
-  (_, maybeOut, _, handle) <-
-    createProcess
-      ( proc
-          cudaFixtureInterpreter
-          [ "-c",
-            cudaAllocationFixtureProgram,
-            show requestedMib,
-            show holdSeconds
-          ]
-      )
-        { create_group = True,
-          std_out = CreatePipe
-        }
-  outHandle <-
-    maybe (fail "CUDA allocation fixture exposed no stdout pipe") pure maybeOut
-  childPid <-
-    getPid handle >>= maybe (fail "CUDA allocation fixture exposed no pid") pure
-  -- The gate is bounded: a driver that never returns must not hang the suite.
-  gate <- timeout cudaFixtureGateTimeoutMicros (System.IO.hGetLine outHandle)
-  pure ((,,) handle childPid <$> gate)
+-- | Phase 6 Sprint 6.55 — one fixture child, owned for exactly the duration of
+-- the action.
+--
+-- The retired form returned @Maybe (ProcessHandle, CPid, String)@ and dropped
+-- the handle at every call site. Two paths leaked a live child as a result. A
+-- gate that timed out returned 'Nothing' with the child already started and
+-- nothing holding it, so a driver that hung left a device allocation running
+-- for the rest of the suite; and an assertion that failed between the start and
+-- the explicit reap never reached that reap. Both leaks are invisible to the
+-- suite that causes them and are attributed to whatever runs next.
+--
+-- The owner closes both. The action receives the group pid, the gate line, and
+-- the single reaping operation; whatever it does — return, fail, raise, or be
+-- cancelled — the release signals a still-live group, reaps it exactly once,
+-- and closes the owned pipe. Release failure is raised rather than swallowed,
+-- and a primary exception is preserved through it.
+data OwnedFixtureChild = OwnedFixtureChild
+  { ownedFixtureGroup :: CPid,
+    ownedFixtureGate :: String,
+    -- | Reap this child. Idempotent: the first call waits and records the
+    -- status, later calls return the recorded one.
+    ownedFixtureReap :: IO ProcessStatus
+  }
+
+withOwnedFixtureChild ::
+  String ->
+  CreateProcess ->
+  (Maybe OwnedFixtureChild -> IO a) ->
+  IO a
+withOwnedFixtureChild fixtureLabel processSpec =
+  withOwnedFixtureChildBounded fixtureLabel processSpec cudaFixtureGateTimeoutMicros
+
+withOwnedFixtureChildBounded ::
+  String ->
+  CreateProcess ->
+  Int ->
+  (Maybe OwnedFixtureChild -> IO a) ->
+  IO a
+withOwnedFixtureChildBounded fixtureLabel processSpec gateTimeoutMicros action = do
+  reapedRef <- IORef.newIORef Nothing
+  bracketPreservingPrimary
+    acquire
+    (release reapedRef)
+    (run reapedRef)
+  where
+    acquire = do
+      (_, maybeOut, _, handle) <-
+        createProcess
+          processSpec
+            { create_group = True,
+              std_out = CreatePipe
+            }
+      outHandle <-
+        maybe (fail (fixtureLabel <> " exposed no stdout pipe")) pure maybeOut
+      childPid <-
+        getPid handle >>= maybe (fail (fixtureLabel <> " exposed no pid")) pure
+      pure (childPid, outHandle)
+    run reapedRef (childPid, outHandle) = do
+      -- The gate is bounded: a driver that never returns must not hang the
+      -- suite, and the child it started is owned either way.
+      gate <- timeout gateTimeoutMicros (System.IO.hGetLine outHandle)
+      action
+        ( fmap
+            (\gateLine -> OwnedFixtureChild childPid gateLine (reapOwnedFixtureOnce reapedRef fixtureLabel childPid))
+            gate
+        )
+    release reapedRef (childPid, outHandle) = do
+      alreadyReaped <- IORef.readIORef reapedRef
+      case alreadyReaped of
+        Just _ -> pure ()
+        Nothing -> do
+          terminateOwnedFixtureGroup childPid
+          _ <- reapOwnedFixtureOnce reapedRef fixtureLabel childPid
+          pure ()
+      System.IO.hClose outHandle
+
+-- | Reap once and remember. A second call returns the recorded status instead
+-- of waiting on a pid this process has already collected.
+reapOwnedFixtureOnce :: IORef.IORef (Maybe ProcessStatus) -> String -> CPid -> IO ProcessStatus
+reapOwnedFixtureOnce reapedRef fixtureLabel childPid = do
+  recorded <- IORef.readIORef reapedRef
+  case recorded of
+    Just processStatus -> pure processStatus
+    Nothing -> do
+      processStatus <- reapCappedEngineFixture fixtureLabel childPid
+      IORef.writeIORef reapedRef (Just processStatus)
+      pure processStatus
+
+-- | Signal a still-live group. An already-exited group is not an error, which
+-- is the ordinary case when the action reaped on its own path.
+terminateOwnedFixtureGroup :: CPid -> IO ()
+terminateOwnedFixtureGroup childPid =
+  signalProcessGroup sigKILL childPid
+    `catch` \err ->
+      if isDoesNotExistError err || isPermissionError err
+        then pure ()
+        else ioError err
+
+withCudaAllocationFixture ::
+  Int ->
+  Double ->
+  (Maybe OwnedFixtureChild -> IO a) ->
+  IO a
+withCudaAllocationFixture requestedMib holdSeconds =
+  withOwnedFixtureChild
+    "CUDA allocation fixture"
+    ( proc
+        cudaFixtureInterpreter
+        [ "-c",
+          cudaAllocationFixtureProgram,
+          show requestedMib,
+          show holdSeconds
+        ]
+    )
 
 -- | Start the CUDA-initialized host allocation fixture behind the same pinned
 -- data-segment installer and exact soft/hard value used by production.
-startCudaHostCeilingCalibrationFixture ::
+withCudaHostCeilingCalibrationFixture ::
   Int ->
   Int ->
   Double ->
-  IO (Maybe (ProcessHandle, String))
-startCudaHostCeilingCalibrationFixture ceilingMib requestedMib holdSeconds = do
-  let ceilingBytes = ceilingMib * 1024 * 1024
-  (_, maybeOut, _, handle) <-
-    createProcess
-      ( proc
-          Ceiling.ceilingEnforcementTool
-          [ "--data=" <> show ceilingBytes <> ":" <> show ceilingBytes,
-            "--",
-            cudaFixtureInterpreter,
-            "-c",
-            cudaHostCeilingCalibrationProgram,
-            show requestedMib,
-            show holdSeconds
-          ]
-      )
-        { create_group = True,
-          std_out = CreatePipe
-        }
-  outHandle <-
-    maybe (fail "CUDA host-ceiling calibration fixture exposed no stdout pipe") pure maybeOut
-  gate <- timeout cudaFixtureGateTimeoutMicros (System.IO.hGetLine outHandle)
-  pure ((,) handle <$> gate)
+  (Maybe OwnedFixtureChild -> IO a) ->
+  IO a
+withCudaHostCeilingCalibrationFixture ceilingMib requestedMib holdSeconds =
+  withOwnedFixtureChild
+    "CUDA host-ceiling calibration fixture"
+    ( proc
+        Ceiling.ceilingEnforcementTool
+        [ "--data=" <> show ceilingBytes <> ":" <> show ceilingBytes,
+          "--",
+          cudaFixtureInterpreter,
+          "-c",
+          cudaHostCeilingCalibrationProgram,
+          show requestedMib,
+          show holdSeconds
+        ]
+    )
+  where
+    ceilingBytes = ceilingMib * 1024 * 1024
 
 -- | Driver initialisation plus a multi-gibibyte allocation measured at under a
 -- second on the development host; a minute is loose enough for a loaded cohort
@@ -2856,59 +2974,58 @@ runNvidiaVramBreachAssertions =
           else runLiveNvidiaVramBreachAssertions
 
 runLiveNvidiaVramBreachAssertions :: IO ()
-runLiveNvidiaVramBreachAssertions = do
-  started <- startCudaAllocationFixture cudaBreachAllocationMib 120
-  case started of
+runLiveNvidiaVramBreachAssertions =
+  withCudaAllocationFixture cudaBreachAllocationMib 120 $ \case
     Nothing ->
       fail
         ( "required live CUDA ceiling-breach assertions: the device "
             <> "allocation fixture produced no gate line within its bound"
         )
-    Just (_, breachPid, "allocated") -> do
-      breachOutcome <-
-        CappedEngineInternal.nvidiaWatchdogOutcomeForTest
-          cudaBreachCeilingMib
-          breachPid
-      breachExit <- reapCappedEngineFixture "CUDA breach fixture" breachPid
-      assert
-        ( breachOutcomeExceeds NvidiaVram cudaBreachCeilingMib breachOutcome
-            && breachExit /= Exited ExitSuccess
-        )
-        ( "Sprint 6.44: a live CUDA allocation past the declared ceiling returns the "
-            <> "typed ceiling outcome and reaps the grouped engine non-successfully; observed "
-            <> show breachOutcome
-            <> " and "
-            <> show breachExit
-        )
-      runNvidiaVramCleanAllocationAssertion
-    Just (_, breachPid, gate) -> do
-      void (reapCappedEngineFixture "unavailable CUDA fixture" breachPid)
+    Just breachChild
+      | ownedFixtureGate breachChild == "allocated" -> do
+          breachOutcome <-
+            CappedEngineInternal.nvidiaWatchdogOutcomeForTest
+              cudaBreachCeilingMib
+              (ownedFixtureGroup breachChild)
+          breachExit <- ownedFixtureReap breachChild
+          assert
+            ( breachOutcomeExceeds NvidiaVram cudaBreachCeilingMib breachOutcome
+                && breachExit /= Exited ExitSuccess
+            )
+            ( "Sprint 6.44: a live CUDA allocation past the declared ceiling returns the "
+                <> "typed ceiling outcome and reaps the grouped engine non-successfully; observed "
+                <> show breachOutcome
+                <> " and "
+                <> show breachExit
+            )
+          runNvidiaVramCleanAllocationAssertion
+    Just unavailableChild ->
       fail
         ( "required live CUDA ceiling-breach assertions: the device "
             <> "allocation fixture reported "
-            <> gate
+            <> ownedFixtureGate unavailableChild
         )
 
 -- | The GPU worker stays healthy after a breach: a smaller allocation under the
 -- same enforcer completes without a breach and exits successfully.
 runNvidiaVramCleanAllocationAssertion :: IO ()
-runNvidiaVramCleanAllocationAssertion = do
-  started <- startCudaAllocationFixture cudaCleanAllocationMib 1
-  case started of
-    Just (_, cleanPid, "allocated") -> do
-      cleanOutcome <-
-        CappedEngineInternal.nvidiaWatchdogOutcomeForTest
-          cudaCleanCeilingMib
-          cleanPid
-      cleanExit <- reapCappedEngineFixture "CUDA clean fixture" cleanPid
-      assert
-        (isNothing cleanOutcome && cleanExit == Exited ExitSuccess)
-        ( "Sprint 6.44: a smaller live CUDA allocation after a breach completes under the "
-            <> "same enforcer without a breach or an enforcement failure; observed "
-            <> show cleanOutcome
-            <> " and "
-            <> show cleanExit
-        )
+runNvidiaVramCleanAllocationAssertion =
+  withCudaAllocationFixture cudaCleanAllocationMib 1 $ \case
+    Just cleanChild
+      | ownedFixtureGate cleanChild == "allocated" -> do
+          cleanOutcome <-
+            CappedEngineInternal.nvidiaWatchdogOutcomeForTest
+              cudaCleanCeilingMib
+              (ownedFixtureGroup cleanChild)
+          cleanExit <- ownedFixtureReap cleanChild
+          assert
+            (isNothing cleanOutcome && cleanExit == Exited ExitSuccess)
+            ( "Sprint 6.44: a smaller live CUDA allocation after a breach completes under the "
+                <> "same enforcer without a breach or an enforcement failure; observed "
+                <> show cleanOutcome
+                <> " and "
+                <> show cleanExit
+            )
     _ ->
       fail
         ( "Sprint 6.44: the post-breach CUDA allocation fixture did not reach its "
@@ -2937,18 +3054,17 @@ runCompetingNvidiaTenantAssertion =
               ( "Sprint 6.51: the CUDA host could not establish its initial free-device reading: "
                   <> Text.unpack reason
               )
-          Right admittedArenaMib -> do
-            started <- startCudaAllocationFixture cudaCompetingTenantAllocationMib 120
-            case started of
-              Just (tenantHandle, _, "allocated") -> do
+          Right admittedArenaMib ->
+            withCudaAllocationFixture cudaCompetingTenantAllocationMib 120 $ \case
+              Just tenantChild | ownedFixtureGate tenantChild == "allocated" -> do
                 (availability, freeDuring) <-
                   ( (,)
                       <$> CappedEngineInternal.observeDeviceArenaAvailability admittedArenaMib
                       <*> CappedEngineInternal.observeNvidiaDeviceFreeMibForTest
                   )
                     `finally` ( do
-                                  terminateProcess tenantHandle
-                                  tenantExit <- timeout (4 * 1000000) (waitForProcess tenantHandle)
+                                  terminateOwnedFixtureGroup (ownedFixtureGroup tenantChild)
+                                  tenantExit <- timeout (4 * 1000000) (ownedFixtureReap tenantChild)
                                   assert
                                     (isJust tenantExit)
                                     "Sprint 6.51: the competing CUDA tenant was not reaped within four seconds"
@@ -2983,12 +3099,11 @@ runCompetingNvidiaTenantAssertion =
                           <> "; "
                           <> Text.unpack reason
                       )
-              Just (tenantHandle, _, gate) -> do
-                _ <- waitForProcess tenantHandle
+              Just unavailableTenant ->
                 fail
                   ( "required live competing NVIDIA tenant assertion: the CUDA allocation "
                       <> "fixture reported "
-                      <> gate
+                      <> ownedFixtureGate unavailableTenant
                   )
               Nothing ->
                 fail
@@ -3013,41 +3128,39 @@ runLinuxGpuHostCeilingCalibrationAssertion =
         fail
           "required live Linux GPU host-ceiling calibration: /usr/bin/nvidia-smi is absent on this host"
       else do
-        generous <- startCudaHostCeilingCalibrationFixture 4096 256 1
-        case generous of
-          Just (handle, "allocated") -> do
-            exitCode <- waitForProcess handle
-            assert
-              (exitCode == ExitSuccess)
-              "Sprint 6.51: the CUDA-initialized host allocation did not complete beneath the generous installed ceiling"
-          Just (handle, gate) -> do
-            exitCode <- waitForProcess handle
+        withCudaHostCeilingCalibrationFixture 4096 256 1 $ \case
+          Just generousChild
+            | ownedFixtureGate generousChild == "allocated" -> do
+                exitStatus <- ownedFixtureReap generousChild
+                assert
+                  (exitStatus == Exited ExitSuccess)
+                  "Sprint 6.51: the CUDA-initialized host allocation did not complete beneath the generous installed ceiling"
+          Just generousChild -> do
+            exitStatus <- ownedFixtureReap generousChild
             fail
               ( "Sprint 6.51: the generous CUDA host-ceiling calibration did not allocate: "
-                  <> gate
+                  <> ownedFixtureGate generousChild
                   <> "; exit "
-                  <> show exitCode
+                  <> show exitStatus
               )
           Nothing ->
             fail "Sprint 6.51: the generous CUDA host-ceiling calibration produced no bounded gate line"
 
-        refusal <- startCudaHostCeilingCalibrationFixture 1024 2048 1
-        case refusal of
-          Just (handle, "host-refused") -> do
-            exitCode <- waitForProcess handle
-            assert
-              (exitCode == ExitFailure 42)
-              ( "Sprint 6.51: the CUDA-initialized over-budget host allocation did not retain "
-                  <> "its clean refusal exit; observed "
-                  <> show exitCode
-              )
-          Just (handle, gate) -> do
-            terminateProcess handle
-            _ <- waitForProcess handle
+        withCudaHostCeilingCalibrationFixture 1024 2048 1 $ \case
+          Just refusalChild
+            | ownedFixtureGate refusalChild == "host-refused" -> do
+                exitStatus <- ownedFixtureReap refusalChild
+                assert
+                  (exitStatus == Exited (ExitFailure 42))
+                  ( "Sprint 6.51: the CUDA-initialized over-budget host allocation did not retain "
+                      <> "its clean refusal exit; observed "
+                      <> show exitStatus
+                  )
+          Just refusalChild ->
             fail
               ( "Sprint 6.51: the CUDA-initialized over-budget host allocation was not refused; "
                   <> "observed gate "
-                  <> gate
+                  <> ownedFixtureGate refusalChild
               )
           Nothing ->
             fail "Sprint 6.51: the refusing CUDA host-ceiling calibration produced no bounded gate line"
@@ -3277,10 +3390,826 @@ dispatchNvidiaValidationTest = do
         (BuildMemory.NvidiaHostCeiling, runLinuxGpuHostCeilingCalibrationAssertion)
       ]
 
+-- | The measured facts a verified cache reported, compared with what the
+-- fixture wrote. Any other state fails: a cache that is not verified-ready has
+-- no measured facts to agree with.
+verifiedCacheFactsMatch :: Int -> Integer -> Cache.CacheEntryState -> Bool
+verifiedCacheFactsMatch expectedFiles expectedBytes state =
+  case state of
+    Cache.CacheVerifiedReady facts ->
+      Cache.cacheEntryFileCount facts == expectedFiles
+        && Cache.cacheEntryBytes facts == expectedBytes
+    _ -> False
+
+-- | Whether an image build leaves seed generation to the binary.
+--
+-- The generator step has to be present and no handwritten decoder record may
+-- sit beside it. Both halves matter: a build that only generates is correct, and
+-- a build that generates and then overwrites is the regression this rejects.
+imageSeedIsBinaryOwned :: String -> Bool
+imageSeedIsBinaryOwned dockerfileContents =
+  "infernix internal linux-host-seed > /opt/infernix/dhall/ImageHostSeed.dhall"
+    `isInfixOf` dockerfileContents
+    && not ("hostArchitecture =" `isInfixOf` dockerfileContents)
+    && not ("kindRead = { timeoutMicros" `isInfixOf` dockerfileContents)
+
+-- | Phase 9 Sprint 9.12 — what a cache mutation may select, and what it refuses.
+--
+-- The retired decoder mapped every decode failure to "no model id", which the
+-- mutation read as "all models". The two positive controls come first because
+-- the point is not that malformed bodies are refused in general, but that the
+-- two legitimate scopes still work while every neighbouring malformation
+-- selects nothing at all.
+runCacheRequestScopeAssertions :: IO ()
+runCacheRequestScopeAssertions = do
+  let decodeScope = DemoApi.decodeCacheMutationScope . LazyChar8.pack
+      refused body = isLeft (decodeScope body)
+
+  assert
+    (decodeScope "{}" == Right DemoApi.AllConfiguredModels)
+    "an explicitly empty object selects every configured model, which is a request the caller made"
+  assert
+    ( decodeScope "{\"modelId\":\"llm-tinyllama-gguf\"}"
+        == Right (DemoApi.SingleModel "llm-tinyllama-gguf")
+    )
+    "an object naming one nonempty model id selects that model"
+
+  -- Each of these used to select every model on the machine.
+  forM_
+    [ ("an empty body", ""),
+      ("malformed JSON", "{"),
+      ("a JSON null", "null"),
+      ("a JSON array", "[]"),
+      ("a JSON string", "\"llm-tinyllama-gguf\""),
+      ("a JSON number", "7"),
+      ("a null model id", "{\"modelId\":null}"),
+      ("a numeric model id", "{\"modelId\":7}"),
+      ("an array model id", "{\"modelId\":[\"a\"]}"),
+      ("an empty model id", "{\"modelId\":\"\"}"),
+      ("a whitespace model id", "{\"modelId\":\"   \"}"),
+      ("an unknown field", "{\"model_id\":\"llm-tinyllama-gguf\"}"),
+      ("an extra field beside a valid one", "{\"modelId\":\"llm-tinyllama-gguf\",\"scope\":\"all\"}")
+    ]
+    $ \(label, body) ->
+      assert
+        (refused body)
+        (label <> " is refused rather than widened to every configured model")
+
+-- | Phase 8 Sprint 8.15 — every generated configuration traces to the binary
+-- that owns it, checked against controls rather than against the tree.
+--
+-- The existing image assertions read the real Dockerfile and the real emitted
+-- seed, which is the right thing to check but the wrong thing to trust on its
+-- own: a scan that finds nothing proves nothing until it has been shown to find
+-- something. Each control below is the generated contract with exactly one
+-- thing reintroduced or changed, and each must fail the check it targets.
+runBinaryOwnedConfigurationAssertions :: FilePath -> IO ()
+runBinaryOwnedConfigurationAssertions unitTestRoot = do
+  -- A handwritten seed record reintroduced into an image build. The predicate
+  -- the real Dockerfile passes has to reject this, or passing it means nothing.
+  let generatedSeedStep =
+        "RUN infernix internal linux-host-seed > /opt/infernix/dhall/ImageHostSeed.dhall\n"
+      handwrittenSeedStep =
+        generatedSeedStep
+          <> "RUN printf '{ hostArchitecture = \"x86_64\" }' > /opt/infernix/dhall/ImageHostSeed.dhall\n"
+  assert
+    (imageSeedIsBinaryOwned generatedSeedStep)
+    "an image that generates its seed through the binary is the positive control"
+  assert
+    (not (imageSeedIsBinaryOwned handwrittenSeedStep))
+    "a handwritten seed record reintroduced beside the generator is rejected"
+
+  -- A default changed without regenerating: the decoded payload and the
+  -- decoder's own defaults must disagree, which is what a semantic comparison
+  -- catches and a byte comparison against a copied string does not.
+  let generatedDefaults = HostConfig.defaultLinuxOuterContainerHostConfig "/root"
+      staleDefaults = HostConfig.defaultLinuxOuterContainerHostConfig "/opt/other-home"
+      stalePath = unitTestRoot </> "stale-infernix-host.dhall"
+  createDirectoryIfMissing True unitTestRoot
+  LazyChar8.writeFile stalePath (HostConfig.encodeHostConfig staleDefaults)
+  decodedStale <- HostConfig.decodeHostConfigFile stalePath
+  assert
+    (decodedStale == staleDefaults && decodedStale /= generatedDefaults)
+    "a payload generated from different defaults decodes to those defaults and disagrees with the current producer"
+
+  -- A machine pinned to a system contract it was not generated against. The
+  -- deployment mirror is not a second authority: a machine that disagrees with
+  -- the contract on disk is refused rather than adopting it.
+  paths <- discoverPaths
+  let contractDigest =
+        MachineContract.digestSystemContract
+          (unitGeneratedDemoConfig paths AppleSilicon True appleUnitInferenceMemoryBudget)
+      foreignDigest =
+        MachineContract.digestSystemContract
+          (unitGeneratedDemoConfig paths LinuxCpu True linuxCpuUnitInferenceMemoryBudget)
+      pinnedManifest =
+        generatedDefaults
+          { HostConfig.hostMachine =
+              HostConfig.DeclaredMachine
+                HostConfig.MachineNode
+                  { HostConfig.machineRole = Enums.daemonRoleToDhall Engine,
+                    HostConfig.machineMembers = ["linux-cpu-engine"],
+                    HostConfig.machineModelCacheQuotaBytes = fromInteger defaultModelCacheQuotaBytes,
+                    HostConfig.machineSystemContractDigest =
+                      MachineContract.systemContractDigestText contractDigest
+                  }
+          }
+  assert
+    (MachineContract.classifyMachinePin pinnedManifest contractDigest == MachineContract.MachinePinAgrees)
+    "a machine paired with the contract it was generated against is the positive control"
+  assert
+    ( MachineContract.classifyMachinePin pinnedManifest foreignDigest
+        /= MachineContract.MachinePinAgrees
+    )
+    "a machine pinned to another system contract is refused rather than adopting the one it found"
+
+-- | Phase 7 Sprint 7.32 — a cancellation stops the execution and holds the
+-- authority until its cleanup is terminal.
+--
+-- The distinguishing observation is the last one: the successor may not start
+-- while the cancelled execution is still cleaning up. A registry that only
+-- delivered the interrupt would pass every case above it and fail that one,
+-- which is exactly the behaviour a conversation-only cancel had.
+runEngineCancellationAssertions :: IO ()
+runEngineCancellationAssertions = do
+  registry <- Cancellation.newCancellationRegistry
+  let identity =
+        Cancellation.ExecutionIdentity
+          { Cancellation.executionTenant = "tenant-a",
+            Cancellation.executionContext = "context-a",
+            Cancellation.executionPromptMessageId = "prompt-1"
+          }
+      otherIdentity = identity {Cancellation.executionPromptMessageId = "prompt-2"}
+
+  -- Nothing running: a queued or already-finished prompt is a different answer
+  -- from a cancelled one, and the caller has to be able to tell them apart.
+  idle <- Cancellation.requestCancellation registry identity
+  assert
+    (idle == Cancellation.NoRunningExecution)
+    "a cancellation for an execution this machine is not running reports that, rather than claiming a stop"
+
+  -- A running execution is interrupted, and its own cleanup runs.
+  cleanupRan <- IORef.newIORef False
+  running <- MVar.newEmptyMVar
+  finished <- MVar.newEmptyMVar
+  let engineWork = do
+        MVar.putMVar running ()
+        _ <- timeout (30 * 1000000) (threadDelay (30 * 1000000))
+        pure ()
+      -- Inside the registered region, which is where the engine's own
+      -- process-group termination and reaping live: the terminal signal the
+      -- canceller waits on is posted after this, not before it.
+      engineCleanup = do
+        threadDelay 200000
+        IORef.writeIORef cleanupRan True
+      registeredExecution =
+        Cancellation.withCancellableExecution registry identity (engineWork `finally` engineCleanup)
+  executionThread <- forkIO (registeredExecution `finally` MVar.putMVar finished ())
+  MVar.takeMVar running
+  registeredWhileRunning <- Cancellation.registeredExecutionCount registry
+  assert (registeredWhileRunning == 1) "a running execution is registered under its durable identity"
+
+  unrelated <- Cancellation.requestCancellation registry otherIdentity
+  assert
+    (unrelated == Cancellation.NoRunningExecution)
+    "a cancellation naming another prompt does not stop this one"
+
+  cancelled <- Cancellation.requestCancellation registry identity
+  assert
+    (cancelled == Cancellation.CancelledRunningExecution)
+    "cancelling a running execution reports the stop it actually performed"
+  observedCleanup <- IORef.readIORef cleanupRan
+  assert
+    observedCleanup
+    "the cancellation returns only after the execution's own cleanup has run, not when the interrupt was delivered"
+
+  settled <- timeout (10 * 1000000) (MVar.takeMVar finished)
+  assert (isJust settled) "the cancelled execution thread completes rather than being left held"
+  registeredAfter <- Cancellation.registeredExecutionCount registry
+  assert (registeredAfter == 0) "a completed execution deregisters, so a later cancel reports nothing running"
+  _ <- pure executionThread
+
+  duplicate <- Cancellation.requestCancellation registry identity
+  assert
+    (duplicate == Cancellation.NoRunningExecution)
+    "a duplicate cancellation after the execution is terminal is a no-op with a truthful outcome"
+
+-- | The roles of an accepted prefix's turns, or nothing when it was refused.
+verifiedPrefixRoles ::
+  Either Prefix.PrefixVerificationFailure Prefix.VerifiedConversationPrefix ->
+  Maybe [Text.Text]
+verifiedPrefixRoles =
+  either
+    (const Nothing)
+    (Just . map Prefix.conversationTurnRole . Prefix.verifiedPrefixTurns)
+
+verifiedPrefixMentions ::
+  Text.Text ->
+  Either Prefix.PrefixVerificationFailure Prefix.VerifiedConversationPrefix ->
+  Bool
+verifiedPrefixMentions needle =
+  either
+    (const False)
+    (any ((needle `Text.isInfixOf`) . Prefix.conversationTurnText) . Prefix.verifiedPrefixTurns)
+
+verifiedPrefixHasExtent ::
+  Either Prefix.PrefixVerificationFailure Prefix.VerifiedConversationPrefix ->
+  Bool
+verifiedPrefixHasExtent = either (const False) ((> 0) . Prefix.verifiedPrefixBytes)
+
+prefixRefusalIs ::
+  Prefix.PrefixVerificationFailure ->
+  Either Prefix.PrefixVerificationFailure Prefix.VerifiedConversationPrefix ->
+  Bool
+prefixRefusalIs expected = either (== expected) (const False)
+
+-- | A hash mismatch names two digests this fixture does not predict, so the
+-- arm is matched rather than the values.
+prefixRefusalIsHashMismatch ::
+  Either Prefix.PrefixVerificationFailure Prefix.VerifiedConversationPrefix ->
+  Bool
+prefixRefusalIsHashMismatch outcome =
+  case outcome of
+    Left (Prefix.PrefixHashMismatch _ _) -> True
+    _ -> False
+
+-- | Phase 7 Sprint 7.31 — what the engine is allowed to be told its history is.
+--
+-- The positive control is an ordinary two-turn context: the request names the
+-- offset of its own prompt and the projection hash at that point, and the
+-- reconstruction agrees. Every negative below is that fixture with exactly one
+-- thing changed, because the claim is that each specific way of being wrong is
+-- caught rather than absorbed into the current prompt.
+runVerifiedPrefixAssertions :: IO ()
+runVerifiedPrefixAssertions = do
+  let contextIdValue = Contracts.ContextId "prefix-context"
+      promptMessage identifier textValue =
+        Contracts.ConversationMessage
+          { Contracts.conversationMessageId = Contracts.MessageId identifier,
+            Contracts.conversationMessageEvent =
+              Contracts.ConversationUserPromptEvent
+                Contracts.UserPromptPayload
+                  { Contracts.promptText = textValue,
+                    Contracts.promptClientIdempotencyKey = Contracts.ClientIdempotencyKey identifier,
+                    Contracts.promptUserUploads = []
+                  }
+          }
+      resultMessage identifier promptIdentifier outputText =
+        Contracts.ConversationMessage
+          { Contracts.conversationMessageId = Contracts.MessageId identifier,
+            Contracts.conversationMessageEvent =
+              Contracts.ConversationInferenceResultEvent
+                Contracts.ConversationInferenceResultPayload
+                  { Contracts.inferenceResultUserPromptMessageId = Contracts.MessageId promptIdentifier,
+                    Contracts.inferenceResultStatus = "completed",
+                    Contracts.inferenceResultInlineOutput = Just outputText,
+                    Contracts.inferenceResultError = Nothing,
+                    Contracts.inferenceResultArtifacts = []
+                  }
+          }
+      retained =
+        [ promptMessage "m1" "my favourite colour is viridian",
+          resultMessage "m2" "m1" "noted",
+          promptMessage "m3" "what did I say my favourite colour was"
+        ]
+      hashThrough count =
+        KVCache.rebuildPrefixHashFromLog contextIdValue (take count retained)
+      verifyAt = Prefix.reconstructVerifiedPrefix contextIdValue
+
+  let accepted = verifyAt 2 (hashThrough 3) retained
+  assert (isRight accepted) "a prefix agreeing with the request's offset and hash is accepted"
+  assert
+    (verifiedPrefixRoles accepted == Just ["user", "assistant", "user"])
+    "the reconstructed prefix carries every prior turn in order, not only the current prompt"
+  assert
+    (verifiedPrefixMentions "viridian" accepted)
+    "the fact the second turn depends on is present in the reconstructed prefix"
+  assert
+    (verifiedPrefixHasExtent accepted)
+    "the reconstruction reports the extent it occupies rather than leaving it for the engine to discover"
+
+  -- A retained event removed: the offset the request names is past the end.
+  assert
+    (prefixRefusalIs (Prefix.PrefixOffsetOutOfRange 2 2) (verifyAt 2 (hashThrough 3) (take 2 retained)))
+    "a history shorter than the named offset refuses by name"
+
+  -- An event's bytes altered: the projection no longer hashes to what the
+  -- dispatcher published.
+  let alteredHistory =
+        [ promptMessage "m1" "my favourite colour is vermilion",
+          resultMessage "m2" "m1" "noted",
+          promptMessage "m3" "what did I say my favourite colour was"
+        ]
+  assert
+    (prefixRefusalIsHashMismatch (verifyAt 2 (hashThrough 3) alteredHistory))
+    "an altered retained event fails the projection hash rather than being replayed"
+
+  -- The offset names a result rather than a prompt.
+  assert
+    (prefixRefusalIs (Prefix.PrefixOffsetNotAPrompt 1) (verifyAt 1 (hashThrough 2) retained))
+    "an offset that does not name a user prompt is not a dispatchable turn"
+
+  -- A foreign context's history: its own projection does not hash to the value
+  -- published for this context, which is the mechanism that catches it.
+  let foreignHistory =
+        [ promptMessage "f1" "an unrelated conversation",
+          resultMessage "f2" "f1" "unrelated",
+          promptMessage "f3" "what did I say my favourite colour was"
+        ]
+  assert
+    (prefixRefusalIsHashMismatch (verifyAt 2 (hashThrough 3) foreignHistory))
+    "a foreign context's history with a matching-looking offset fails the hash it does not produce"
+
+-- | Phase 6 Sprint 6.55 — the fixture-ownership contract, proved on the CPU
+-- lane with controlled children rather than on the device.
+--
+-- The accelerator fixtures are the ones that matter, but their cleanup is not
+-- testable where they run: a leaked CUDA allocation is visible only as the next
+-- assertion failing for an unrelated reason. The same owner runs both, so the
+-- contract is exercised here with a child whose behaviour this test chooses —
+-- one that emits its gate and waits, and one that never emits at all.
+--
+-- Four paths, because they fail differently: a normal return, an assertion that
+-- raises, a gate that times out with the child already started, and an
+-- asynchronous cancellation. After each one, the child must be terminal and
+-- reaped and the owned pipe closed.
+runFixtureOwnershipAssertions :: IO ()
+runFixtureOwnershipAssertions = do
+  interpreterPresent <- doesFileExist cudaFixtureInterpreter
+  if not interpreterPresent
+    then
+      fail
+        ( "the fixture-ownership assertions require the pinned interpreter at "
+            <> cudaFixtureInterpreter
+        )
+    else do
+      -- Success: the action reaps, the release finds nothing to do, and the
+      -- recorded status is the child's own.
+      successStatus <-
+        withControlledFixtureChild gatedFixtureProgram $ \case
+          Just child -> do
+            assert (ownedFixtureGate child == "ready") "the controlled fixture emits its gate line"
+            Just <$> ownedFixtureReap child
+          Nothing -> pure Nothing
+      assert
+        (successStatus == Just (Exited ExitSuccess))
+        ( "a controlled fixture that completes is reaped with its own status; observed "
+            <> show successStatus
+        )
+
+      -- Failure: the action raises while the child is still live. The child is
+      -- owned by the release, not by the action that abandoned it.
+      failurePid <- IORef.newIORef Nothing
+      raised <-
+        try @SomeException
+          ( withControlledFixtureChild heldFixtureProgram $ \case
+              Just child -> do
+                IORef.writeIORef failurePid (Just (ownedFixtureGroup child))
+                fail "deliberate assertion failure while the fixture child is live"
+              Nothing -> fail "the held fixture produced no gate line"
+          )
+      assert (isLeft raised) "the deliberate failure propagates out of the owner"
+      assertOwnedFixtureGroupIsGone failurePid "a fixture abandoned by a failing assertion"
+
+      -- Readiness timeout: the child starts and never emits. The retired form
+      -- returned Nothing here and left it running for the rest of the suite.
+      timeoutPid <- IORef.newIORef Nothing
+      timedOut <-
+        withOwnedFixtureChildBounded
+          "silent fixture"
+          (controlledFixtureSpec silentFixtureProgram)
+          (2 * 1000000)
+          ( \started -> do
+              case started of
+                Just child -> IORef.writeIORef timeoutPid (Just (ownedFixtureGroup child))
+                Nothing -> pure ()
+              pure (isNothing started)
+          )
+      assert timedOut "a fixture that never emits its gate line times out rather than hanging the suite"
+      silentGroups <- IORef.readIORef timeoutPid
+      assert (isNothing silentGroups) "the timed-out fixture yields no owned child to the action"
+
+      -- Cancellation: an asynchronous exception delivered while the action
+      -- holds a live child.
+      cancelPid <- IORef.newIORef Nothing
+      cancelDone <- MVar.newEmptyMVar
+      let cancelledOwner =
+            withControlledFixtureChild heldFixtureProgram $ \case
+              Just child -> do
+                IORef.writeIORef cancelPid (Just (ownedFixtureGroup child))
+                _ <- timeout (30 * 1000000) (threadDelay (30 * 1000000))
+                pure ()
+              Nothing -> fail "the cancelled fixture produced no gate line"
+      cancelThread <- forkIO (cancelledOwner `finally` MVar.putMVar cancelDone ())
+      startedCancelChild <- awaitRecordedFixtureGroup cancelPid
+      assert (isJust startedCancelChild) "the cancellation fixture child started before the cancellation"
+      throwTo cancelThread ThreadKilled
+      cancelSettled <- timeout (10 * 1000000) (MVar.takeMVar cancelDone)
+      assert (isJust cancelSettled) "the cancelled owner returns rather than leaving the child held"
+      assertOwnedFixtureGroupIsGone cancelPid "a fixture whose owner was cancelled"
+
+-- | A child that announces itself and exits immediately.
+gatedFixtureProgram :: String
+gatedFixtureProgram =
+  intercalate
+    "\n"
+    [ "import sys",
+      "sys.stdout.write('ready\\n')",
+      "sys.stdout.flush()"
+    ]
+
+-- | A child that announces itself and then stays alive well past the test.
+heldFixtureProgram :: String
+heldFixtureProgram =
+  intercalate
+    "\n"
+    [ "import sys, time",
+      "sys.stdout.write('ready\\n')",
+      "sys.stdout.flush()",
+      "time.sleep(300)"
+    ]
+
+-- | A child that never announces itself, which is the readiness-timeout case.
+silentFixtureProgram :: String
+silentFixtureProgram =
+  intercalate
+    "\n"
+    [ "import time",
+      "time.sleep(300)"
+    ]
+
+controlledFixtureSpec :: String -> CreateProcess
+controlledFixtureSpec program = proc cudaFixtureInterpreter ["-c", program]
+
+withControlledFixtureChild :: String -> (Maybe OwnedFixtureChild -> IO a) -> IO a
+withControlledFixtureChild program =
+  withOwnedFixtureChild "controlled fixture" (controlledFixtureSpec program)
+
+-- | Wait briefly for the forked owner to record the child it started.
+awaitRecordedFixtureGroup :: IORef.IORef (Maybe CPid) -> IO (Maybe CPid)
+awaitRecordedFixtureGroup recordedRef = poll (100 :: Int)
+  where
+    poll remaining = do
+      recorded <- IORef.readIORef recordedRef
+      case recorded of
+        Just groupPid -> pure (Just groupPid)
+        Nothing
+          | remaining <= 0 -> pure Nothing
+          | otherwise -> threadDelay 50000 >> poll (remaining - 1)
+
+-- | The owned group is gone: signalling it with the null signal reports no such
+-- process, which is the only evidence that distinguishes a reaped child from one
+-- this process merely stopped waiting for.
+assertOwnedFixtureGroupIsGone :: IORef.IORef (Maybe CPid) -> String -> IO ()
+assertOwnedFixtureGroupIsGone recordedRef context = do
+  recorded <- IORef.readIORef recordedRef
+  case recorded of
+    Nothing -> fail (context <> " recorded no owned child, so its cleanup cannot be checked")
+    Just groupPid -> do
+      gone <- awaitGroupAbsent groupPid (100 :: Int)
+      assert gone (context <> " left its owned process group live after the owner returned")
+
+awaitGroupAbsent :: CPid -> Int -> IO Bool
+awaitGroupAbsent groupPid remaining = do
+  present <-
+    (signalProcessGroup nullSignal groupPid >> pure True)
+      `catch` \err ->
+        if isDoesNotExistError err then pure False else ioError err
+  if not present
+    then pure True
+    else
+      if remaining <= 0
+        then pure False
+        else threadDelay 50000 >> awaitGroupAbsent groupPid (remaining - 1)
+
+-- | Phase 5 Sprint 5.13 — what the static file handler will and will not open.
+--
+-- The fixture places a sentinel outside the served root, a symlink inside the
+-- root pointing at it, and a sibling directory whose name begins with the
+-- root's name. Each of those is a distinct way to leave the root, and the
+-- outside sentinel's bytes are never returned by any of them.
+runStaticAssetContainmentAssertions :: FilePath -> IO ()
+runStaticAssetContainmentAssertions unitTestRoot = do
+  let fixtureRoot = unitTestRoot </> "static-containment"
+      servedRoot = fixtureRoot </> "dist"
+      lookalikeRoot = fixtureRoot </> "dist-operator"
+      outsidePath = fixtureRoot </> "outside.txt"
+      publicPath = servedRoot </> "app.js"
+      nestedPath = servedRoot </> "assets" </> "nested.css"
+      escapeLinkPath = servedRoot </> "escape.txt"
+  removeTestPathIfPresent fixtureRoot
+  createDirectoryIfMissing True (servedRoot </> "assets")
+  createDirectoryIfMissing True lookalikeRoot
+  writeFile outsidePath "outside-sentinel\n"
+  writeFile publicPath "console.log('served');\n"
+  writeFile nestedPath ".served {}\n"
+  writeFile (lookalikeRoot </> "operator.txt") "lookalike-sentinel\n"
+  createSymbolicLink outsidePath escapeLinkPath
+
+  let served = DemoApi.resolveStaticAsset servedRoot
+      refused segments = fmap isLeft (served segments)
+
+  publicResolved <- served ["app.js"]
+  assert
+    (either (const False) (/= outsidePath) publicResolved)
+    "an ordinary public asset resolves inside the served root"
+  publicBytes <- either (const (pure "")) readFile publicResolved
+  assert
+    (publicBytes == "console.log('served');\n")
+    "the positive control returns the served asset's own bytes"
+
+  nestedResolved <- served ["assets", "nested.css"]
+  assert (isRight nestedResolved) "a nested public asset inside the root is served"
+
+  -- WAI percent-decodes before this handler sees a segment, so these are the
+  -- decoded forms of ..%2f.., %2e%2e, %2f and a NUL.
+  dotDot <- refused ["..", "outside.txt"]
+  assert dotDot "a decoded dot-dot segment is refused before any file is opened"
+  encodedSeparator <- refused ["/etc/passwd"]
+  assert encodedSeparator "a segment carrying a decoded separator is refused"
+  absoluteLooking <- refused ["", "etc", "passwd"]
+  assert absoluteLooking "an empty segment is refused rather than collapsing the path"
+  currentDirectory <- refused ["."]
+  assert currentDirectory "a decoded dot segment is refused"
+  embeddedNul <- refused [Text.pack "app.js\0"]
+  assert embeddedNul "a segment carrying an embedded NUL is refused"
+
+  symlinkEscape <- refused ["escape.txt"]
+  assert
+    symlinkEscape
+    "a symlink inside the root pointing outside it is refused at the canonicalized read boundary"
+
+  lookalike <- refused ["..", "dist-operator", "operator.txt"]
+  assert
+    lookalike
+    "a sibling root whose name begins with the served root's name is outside it"
+
+  absent <- served ["missing.js"]
+  assert
+    (absent == Left DemoApi.StaticAssetAbsent)
+    "an absent public asset is a plain absence, distinct from an escape refusal"
+
+-- | Phase 4 Sprint 4.50 — the derived cache reports what it observes.
+--
+-- Every case here starts from the same fixture directory and changes exactly
+-- one thing, because the interesting claim is not that a good cache passes but
+-- that each specific way of being unusable is distinguished from readiness and
+-- from every other way.
+runVerifiedCacheStateAssertions :: FilePath -> IO ()
+runVerifiedCacheStateAssertions unitTestRoot = do
+  let cacheRoot = unitTestRoot </> "verified-model-cache"
+      cacheConfig = nativeModelCacheFixtureConfig cacheRoot
+  removeTestPathIfPresent cacheRoot
+
+  model <-
+    maybe (fail "expected a linux-cpu gguf catalog row") pure (findModel LinuxCpu "llm-tinyllama-gguf")
+  let modelDirectory = cacheRoot </> Text.unpack (modelId model)
+      payloadPath = modelDirectory </> "payload"
+      readyPath = modelDirectory </> ".ready"
+      wholeArtifact = ggufArtifactBytes [("token_embd.weight", 0 :: Int, [64, 4] :: [Int])]
+      stateLabel = Cache.cacheEntryStateLabel
+
+  absent <- Cache.observeCacheEntry cacheConfig model
+  assert
+    (stateLabel absent == "missing")
+    "a model with no cache generation on this machine reports missing rather than ready"
+
+  -- The retired marker: a directory holding a line of prose about a
+  -- materialization that never wrote a weight.
+  createDirectoryIfMissing True modelDirectory
+  writeFile (modelDirectory </> "materialized.txt") "materialized from minio://infernix-models/\n"
+  markerOnly <- Cache.observeCacheEntry cacheConfig model
+  assert
+    (stateLabel markerOnly == "incomplete")
+    "a marker-only directory is incomplete: a line of prose is not a weight file"
+
+  BS.writeFile payloadPath BS.empty
+  emptyWeights <- Cache.observeCacheEntry cacheConfig model
+  assert
+    (stateLabel emptyWeights == "incomplete")
+    "a zero-byte payload is an absent weight file, not a small one"
+
+  BS.writeFile payloadPath wholeArtifact
+  withoutSentinel <- Cache.observeCacheEntry cacheConfig model
+  assert
+    (stateLabel withoutSentinel == "incomplete")
+    "a complete payload that never published its readiness sentinel is not advertised ready"
+
+  writeFile readyPath "native-model-cache-ready\n"
+  complete <- Cache.observeCacheEntry cacheConfig model
+  assert
+    (stateLabel complete == "verified-ready")
+    "a complete verified payload with its published sentinel is the positive control"
+  assert
+    (verifiedCacheFactsMatch 1 (toInteger (BS.length wholeArtifact)) complete)
+    "a verified cache reports the file and byte counts it measured, not a declared size"
+
+  -- Truncation is the failure a present-and-nonempty check cannot see: the
+  -- file is there, it is not empty, and its own header says it should be
+  -- longer than it is.
+  BS.writeFile payloadPath (BS.take (BS.length wholeArtifact - 32) wholeArtifact)
+  truncated <- Cache.observeCacheEntry cacheConfig model
+  assert
+    (stateLabel truncated == "corrupt")
+    "a truncated payload disagrees with its own header and reports corrupt rather than ready"
+
+  BS.writeFile payloadPath (BS.replicate (BS.length wholeArtifact) 0)
+  overwritten <- Cache.observeCacheEntry cacheConfig model
+  assert
+    (stateLabel overwritten == "corrupt")
+    "a payload overwritten with bytes no reader recognizes is corrupt rather than ready"
+
+  -- A sharded snapshot whose index names two files and whose directory holds
+  -- one: the missing shard is named rather than summed around.
+  snapshotModel <-
+    maybe (fail "expected an apple-silicon snapshot catalog row") pure (findModel AppleSilicon "llm-qwen15-mlx")
+  let snapshotDirectory = cacheRoot </> Text.unpack (modelId snapshotModel)
+      snapshotIndexPath = snapshotDirectory </> ".infernix-native-snapshot-files"
+  createDirectoryIfMissing True snapshotDirectory
+  writeFile snapshotIndexPath "shard-00001.safetensors\nshard-00002.safetensors\n"
+  BS.writeFile (snapshotDirectory </> "shard-00001.safetensors") wholeArtifact
+  writeFile (snapshotDirectory </> ".ready") "native-model-cache-ready\n"
+  missingShard <- Cache.observeCacheEntry cacheConfig snapshotModel
+  assert
+    (stateLabel missingShard == "incomplete")
+    "a snapshot whose index names a shard the directory does not hold is incomplete"
+
+-- | Phase 4 Sprint 4.50 — the behavioral acceptance a claimed inference success
+-- has to clear, exercised through the substitutions it exists to catch.
+--
+-- The positive control comes first, because every negative below is one edit
+-- away from it: if the accepted case did not pass, a refusal would prove only
+-- that the fixture was broken.
+runRealnessAcceptanceAssertions :: IO ()
+runRealnessAcceptanceAssertions = do
+  let modelIdValue = "llm-qwen25-gguf"
+      observationFor inputValue outputValue =
+        Realness.InferenceExecutionObservation
+          { Realness.observationInput = inputValue,
+            Realness.observationResultModelId = modelIdValue,
+            Realness.observationStatus = "completed",
+            Realness.observationEngineExecuted = True,
+            Realness.observationInlineOutput = Just outputValue,
+            Realness.observationArtifactBytes = Nothing
+          }
+      firstObservation = observationFor "name one property of prime numbers" "they have exactly two divisors"
+      secondObservation = observationFor "describe the colour of a clear midday sky" "it is blue"
+      acceptedCase =
+        Realness.RealInferenceCase
+          { Realness.realCaseModelId = modelIdValue,
+            Realness.realCaseObservations = [firstObservation, secondObservation]
+          }
+      refusalOf realCase = either Just (const Nothing) (Realness.acceptInputSensitiveInference realCase)
+
+  assert
+    (isRight (Realness.acceptInputSensitiveInference acceptedCase))
+    "two independently chosen prompts with differing real output are accepted as a real inference success"
+
+  -- A transform replaced by a plausible constant: both prompts answer, both
+  -- answers validate for the family, and the outputs are identical.
+  assert
+    ( refusalOf
+        acceptedCase
+          { Realness.realCaseObservations =
+              [ observationFor "name one property of prime numbers" "that is an interesting question",
+                observationFor "describe the colour of a clear midday sky" "that is an interesting question"
+              ]
+          }
+        == Just (Realness.RealnessConstantOutput modelIdValue)
+    )
+    "a plausible constant answering every prompt identically is refused as a constant-output substitution"
+
+  -- The engine invocation suppressed: a well-shaped result with nothing that ran.
+  assert
+    ( refusalOf
+        acceptedCase
+          { Realness.realCaseObservations =
+              [ firstObservation {Realness.observationEngineExecuted = False},
+                secondObservation
+              ]
+          }
+        == Just (Realness.RealnessNoExecutionObserved modelIdValue)
+    )
+    "a result with no observed engine invocation is refused however well shaped it is"
+
+  -- A result belonging to a different model than the case requested.
+  assert
+    ( refusalOf
+        acceptedCase
+          { Realness.realCaseObservations =
+              [ firstObservation {Realness.observationResultModelId = "llm-phi35-gguf"},
+                secondObservation
+              ]
+          }
+        == Just (Realness.RealnessModelIdentityMismatch modelIdValue "llm-phi35-gguf")
+    )
+    "a result naming another model does not discharge this model's success case"
+
+  -- Weights removed: the engine fails and the result is not terminal-completed.
+  assert
+    ( refusalOf
+        acceptedCase
+          { Realness.realCaseObservations =
+              [ firstObservation {Realness.observationStatus = "failed"},
+                secondObservation
+              ]
+          }
+        == Just (Realness.RealnessNonTerminalOutcome "failed")
+    )
+    "a failed terminal status is a failure, never a weaker success"
+
+  -- An empty renderer or blank transcript.
+  assert
+    ( refusalOf
+        acceptedCase
+          { Realness.realCaseObservations =
+              [ firstObservation {Realness.observationInlineOutput = Just "   "},
+                secondObservation
+              ]
+          }
+        == Just (Realness.RealnessEmptyOutput modelIdValue)
+    )
+    "blank inline output validates for no family and is refused"
+
+  -- A degenerate prompt, which a canned answer would satisfy just as well.
+  assert
+    ( refusalOf
+        acceptedCase
+          { Realness.realCaseObservations =
+              [ firstObservation {Realness.observationInput = "hi"},
+                secondObservation
+              ]
+          }
+        == Just (Realness.RealnessDegenerateInput modelIdValue)
+    )
+    "a prompt too short to distinguish a responsive answer from a canned one is refused"
+
+  -- One prompt sent twice: differing output would prove nothing, and identical
+  -- output proves nothing either.
+  assert
+    ( refusalOf
+        acceptedCase
+          { Realness.realCaseObservations = [firstObservation, firstObservation]
+          }
+        == Just (Realness.RealnessInputsNotIndependent modelIdValue)
+    )
+    "reusing one input across both observations is refused before the outputs are compared"
+
+  -- A single observation is consistent with an adapter that ignores its input.
+  assert
+    ( refusalOf acceptedCase {Realness.realCaseObservations = [firstObservation]}
+        == Just (Realness.RealnessTooFewObservations 2 1)
+    )
+    "one observation cannot establish that the output depends on the input"
+
+  -- The artifact acceptance drops input sensitivity and keeps everything else.
+  let artifactObservation =
+        Realness.InferenceExecutionObservation
+          { Realness.observationInput = "a watercolour of a harbour at dawn",
+            Realness.observationResultModelId = "image-sd15-diffusers",
+            Realness.observationStatus = "completed",
+            Realness.observationEngineExecuted = True,
+            Realness.observationInlineOutput = Nothing,
+            Realness.observationArtifactBytes = Just 262144
+          }
+      artifactCase =
+        Realness.RealInferenceCase
+          { Realness.realCaseModelId = "image-sd15-diffusers",
+            Realness.realCaseObservations = [artifactObservation]
+          }
+  assert
+    (isRight (Realness.acceptArtifactInference artifactCase))
+    "an artifact family success is accepted on identity, observed execution, and a positive extent"
+  assert
+    ( Realness.acceptArtifactInference
+        artifactCase
+          { Realness.realCaseObservations =
+              [artifactObservation {Realness.observationArtifactBytes = Just 0}]
+          }
+        == Left (Realness.RealnessEmptyOutput "image-sd15-diffusers")
+    )
+    "a zero-extent artifact is an empty output, not a small success"
+  assert
+    ( Realness.acceptArtifactInference
+        artifactCase
+          { Realness.realCaseObservations =
+              [artifactObservation {Realness.observationEngineExecuted = False}]
+          }
+        == Left (Realness.RealnessNoExecutionObserved "image-sd15-diffusers")
+    )
+    "an artifact result with no observed engine invocation is refused"
+
 runDeployedRouteInventoryAssertions :: IO ()
 runDeployedRouteInventoryAssertions =
   forM_ [True, False] $ \demoEnabled -> do
-    helmValues <- expectRight "decode binary-owned route values" (Yaml.decodeEither' (ByteString8.pack (unlines (Routes.routeHelmValues demoEnabled))))
+    helmValues <-
+      expectRight
+        "decode binary-owned route values"
+        ( either
+            (Left . Yaml.prettyPrintParseException)
+            Right
+            (Yaml.decodeEither' (ByteString8.pack (unlines (Routes.routeHelmValues demoEnabled))))
+        )
     observedRoutes <- expectRight "construct deployed route fixture" (AesonTypes.parseEither parseRouteValues helmValues)
     let inventory :: [Aeson.Value] -> Aeson.Value
         inventory entries = Aeson.object ["items" Aeson..= entries]
@@ -3328,21 +4257,19 @@ runDeployedRouteInventoryAssertions =
       backendPort <- objectValue Aeson..: "servicePort"
       rewriteValue <- objectValue Aeson..: "rewritePrefix"
       let filters =
-            if Text.null rewriteValue
-              then []
-              else
-                [ Aeson.object
-                    [ "type" Aeson..= ("URLRewrite" :: Text.Text),
-                      "urlRewrite"
-                        Aeson..= Aeson.object
-                          [ "path"
-                              Aeson..= Aeson.object
-                                [ "type" Aeson..= ("ReplacePrefixMatch" :: Text.Text),
-                                  "replacePrefixMatch" Aeson..= rewriteValue
-                                ]
-                          ]
-                    ]
+            [ Aeson.object
+                [ "type" Aeson..= ("URLRewrite" :: Text.Text),
+                  "urlRewrite"
+                    Aeson..= Aeson.object
+                      [ "path"
+                          Aeson..= Aeson.object
+                            [ "type" Aeson..= ("ReplacePrefixMatch" :: Text.Text),
+                              "replacePrefixMatch" Aeson..= rewriteValue
+                            ]
+                      ]
                 ]
+            | not (Text.null rewriteValue)
+            ]
       pure $
         Aeson.object
           [ "metadata"
@@ -3532,6 +4459,14 @@ main = do
   runInitializationContextAssertions
   runRegistryBlobServabilityAssertions
   runDeployedRouteInventoryAssertions
+  runRealnessAcceptanceAssertions
+  runVerifiedCacheStateAssertions unitTestRoot
+  runStaticAssetContainmentAssertions unitTestRoot
+  runFixtureOwnershipAssertions
+  runVerifiedPrefixAssertions
+  runEngineCancellationAssertions
+  runBinaryOwnedConfigurationAssertions unitTestRoot
+  runCacheRequestScopeAssertions
   runValidationEvidenceAssertions unitTestRoot
   runDescriptorSpaceAssertions
   runNativeArtifactMarkerAssertions
@@ -3990,10 +4925,7 @@ main = do
     ("ln -s /opt/infernix/chart/charts /workspace/chart/charts" `isInfixOf` linuxDockerfileContents)
     "Sprint 1.11: Linux launcher preserves Helm's chart/charts dependency lookup through an image-local symlink"
   assert
-    ( "infernix internal linux-host-seed > /opt/infernix/dhall/ImageHostSeed.dhall" `isInfixOf` linuxDockerfileContents
-        && not ("hostArchitecture =" `isInfixOf` linuxDockerfileContents)
-        && not ("kindRead = { timeoutMicros" `isInfixOf` linuxDockerfileContents)
-    )
+    (imageSeedIsBinaryOwned linuxDockerfileContents)
     "Linux launcher delegates seed generation to the binary without duplicating the decoder record"
   -- The image build populates the JavaCPP cache that the deployed Linux target
   -- then loads from, so it is a second producer of the same invocation. It has
@@ -18933,26 +19865,60 @@ assertRuntimeKVCachePath _paths = do
           ]
       firstPrefix = prefixFor "first"
       secondPrefix = prefixFor "second"
-      cacheRequest prefixHash =
+      cacheRequestWith tenantValue artifactValue templateValue shapeValue prefixHash =
         KVCache.KVCacheRequest
           { KVCache.kvCacheRequestContextId = contextId,
             KVCache.kvCacheRequestModelId = modelIdValue,
+            KVCache.kvCacheRequestTenantId = tenantValue,
+            KVCache.kvCacheRequestArtifact = artifactValue,
+            KVCache.kvCacheRequestTemplate = templateValue,
+            KVCache.kvCacheRequestExecutionShape = shapeValue,
             KVCache.kvCacheRequestPrefixHash = prefixHash
           }
-      observeLabel prefixHash =
+      cacheRequest = cacheRequestWith "tenant-a" "gguf:speech-whisper-small" "whisper-cpp" "4096/1/256/2"
+      observeLabelFor request =
         KVCache.kvCacheDecisionLabel . KVCache.kvCacheObservationDecision
-          <$> KVCache.observeKVCachePrefix engineKVCache (cacheRequest prefixHash)
-  -- Phase 4 Sprint 4.2/4.12: the KV-cache observation is threaded into
-  -- executeInferenceWithKVCache and consumed by the real engine; the
-  -- machine-independent assertion exercises the observation/decision logic
-  -- directly (the engine's actual KV-cache reuse is the cohort gate, since
-  -- the old native debug-metadata output was retired).
+          <$> KVCache.observeKVCachePrefix engineKVCache request
+      observeLabel = observeLabelFor . cacheRequest
+      publishFor request =
+        KVCache.publishKVCacheState
+          engineKVCache
+          (KVCache.kvCacheRequestIdentity request)
+          (KVCache.kvCacheRequestPrefixHash request)
+  -- Phase 7 Sprint 7.31: an observation is a read. The retired form wrote the
+  -- requested hash into its map as a side effect of asking, so a request that
+  -- never reached an engine still left a hit behind for the next one.
   firstLabel <- observeLabel firstPrefix
   assert (firstLabel == "rebuild") "first engine execution rebuilds a missing KV cache"
+  repeatedWithoutConstruction <- observeLabel firstPrefix
+  assert
+    (repeatedWithoutConstruction == "rebuild")
+    "observing a prefix does not make its engine state exist: a second ask still rebuilds"
+  publishFor (cacheRequest firstPrefix)
   secondLabel <- observeLabel firstPrefix
-  assert (secondLabel == "reuse") "second engine execution reuses the matching KV cache"
+  assert (secondLabel == "reuse") "a constructed and published state is reused"
   thirdLabel <- observeLabel secondPrefix
   assert (thirdLabel == "rebuild") "tampered or divergent prefix forces a KV-cache rebuild"
+  -- Each identity component independently separates one engine's state from
+  -- another's. A coarser key would report a hit for state that is not the
+  -- state the request describes.
+  forM_
+    [ ("tenant", cacheRequestWith "tenant-b" "gguf:speech-whisper-small" "whisper-cpp" "4096/1/256/2" firstPrefix),
+      ("artifact", cacheRequestWith "tenant-a" "gguf:speech-whisper-small-v2" "whisper-cpp" "4096/1/256/2" firstPrefix),
+      ("template", cacheRequestWith "tenant-a" "gguf:speech-whisper-small" "whisper-cpp-chatml" "4096/1/256/2" firstPrefix),
+      ("execution shape", cacheRequestWith "tenant-a" "gguf:speech-whisper-small" "whisper-cpp" "8192/1/256/2" firstPrefix)
+    ]
+    $ \(component, divergent) -> do
+      divergentLabel <- observeLabelFor divergent
+      assert
+        (divergentLabel == "rebuild")
+        ("a different " <> component <> " is a different engine state and cannot reuse this entry")
+  -- Construction failure, restart, and divergence all withdraw the claim.
+  KVCache.invalidateKVCacheState engineKVCache (KVCache.kvCacheRequestIdentity (cacheRequest firstPrefix))
+  afterInvalidation <- observeLabel firstPrefix
+  assert
+    (afterInvalidation == "rebuild")
+    "an invalidated entry advertises no reusable state"
 
 assertCompactedMetadataPatterns :: IO ()
 assertCompactedMetadataPatterns = do

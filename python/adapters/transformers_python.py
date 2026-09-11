@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from adapters.common import AdapterContext, run_context_adapter, run_setup_from_argv
+from adapters.common import (
+    AdapterContext,
+    ConversationTurn,
+    run_context_adapter,
+    run_setup_from_argv,
+)
 from adapters.model_cache import get_model_path
 
 
@@ -31,7 +36,9 @@ def transform(context: AdapterContext) -> str:
     )
     model = model.to(device)
     model.eval()
-    inputs = _tokenize_prompt(tokenizer, context.input_text)
+    # Phase 7 Sprint 7.31: this engine holds no state between requests, so the
+    # verified prefix is replayed in full rather than a reuse being claimed.
+    inputs = _tokenize_prompt(tokenizer, context.prompt_turns())
     inputs = {key: value.to(device) for key, value in inputs.items()}
     with torch.no_grad():
         generated = model.generate(
@@ -47,9 +54,16 @@ def transform(context: AdapterContext) -> str:
     return continuation
 
 
-def _tokenize_prompt(tokenizer: Any, prompt: str) -> dict[str, Any]:
+def _tokenize_prompt(tokenizer: Any, turns: list[ConversationTurn]) -> dict[str, Any]:
+    """Tokenize the whole verified prefix, newest turn last.
+
+    A chat template is given every turn with its own role, which is what makes
+    the model's answer depend on the conversation rather than on the last
+    message alone. Without a template the turns are flattened in order, which is
+    a weaker replay but still a replay; dropping the earlier turns would not be.
+    """
     if getattr(tokenizer, "chat_template", None):
-        messages = [{"role": "user", "content": prompt}]
+        messages = [{"role": turn.role, "content": turn.text} for turn in turns]
         try:
             templated = tokenizer.apply_chat_template(
                 messages,
@@ -62,7 +76,8 @@ def _tokenize_prompt(tokenizer: Any, prompt: str) -> dict[str, Any]:
             templated = None
         if isinstance(templated, dict):
             return templated
-    return cast(dict[str, Any], tokenizer(prompt, return_tensors="pt"))
+    flattened = "\n".join(f"{turn.role}: {turn.text}" for turn in turns)
+    return cast(dict[str, Any], tokenizer(flattened, return_tensors="pt"))
 
 
 def _preferred_torch_device(torch_module: Any) -> str:

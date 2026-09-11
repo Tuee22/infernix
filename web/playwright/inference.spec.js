@@ -76,6 +76,42 @@ test("routed edge surfaces the SPA + the published platform state", async ({ pag
   await expect(page.locator(".app-landing h1, .app-header h1").first()).toHaveText("Infernix");
 });
 
+test("served bundle and route inventory belong to the source under validation", async ({ page, request, infernixFixture }) => {
+  // Phase 5 Sprint 5.13: the launcher refuses a stale image, but the bundle the
+  // browser executes is a separate artifact. The fixture carries this run's
+  // digest of the bundle this checkout built; the same path is fetched back
+  // through the real Gateway and digested again here, so a served bundle from
+  // any other build fails rather than rendering a page that looks right.
+  const fixture = infernixFixture;
+  expect(fixture?.expectedBundleDigest).toBeTruthy();
+  expect(fixture?.expectedBundlePath).toBeTruthy();
+  expect(Array.isArray(fixture?.expectedRoutePrefixes)).toBe(true);
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+
+  const bundleResponse = await request.get(`${baseUrl}${fixture.expectedBundlePath}`);
+  expect(bundleResponse.ok()).toBeTruthy();
+  const servedBundle = await bundleResponse.body();
+  const servedDigest = createHash("sha256").update(servedBundle).digest("hex");
+  expect(servedDigest).toBe(fixture.expectedBundleDigest);
+
+  const publicationResponse = await request.get(`${baseUrl}/api/publication`);
+  expect(publicationResponse.ok()).toBeTruthy();
+  const publication = await publicationResponse.json();
+  const publishedPrefixes = (publication.routes ?? []).map((route) => route.path).sort();
+  expect(publishedPrefixes).toEqual([...fixture.expectedRoutePrefixes].sort());
+
+  // The reconciliation is only meaningful if the bundle whose digest matched is
+  // the one that rendered, so the assertion below reads the application's own
+  // output rather than anything the harness supplied.
+  const demoConfigResponse = await request.get(`${baseUrl}/api/demo-config`);
+  expect(demoConfigResponse.ok()).toBeTruthy();
+  const demoConfig = await demoConfigResponse.json();
+  expect(demoConfig.runtimeMode).toBe(publication.runtimeMode);
+
+  await page.goto(baseUrl);
+  await expect(page.locator(".app-landing h1, .app-header h1").first()).toHaveText("Infernix");
+});
+
 test("routed keycloak auth supports self-registration without email verification", async ({ page, infernixFixture }) => {
   test.setTimeout(90000);
   const fixture = infernixFixture;
@@ -1004,6 +1040,13 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     buffer: Buffer.from(textPreviewBody, "utf8"),
   }, artifactDownloadOptions);
   await expect(textCard.locator(".artifact-preview-text")).toHaveText(textPreviewBody);
+  // Phase 7 Sprint 7.33: a preview that fits states that it was not truncated,
+  // so the truncation signal is exercised in both directions rather than only
+  // when it fires.
+  await expect(textCard.locator(".artifact-preview-text")).toHaveAttribute(
+    "data-preview-truncated",
+    "false",
+  );
 
   const jsonName = `browser-json-${randomUUID()}.json`;
   const jsonCard = await uploadAndDownloadArtifact(page, {
@@ -1053,6 +1096,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     buffer: tinyMidiBuffer(),
   }, artifactDownloadOptions);
   await expectInBrowserRenderReady(midiCard, "RenderMidi", ".artifact-preview-midi");
+  await expectMidiRenderAndPlayback(midiCard);
 
   const musicXmlName = `browser-musicxml-${randomUUID()}.musicxml`;
   const musicXmlCard = await uploadAndDownloadArtifact(page, {
@@ -2720,9 +2764,36 @@ async function expectDownloadOnlyReady(card) {
 // renderer (validated by the bundle) populates it from the fetched bytes. This
 // asserts the disposition flip + mount node (the contract change); rendering a
 // real score from a valid fixture is the deeper cohort check.
+// Phase 7 Sprint 7.33: a mount node with the right class is what a renderer
+// that failed also leaves behind. The renderer states its own outcome, and the
+// assertion reads that rather than the element's existence.
 async function expectInBrowserRenderReady(card, dispositionTag, previewSelector) {
   await expect(card).toHaveAttribute("data-render-disposition", dispositionTag);
-  await expect(card.locator(previewSelector)).toHaveCount(1);
+  const mount = card.locator(previewSelector);
+  await expect(mount).toHaveCount(1);
+  await expect(mount).toHaveAttribute("data-preview-status", "ready", { timeout: 60000 });
+}
+
+// Phase 7 Sprint 7.33: MIDI is the case where "the widget is there" was the
+// whole assertion. What is checked now is that the file decoded to notes, and
+// that pressing Play scheduled audio for them — the two things a renderer that
+// silently failed to load its instrument could not do.
+async function expectMidiRenderAndPlayback(card) {
+  const mount = card.locator(".artifact-preview-midi");
+  await expect(mount).toHaveAttribute("data-preview-status", "ready", { timeout: 60000 });
+  const renderedNotes = await mount.getAttribute("data-preview-rendered-notes");
+  expect(Number(renderedNotes)).toBeGreaterThan(0);
+  await expect(mount.locator("canvas.artifact-midi-pianoroll")).toHaveCount(1);
+
+  const play = mount.locator("button.artifact-midi-play");
+  await expect(play).toHaveCount(1);
+  // The click is the user gesture browser autoplay policy requires; what is
+  // asserted is the scheduling the renderer performed, never audibility.
+  await play.click();
+  await expect(play).toHaveAttribute("data-playback-status", "playing", { timeout: 30000 });
+  const scheduled = await play.getAttribute("data-playback-scheduled-notes");
+  expect(Number(scheduled)).toBeGreaterThan(0);
+  expect(await play.getAttribute("data-playback-error")).toBeNull();
 }
 
 // Phase 4 Sprint 4.39: the expected summary is derived from the payload the

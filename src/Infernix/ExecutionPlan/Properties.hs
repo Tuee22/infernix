@@ -336,6 +336,8 @@ runExecutableLaunchBoundaryProperties paths = do
           (Just cacheConfig)
           executable
           mismatchedRequest
+          Nothing
+          Nothing
       descriptor = executableModelDescriptor executable
       binding = executableModelEngine executable
   propertyRootPresent <- doesPathExist propertyRoot
@@ -360,6 +362,7 @@ runExecutableLaunchBoundaryProperties paths = do
       propertyPaths
       Nothing
       Nothing
+      Nothing
       executable
       mismatchedRequest
   assertRequestModelMismatch "runtime execution boundary" runtimeResult
@@ -368,6 +371,7 @@ runExecutableLaunchBoundaryProperties paths = do
       propertyPaths
       executable
       mismatchedRequest
+      Nothing
       Nothing
   assertRequestModelMismatch
     "worker execution boundary"

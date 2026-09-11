@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Active — Sprints 6.55 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+**Status**: Active — Sprint 6.55 has validated code-side closure. Wave R6 is the remaining cohort gate.
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -16,11 +16,11 @@
 
 ## Phase Status
 
-Sprints 6.1–6.54 retain their closed headings and only their established scope. Required CUDA checks can skip successfully when tooling or fixtures are unavailable or readiness times out; timeout branches also discard live child handles. The outer launcher does not itself request GPU access, so its exit code alone cannot establish GPU behavioral sign-off.
+Sprints 6.1–6.54 retain their closed headings and only their established scope. Sprint 6.55 puts every fixture child under an owner that terminates, reaps once, and closes its pipes on return, failure, readiness timeout, and cancellation, and exercises that contract on the CPU lane with controlled children. The outer launcher does not itself request GPU access, so its exit code alone cannot establish GPU behavioral sign-off.
 
 The existing Phase 6 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R6 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 6.55 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R6 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
@@ -3598,12 +3598,12 @@ None.
 
 ---
 
-## Sprint 6.55: Mandatory CUDA Behavioral Gates and Complete Fixture Cleanup [Blocked]
+## Sprint 6.55: Mandatory CUDA Behavioral Gates and Complete Fixture Cleanup [Active]
 
-**Status**: Blocked
-**Code-side closure**: Device-fixture integration with the foundation runner and fixture cleanup pending; CUDA behavior requires its named hardware.
+**Status**: Active
+**Code-side closure**: Every fixture child is owned through a release that terminates, reaps exactly once, and closes its pipes on return, failure, readiness timeout, and cancellation, with the contract exercised on the CPU lane through controlled children. CUDA behavior requires its named hardware.
 **Cohort gate**: Wave R6 — selected `linux-gpu` plus native `linux-cpu`.
-**Blocked by**: Sprint 5.13 code-side closure.
+**Blocked by**: nothing — Sprint 5.13 code-side closure is validated.
 **Implementation targets**: `test/unit/Spec.hs`, `test/capped-engine-observer/Spec.hs`, `test/integration/Spec.hs`, `src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-engine.yaml`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/architecture/bounded_inference_memory.md`, `documents/architecture/realness_contract.md`, `documents/engineering/docker_policy.md`
 
@@ -3653,12 +3653,15 @@ completed its owned cleanup.
 
 ### Remaining Work
 
-Implement device-fixture result integration and cleanup, run real CUDA behavior, and retain Wave R6 evidence. Once the
-machine-independent implementation gates pass, pending hardware sign-off is validation-only.
+Cohort gate only: retain Wave R6's selected `linux-gpu` plus native `linux-cpu` full-suite results
+against one frozen implementation, including the real CUDA allocation, device observation, ceiling
+readback, and measured device-memory breach. No new full-suite result is claimed.
+
+**Code-side evidence**: source `0ec9c57a65b1cc13cea47d6d236c79e8213342aa46aca2e428debb177a901538`; image `sha256:03f2a5e7ffd606d451e0f03aa3273ff5df95e5762784aa81354a162868f65b1b`; lint `.data/runtime/validation/run-CRlS7S/receipt.json`; unit `.data/runtime/validation/run-7cosnY/receipt.json`. Sprints 5.13 and 6.55 share this validated snapshot.
 
 ## Remaining Work
 
-Implement Sprints 6.55, pass their governed machine-independent gates, and retain Wave R6's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R6's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 6.55 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

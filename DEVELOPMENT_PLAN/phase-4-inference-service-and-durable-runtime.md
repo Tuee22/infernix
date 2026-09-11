@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — Sprints 4.50 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+**Status**: Active — Sprint 4.50 has validated code-side closure. Wave R4 is the remaining cohort gate.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
@@ -12,15 +12,15 @@
 
 ## Phase Status
 
-Sprints 4.1–4.49 retain their closed headings and only their established scope. Cache lifecycle and model-output validation require repair. Runtime/Cache.hs marks directories as materialized without constructing usable weights; local checkpoint selection can take only the first shard; the adapter AST guard accepts a fabricated constant transform.
+Sprints 4.1–4.49 retain their closed headings and only their established scope. Sprint 4.50 makes the cache commands address the engine-consumed tree and report observed state, publishes readiness only after verification, applies one checkpoint-selection policy to the local and staged-object paths, and adds the behavioral acceptance a claimed inference success must clear.
 
 The existing Phase 4 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R4 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 4.50 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R4 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
-The engine, Pulsar, artifact reader, and memory-admission modules exist. Sprint 4.50 owns real engine-consumed cache materialization/inspection/eviction/rebuild, consistent local and remote checkpoint accounting, and behavioral realness controls. Existing static guard success cannot prove a model produced an output; a typed admission refusal is a refusal result and does not satisfy a required inference-success assertion.
+The engine, Pulsar, artifact reader, and memory-admission modules exist. Sprint 4.50 owns real engine-consumed cache materialization/inspection/eviction/rebuild, consistent local and remote checkpoint accounting, and behavioral realness controls. A static guard reads source and cannot prove a model produced an output; a typed admission refusal is a refusal result and does not satisfy a required inference-success assertion. The behavioral acceptance bounds the accidental substitutions, not a forgery by an actor controlling the executor and the evidence store together.
 
 ## Substrate Config Ownership Contract
 
@@ -3371,12 +3371,12 @@ None.
 
 ---
 
-## Sprint 4.50: Real Artifact Cache Lifecycle, Complete Accounting, and Behavioral Realness [Blocked]
+## Sprint 4.50: Real Artifact Cache Lifecycle, Complete Accounting, and Behavioral Realness [Active]
 
-**Status**: Blocked
-**Code-side closure**: Cache behavior, checkpoint selection, and independent realness controls pending.
+**Status**: Active
+**Code-side closure**: The engine-consumed cache is observed rather than marked, readiness is published only after verification, one artifact-selection policy governs the local and staged-object paths, and the behavioral realness acceptance and its negative controls are implemented.
 **Cohort gate**: Wave R4 — selected `apple-silicon` plus native `linux-cpu`.
-**Blocked by**: Sprint 3.18 code-side closure.
+**Blocked by**: nothing — Sprint 3.18 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Enforcer.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Demo/Api.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/realness_contract.md`, `documents/architecture/bounded_inference_memory.md`, `documents/architecture/model_catalog.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/development/testing_strategy.md`
 
@@ -3423,12 +3423,16 @@ establish a model-specific behavior.
 
 ### Remaining Work
 
-Implement and validate the real cache, consistent accounting, and behavioral controls; retain
-Wave R4. Current marker behavior and syntactic lint do not close these criteria.
+Cohort gate only: retain Wave R4's selected `apple-silicon` plus native `linux-cpu` full-suite
+results against one frozen implementation, including the hydrate-infer-evict-rebuild cycle against
+a real engine cache and the per-row behavioral acceptance. Apple hardware is unavailable on this
+Linux host. No new full-suite result is claimed.
+
+**Code-side evidence**: source `1ed8b3649558efa2ba74b8b3b5c72ea3f36504e08b08236bff140e52b4043fd2`; image `sha256:171ae789e19593cf1b3aed825e252c313e85049f4a29144d400d55e48352a5f1`; lint `.data/runtime/validation/run-Yw8iif/receipt.json`; unit `.data/runtime/validation/run-9HRNxB/receipt.json`.
 
 ## Remaining Work
 
-Implement Sprints 4.50, pass their governed machine-independent gates, and retain Wave R4's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R4's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 4.50 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

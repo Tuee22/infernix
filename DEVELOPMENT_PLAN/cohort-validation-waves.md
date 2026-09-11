@@ -28,13 +28,13 @@
 |------|-------|--------------------|-------------|------|-------|
 | R1 | 1 | `apple-silicon` | `linux-cpu` | Sprints 1.44–1.46; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending; Apple host unavailable |
 | R2 | 2 | `linux-gpu` | `linux-cpu` | Sprints 2.18; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
-| R3 | 3 | `linux-gpu` | `linux-cpu` | Sprints 3.18; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
-| R4 | 4 | `apple-silicon` | `linux-cpu` | Sprints 4.50; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
-| R5 | 5 | `apple-silicon` | `linux-cpu` | Sprints 5.13; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
-| R6 | 6 | `linux-gpu` | `linux-cpu` | Sprints 6.55; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
-| R7 | 7 | `linux-gpu` | `linux-cpu` | Sprints 7.30–7.33; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
-| R8 | 8 | `linux-gpu` | `linux-cpu` | Sprints 8.15; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
-| R9 | 9 | `linux-gpu` | `linux-cpu` | Sprints 9.12; source-bound `infernix test all` on both lanes | Blocked on owning sprint code-side closure |
+| R3 | 3 | `linux-gpu` | `linux-cpu` | Sprints 3.18; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
+| R4 | 4 | `apple-silicon` | `linux-cpu` | Sprints 4.50; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending; Apple host unavailable |
+| R5 | 5 | `apple-silicon` | `linux-cpu` | Sprints 5.13; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending; Apple host unavailable |
+| R6 | 6 | `linux-gpu` | `linux-cpu` | Sprints 6.55; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
+| R7 | 7 | `linux-gpu` | `linux-cpu` | Sprints 7.30–7.33; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
+| R8 | 8 | `linux-gpu` | `linux-cpu` | Sprints 8.15; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
+| R9 | 9 | `linux-gpu` | `linux-cpu` | Sprints 9.12; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
 
 All rows are open obligations, not scheduled or completed runs. The paired CPU lane is native arm64
 or amd64 as recorded by the actual run; emulated Apple/Linux execution does not qualify. Hardware

@@ -18,6 +18,7 @@ module Infernix.Runtime.Pulsar
     compactTopicAndWait,
     clearServiceReadinessMarker,
     consumeTopicForever,
+    runEngineCancellationConsumer,
     coordinatorTopicCapabilities,
     DemoUserTopicDeletion (..),
     authorizedGeneratedResultObjectRefs,
@@ -131,7 +132,7 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.Either (fromLeft, fromRight)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, intercalate, sort)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict (Map)
@@ -157,6 +158,7 @@ import Infernix.ClusterConfig
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config
 import Infernix.Conversation.Hash (PrefixHash (..))
+import Infernix.Conversation.Prefix qualified as Prefix
 import Infernix.Conversation.Reducer
   ( ReducerState,
     StepOutcome (StepAdvanced, StepDropped),
@@ -205,10 +207,12 @@ import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Runtime (executeExecutableInferenceWithKVCache)
+import Infernix.Runtime.Cancellation qualified as Cancellation
 import Infernix.Runtime.CappedEngine
   ( EngineExecutionPlan,
+    engineExecutionCancellations,
     engineExecutionRuntimePlan,
-    withEngineExecutionPlan,
+    withIdentifiedEngineExecution,
   )
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
@@ -4004,10 +4008,38 @@ runDispatcherForContext ::
   IO ()
 runDispatcherForContext transport runtimeMode requestTopic conversationTopic userIdValue contextIdValue contextModelMap modelCatalog = do
   reducerStateRef <- newIORef (initialReducerState contextIdValue)
+  seenMessageIdsRef <- newIORef Set.empty
   processLabel <- currentProcessLabel
   let subscriptionName = Dispatch.dispatcherSubscriptionName contextIdValue
       consumerName = PulsarFailover.failoverConsumerName subscriptionName processLabel
   topicRef <- requireTopicRef conversationTopic
+  -- Phase 7 Sprint 7.30: restore the reducer from durable history before the
+  -- subscription resumes.
+  --
+  -- A durable subscription resumes at its acknowledged cursor, which is the
+  -- correct place to resume /consuming/ and the wrong place to resume /from/:
+  -- the reducer that decides what to dispatch is process state, and a restarted
+  -- coordinator rebuilt it empty. Everything already acknowledged was therefore
+  -- invisible to it — a prompt queued behind an in-flight one had its
+  -- conversation events acknowledged, so after a restart the queue it was
+  -- waiting in no longer existed and it was never dispatched. The user saw a
+  -- prompt that was accepted and then silently never answered.
+  --
+  -- The topic is the durable state, so the reducer is folded from it: a reader
+  -- from the earliest retained position replays the context's history, and the
+  -- live subscription starts only once that fold is complete. The two
+  -- observations overlap by construction — the reader runs to the present while
+  -- the subscription has not started — so the replayed message ids are retained
+  -- and the live path drops what it has already folded. Deduplication is by
+  -- durable message identity rather than by content, because a redelivered
+  -- event is the same event and a resubmitted prompt is not.
+  replayConversationHistoryIntoReducer
+    conversationTopic
+    topicRef
+    transport
+    contextIdValue
+    reducerStateRef
+    seenMessageIdsRef
   let consumerPath =
         buildFailoverConsumerSocketPath
           (pulsarWebSocketBase transport)
@@ -4024,10 +4056,232 @@ runDispatcherForContext transport runtimeMode requestTopic conversationTopic use
             userIdValue
             contextIdValue
             reducerStateRef
+            seenMessageIdsRef
             contextModelMap
             modelCatalog
             connection
         )
+
+-- | Phase 7 Sprint 7.31 — read a context's retained conversation history in
+-- order, so the prefix a request names can be reconstructed and checked.
+--
+-- Same replay-to-live boundary as the dispatcher's: a reader signals no end of
+-- topic, so the history is complete when the reader stops producing within the
+-- idle interval. Ending early would shorten the reconstructed prefix, which
+-- surfaces as the offset or hash refusal rather than as a silently truncated
+-- context.
+readRetainedConversationMessages ::
+  PulsarTransport ->
+  Text.Text ->
+  IO [Contracts.ConversationMessage]
+readRetainedConversationMessages transport conversationTopic = do
+  topicRef <- requireTopicRef conversationTopic
+  readerName <- uniqueBrowserReaderName "prefix-verify-" conversationTopic
+  let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
+  collected <- newIORef []
+  runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+    collectRetainedConversationFrames collected connection
+  reverse <$> readIORef collected
+
+collectRetainedConversationFrames ::
+  IORef [Contracts.ConversationMessage] ->
+  WebSockets.Connection ->
+  IO ()
+collectRetainedConversationFrames collected connection = do
+  nextFrame <-
+    timeout
+      dispatcherReplayIdleMicroseconds
+      (receiveJsonFrame "Pulsar retained conversation message" connection)
+  case nextFrame of
+    Nothing -> pure ()
+    Just rawEnvelope -> do
+      envelope <- decodeJsonText "Pulsar retained conversation message" rawEnvelope
+      eventBytes <- conversationPayloadBytes envelope
+      case eitherDecode (Lazy.fromStrict eventBytes) of
+        Left decodeError ->
+          hPutStrLn
+            stderr
+            ( "prefix verification skipping undecodable conversation event "
+                <> Text.unpack (envelopeMessageId envelope)
+                <> ": "
+                <> decodeError
+            )
+        Right conversationEvent ->
+          modifyIORef'
+            collected
+            ( Contracts.ConversationMessage
+                (Contracts.MessageId (envelopeMessageId envelope))
+                conversationEvent
+                :
+            )
+      sendAck connection (envelopeMessageId envelope)
+      collectRetainedConversationFrames collected connection
+
+-- | Reconstruct and verify the prefix one dispatched request names, or refuse.
+--
+-- A request that carries no context seed is a manual single-turn execution and
+-- has no history to reconstruct; one that does carries a durable claim, and the
+-- claim is checked against the log before the engine is reached.
+verifyRequestConversationPrefix ::
+  Maybe PulsarTransport ->
+  Maybe KVCache.KVCacheRequestSeed ->
+  IO (Either ErrorResponse (Maybe Prefix.VerifiedConversationPrefix))
+verifyRequestConversationPrefix _ Nothing = pure (Right Nothing)
+verifyRequestConversationPrefix Nothing (Just _) =
+  pure
+    ( Left
+        ErrorResponse
+          { errorCode = "conversation_history_unobservable",
+            message =
+              "the request names a durable conversation prefix, but this daemon has no "
+                <> "transport to read that history through, so the prefix cannot be verified"
+          }
+    )
+verifyRequestConversationPrefix (Just transport) (Just seed) = do
+  let contextIdValue = Contracts.ContextId (KVCache.kvSeedContextId seed)
+      userIdValue = Contracts.UserId (KVCache.kvSeedTenantId seed)
+      conversationTopic =
+        ConversationTopic.conversationTopicName
+          ConversationTopic.defaultDemoTopicNamespace
+          userIdValue
+          contextIdValue
+  retained <- try @SomeException (readRetainedConversationMessages transport conversationTopic)
+  case retained of
+    Left err ->
+      pure
+        ( Left
+            ErrorResponse
+              { errorCode = "conversation_history_unobservable",
+                message =
+                  "the retained conversation history for "
+                    <> conversationTopic
+                    <> " could not be read, so the request's prefix is unverified: "
+                    <> Text.pack (displayException err)
+              }
+        )
+    Right messages ->
+      case Prefix.reconstructVerifiedPrefix
+        contextIdValue
+        (KVCache.kvSeedConversationLogOffset seed)
+        (KVCache.kvSeedPrefixHash seed)
+        messages of
+        Left failure ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "conversation_prefix_unverified",
+                    message = Prefix.prefixVerificationFailureText failure
+                  }
+            )
+        Right verified -> pure (Right (Just verified))
+
+-- | Fold the context's retained conversation history into the dispatcher's
+-- reducer, then return so the live subscription can start.
+--
+-- The replay-to-live boundary is \"the reader stopped producing\": a Pulsar
+-- reader signals no end of topic, so the boundary is an idle interval with no
+-- frame. That is a heuristic about the /reader/, not about the data — the
+-- overlap it may leave is exactly what the retained message-id set removes, and
+-- an interval that ends early only means the live path folds a few more events
+-- than it strictly had to.
+--
+-- A reader that cannot be opened at all is a visible failure rather than an
+-- empty history: an unreadable topic and an empty topic are different
+-- propositions, and treating the first as the second is how queued work would
+-- be discarded silently.
+replayConversationHistoryIntoReducer ::
+  Text.Text ->
+  TopicRef ->
+  PulsarTransport ->
+  Contracts.ContextId ->
+  IORef ReducerState ->
+  IORef (Set Contracts.MessageId) ->
+  IO ()
+replayConversationHistoryIntoReducer conversationTopic topicRef transport contextIdValue reducerStateRef seenMessageIdsRef = do
+  readerName <- uniqueBrowserReaderName "dispatcher-replay-" (Contracts.unContextId contextIdValue)
+  let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
+  replayed <-
+    try @SomeException
+      ( runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+          foldReplayedConversationFrames contextIdValue reducerStateRef seenMessageIdsRef connection
+      )
+  case replayed of
+    Right () -> pure ()
+    Left err ->
+      ioError
+        ( userError
+            ( "dispatcher could not replay retained history for "
+                <> Text.unpack conversationTopic
+                <> " before resuming its subscription, so queued work cannot be recovered:\n"
+                <> displayException err
+            )
+        )
+
+-- | Read frames until the reader goes idle for the replay interval.
+foldReplayedConversationFrames ::
+  Contracts.ContextId ->
+  IORef ReducerState ->
+  IORef (Set Contracts.MessageId) ->
+  WebSockets.Connection ->
+  IO ()
+foldReplayedConversationFrames contextIdValue reducerStateRef seenMessageIdsRef connection = do
+  nextFrame <-
+    timeout
+      dispatcherReplayIdleMicroseconds
+      (receiveJsonFrame "Pulsar dispatcher replay message" connection)
+  case nextFrame of
+    Nothing -> pure ()
+    Just rawEnvelope -> do
+      envelope <- decodeJsonText "Pulsar dispatcher replay message" rawEnvelope
+      _ <- foldConversationEnvelopeIntoReducer contextIdValue reducerStateRef seenMessageIdsRef envelope
+      sendAck connection (envelopeMessageId envelope)
+      foldReplayedConversationFrames contextIdValue reducerStateRef seenMessageIdsRef connection
+
+-- | Fold one envelope into the reducer, remembering its durable identity.
+-- Returns the advanced state when this envelope was new, and 'Nothing' when it
+-- had already been folded.
+foldConversationEnvelopeIntoReducer ::
+  Contracts.ContextId ->
+  IORef ReducerState ->
+  IORef (Set Contracts.MessageId) ->
+  PulsarEnvelope ->
+  IO (Maybe ReducerState)
+foldConversationEnvelopeIntoReducer _contextIdValue reducerStateRef seenMessageIdsRef envelope = do
+  let messageId = Contracts.MessageId (envelopeMessageId envelope)
+  alreadyFolded <-
+    atomicModifyIORef' seenMessageIdsRef $ \seen ->
+      if Set.member messageId seen
+        then (seen, True)
+        else (Set.insert messageId seen, False)
+  if alreadyFolded
+    then pure Nothing
+    else do
+      eventBytes <- conversationPayloadBytes envelope
+      case eitherDecode (Lazy.fromStrict eventBytes) of
+        Left decodeError -> do
+          hPutStrLn
+            stderr
+            ( "dispatcher skipping undecodable conversation event "
+                <> Text.unpack (envelopeMessageId envelope)
+                <> ": "
+                <> decodeError
+            )
+          pure Nothing
+        Right conversationEvent -> do
+          let conversationMessage = Contracts.ConversationMessage messageId conversationEvent
+          currentState <- readIORef reducerStateRef
+          case stepReducer currentState conversationMessage of
+            StepDropped unchanged -> do
+              writeIORef reducerStateRef unchanged
+              pure Nothing
+            StepAdvanced advancedState _patch -> do
+              writeIORef reducerStateRef advancedState
+              pure (Just advancedState)
+
+-- | How long the replay reader waits for another retained frame before it
+-- declares the history caught up.
+dispatcherReplayIdleMicroseconds :: Int
+dispatcherReplayIdleMicroseconds = 3 * 1000000
 
 handleDispatcherMessage ::
   PulsarTransport ->
@@ -4036,48 +4290,46 @@ handleDispatcherMessage ::
   Contracts.UserId ->
   Contracts.ContextId ->
   IORef ReducerState ->
+  IORef (Set Contracts.MessageId) ->
   ContextModelMap ->
   [ModelDescriptor] ->
   WebSockets.Connection ->
   IO ()
-handleDispatcherMessage transport runtimeMode requestTopic userIdValue contextIdValue reducerStateRef contextModelMap modelCatalog connection = do
+handleDispatcherMessage transport runtimeMode requestTopic userIdValue contextIdValue reducerStateRef seenMessageIdsRef contextModelMap modelCatalog connection = do
   rawEnvelope <- receiveJsonFrame "Pulsar dispatcher message" connection
   envelope <- decodeJsonText "Pulsar dispatcher message" rawEnvelope
   handled <-
     try @SomeException
       ( do
-          eventBytes <- conversationPayloadBytes envelope
-          case eitherDecode (Lazy.fromStrict eventBytes) of
-            Left decodeError ->
-              hPutStrLn
-                stderr
-                ( "dispatcher skipping undecodable conversation event "
-                    <> Text.unpack (envelopeMessageId envelope)
-                    <> ": "
-                    <> decodeError
-                )
-            Right conversationEvent -> do
-              let messageId = Contracts.MessageId (envelopeMessageId envelope)
-                  conversationMessage =
-                    Contracts.ConversationMessage messageId conversationEvent
-              currentState <- readIORef reducerStateRef
-              case stepReducer currentState conversationMessage of
-                StepDropped unchanged ->
-                  writeIORef reducerStateRef unchanged
-                StepAdvanced advancedState _patch ->
-                  case Dispatch.buildDispatchDecision userIdValue advancedState of
-                    Dispatch.DispatchNoOp ->
-                      writeIORef reducerStateRef advancedState
-                    Dispatch.DispatchPrompt inferenceEnvelope -> do
-                      modelIdValue <- resolveContextModelIdForDispatch contextModelMap contextIdValue
-                      publishDispatchedInferenceRequest
-                        transport
-                        runtimeMode
-                        requestTopic
-                        modelCatalog
-                        modelIdValue
-                        inferenceEnvelope
-                      writeIORef reducerStateRef advancedState
+          -- An event the replay already folded is dropped here rather than
+          -- folded twice: the reducer is not idempotent in the queue position
+          -- it derives, and the overlap between replay and live delivery is
+          -- expected rather than exceptional.
+          advanced <-
+            foldConversationEnvelopeIntoReducer
+              contextIdValue
+              reducerStateRef
+              seenMessageIdsRef
+              envelope
+          case advanced of
+            Nothing -> pure ()
+            Just advancedState -> do
+              -- A cancel event resolves the prompt in the projection, which is
+              -- what unblocks its successor. The engine running the cancelled
+              -- prompt learns about it here, and only its own cleanup releases
+              -- the execution authority the successor then takes.
+              forwardCancellationIfAny transport runtimeMode userIdValue contextIdValue envelope
+              case Dispatch.buildDispatchDecision userIdValue advancedState of
+                Dispatch.DispatchNoOp -> pure ()
+                Dispatch.DispatchPrompt inferenceEnvelope -> do
+                  modelIdValue <- resolveContextModelIdForDispatch contextModelMap contextIdValue
+                  publishDispatchedInferenceRequest
+                    transport
+                    runtimeMode
+                    requestTopic
+                    modelCatalog
+                    modelIdValue
+                    inferenceEnvelope
       )
   case handled of
     Right _ -> sendAck connection (envelopeMessageId envelope)
@@ -4174,6 +4426,63 @@ publishDispatchedInferenceRequest transport runtimeMode requestTopic modelCatalo
     options
     promptMessageIdText
     (encodeMessage protoPayload)
+
+-- | Publish the engine-facing cancellation when this envelope carried one.
+forwardCancellationIfAny ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Contracts.UserId ->
+  Contracts.ContextId ->
+  PulsarEnvelope ->
+  IO ()
+forwardCancellationIfAny transport runtimeMode userIdValue contextIdValue envelope = do
+  eventBytes <- conversationPayloadBytes envelope
+  case eitherDecode (Lazy.fromStrict eventBytes) of
+    Right (Contracts.ConversationCancelEvent payload) ->
+      publishInferenceCancellation
+        transport
+        runtimeMode
+        userIdValue
+        contextIdValue
+        (Contracts.cancelUserPromptMessageId payload)
+    _ -> pure ()
+
+-- | Phase 7 Sprint 7.32 — forward a cancellation to the engines.
+--
+-- The conversation event resolves the prompt in the projection; this is what
+-- reaches the machine that is running it. The two are published separately and
+-- neither implies the other: an engine that never sees this keeps running, and
+-- a projection that never sees the event keeps waiting.
+publishInferenceCancellation ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Contracts.UserId ->
+  Contracts.ContextId ->
+  Contracts.MessageId ->
+  IO ()
+publishInferenceCancellation transport runtimeMode userIdValue contextIdValue promptMessageId = do
+  let Contracts.MessageId promptMessageIdText = promptMessageId
+      Contracts.ContextId contextIdText = contextIdValue
+      cancelTopic =
+        ConversationTopic.inferenceCancelTopicName
+          ConversationTopic.defaultDemoTopicNamespace
+          (runtimeModeId runtimeMode)
+      identity =
+        Cancellation.ExecutionIdentity
+          { Cancellation.executionTenant = Contracts.unUserId userIdValue,
+            Cancellation.executionContext = contextIdText,
+            Cancellation.executionPromptMessageId = promptMessageIdText
+          }
+      options =
+        (defaultPublishOptions ("cancellations-" <> contextIdText))
+          { publishSequenceId = parseMessageIdToSequenceId promptMessageIdText
+          }
+  publishTopicPayload
+    transport
+    cancelTopic
+    options
+    promptMessageIdText
+    (Lazy.toStrict (encode identity))
 
 dispatchedInputObjectRef :: [ModelDescriptor] -> Text.Text -> Dispatch.InferenceRequestEnvelope -> Maybe Text.Text
 dispatchedInputObjectRef modelCatalog resolvedModelId env = do
@@ -5482,7 +5791,11 @@ publishedResultFromRequest ::
   ProtoInference.InferenceRequest ->
   IO InferenceResult
 publishedResultFromRequest maybeTransport paths runtimeMode executionPlan maybeEngineKVCache protoRequest =
-  withEngineExecutionPlan executionPlan $ do
+  -- Phase 7 Sprint 7.32: the execution registers under the request's durable
+  -- identity, so a cancellation reaches this computation rather than only the
+  -- conversation projection, and the authority this holds is not released until
+  -- its cleanup has run.
+  withIdentifiedEngineExecution executionPlan (executionIdentityFromProto protoRequest) $ do
     let runtimePlan = engineExecutionRuntimePlan executionPlan
     domainResult <-
       executeInferenceWithModelBootstrapRetry
@@ -5535,7 +5848,7 @@ executeInferenceWithModelBootstrapRetry ::
   Paths ->
   RuntimePlan ->
   Maybe KVCache.EngineKVCache ->
-  Maybe KVCache.KVCacheRequest ->
+  Maybe KVCache.KVCacheRequestSeed ->
   InferenceRequest ->
   IO (Either ErrorResponse InferenceResult)
 executeInferenceWithModelBootstrapRetry maybeTransport paths runtimePlan maybeEngineKVCache maybeKVCacheRequest requestValue = do
@@ -5558,13 +5871,18 @@ executeInferenceWithModelBootstrapRetry maybeTransport paths runtimePlan maybeEn
                     message = "The requested model has no refined executable placement."
                   }
             )
-        Just executableModel ->
-          executeExecutableInferenceWithKVCache
-            paths
-            maybeEngineKVCache
-            maybeKVCacheRequest
-            executableModel
-            requestValue
+        Just executableModel -> do
+          verifiedPrefix <- verifyRequestConversationPrefix maybeTransport maybeKVCacheRequest
+          case verifiedPrefix of
+            Left refusal -> pure (Left refusal)
+            Right maybeVerifiedPrefix ->
+              executeExecutableInferenceWithKVCache
+                paths
+                maybeEngineKVCache
+                maybeKVCacheRequest
+                maybeVerifiedPrefix
+                executableModel
+                requestValue
     bootstrapAndRetry transport errorValue =
       case lookupExecutableModel (requestModelId requestValue) runtimePlan of
         Nothing -> pure (Left errorValue)
@@ -5742,19 +6060,102 @@ modelCacheBootstrapRetryableError errorValue =
         "model cache config"
       ]
 
-kvCacheRequestFromProto :: ProtoInference.InferenceRequest -> Maybe KVCache.KVCacheRequest
+-- | Phase 7 Sprint 7.32 — consume typed cancellations for this engine.
+--
+-- Every engine on the substrate reads the cancel topic, because the coordinator
+-- that publishes a cancellation does not know which machine took the request.
+-- The machine running it stops it; the others report that they hold nothing by
+-- that identity, which is a different answer from "cancelled" and is recorded
+-- as one.
+runEngineCancellationConsumer ::
+  PulsarTransport ->
+  RuntimeMode ->
+  EngineExecutionPlan ->
+  IO ()
+runEngineCancellationConsumer transport runtimeMode executionPlan = do
+  let cancelTopic =
+        ConversationTopic.inferenceCancelTopicName
+          ConversationTopic.defaultDemoTopicNamespace
+          (runtimeModeId runtimeMode)
+  processLabel <- currentProcessLabel
+  topicRef <- requireTopicRef cancelTopic
+  let subscriptionName = "engine-cancellations"
+      consumerPath =
+        buildServiceConsumerSocketPath
+          (pulsarWebSocketBase transport)
+          topicRef
+          subscriptionName
+          (Text.unpack processLabel)
+          ConsumerShared
+  retryCoordinatorStream transport cancelTopic ("engine cancellation consumer for " <> cancelTopic) $
+    runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
+      forever (handleEngineCancellation executionPlan connection)
+
+handleEngineCancellation :: EngineExecutionPlan -> WebSockets.Connection -> IO ()
+handleEngineCancellation executionPlan connection = do
+  rawEnvelope <- receiveJsonFrame "Pulsar engine cancellation" connection
+  envelope <- decodeJsonText "Pulsar engine cancellation" rawEnvelope
+  handled <-
+    try @SomeException
+      ( do
+          eventBytes <- conversationPayloadBytes envelope
+          case eitherDecode (Lazy.fromStrict eventBytes) of
+            Left decodeError ->
+              hPutStrLn
+                stderr
+                ( "engine cancellation consumer skipping undecodable event "
+                    <> Text.unpack (envelopeMessageId envelope)
+                    <> ": "
+                    <> decodeError
+                )
+            Right identity -> do
+              outcome <-
+                Cancellation.requestCancellation
+                  (engineExecutionCancellations executionPlan)
+                  identity
+              putStrLn
+                ( "engineCancellation: "
+                    <> Text.unpack (Cancellation.executionPromptMessageId identity)
+                    <> " -> "
+                    <> Text.unpack (Cancellation.cancellationOutcomeLabel outcome)
+                )
+      )
+  case handled of
+    Right _ -> sendAck connection (envelopeMessageId envelope)
+    Left err -> do
+      sendNegativeAck connection (envelopeMessageId envelope)
+      hPutStrLn
+        stderr
+        ("engine cancellation handling failed:\n" <> displayException err)
+
+-- | The durable identity a cancellation names, taken from the request envelope
+-- so the two cannot drift apart.
+executionIdentityFromProto :: ProtoInference.InferenceRequest -> Cancellation.ExecutionIdentity
+executionIdentityFromProto protoRequest =
+  Cancellation.ExecutionIdentity
+    { Cancellation.executionTenant = view ProtoInferenceFields.userId protoRequest,
+      Cancellation.executionContext = view ProtoInferenceFields.contextId protoRequest,
+      Cancellation.executionPromptMessageId =
+        view ProtoInferenceFields.userPromptMessageId protoRequest
+    }
+
+kvCacheRequestFromProto :: ProtoInference.InferenceRequest -> Maybe KVCache.KVCacheRequestSeed
 kvCacheRequestFromProto protoRequest = do
   let modelIdValue = view ProtoInferenceFields.requestModelId protoRequest
       contextIdValue = view ProtoInferenceFields.contextId protoRequest
+      tenantIdValue = view ProtoInferenceFields.userId protoRequest
       prefixHashValue = view ProtoInferenceFields.prefixHash protoRequest
+      offsetValue = view ProtoInferenceFields.conversationLogOffset protoRequest
   if Text.null modelIdValue || Text.null contextIdValue || Text.null prefixHashValue
     then Nothing
     else
       Just
-        KVCache.KVCacheRequest
-          { KVCache.kvCacheRequestContextId = contextIdValue,
-            KVCache.kvCacheRequestModelId = modelIdValue,
-            KVCache.kvCacheRequestPrefixHash = PrefixHash prefixHashValue
+        KVCache.KVCacheRequestSeed
+          { KVCache.kvSeedContextId = contextIdValue,
+            KVCache.kvSeedModelId = modelIdValue,
+            KVCache.kvSeedTenantId = tenantIdValue,
+            KVCache.kvSeedPrefixHash = PrefixHash prefixHashValue,
+            KVCache.kvSeedConversationLogOffset = fromIntegral offsetValue
           }
 
 decodeEnvelopePayload :: (Message a) => String -> PulsarEnvelope -> IO a

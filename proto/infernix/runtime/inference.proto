@@ -116,6 +116,33 @@ message WorkerRequest {
   // than choosing them.
   InferenceMemoryBudget memory_budget = 21;
   ModelExecutionShape execution_shape = 22;
+  // Phase 7 Sprint 7.31: the verified conversation prefix the engine runs
+  // against, and what the daemon decided about the engine's KV state for it.
+  //
+  // The retired message carried only input_text, so an adapter received the
+  // latest prompt and nothing else: a multi-turn context was executed as a
+  // series of unrelated single-turn requests, and the prefix hash the request
+  // already carried was compared against a bookkeeping map that no engine state
+  // corresponded to. The prefix here is the canonical ordered projection the
+  // daemon reconstructed from the durable conversation log and verified against
+  // conversation_log_offset and prefix_hash before the engine was reached.
+  repeated ConversationTurn conversation_prefix = 23;
+  // The canonical projection hash of exactly the turns above. An adapter that
+  // wants to key its own state keys it on this, never on the prompt text.
+  string conversation_prefix_hash = 24;
+  // "reuse" when the daemon established that this engine already holds state
+  // for that exact prefix, "replay" when the prefix must be re-fed. A backend
+  // with no reusable KV state always receives "replay"; it never receives a
+  // reuse it cannot honour.
+  string kv_cache_disposition = 25;
+}
+
+// Phase 7 Sprint 7.31: one turn of the reconstructed conversation prefix.
+message ConversationTurn {
+  // "user" or "assistant". The daemon assigns this from the durable event
+  // type; an adapter does not infer it from content.
+  string role = 1;
+  string text = 2;
 }
 
 // Phase 4 Sprint 4.42: exactly one device route is populated, never both.

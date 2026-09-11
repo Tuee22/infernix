@@ -4,10 +4,10 @@
 {-# OPTIONS_GHC -Wno-duplicate-exports#-}
 {-# OPTIONS_GHC -Wno-dodgy-exports#-}
 module Proto.Infernix.Runtime.Inference (
-        CatalogEntry(), CeilingAcknowledgement(), EngineBinding(),
-        ErrorResponse(), GeneratedCatalog(), HostAndDeviceClaim(),
-        HostResidentClaim(), InferenceError(), InferenceError'Error(..),
-        _InferenceError'ModelMemoryLimitExceeded,
+        CatalogEntry(), CeilingAcknowledgement(), ConversationTurn(),
+        EngineBinding(), ErrorResponse(), GeneratedCatalog(),
+        HostAndDeviceClaim(), HostResidentClaim(), InferenceError(),
+        InferenceError'Error(..), _InferenceError'ModelMemoryLimitExceeded,
         _InferenceError'ModelRequirementUnderivable,
         InferenceMemoryBudget(), InferenceMemoryBudget'Claim(..),
         _InferenceMemoryBudget'HostResident,
@@ -998,6 +998,162 @@ instance Control.DeepSeq.NFData CeilingAcknowledgement where
                 (_CeilingAcknowledgement'softBytes x__)
                 (Control.DeepSeq.deepseq
                    (_CeilingAcknowledgement'hardBytes x__) ()))
+{- | Fields :
+     
+         * 'Proto.Infernix.Runtime.Inference_Fields.role' @:: Lens' ConversationTurn Data.Text.Text@
+         * 'Proto.Infernix.Runtime.Inference_Fields.text' @:: Lens' ConversationTurn Data.Text.Text@ -}
+data ConversationTurn
+  = ConversationTurn'_constructor {_ConversationTurn'role :: !Data.Text.Text,
+                                   _ConversationTurn'text :: !Data.Text.Text,
+                                   _ConversationTurn'_unknownFields :: !Data.ProtoLens.FieldSet}
+  deriving stock (Prelude.Eq, Prelude.Ord)
+instance Prelude.Show ConversationTurn where
+  showsPrec _ __x __s
+    = Prelude.showChar
+        '{'
+        (Prelude.showString
+           (Data.ProtoLens.showMessageShort __x) (Prelude.showChar '}' __s))
+instance Data.ProtoLens.Field.HasField ConversationTurn "role" Data.Text.Text where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ConversationTurn'role
+           (\ x__ y__ -> x__ {_ConversationTurn'role = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField ConversationTurn "text" Data.Text.Text where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _ConversationTurn'text
+           (\ x__ y__ -> x__ {_ConversationTurn'text = y__}))
+        Prelude.id
+instance Data.ProtoLens.Message ConversationTurn where
+  messageName _ = Data.Text.pack "infernix.runtime.ConversationTurn"
+  packedMessageDescriptor _
+    = "\n\
+      \\DLEConversationTurn\DC2\DC2\n\
+      \\EOTrole\CAN\SOH \SOH(\tR\EOTrole\DC2\DC2\n\
+      \\EOTtext\CAN\STX \SOH(\tR\EOTtext"
+  packedFileDescriptor _ = packedFileDescriptor
+  fieldsByTag
+    = let
+        role__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "role"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.StringField ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Text.Text)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional (Data.ProtoLens.Field.field @"role")) ::
+              Data.ProtoLens.FieldDescriptor ConversationTurn
+        text__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "text"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.StringField ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Text.Text)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional (Data.ProtoLens.Field.field @"text")) ::
+              Data.ProtoLens.FieldDescriptor ConversationTurn
+      in
+        Data.Map.fromList
+          [(Data.ProtoLens.Tag 1, role__field_descriptor),
+           (Data.ProtoLens.Tag 2, text__field_descriptor)]
+  unknownFields
+    = Lens.Family2.Unchecked.lens
+        _ConversationTurn'_unknownFields
+        (\ x__ y__ -> x__ {_ConversationTurn'_unknownFields = y__})
+  defMessage
+    = ConversationTurn'_constructor
+        {_ConversationTurn'role = Data.ProtoLens.fieldDefault,
+         _ConversationTurn'text = Data.ProtoLens.fieldDefault,
+         _ConversationTurn'_unknownFields = []}
+  parseMessage
+    = let
+        loop ::
+          ConversationTurn
+          -> Data.ProtoLens.Encoding.Bytes.Parser ConversationTurn
+        loop x
+          = do end <- Data.ProtoLens.Encoding.Bytes.atEnd
+               if end then
+                   do (let missing = []
+                       in
+                         if Prelude.null missing then
+                             Prelude.return ()
+                         else
+                             Prelude.fail
+                               ((Prelude.++)
+                                  "Missing required fields: "
+                                  (Prelude.show (missing :: [Prelude.String]))))
+                      Prelude.return
+                        (Lens.Family2.over
+                           Data.ProtoLens.unknownFields (\ !t -> Prelude.reverse t) x)
+               else
+                   do tag <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                      case tag of
+                        10
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.getText
+                                             (Prelude.fromIntegral len))
+                                       "role"
+                                loop (Lens.Family2.set (Data.ProtoLens.Field.field @"role") y x)
+                        18
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.getText
+                                             (Prelude.fromIntegral len))
+                                       "text"
+                                loop (Lens.Family2.set (Data.ProtoLens.Field.field @"text") y x)
+                        wire
+                          -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
+                                        wire
+                                loop
+                                  (Lens.Family2.over
+                                     Data.ProtoLens.unknownFields (\ !t -> (:) y t) x)
+      in
+        (Data.ProtoLens.Encoding.Bytes.<?>)
+          (do loop Data.ProtoLens.defMessage) "ConversationTurn"
+  buildMessage
+    = \ _x
+        -> (Data.Monoid.<>)
+             (let _v = Lens.Family2.view (Data.ProtoLens.Field.field @"role") _x
+              in
+                if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                    Data.Monoid.mempty
+                else
+                    (Data.Monoid.<>)
+                      (Data.ProtoLens.Encoding.Bytes.putVarInt 10)
+                      ((Prelude..)
+                         (\ bs
+                            -> (Data.Monoid.<>)
+                                 (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                    (Prelude.fromIntegral (Data.ByteString.length bs)))
+                                 (Data.ProtoLens.Encoding.Bytes.putBytes bs))
+                         Data.Text.Encoding.encodeUtf8 _v))
+             ((Data.Monoid.<>)
+                (let _v = Lens.Family2.view (Data.ProtoLens.Field.field @"text") _x
+                 in
+                   if (Prelude.==) _v Data.ProtoLens.fieldDefault then
+                       Data.Monoid.mempty
+                   else
+                       (Data.Monoid.<>)
+                         (Data.ProtoLens.Encoding.Bytes.putVarInt 18)
+                         ((Prelude..)
+                            (\ bs
+                               -> (Data.Monoid.<>)
+                                    (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                       (Prelude.fromIntegral (Data.ByteString.length bs)))
+                                    (Data.ProtoLens.Encoding.Bytes.putBytes bs))
+                            Data.Text.Encoding.encodeUtf8 _v))
+                (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                   (Lens.Family2.view Data.ProtoLens.unknownFields _x)))
+instance Control.DeepSeq.NFData ConversationTurn where
+  rnf
+    = \ x__
+        -> Control.DeepSeq.deepseq
+             (_ConversationTurn'_unknownFields x__)
+             (Control.DeepSeq.deepseq
+                (_ConversationTurn'role x__)
+                (Control.DeepSeq.deepseq (_ConversationTurn'text x__) ()))
 {- | Fields :
      
          * 'Proto.Infernix.Runtime.Inference_Fields.engine' @:: Lens' EngineBinding Data.Text.Text@
@@ -5410,7 +5566,11 @@ _ResultPayload'InferenceError
          * 'Proto.Infernix.Runtime.Inference_Fields.memoryBudget' @:: Lens' WorkerRequest InferenceMemoryBudget@
          * 'Proto.Infernix.Runtime.Inference_Fields.maybe'memoryBudget' @:: Lens' WorkerRequest (Prelude.Maybe InferenceMemoryBudget)@
          * 'Proto.Infernix.Runtime.Inference_Fields.executionShape' @:: Lens' WorkerRequest ModelExecutionShape@
-         * 'Proto.Infernix.Runtime.Inference_Fields.maybe'executionShape' @:: Lens' WorkerRequest (Prelude.Maybe ModelExecutionShape)@ -}
+         * 'Proto.Infernix.Runtime.Inference_Fields.maybe'executionShape' @:: Lens' WorkerRequest (Prelude.Maybe ModelExecutionShape)@
+         * 'Proto.Infernix.Runtime.Inference_Fields.conversationPrefix' @:: Lens' WorkerRequest [ConversationTurn]@
+         * 'Proto.Infernix.Runtime.Inference_Fields.vec'conversationPrefix' @:: Lens' WorkerRequest (Data.Vector.Vector ConversationTurn)@
+         * 'Proto.Infernix.Runtime.Inference_Fields.conversationPrefixHash' @:: Lens' WorkerRequest Data.Text.Text@
+         * 'Proto.Infernix.Runtime.Inference_Fields.kvCacheDisposition' @:: Lens' WorkerRequest Data.Text.Text@ -}
 data WorkerRequest
   = WorkerRequest'_constructor {_WorkerRequest'requestModelId :: !Data.Text.Text,
                                 _WorkerRequest'inputText :: !Data.Text.Text,
@@ -5434,6 +5594,9 @@ data WorkerRequest
                                 _WorkerRequest'generatedOutputObjectPrefix :: !Data.Text.Text,
                                 _WorkerRequest'memoryBudget :: !(Prelude.Maybe InferenceMemoryBudget),
                                 _WorkerRequest'executionShape :: !(Prelude.Maybe ModelExecutionShape),
+                                _WorkerRequest'conversationPrefix :: !(Data.Vector.Vector ConversationTurn),
+                                _WorkerRequest'conversationPrefixHash :: !Data.Text.Text,
+                                _WorkerRequest'kvCacheDisposition :: !Data.Text.Text,
                                 _WorkerRequest'_unknownFields :: !Data.ProtoLens.FieldSet}
   deriving stock (Prelude.Eq, Prelude.Ord)
 instance Prelude.Show WorkerRequest where
@@ -5611,6 +5774,36 @@ instance Data.ProtoLens.Field.HasField WorkerRequest "maybe'executionShape" (Pre
            _WorkerRequest'executionShape
            (\ x__ y__ -> x__ {_WorkerRequest'executionShape = y__}))
         Prelude.id
+instance Data.ProtoLens.Field.HasField WorkerRequest "conversationPrefix" [ConversationTurn] where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerRequest'conversationPrefix
+           (\ x__ y__ -> x__ {_WorkerRequest'conversationPrefix = y__}))
+        (Lens.Family2.Unchecked.lens
+           Data.Vector.Generic.toList
+           (\ _ y__ -> Data.Vector.Generic.fromList y__))
+instance Data.ProtoLens.Field.HasField WorkerRequest "vec'conversationPrefix" (Data.Vector.Vector ConversationTurn) where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerRequest'conversationPrefix
+           (\ x__ y__ -> x__ {_WorkerRequest'conversationPrefix = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField WorkerRequest "conversationPrefixHash" Data.Text.Text where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerRequest'conversationPrefixHash
+           (\ x__ y__ -> x__ {_WorkerRequest'conversationPrefixHash = y__}))
+        Prelude.id
+instance Data.ProtoLens.Field.HasField WorkerRequest "kvCacheDisposition" Data.Text.Text where
+  fieldOf _
+    = (Prelude..)
+        (Lens.Family2.Unchecked.lens
+           _WorkerRequest'kvCacheDisposition
+           (\ x__ y__ -> x__ {_WorkerRequest'kvCacheDisposition = y__}))
+        Prelude.id
 instance Data.ProtoLens.Message WorkerRequest where
   messageName _ = Data.Text.pack "infernix.runtime.WorkerRequest"
   packedMessageDescriptor _
@@ -5640,7 +5833,10 @@ instance Data.ProtoLens.Message WorkerRequest where
       \\DLEminio_secret_key\CAN\DC3 \SOH(\tR\SOminioSecretKey\DC2C\n\
       \\RSgenerated_output_object_prefix\CAN\DC4 \SOH(\tR\ESCgeneratedOutputObjectPrefix\DC2L\n\
       \\rmemory_budget\CAN\NAK \SOH(\v2'.infernix.runtime.InferenceMemoryBudgetR\fmemoryBudget\DC2N\n\
-      \\SIexecution_shape\CAN\SYN \SOH(\v2%.infernix.runtime.ModelExecutionShapeR\SOexecutionShape"
+      \\SIexecution_shape\CAN\SYN \SOH(\v2%.infernix.runtime.ModelExecutionShapeR\SOexecutionShape\DC2S\n\
+      \\DC3conversation_prefix\CAN\ETB \ETX(\v2\".infernix.runtime.ConversationTurnR\DC2conversationPrefix\DC28\n\
+      \\CANconversation_prefix_hash\CAN\CAN \SOH(\tR\SYNconversationPrefixHash\DC20\n\
+      \\DC4kv_cache_disposition\CAN\EM \SOH(\tR\DC2kvCacheDisposition"
   packedFileDescriptor _ = packedFileDescriptor
   fieldsByTag
     = let
@@ -5839,6 +6035,33 @@ instance Data.ProtoLens.Message WorkerRequest where
               (Data.ProtoLens.OptionalField
                  (Data.ProtoLens.Field.field @"maybe'executionShape")) ::
               Data.ProtoLens.FieldDescriptor WorkerRequest
+        conversationPrefix__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "conversation_prefix"
+              (Data.ProtoLens.MessageField Data.ProtoLens.MessageType ::
+                 Data.ProtoLens.FieldTypeDescriptor ConversationTurn)
+              (Data.ProtoLens.RepeatedField
+                 Data.ProtoLens.Unpacked
+                 (Data.ProtoLens.Field.field @"conversationPrefix")) ::
+              Data.ProtoLens.FieldDescriptor WorkerRequest
+        conversationPrefixHash__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "conversation_prefix_hash"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.StringField ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Text.Text)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"conversationPrefixHash")) ::
+              Data.ProtoLens.FieldDescriptor WorkerRequest
+        kvCacheDisposition__field_descriptor
+          = Data.ProtoLens.FieldDescriptor
+              "kv_cache_disposition"
+              (Data.ProtoLens.ScalarField Data.ProtoLens.StringField ::
+                 Data.ProtoLens.FieldTypeDescriptor Data.Text.Text)
+              (Data.ProtoLens.PlainField
+                 Data.ProtoLens.Optional
+                 (Data.ProtoLens.Field.field @"kvCacheDisposition")) ::
+              Data.ProtoLens.FieldDescriptor WorkerRequest
       in
         Data.Map.fromList
           [(Data.ProtoLens.Tag 1, requestModelId__field_descriptor),
@@ -5864,7 +6087,10 @@ instance Data.ProtoLens.Message WorkerRequest where
            (Data.ProtoLens.Tag 20, 
             generatedOutputObjectPrefix__field_descriptor),
            (Data.ProtoLens.Tag 21, memoryBudget__field_descriptor),
-           (Data.ProtoLens.Tag 22, executionShape__field_descriptor)]
+           (Data.ProtoLens.Tag 22, executionShape__field_descriptor),
+           (Data.ProtoLens.Tag 23, conversationPrefix__field_descriptor),
+           (Data.ProtoLens.Tag 24, conversationPrefixHash__field_descriptor),
+           (Data.ProtoLens.Tag 25, kvCacheDisposition__field_descriptor)]
   unknownFields
     = Lens.Family2.Unchecked.lens
         _WorkerRequest'_unknownFields
@@ -5893,15 +6119,23 @@ instance Data.ProtoLens.Message WorkerRequest where
          _WorkerRequest'generatedOutputObjectPrefix = Data.ProtoLens.fieldDefault,
          _WorkerRequest'memoryBudget = Prelude.Nothing,
          _WorkerRequest'executionShape = Prelude.Nothing,
+         _WorkerRequest'conversationPrefix = Data.Vector.Generic.empty,
+         _WorkerRequest'conversationPrefixHash = Data.ProtoLens.fieldDefault,
+         _WorkerRequest'kvCacheDisposition = Data.ProtoLens.fieldDefault,
          _WorkerRequest'_unknownFields = []}
   parseMessage
     = let
         loop ::
-          WorkerRequest -> Data.ProtoLens.Encoding.Bytes.Parser WorkerRequest
-        loop x
+          WorkerRequest
+          -> Data.ProtoLens.Encoding.Growing.Growing Data.Vector.Vector Data.ProtoLens.Encoding.Growing.RealWorld ConversationTurn
+             -> Data.ProtoLens.Encoding.Bytes.Parser WorkerRequest
+        loop x mutable'conversationPrefix
           = do end <- Data.ProtoLens.Encoding.Bytes.atEnd
                if end then
-                   do (let missing = []
+                   do frozen'conversationPrefix <- Data.ProtoLens.Encoding.Parser.Unsafe.unsafeLiftIO
+                                                     (Data.ProtoLens.Encoding.Growing.unsafeFreeze
+                                                        mutable'conversationPrefix)
+                      (let missing = []
                        in
                          if Prelude.null missing then
                              Prelude.return ()
@@ -5912,7 +6146,10 @@ instance Data.ProtoLens.Message WorkerRequest where
                                   (Prelude.show (missing :: [Prelude.String]))))
                       Prelude.return
                         (Lens.Family2.over
-                           Data.ProtoLens.unknownFields (\ !t -> Prelude.reverse t) x)
+                           Data.ProtoLens.unknownFields (\ !t -> Prelude.reverse t)
+                           (Lens.Family2.set
+                              (Data.ProtoLens.Field.field @"vec'conversationPrefix")
+                              frozen'conversationPrefix x))
                else
                    do tag <- Data.ProtoLens.Encoding.Bytes.getVarInt
                       case tag of
@@ -5925,6 +6162,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"requestModelId") y x)
+                                  mutable'conversationPrefix
                         18
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -5933,6 +6171,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                        "input_text"
                                 loop
                                   (Lens.Family2.set (Data.ProtoLens.Field.field @"inputText") y x)
+                                  mutable'conversationPrefix
                         26
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -5941,6 +6180,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                        "runtime_mode"
                                 loop
                                   (Lens.Family2.set (Data.ProtoLens.Field.field @"runtimeMode") y x)
+                                  mutable'conversationPrefix
                         34
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -5950,6 +6190,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"selectedEngine") y x)
+                                  mutable'conversationPrefix
                         42
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -5958,6 +6199,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                        "adapter_id"
                                 loop
                                   (Lens.Family2.set (Data.ProtoLens.Field.field @"adapterId") y x)
+                                  mutable'conversationPrefix
                         50
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -5967,6 +6209,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"engineInstallRoot") y x)
+                                  mutable'conversationPrefix
                         58
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -5975,13 +6218,16 @@ instance Data.ProtoLens.Message WorkerRequest where
                                        "display_name"
                                 loop
                                   (Lens.Family2.set (Data.ProtoLens.Field.field @"displayName") y x)
+                                  mutable'conversationPrefix
                         66
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
                                            Data.ProtoLens.Encoding.Bytes.getText
                                              (Prelude.fromIntegral len))
                                        "family"
-                                loop (Lens.Family2.set (Data.ProtoLens.Field.field @"family") y x)
+                                loop
+                                  (Lens.Family2.set (Data.ProtoLens.Field.field @"family") y x)
+                                  mutable'conversationPrefix
                         74
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -5991,6 +6237,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"artifactType") y x)
+                                  mutable'conversationPrefix
                         82
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -5999,6 +6246,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                        "runtime_lane"
                                 loop
                                   (Lens.Family2.set (Data.ProtoLens.Field.field @"runtimeLane") y x)
+                                  mutable'conversationPrefix
                         90
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6008,6 +6256,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"inputObjectRef") y x)
+                                  mutable'conversationPrefix
                         98
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6017,6 +6266,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"modelCacheRoot") y x)
+                                  mutable'conversationPrefix
                         104
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6024,6 +6274,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"modelCacheQuotaBytes") y x)
+                                  mutable'conversationPrefix
                         114
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6033,6 +6284,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"minioEndpoint") y x)
+                                  mutable'conversationPrefix
                         122
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6042,6 +6294,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"minioModelsBucket") y x)
+                                  mutable'conversationPrefix
                         130
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6051,6 +6304,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"minioDemoArtifactsBucket") y x)
+                                  mutable'conversationPrefix
                         138
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6059,6 +6313,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                        "minio_region"
                                 loop
                                   (Lens.Family2.set (Data.ProtoLens.Field.field @"minioRegion") y x)
+                                  mutable'conversationPrefix
                         146
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6068,6 +6323,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"minioAccessKey") y x)
+                                  mutable'conversationPrefix
                         154
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6077,6 +6333,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"minioSecretKey") y x)
+                                  mutable'conversationPrefix
                         162
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6087,6 +6344,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"generatedOutputObjectPrefix") y
                                      x)
+                                  mutable'conversationPrefix
                         170
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6096,6 +6354,7 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"memoryBudget") y x)
+                                  mutable'conversationPrefix
                         178
                           -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
@@ -6105,15 +6364,51 @@ instance Data.ProtoLens.Message WorkerRequest where
                                 loop
                                   (Lens.Family2.set
                                      (Data.ProtoLens.Field.field @"executionShape") y x)
+                                  mutable'conversationPrefix
+                        186
+                          -> do !y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                        (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                            Data.ProtoLens.Encoding.Bytes.isolate
+                                              (Prelude.fromIntegral len)
+                                              Data.ProtoLens.parseMessage)
+                                        "conversation_prefix"
+                                v <- Data.ProtoLens.Encoding.Parser.Unsafe.unsafeLiftIO
+                                       (Data.ProtoLens.Encoding.Growing.append
+                                          mutable'conversationPrefix y)
+                                loop x v
+                        194
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.getText
+                                             (Prelude.fromIntegral len))
+                                       "conversation_prefix_hash"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"conversationPrefixHash") y x)
+                                  mutable'conversationPrefix
+                        202
+                          -> do y <- (Data.ProtoLens.Encoding.Bytes.<?>)
+                                       (do len <- Data.ProtoLens.Encoding.Bytes.getVarInt
+                                           Data.ProtoLens.Encoding.Bytes.getText
+                                             (Prelude.fromIntegral len))
+                                       "kv_cache_disposition"
+                                loop
+                                  (Lens.Family2.set
+                                     (Data.ProtoLens.Field.field @"kvCacheDisposition") y x)
+                                  mutable'conversationPrefix
                         wire
                           -> do !y <- Data.ProtoLens.Encoding.Wire.parseTaggedValueFromWire
                                         wire
                                 loop
                                   (Lens.Family2.over
                                      Data.ProtoLens.unknownFields (\ !t -> (:) y t) x)
+                                  mutable'conversationPrefix
       in
         (Data.ProtoLens.Encoding.Bytes.<?>)
-          (do loop Data.ProtoLens.defMessage) "WorkerRequest"
+          (do mutable'conversationPrefix <- Data.ProtoLens.Encoding.Parser.Unsafe.unsafeLiftIO
+                                              Data.ProtoLens.Encoding.Growing.new
+              loop Data.ProtoLens.defMessage mutable'conversationPrefix)
+          "WorkerRequest"
   buildMessage
     = \ _x
         -> (Data.Monoid.<>)
@@ -6592,10 +6887,85 @@ instance Data.ProtoLens.Message WorkerRequest where
                                                                                                     bs))
                                                                                          Data.ProtoLens.encodeMessage
                                                                                          _v))
-                                                                            (Data.ProtoLens.Encoding.Wire.buildFieldSet
-                                                                               (Lens.Family2.view
-                                                                                  Data.ProtoLens.unknownFields
-                                                                                  _x)))))))))))))))))))))))
+                                                                            ((Data.Monoid.<>)
+                                                                               (Data.ProtoLens.Encoding.Bytes.foldMapBuilder
+                                                                                  (\ _v
+                                                                                     -> (Data.Monoid.<>)
+                                                                                          (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                             186)
+                                                                                          ((Prelude..)
+                                                                                             (\ bs
+                                                                                                -> (Data.Monoid.<>)
+                                                                                                     (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                                        (Prelude.fromIntegral
+                                                                                                           (Data.ByteString.length
+                                                                                                              bs)))
+                                                                                                     (Data.ProtoLens.Encoding.Bytes.putBytes
+                                                                                                        bs))
+                                                                                             Data.ProtoLens.encodeMessage
+                                                                                             _v))
+                                                                                  (Lens.Family2.view
+                                                                                     (Data.ProtoLens.Field.field
+                                                                                        @"vec'conversationPrefix")
+                                                                                     _x))
+                                                                               ((Data.Monoid.<>)
+                                                                                  (let
+                                                                                     _v
+                                                                                       = Lens.Family2.view
+                                                                                           (Data.ProtoLens.Field.field
+                                                                                              @"conversationPrefixHash")
+                                                                                           _x
+                                                                                   in
+                                                                                     if (Prelude.==)
+                                                                                          _v
+                                                                                          Data.ProtoLens.fieldDefault then
+                                                                                         Data.Monoid.mempty
+                                                                                     else
+                                                                                         (Data.Monoid.<>)
+                                                                                           (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                              194)
+                                                                                           ((Prelude..)
+                                                                                              (\ bs
+                                                                                                 -> (Data.Monoid.<>)
+                                                                                                      (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                                         (Prelude.fromIntegral
+                                                                                                            (Data.ByteString.length
+                                                                                                               bs)))
+                                                                                                      (Data.ProtoLens.Encoding.Bytes.putBytes
+                                                                                                         bs))
+                                                                                              Data.Text.Encoding.encodeUtf8
+                                                                                              _v))
+                                                                                  ((Data.Monoid.<>)
+                                                                                     (let
+                                                                                        _v
+                                                                                          = Lens.Family2.view
+                                                                                              (Data.ProtoLens.Field.field
+                                                                                                 @"kvCacheDisposition")
+                                                                                              _x
+                                                                                      in
+                                                                                        if (Prelude.==)
+                                                                                             _v
+                                                                                             Data.ProtoLens.fieldDefault then
+                                                                                            Data.Monoid.mempty
+                                                                                        else
+                                                                                            (Data.Monoid.<>)
+                                                                                              (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                                 202)
+                                                                                              ((Prelude..)
+                                                                                                 (\ bs
+                                                                                                    -> (Data.Monoid.<>)
+                                                                                                         (Data.ProtoLens.Encoding.Bytes.putVarInt
+                                                                                                            (Prelude.fromIntegral
+                                                                                                               (Data.ByteString.length
+                                                                                                                  bs)))
+                                                                                                         (Data.ProtoLens.Encoding.Bytes.putBytes
+                                                                                                            bs))
+                                                                                                 Data.Text.Encoding.encodeUtf8
+                                                                                                 _v))
+                                                                                     (Data.ProtoLens.Encoding.Wire.buildFieldSet
+                                                                                        (Lens.Family2.view
+                                                                                           Data.ProtoLens.unknownFields
+                                                                                           _x))))))))))))))))))))))))))
 instance Control.DeepSeq.NFData WorkerRequest where
   rnf
     = \ x__
@@ -6651,7 +7021,16 @@ instance Control.DeepSeq.NFData WorkerRequest where
                                                                             (Control.DeepSeq.deepseq
                                                                                (_WorkerRequest'executionShape
                                                                                   x__)
-                                                                               ()))))))))))))))))))))))
+                                                                               (Control.DeepSeq.deepseq
+                                                                                  (_WorkerRequest'conversationPrefix
+                                                                                     x__)
+                                                                                  (Control.DeepSeq.deepseq
+                                                                                     (_WorkerRequest'conversationPrefixHash
+                                                                                        x__)
+                                                                                     (Control.DeepSeq.deepseq
+                                                                                        (_WorkerRequest'kvCacheDisposition
+                                                                                           x__)
+                                                                                        ())))))))))))))))))))))))))
 {- | Fields :
      
          * 'Proto.Infernix.Runtime.Inference_Fields.outputText' @:: Lens' WorkerResponse Data.Text.Text@
@@ -7032,7 +7411,7 @@ packedFileDescriptor
     \prefixHash\DC2\GS\n\
     \\n\
     \causal_ref\CAN\v \SOH(\tR\tcausalRef\DC2(\n\
-    \\DLEinput_object_ref\CAN\f \SOH(\tR\SOinputObjectRef\"\241\a\n\
+    \\DLEinput_object_ref\CAN\f \SOH(\tR\SOinputObjectRef\"\178\t\n\
     \\rWorkerRequest\DC2(\n\
     \\DLErequest_model_id\CAN\SOH \SOH(\tR\SOrequestModelId\DC2\GS\n\
     \\n\
@@ -7058,7 +7437,13 @@ packedFileDescriptor
     \\DLEminio_secret_key\CAN\DC3 \SOH(\tR\SOminioSecretKey\DC2C\n\
     \\RSgenerated_output_object_prefix\CAN\DC4 \SOH(\tR\ESCgeneratedOutputObjectPrefix\DC2L\n\
     \\rmemory_budget\CAN\NAK \SOH(\v2'.infernix.runtime.InferenceMemoryBudgetR\fmemoryBudget\DC2N\n\
-    \\SIexecution_shape\CAN\SYN \SOH(\v2%.infernix.runtime.ModelExecutionShapeR\SOexecutionShape\"\188\SOH\n\
+    \\SIexecution_shape\CAN\SYN \SOH(\v2%.infernix.runtime.ModelExecutionShapeR\SOexecutionShape\DC2S\n\
+    \\DC3conversation_prefix\CAN\ETB \ETX(\v2\".infernix.runtime.ConversationTurnR\DC2conversationPrefix\DC28\n\
+    \\CANconversation_prefix_hash\CAN\CAN \SOH(\tR\SYNconversationPrefixHash\DC20\n\
+    \\DC4kv_cache_disposition\CAN\EM \SOH(\tR\DC2kvCacheDisposition\":\n\
+    \\DLEConversationTurn\DC2\DC2\n\
+    \\EOTrole\CAN\SOH \SOH(\tR\EOTrole\DC2\DC2\n\
+    \\EOTtext\CAN\STX \SOH(\tR\EOTtext\"\188\SOH\n\
     \\NAKInferenceMemoryBudget\DC2J\n\
     \\rhost_resident\CAN\SOH \SOH(\v2#.infernix.runtime.HostResidentClaimH\NULR\fhostResident\DC2N\n\
     \\SIhost_and_device\CAN\STX \SOH(\v2$.infernix.runtime.HostAndDeviceClaimH\NULR\rhostAndDeviceB\a\n\
@@ -7130,8 +7515,8 @@ packedFileDescriptor
     \\rErrorResponse\DC2\GS\n\
     \\n\
     \error_code\CAN\SOH \SOH(\tR\terrorCode\DC2\CAN\n\
-    \\amessage\CAN\STX \SOH(\tR\amessageJ\171]\n\
-    \\a\DC2\ENQ\NUL\NUL\253\SOH\SOH\n\
+    \\amessage\CAN\STX \SOH(\tR\amessageJ\251i\n\
+    \\a\DC2\ENQ\NUL\NUL\152\STX\SOH\n\
     \\b\n\
     \\SOH\f\DC2\ETX\NUL\NUL\DC2\n\
     \\b\n\
@@ -7552,9 +7937,8 @@ packedFileDescriptor
     \\ENQ\EOT\EOT\STX\v\SOH\DC2\ETXH\t\EM\n\
     \\f\n\
     \\ENQ\EOT\EOT\STX\v\ETX\DC2\ETXH\FS\RS\n\
-    \\n\
-    \\n\
-    \\STX\EOT\ENQ\DC2\EOTK\NULv\SOH\n\
+    \\v\n\
+    \\STX\EOT\ENQ\DC2\ENQK\NUL\137\SOH\SOH\n\
     \\n\
     \\n\
     \\ETX\EOT\ENQ\SOH\DC2\ETXK\b\NAK\n\
@@ -7758,160 +8142,232 @@ packedFileDescriptor
     \\ENQ\EOT\ENQ\STX\NAK\SOH\DC2\ETXu\SYN%\n\
     \\f\n\
     \\ENQ\EOT\ENQ\STX\NAK\ETX\DC2\ETXu(*\n\
-    \\166\STX\n\
-    \\STX\EOT\ACK\DC2\ENQ}\NUL\130\SOH\SOH\SUB\152\STX Phase 4 Sprint 4.42: exactly one device route is populated, never both.\n\
+    \\169\ENQ\n\
+    \\EOT\EOT\ENQ\STX\SYN\DC2\EOT\128\SOH\STX5\SUB\154\ENQ Phase 7 Sprint 7.31: the verified conversation prefix the engine runs\n\
+    \ against, and what the daemon decided about the engine's KV state for it.\n\
+    \\n\
+    \ The retired message carried only input_text, so an adapter received the\n\
+    \ latest prompt and nothing else: a multi-turn context was executed as a\n\
+    \ series of unrelated single-turn requests, and the prefix hash the request\n\
+    \ already carried was compared against a bookkeeping map that no engine state\n\
+    \ corresponded to. The prefix here is the canonical ordered projection the\n\
+    \ daemon reconstructed from the durable conversation log and verified against\n\
+    \ conversation_log_offset and prefix_hash before the engine was reached.\n\
+    \\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\SYN\EOT\DC2\EOT\128\SOH\STX\n\
+    \\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\SYN\ACK\DC2\EOT\128\SOH\v\ESC\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\SYN\SOH\DC2\EOT\128\SOH\FS/\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\SYN\ETX\DC2\EOT\128\SOH24\n\
+    \\161\SOH\n\
+    \\EOT\EOT\ENQ\STX\ETB\DC2\EOT\131\SOH\STX'\SUB\146\SOH The canonical projection hash of exactly the turns above. An adapter that\n\
+    \ wants to key its own state keys it on this, never on the prompt text.\n\
+    \\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\ETB\ENQ\DC2\EOT\131\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\ETB\SOH\DC2\EOT\131\SOH\t!\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\ETB\ETX\DC2\EOT\131\SOH$&\n\
+    \\134\STX\n\
+    \\EOT\EOT\ENQ\STX\CAN\DC2\EOT\136\SOH\STX#\SUB\247\SOH \"reuse\" when the daemon established that this engine already holds state\n\
+    \ for that exact prefix, \"replay\" when the prefix must be re-fed. A backend\n\
+    \ with no reusable KV state always receives \"replay\"; it never receives a\n\
+    \ reuse it cannot honour.\n\
+    \\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\CAN\ENQ\DC2\EOT\136\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\CAN\SOH\DC2\EOT\136\SOH\t\GS\n\
+    \\r\n\
+    \\ENQ\EOT\ENQ\STX\CAN\ETX\DC2\EOT\136\SOH \"\n\
+    \W\n\
+    \\STX\EOT\ACK\DC2\ACK\140\SOH\NUL\145\SOH\SOH\SUBI Phase 7 Sprint 7.31: one turn of the reconstructed conversation prefix.\n\
+    \\n\
+    \\v\n\
+    \\ETX\EOT\ACK\SOH\DC2\EOT\140\SOH\b\CAN\n\
+    \\135\SOH\n\
+    \\EOT\EOT\ACK\STX\NUL\DC2\EOT\143\SOH\STX\DC2\SUBy \"user\" or \"assistant\". The daemon assigns this from the durable event\n\
+    \ type; an adapter does not infer it from content.\n\
+    \\n\
+    \\r\n\
+    \\ENQ\EOT\ACK\STX\NUL\ENQ\DC2\EOT\143\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\ACK\STX\NUL\SOH\DC2\EOT\143\SOH\t\r\n\
+    \\r\n\
+    \\ENQ\EOT\ACK\STX\NUL\ETX\DC2\EOT\143\SOH\DLE\DC1\n\
+    \\f\n\
+    \\EOT\EOT\ACK\STX\SOH\DC2\EOT\144\SOH\STX\DC2\n\
+    \\r\n\
+    \\ENQ\EOT\ACK\STX\SOH\ENQ\DC2\EOT\144\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\ACK\STX\SOH\SOH\DC2\EOT\144\SOH\t\r\n\
+    \\r\n\
+    \\ENQ\EOT\ACK\STX\SOH\ETX\DC2\EOT\144\SOH\DLE\DC1\n\
+    \\167\STX\n\
+    \\STX\EOT\a\DC2\ACK\152\SOH\NUL\157\SOH\SOH\SUB\152\STX Phase 4 Sprint 4.42: exactly one device route is populated, never both.\n\
     \\n\
     \ A discriminated alternative makes the choice the sender already made visible\n\
     \ to the receiver. Two independent optional fields would let a caller populate\n\
     \ both and let a decoder guess which one meant it.\n\
     \\n\
-    \\n\
-    \\n\
-    \\ETX\EOT\ACK\SOH\DC2\ETX}\b\GS\n\
-    \\r\n\
-    \\EOT\EOT\ACK\b\NUL\DC2\ENQ~\STX\129\SOH\ETX\n\
-    \\f\n\
-    \\ENQ\EOT\ACK\b\NUL\SOH\DC2\ETX~\b\r\n\
     \\v\n\
-    \\EOT\EOT\ACK\STX\NUL\DC2\ETX\DEL\EOT(\n\
-    \\f\n\
-    \\ENQ\EOT\ACK\STX\NUL\ACK\DC2\ETX\DEL\EOT\NAK\n\
-    \\f\n\
-    \\ENQ\EOT\ACK\STX\NUL\SOH\DC2\ETX\DEL\SYN#\n\
-    \\f\n\
-    \\ENQ\EOT\ACK\STX\NUL\ETX\DC2\ETX\DEL&'\n\
-    \\f\n\
-    \\EOT\EOT\ACK\STX\SOH\DC2\EOT\128\SOH\EOT+\n\
+    \\ETX\EOT\a\SOH\DC2\EOT\152\SOH\b\GS\n\
+    \\SO\n\
+    \\EOT\EOT\a\b\NUL\DC2\ACK\153\SOH\STX\156\SOH\ETX\n\
     \\r\n\
-    \\ENQ\EOT\ACK\STX\SOH\ACK\DC2\EOT\128\SOH\EOT\SYN\n\
-    \\r\n\
-    \\ENQ\EOT\ACK\STX\SOH\SOH\DC2\EOT\128\SOH\ETB&\n\
-    \\r\n\
-    \\ENQ\EOT\ACK\STX\SOH\ETX\DC2\EOT\128\SOH)*\n\
+    \\ENQ\EOT\a\b\NUL\SOH\DC2\EOT\153\SOH\b\r\n\
     \\f\n\
-    \\STX\EOT\a\DC2\ACK\132\SOH\NUL\134\SOH\SOH\n\
+    \\EOT\EOT\a\STX\NUL\DC2\EOT\154\SOH\EOT(\n\
+    \\r\n\
+    \\ENQ\EOT\a\STX\NUL\ACK\DC2\EOT\154\SOH\EOT\NAK\n\
+    \\r\n\
+    \\ENQ\EOT\a\STX\NUL\SOH\DC2\EOT\154\SOH\SYN#\n\
+    \\r\n\
+    \\ENQ\EOT\a\STX\NUL\ETX\DC2\EOT\154\SOH&'\n\
+    \\f\n\
+    \\EOT\EOT\a\STX\SOH\DC2\EOT\155\SOH\EOT+\n\
+    \\r\n\
+    \\ENQ\EOT\a\STX\SOH\ACK\DC2\EOT\155\SOH\EOT\SYN\n\
+    \\r\n\
+    \\ENQ\EOT\a\STX\SOH\SOH\DC2\EOT\155\SOH\ETB&\n\
+    \\r\n\
+    \\ENQ\EOT\a\STX\SOH\ETX\DC2\EOT\155\SOH)*\n\
+    \\f\n\
+    \\STX\EOT\b\DC2\ACK\159\SOH\NUL\161\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\a\SOH\DC2\EOT\132\SOH\b\EM\n\
+    \\ETX\EOT\b\SOH\DC2\EOT\159\SOH\b\EM\n\
     \\f\n\
-    \\EOT\EOT\a\STX\NUL\DC2\EOT\133\SOH\STX\NAK\n\
+    \\EOT\EOT\b\STX\NUL\DC2\EOT\160\SOH\STX\NAK\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\NUL\ENQ\DC2\EOT\133\SOH\STX\a\n\
+    \\ENQ\EOT\b\STX\NUL\ENQ\DC2\EOT\160\SOH\STX\a\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\NUL\SOH\DC2\EOT\133\SOH\b\DLE\n\
+    \\ENQ\EOT\b\STX\NUL\SOH\DC2\EOT\160\SOH\b\DLE\n\
     \\r\n\
-    \\ENQ\EOT\a\STX\NUL\ETX\DC2\EOT\133\SOH\DC3\DC4\n\
+    \\ENQ\EOT\b\STX\NUL\ETX\DC2\EOT\160\SOH\DC3\DC4\n\
     \\f\n\
-    \\STX\EOT\b\DC2\ACK\136\SOH\NUL\139\SOH\SOH\n\
+    \\STX\EOT\t\DC2\ACK\163\SOH\NUL\166\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\b\SOH\DC2\EOT\136\SOH\b\SUB\n\
+    \\ETX\EOT\t\SOH\DC2\EOT\163\SOH\b\SUB\n\
     \\f\n\
-    \\EOT\EOT\b\STX\NUL\DC2\EOT\137\SOH\STX\NAK\n\
+    \\EOT\EOT\t\STX\NUL\DC2\EOT\164\SOH\STX\NAK\n\
     \\r\n\
-    \\ENQ\EOT\b\STX\NUL\ENQ\DC2\EOT\137\SOH\STX\a\n\
+    \\ENQ\EOT\t\STX\NUL\ENQ\DC2\EOT\164\SOH\STX\a\n\
     \\r\n\
-    \\ENQ\EOT\b\STX\NUL\SOH\DC2\EOT\137\SOH\b\DLE\n\
+    \\ENQ\EOT\t\STX\NUL\SOH\DC2\EOT\164\SOH\b\DLE\n\
     \\r\n\
-    \\ENQ\EOT\b\STX\NUL\ETX\DC2\EOT\137\SOH\DC3\DC4\n\
+    \\ENQ\EOT\t\STX\NUL\ETX\DC2\EOT\164\SOH\DC3\DC4\n\
     \\f\n\
-    \\EOT\EOT\b\STX\SOH\DC2\EOT\138\SOH\STX\ETB\n\
+    \\EOT\EOT\t\STX\SOH\DC2\EOT\165\SOH\STX\ETB\n\
     \\r\n\
-    \\ENQ\EOT\b\STX\SOH\ENQ\DC2\EOT\138\SOH\STX\a\n\
+    \\ENQ\EOT\t\STX\SOH\ENQ\DC2\EOT\165\SOH\STX\a\n\
     \\r\n\
-    \\ENQ\EOT\b\STX\SOH\SOH\DC2\EOT\138\SOH\b\DC2\n\
+    \\ENQ\EOT\t\STX\SOH\SOH\DC2\EOT\165\SOH\b\DC2\n\
     \\r\n\
-    \\ENQ\EOT\b\STX\SOH\ETX\DC2\EOT\138\SOH\NAK\SYN\n\
+    \\ENQ\EOT\t\STX\SOH\ETX\DC2\EOT\165\SOH\NAK\SYN\n\
     \\204\SOH\n\
-    \\STX\EOT\t\DC2\ACK\144\SOH\NUL\150\SOH\SOH\SUB\189\SOH The shape the cache term was computed from, carried to the engine so it runs\n\
+    \\STX\EOT\n\
+    \\DC2\ACK\171\SOH\NUL\177\SOH\SOH\SUB\189\SOH The shape the cache term was computed from, carried to the engine so it runs\n\
     \ the execution the model was admitted against rather than a number that was\n\
     \ never compared against a machine.\n\
     \\n\
     \\v\n\
-    \\ETX\EOT\t\SOH\DC2\EOT\144\SOH\b\ESC\n\
-    \\f\n\
-    \\EOT\EOT\t\STX\NUL\DC2\EOT\145\SOH\STX\ESC\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\NUL\ENQ\DC2\EOT\145\SOH\STX\a\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\NUL\SOH\DC2\EOT\145\SOH\b\SYN\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\NUL\ETX\DC2\EOT\145\SOH\EM\SUB\n\
-    \\f\n\
-    \\EOT\EOT\t\STX\SOH\DC2\EOT\146\SOH\STX\ETB\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\SOH\ENQ\DC2\EOT\146\SOH\STX\a\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\SOH\SOH\DC2\EOT\146\SOH\b\DC2\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\SOH\ETX\DC2\EOT\146\SOH\NAK\SYN\n\
-    \\f\n\
-    \\EOT\EOT\t\STX\STX\DC2\EOT\147\SOH\STX\GS\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\STX\ENQ\DC2\EOT\147\SOH\STX\a\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\STX\SOH\DC2\EOT\147\SOH\b\CAN\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\STX\ETX\DC2\EOT\147\SOH\ESC\FS\n\
-    \\f\n\
-    \\EOT\EOT\t\STX\ETX\DC2\EOT\148\SOH\STX \n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\ETX\ENQ\DC2\EOT\148\SOH\STX\a\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\ETX\SOH\DC2\EOT\148\SOH\b\ESC\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\ETX\ETX\DC2\EOT\148\SOH\RS\US\n\
-    \\f\n\
-    \\EOT\EOT\t\STX\EOT\DC2\EOT\149\SOH\STX$\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\EOT\ENQ\DC2\EOT\149\SOH\STX\ACK\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\EOT\SOH\DC2\EOT\149\SOH\a\US\n\
-    \\r\n\
-    \\ENQ\EOT\t\STX\EOT\ETX\DC2\EOT\149\SOH\"#\n\
-    \\f\n\
-    \\STX\EOT\n\
-    \\DC2\ACK\152\SOH\NUL\173\SOH\SOH\n\
-    \\v\n\
     \\ETX\EOT\n\
-    \\SOH\DC2\EOT\152\SOH\b\SYN\n\
+    \\SOH\DC2\EOT\171\SOH\b\ESC\n\
     \\f\n\
     \\EOT\EOT\n\
-    \\STX\NUL\DC2\EOT\153\SOH\STX\EM\n\
+    \\STX\NUL\DC2\EOT\172\SOH\STX\ESC\n\
     \\r\n\
     \\ENQ\EOT\n\
-    \\STX\NUL\ENQ\DC2\EOT\153\SOH\STX\b\n\
+    \\STX\NUL\ENQ\DC2\EOT\172\SOH\STX\a\n\
     \\r\n\
     \\ENQ\EOT\n\
-    \\STX\NUL\SOH\DC2\EOT\153\SOH\t\DC4\n\
+    \\STX\NUL\SOH\DC2\EOT\172\SOH\b\SYN\n\
     \\r\n\
     \\ENQ\EOT\n\
-    \\STX\NUL\ETX\DC2\EOT\153\SOH\ETB\CAN\n\
+    \\STX\NUL\ETX\DC2\EOT\172\SOH\EM\SUB\n\
     \\f\n\
     \\EOT\EOT\n\
-    \\STX\SOH\DC2\EOT\154\SOH\STX\CAN\n\
+    \\STX\SOH\DC2\EOT\173\SOH\STX\ETB\n\
     \\r\n\
     \\ENQ\EOT\n\
-    \\STX\SOH\ENQ\DC2\EOT\154\SOH\STX\b\n\
+    \\STX\SOH\ENQ\DC2\EOT\173\SOH\STX\a\n\
     \\r\n\
     \\ENQ\EOT\n\
-    \\STX\SOH\SOH\DC2\EOT\154\SOH\t\DC3\n\
+    \\STX\SOH\SOH\DC2\EOT\173\SOH\b\DC2\n\
     \\r\n\
     \\ENQ\EOT\n\
-    \\STX\SOH\ETX\DC2\EOT\154\SOH\SYN\ETB\n\
+    \\STX\SOH\ETX\DC2\EOT\173\SOH\NAK\SYN\n\
     \\f\n\
     \\EOT\EOT\n\
-    \\STX\STX\DC2\EOT\155\SOH\STX\ESC\n\
+    \\STX\STX\DC2\EOT\174\SOH\STX\GS\n\
     \\r\n\
     \\ENQ\EOT\n\
-    \\STX\STX\ENQ\DC2\EOT\155\SOH\STX\b\n\
+    \\STX\STX\ENQ\DC2\EOT\174\SOH\STX\a\n\
     \\r\n\
     \\ENQ\EOT\n\
-    \\STX\STX\SOH\DC2\EOT\155\SOH\t\SYN\n\
+    \\STX\STX\SOH\DC2\EOT\174\SOH\b\CAN\n\
     \\r\n\
     \\ENQ\EOT\n\
-    \\STX\STX\ETX\DC2\EOT\155\SOH\EM\SUB\n\
+    \\STX\STX\ETX\DC2\EOT\174\SOH\ESC\FS\n\
+    \\f\n\
+    \\EOT\EOT\n\
+    \\STX\ETX\DC2\EOT\175\SOH\STX \n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\ETX\ENQ\DC2\EOT\175\SOH\STX\a\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\ETX\SOH\DC2\EOT\175\SOH\b\ESC\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\ETX\ETX\DC2\EOT\175\SOH\RS\US\n\
+    \\f\n\
+    \\EOT\EOT\n\
+    \\STX\EOT\DC2\EOT\176\SOH\STX$\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\EOT\ENQ\DC2\EOT\176\SOH\STX\ACK\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\EOT\SOH\DC2\EOT\176\SOH\a\US\n\
+    \\r\n\
+    \\ENQ\EOT\n\
+    \\STX\EOT\ETX\DC2\EOT\176\SOH\"#\n\
+    \\f\n\
+    \\STX\EOT\v\DC2\ACK\179\SOH\NUL\200\SOH\SOH\n\
+    \\v\n\
+    \\ETX\EOT\v\SOH\DC2\EOT\179\SOH\b\SYN\n\
+    \\f\n\
+    \\EOT\EOT\v\STX\NUL\DC2\EOT\180\SOH\STX\EM\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\NUL\ENQ\DC2\EOT\180\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\NUL\SOH\DC2\EOT\180\SOH\t\DC4\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\NUL\ETX\DC2\EOT\180\SOH\ETB\CAN\n\
+    \\f\n\
+    \\EOT\EOT\v\STX\SOH\DC2\EOT\181\SOH\STX\CAN\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\SOH\ENQ\DC2\EOT\181\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\SOH\SOH\DC2\EOT\181\SOH\t\DC3\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\SOH\ETX\DC2\EOT\181\SOH\SYN\ETB\n\
+    \\f\n\
+    \\EOT\EOT\v\STX\STX\DC2\EOT\182\SOH\STX\ESC\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\STX\ENQ\DC2\EOT\182\SOH\STX\b\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\STX\SOH\DC2\EOT\182\SOH\t\SYN\n\
+    \\r\n\
+    \\ENQ\EOT\v\STX\STX\ETX\DC2\EOT\182\SOH\EM\SUB\n\
     \\224\STX\n\
-    \\EOT\EOT\n\
-    \\STX\ETX\DC2\EOT\162\SOH\STX\CAN\SUB\209\STX Phase 4 Sprint 4.15: artifact families (source separation,\n\
+    \\EOT\EOT\v\STX\ETX\DC2\EOT\189\SOH\STX\CAN\SUB\209\STX Phase 4 Sprint 4.15: artifact families (source separation,\n\
     \ audio-to-MIDI, music transcription, image, video, audio generation,\n\
     \ OMR) write their generated bytes to the infernix-demo-objects MinIO\n\
     \ bucket and return the object reference (bucket/key) here. Text\n\
@@ -7919,17 +8375,13 @@ packedFileDescriptor
     \ output_text.\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ETX\ENQ\DC2\EOT\162\SOH\STX\b\n\
+    \\ENQ\EOT\v\STX\ETX\ENQ\DC2\EOT\189\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ETX\SOH\DC2\EOT\162\SOH\t\DC3\n\
+    \\ENQ\EOT\v\STX\ETX\SOH\DC2\EOT\189\SOH\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\ETX\ETX\DC2\EOT\162\SOH\SYN\ETB\n\
+    \\ENQ\EOT\v\STX\ETX\ETX\DC2\EOT\189\SOH\SYN\ETB\n\
     \\154\EOT\n\
-    \\EOT\EOT\n\
-    \\STX\EOT\DC2\EOT\172\SOH\STX5\SUB\139\EOT Phase 4 Sprint 4.42: the conformance acknowledgement.\n\
+    \\EOT\EOT\v\STX\EOT\DC2\EOT\199\SOH\STX5\SUB\139\EOT Phase 4 Sprint 4.42: the conformance acknowledgement.\n\
     \\n\
     \ A limit that was set and a limit the running image fits under are different\n\
     \ claims, and only the second is evidence that this execution is bounded. The\n\
@@ -7940,16 +8392,13 @@ packedFileDescriptor
     \ classify.\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\EOT\ACK\DC2\EOT\172\SOH\STX\CAN\n\
+    \\ENQ\EOT\v\STX\EOT\ACK\DC2\EOT\199\SOH\STX\CAN\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\EOT\SOH\DC2\EOT\172\SOH\EM0\n\
+    \\ENQ\EOT\v\STX\EOT\SOH\DC2\EOT\199\SOH\EM0\n\
     \\r\n\
-    \\ENQ\EOT\n\
-    \\STX\EOT\ETX\DC2\EOT\172\SOH34\n\
+    \\ENQ\EOT\v\STX\EOT\ETX\DC2\EOT\199\SOH34\n\
     \\241\ETX\n\
-    \\STX\EOT\v\DC2\ACK\183\SOH\NUL\186\SOH\SOH\SUB\226\ETX Phase 4 Sprint 4.42: the two values the engine read back from inside the\n\
+    \\STX\EOT\f\DC2\ACK\210\SOH\NUL\213\SOH\SOH\SUB\226\ETX Phase 4 Sprint 4.42: the two values the engine read back from inside the\n\
     \ process the limit binds, and deliberately nothing else.\n\
     \\n\
     \ The resource is not carried. The only consumer is the worker, which already\n\
@@ -7959,244 +8408,244 @@ packedFileDescriptor
     \ two-enumerations defect Sprint 4.38 deleted.\n\
     \\n\
     \\v\n\
-    \\ETX\EOT\v\SOH\DC2\EOT\183\SOH\b\RS\n\
+    \\ETX\EOT\f\SOH\DC2\EOT\210\SOH\b\RS\n\
     \\f\n\
-    \\EOT\EOT\v\STX\NUL\DC2\EOT\184\SOH\STX\ETB\n\
+    \\EOT\EOT\f\STX\NUL\DC2\EOT\211\SOH\STX\ETB\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\NUL\ENQ\DC2\EOT\184\SOH\STX\a\n\
+    \\ENQ\EOT\f\STX\NUL\ENQ\DC2\EOT\211\SOH\STX\a\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\NUL\SOH\DC2\EOT\184\SOH\b\DC2\n\
+    \\ENQ\EOT\f\STX\NUL\SOH\DC2\EOT\211\SOH\b\DC2\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\NUL\ETX\DC2\EOT\184\SOH\NAK\SYN\n\
+    \\ENQ\EOT\f\STX\NUL\ETX\DC2\EOT\211\SOH\NAK\SYN\n\
     \\f\n\
-    \\EOT\EOT\v\STX\SOH\DC2\EOT\185\SOH\STX\ETB\n\
+    \\EOT\EOT\f\STX\SOH\DC2\EOT\212\SOH\STX\ETB\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\SOH\ENQ\DC2\EOT\185\SOH\STX\a\n\
+    \\ENQ\EOT\f\STX\SOH\ENQ\DC2\EOT\212\SOH\STX\a\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\SOH\SOH\DC2\EOT\185\SOH\b\DC2\n\
+    \\ENQ\EOT\f\STX\SOH\SOH\DC2\EOT\212\SOH\b\DC2\n\
     \\r\n\
-    \\ENQ\EOT\v\STX\SOH\ETX\DC2\EOT\185\SOH\NAK\SYN\n\
+    \\ENQ\EOT\f\STX\SOH\ETX\DC2\EOT\212\SOH\NAK\SYN\n\
     \\f\n\
-    \\STX\EOT\f\DC2\ACK\188\SOH\NUL\194\SOH\SOH\n\
+    \\STX\EOT\r\DC2\ACK\215\SOH\NUL\221\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\f\SOH\DC2\EOT\188\SOH\b\NAK\n\
+    \\ETX\EOT\r\SOH\DC2\EOT\215\SOH\b\NAK\n\
     \\SO\n\
-    \\EOT\EOT\f\b\NUL\DC2\ACK\189\SOH\STX\193\SOH\ETX\n\
+    \\EOT\EOT\r\b\NUL\DC2\ACK\216\SOH\STX\220\SOH\ETX\n\
     \\r\n\
-    \\ENQ\EOT\f\b\NUL\SOH\DC2\EOT\189\SOH\b\SO\n\
+    \\ENQ\EOT\r\b\NUL\SOH\DC2\EOT\216\SOH\b\SO\n\
     \\f\n\
-    \\EOT\EOT\f\STX\NUL\DC2\EOT\190\SOH\EOT\GS\n\
+    \\EOT\EOT\r\STX\NUL\DC2\EOT\217\SOH\EOT\GS\n\
     \\r\n\
-    \\ENQ\EOT\f\STX\NUL\ENQ\DC2\EOT\190\SOH\EOT\n\
+    \\ENQ\EOT\r\STX\NUL\ENQ\DC2\EOT\217\SOH\EOT\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\f\STX\NUL\SOH\DC2\EOT\190\SOH\v\CAN\n\
+    \\ENQ\EOT\r\STX\NUL\SOH\DC2\EOT\217\SOH\v\CAN\n\
     \\r\n\
-    \\ENQ\EOT\f\STX\NUL\ETX\DC2\EOT\190\SOH\ESC\FS\n\
+    \\ENQ\EOT\r\STX\NUL\ETX\DC2\EOT\217\SOH\ESC\FS\n\
     \\f\n\
-    \\EOT\EOT\f\STX\SOH\DC2\EOT\191\SOH\EOT\SUB\n\
+    \\EOT\EOT\r\STX\SOH\DC2\EOT\218\SOH\EOT\SUB\n\
     \\r\n\
-    \\ENQ\EOT\f\STX\SOH\ENQ\DC2\EOT\191\SOH\EOT\n\
+    \\ENQ\EOT\r\STX\SOH\ENQ\DC2\EOT\218\SOH\EOT\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\f\STX\SOH\SOH\DC2\EOT\191\SOH\v\NAK\n\
+    \\ENQ\EOT\r\STX\SOH\SOH\DC2\EOT\218\SOH\v\NAK\n\
     \\r\n\
-    \\ENQ\EOT\f\STX\SOH\ETX\DC2\EOT\191\SOH\CAN\EM\n\
+    \\ENQ\EOT\r\STX\SOH\ETX\DC2\EOT\218\SOH\CAN\EM\n\
     \\f\n\
-    \\EOT\EOT\f\STX\STX\DC2\EOT\192\SOH\EOT'\n\
+    \\EOT\EOT\r\STX\STX\DC2\EOT\219\SOH\EOT'\n\
     \\r\n\
-    \\ENQ\EOT\f\STX\STX\ACK\DC2\EOT\192\SOH\EOT\DC2\n\
+    \\ENQ\EOT\r\STX\STX\ACK\DC2\EOT\219\SOH\EOT\DC2\n\
     \\r\n\
-    \\ENQ\EOT\f\STX\STX\SOH\DC2\EOT\192\SOH\DC3\"\n\
+    \\ENQ\EOT\r\STX\STX\SOH\DC2\EOT\219\SOH\DC3\"\n\
     \\r\n\
-    \\ENQ\EOT\f\STX\STX\ETX\DC2\EOT\192\SOH%&\n\
+    \\ENQ\EOT\r\STX\STX\ETX\DC2\EOT\219\SOH%&\n\
     \\f\n\
-    \\STX\EOT\r\DC2\ACK\196\SOH\NUL\205\SOH\SOH\n\
+    \\STX\EOT\SO\DC2\ACK\223\SOH\NUL\232\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\r\SOH\DC2\EOT\196\SOH\b\SYN\n\
+    \\ETX\EOT\SO\SOH\DC2\EOT\223\SOH\b\SYN\n\
     \\SO\n\
-    \\EOT\EOT\r\b\NUL\DC2\ACK\197\SOH\STX\204\SOH\ETX\n\
+    \\EOT\EOT\SO\b\NUL\DC2\ACK\224\SOH\STX\231\SOH\ETX\n\
     \\r\n\
-    \\ENQ\EOT\r\b\NUL\SOH\DC2\EOT\197\SOH\b\r\n\
+    \\ENQ\EOT\SO\b\NUL\SOH\DC2\EOT\224\SOH\b\r\n\
     \\f\n\
-    \\EOT\EOT\r\STX\NUL\DC2\EOT\198\SOH\EOT=\n\
+    \\EOT\EOT\SO\STX\NUL\DC2\EOT\225\SOH\EOT=\n\
     \\r\n\
-    \\ENQ\EOT\r\STX\NUL\ACK\DC2\EOT\198\SOH\EOT\FS\n\
+    \\ENQ\EOT\SO\STX\NUL\ACK\DC2\EOT\225\SOH\EOT\FS\n\
     \\r\n\
-    \\ENQ\EOT\r\STX\NUL\SOH\DC2\EOT\198\SOH\GS8\n\
+    \\ENQ\EOT\SO\STX\NUL\SOH\DC2\EOT\225\SOH\GS8\n\
     \\r\n\
-    \\ENQ\EOT\r\STX\NUL\ETX\DC2\EOT\198\SOH;<\n\
+    \\ENQ\EOT\SO\STX\NUL\ETX\DC2\EOT\225\SOH;<\n\
     \\151\STX\n\
-    \\EOT\EOT\r\STX\SOH\DC2\EOT\203\SOH\EOTB\SUB\136\STX Phase 4 Sprint 4.39: a model whose memory requirement could not be\n\
+    \\EOT\EOT\SO\STX\SOH\DC2\EOT\230\SOH\EOTB\SUB\136\STX Phase 4 Sprint 4.39: a model whose memory requirement could not be\n\
     \ derived from its own artifact is a distinct terminal outcome from one\n\
     \ whose requirement exceeded a limit. It carries no quantity, because the\n\
     \ quantity is exactly what could not be established.\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\r\STX\SOH\ACK\DC2\EOT\203\SOH\EOT\US\n\
+    \\ENQ\EOT\SO\STX\SOH\ACK\DC2\EOT\230\SOH\EOT\US\n\
     \\r\n\
-    \\ENQ\EOT\r\STX\SOH\SOH\DC2\EOT\203\SOH =\n\
+    \\ENQ\EOT\SO\STX\SOH\SOH\DC2\EOT\230\SOH =\n\
     \\r\n\
-    \\ENQ\EOT\r\STX\SOH\ETX\DC2\EOT\203\SOH@A\n\
+    \\ENQ\EOT\SO\STX\SOH\ETX\DC2\EOT\230\SOH@A\n\
     \\f\n\
-    \\STX\EOT\SO\DC2\ACK\207\SOH\NUL\211\SOH\SOH\n\
+    \\STX\EOT\SI\DC2\ACK\234\SOH\NUL\238\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\SO\SOH\DC2\EOT\207\SOH\b#\n\
+    \\ETX\EOT\SI\SOH\DC2\EOT\234\SOH\b#\n\
     \\f\n\
-    \\EOT\EOT\SO\STX\NUL\DC2\EOT\208\SOH\STX\SYN\n\
+    \\EOT\EOT\SI\STX\NUL\DC2\EOT\235\SOH\STX\SYN\n\
     \\r\n\
-    \\ENQ\EOT\SO\STX\NUL\ENQ\DC2\EOT\208\SOH\STX\b\n\
+    \\ENQ\EOT\SI\STX\NUL\ENQ\DC2\EOT\235\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\SO\STX\NUL\SOH\DC2\EOT\208\SOH\t\DC1\n\
+    \\ENQ\EOT\SI\STX\NUL\SOH\DC2\EOT\235\SOH\t\DC1\n\
     \\r\n\
-    \\ENQ\EOT\SO\STX\NUL\ETX\DC2\EOT\208\SOH\DC4\NAK\n\
+    \\ENQ\EOT\SI\STX\NUL\ETX\DC2\EOT\235\SOH\DC4\NAK\n\
     \\f\n\
-    \\EOT\EOT\SO\STX\SOH\DC2\EOT\209\SOH\STX\ESC\n\
+    \\EOT\EOT\SI\STX\SOH\DC2\EOT\236\SOH\STX\ESC\n\
     \\r\n\
-    \\ENQ\EOT\SO\STX\SOH\ENQ\DC2\EOT\209\SOH\STX\b\n\
+    \\ENQ\EOT\SI\STX\SOH\ENQ\DC2\EOT\236\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\SO\STX\SOH\SOH\DC2\EOT\209\SOH\t\SYN\n\
+    \\ENQ\EOT\SI\STX\SOH\SOH\DC2\EOT\236\SOH\t\SYN\n\
     \\r\n\
-    \\ENQ\EOT\SO\STX\SOH\ETX\DC2\EOT\209\SOH\EM\SUB\n\
+    \\ENQ\EOT\SI\STX\SOH\ETX\DC2\EOT\236\SOH\EM\SUB\n\
     \\f\n\
-    \\EOT\EOT\SO\STX\STX\DC2\EOT\210\SOH\STX\DC4\n\
+    \\EOT\EOT\SI\STX\STX\DC2\EOT\237\SOH\STX\DC4\n\
     \\r\n\
-    \\ENQ\EOT\SO\STX\STX\ENQ\DC2\EOT\210\SOH\STX\b\n\
+    \\ENQ\EOT\SI\STX\STX\ENQ\DC2\EOT\237\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\SO\STX\STX\SOH\DC2\EOT\210\SOH\t\SI\n\
+    \\ENQ\EOT\SI\STX\STX\SOH\DC2\EOT\237\SOH\t\SI\n\
     \\r\n\
-    \\ENQ\EOT\SO\STX\STX\ETX\DC2\EOT\210\SOH\DC2\DC3\n\
+    \\ENQ\EOT\SI\STX\STX\ETX\DC2\EOT\237\SOH\DC2\DC3\n\
     \\f\n\
-    \\STX\EOT\SI\DC2\ACK\213\SOH\NUL\219\SOH\SOH\n\
+    \\STX\EOT\DLE\DC2\ACK\240\SOH\NUL\246\SOH\SOH\n\
     \\v\n\
-    \\ETX\EOT\SI\SOH\DC2\EOT\213\SOH\b \n\
+    \\ETX\EOT\DLE\SOH\DC2\EOT\240\SOH\b \n\
     \\f\n\
-    \\EOT\EOT\SI\STX\NUL\DC2\EOT\214\SOH\STX\SYN\n\
+    \\EOT\EOT\DLE\STX\NUL\DC2\EOT\241\SOH\STX\SYN\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\NUL\ENQ\DC2\EOT\214\SOH\STX\b\n\
+    \\ENQ\EOT\DLE\STX\NUL\ENQ\DC2\EOT\241\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\NUL\SOH\DC2\EOT\214\SOH\t\DC1\n\
+    \\ENQ\EOT\DLE\STX\NUL\SOH\DC2\EOT\241\SOH\t\DC1\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\NUL\ETX\DC2\EOT\214\SOH\DC4\NAK\n\
+    \\ENQ\EOT\DLE\STX\NUL\ETX\DC2\EOT\241\SOH\DC4\NAK\n\
     \\f\n\
-    \\EOT\EOT\SI\STX\SOH\DC2\EOT\215\SOH\STX\EM\n\
+    \\EOT\EOT\DLE\STX\SOH\DC2\EOT\242\SOH\STX\EM\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\SOH\ENQ\DC2\EOT\215\SOH\STX\a\n\
+    \\ENQ\EOT\DLE\STX\SOH\ENQ\DC2\EOT\242\SOH\STX\a\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\SOH\SOH\DC2\EOT\215\SOH\b\DC4\n\
+    \\ENQ\EOT\DLE\STX\SOH\SOH\DC2\EOT\242\SOH\b\DC4\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\SOH\ETX\DC2\EOT\215\SOH\ETB\CAN\n\
+    \\ENQ\EOT\DLE\STX\SOH\ETX\DC2\EOT\242\SOH\ETB\CAN\n\
     \\f\n\
-    \\EOT\EOT\SI\STX\STX\DC2\EOT\216\SOH\STX\SUB\n\
+    \\EOT\EOT\DLE\STX\STX\DC2\EOT\243\SOH\STX\SUB\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\STX\ENQ\DC2\EOT\216\SOH\STX\a\n\
+    \\ENQ\EOT\DLE\STX\STX\ENQ\DC2\EOT\243\SOH\STX\a\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\STX\SOH\DC2\EOT\216\SOH\b\NAK\n\
+    \\ENQ\EOT\DLE\STX\STX\SOH\DC2\EOT\243\SOH\b\NAK\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\STX\ETX\DC2\EOT\216\SOH\CAN\EM\n\
+    \\ENQ\EOT\DLE\STX\STX\ETX\DC2\EOT\243\SOH\CAN\EM\n\
     \\f\n\
-    \\EOT\EOT\SI\STX\ETX\DC2\EOT\217\SOH\STX\SYN\n\
+    \\EOT\EOT\DLE\STX\ETX\DC2\EOT\244\SOH\STX\SYN\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\ETX\ENQ\DC2\EOT\217\SOH\STX\b\n\
+    \\ENQ\EOT\DLE\STX\ETX\ENQ\DC2\EOT\244\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\ETX\SOH\DC2\EOT\217\SOH\t\DC1\n\
+    \\ENQ\EOT\DLE\STX\ETX\SOH\DC2\EOT\244\SOH\t\DC1\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\ETX\ETX\DC2\EOT\217\SOH\DC4\NAK\n\
+    \\ENQ\EOT\DLE\STX\ETX\ETX\DC2\EOT\244\SOH\DC4\NAK\n\
     \\f\n\
-    \\EOT\EOT\SI\STX\EOT\DC2\EOT\218\SOH\STX\DC4\n\
+    \\EOT\EOT\DLE\STX\EOT\DC2\EOT\245\SOH\STX\DC4\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\EOT\ENQ\DC2\EOT\218\SOH\STX\b\n\
+    \\ENQ\EOT\DLE\STX\EOT\ENQ\DC2\EOT\245\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\EOT\SOH\DC2\EOT\218\SOH\t\SI\n\
+    \\ENQ\EOT\DLE\STX\EOT\SOH\DC2\EOT\245\SOH\t\SI\n\
     \\r\n\
-    \\ENQ\EOT\SI\STX\EOT\ETX\DC2\EOT\218\SOH\DC2\DC3\n\
+    \\ENQ\EOT\DLE\STX\EOT\ETX\DC2\EOT\245\SOH\DC2\DC3\n\
     \\f\n\
-    \\STX\EOT\DLE\DC2\ACK\221\SOH\NUL\248\SOH\SOH\n\
+    \\STX\EOT\DC1\DC2\ACK\248\SOH\NUL\147\STX\SOH\n\
     \\v\n\
-    \\ETX\EOT\DLE\SOH\DC2\EOT\221\SOH\b\ETB\n\
+    \\ETX\EOT\DC1\SOH\DC2\EOT\248\SOH\b\ETB\n\
     \\f\n\
-    \\EOT\EOT\DLE\STX\NUL\DC2\EOT\222\SOH\STX\CAN\n\
+    \\EOT\EOT\DC1\STX\NUL\DC2\EOT\249\SOH\STX\CAN\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\NUL\ENQ\DC2\EOT\222\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\NUL\ENQ\DC2\EOT\249\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\NUL\SOH\DC2\EOT\222\SOH\t\DC3\n\
+    \\ENQ\EOT\DC1\STX\NUL\SOH\DC2\EOT\249\SOH\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\NUL\ETX\DC2\EOT\222\SOH\SYN\ETB\n\
+    \\ENQ\EOT\DC1\STX\NUL\ETX\DC2\EOT\249\SOH\SYN\ETB\n\
     \\f\n\
-    \\EOT\EOT\DLE\STX\SOH\DC2\EOT\223\SOH\STX\GS\n\
+    \\EOT\EOT\DC1\STX\SOH\DC2\EOT\250\SOH\STX\GS\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\SOH\ENQ\DC2\EOT\223\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\SOH\ENQ\DC2\EOT\250\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\SOH\SOH\DC2\EOT\223\SOH\t\CAN\n\
+    \\ENQ\EOT\DC1\STX\SOH\SOH\DC2\EOT\250\SOH\t\CAN\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\SOH\ETX\DC2\EOT\223\SOH\ESC\FS\n\
+    \\ENQ\EOT\DC1\STX\SOH\ETX\DC2\EOT\250\SOH\ESC\FS\n\
     \\f\n\
-    \\EOT\EOT\DLE\STX\STX\DC2\EOT\224\SOH\STX\ESC\n\
+    \\EOT\EOT\DC1\STX\STX\DC2\EOT\251\SOH\STX\ESC\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\STX\ENQ\DC2\EOT\224\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\STX\ENQ\DC2\EOT\251\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\STX\SOH\DC2\EOT\224\SOH\t\SYN\n\
+    \\ENQ\EOT\DC1\STX\STX\SOH\DC2\EOT\251\SOH\t\SYN\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\STX\ETX\DC2\EOT\224\SOH\EM\SUB\n\
+    \\ENQ\EOT\DC1\STX\STX\ETX\DC2\EOT\251\SOH\EM\SUB\n\
     \\f\n\
-    \\EOT\EOT\DLE\STX\ETX\DC2\EOT\225\SOH\STX\SUB\n\
+    \\EOT\EOT\DC1\STX\ETX\DC2\EOT\252\SOH\STX\SUB\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\ETX\ENQ\DC2\EOT\225\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\ETX\ENQ\DC2\EOT\252\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\ETX\SOH\DC2\EOT\225\SOH\t\NAK\n\
+    \\ENQ\EOT\DC1\STX\ETX\SOH\DC2\EOT\252\SOH\t\NAK\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\ETX\ETX\DC2\EOT\225\SOH\CAN\EM\n\
+    \\ENQ\EOT\DC1\STX\ETX\ETX\DC2\EOT\252\SOH\CAN\EM\n\
     \\f\n\
-    \\EOT\EOT\DLE\STX\EOT\DC2\EOT\226\SOH\STX\GS\n\
+    \\EOT\EOT\DC1\STX\EOT\DC2\EOT\253\SOH\STX\GS\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\EOT\ENQ\DC2\EOT\226\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\EOT\ENQ\DC2\EOT\253\SOH\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\EOT\SOH\DC2\EOT\226\SOH\t\CAN\n\
+    \\ENQ\EOT\DC1\STX\EOT\SOH\DC2\EOT\253\SOH\t\CAN\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\EOT\ETX\DC2\EOT\226\SOH\ESC\FS\n\
+    \\ENQ\EOT\DC1\STX\EOT\ETX\DC2\EOT\253\SOH\ESC\FS\n\
     \\246\SOH\n\
-    \\EOT\EOT\DLE\STX\ENQ\DC2\EOT\231\SOH\STX\DC4\SUB\231\SOH Supported status values: \"Completed\", \"Failed\", \"Cancelled\" (Phase 7\n\
+    \\EOT\EOT\DC1\STX\ENQ\DC2\EOT\130\STX\STX\DC4\SUB\231\SOH Supported status values: \"Completed\", \"Failed\", \"Cancelled\" (Phase 7\n\
     \ Sprint 7.8 adds Cancelled). Engine emits Cancelled when the bridge\n\
     \ observes a ConversationCancelEvent in the conversation log before the\n\
     \ inference completes.\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\ENQ\ENQ\DC2\EOT\231\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\ENQ\ENQ\DC2\EOT\130\STX\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\ENQ\SOH\DC2\EOT\231\SOH\t\SI\n\
+    \\ENQ\EOT\DC1\STX\ENQ\SOH\DC2\EOT\130\STX\t\SI\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\ENQ\ETX\DC2\EOT\231\SOH\DC2\DC3\n\
+    \\ENQ\EOT\DC1\STX\ENQ\ETX\DC2\EOT\130\STX\DC2\DC3\n\
     \\f\n\
-    \\EOT\EOT\DLE\STX\ACK\DC2\EOT\232\SOH\STX\FS\n\
+    \\EOT\EOT\DC1\STX\ACK\DC2\EOT\131\STX\STX\FS\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\ACK\ACK\DC2\EOT\232\SOH\STX\SI\n\
+    \\ENQ\EOT\DC1\STX\ACK\ACK\DC2\EOT\131\STX\STX\SI\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\ACK\SOH\DC2\EOT\232\SOH\DLE\ETB\n\
+    \\ENQ\EOT\DC1\STX\ACK\SOH\DC2\EOT\131\STX\DLE\ETB\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\ACK\ETX\DC2\EOT\232\SOH\SUB\ESC\n\
+    \\ENQ\EOT\DC1\STX\ACK\ETX\DC2\EOT\131\STX\SUB\ESC\n\
     \\f\n\
-    \\EOT\EOT\DLE\STX\a\DC2\EOT\233\SOH\STX\CAN\n\
+    \\EOT\EOT\DC1\STX\a\DC2\EOT\132\STX\STX\CAN\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\a\ENQ\DC2\EOT\233\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\a\ENQ\DC2\EOT\132\STX\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\a\SOH\DC2\EOT\233\SOH\t\DC3\n\
+    \\ENQ\EOT\DC1\STX\a\SOH\DC2\EOT\132\STX\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\a\ETX\DC2\EOT\233\SOH\SYN\ETB\n\
+    \\ENQ\EOT\DC1\STX\a\ETX\DC2\EOT\132\STX\SYN\ETB\n\
     \\186\STX\n\
-    \\EOT\EOT\DLE\STX\b\DC2\EOT\239\SOH\STX\CAN\SUB\171\STX Phase 7 Sprint 7.8: causal reference back to the user prompt message id\n\
+    \\EOT\EOT\DC1\STX\b\DC2\EOT\138\STX\STX\CAN\SUB\171\STX Phase 7 Sprint 7.8: causal reference back to the user prompt message id\n\
     \ that this result resolves. Used by the result-bridge to write a\n\
     \ ConversationInferenceResultEvent back to the per-context conversation\n\
     \ topic; producer-side dedup on the inference.result.<mode> topic is keyed\n\
     \ by this value.\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\b\ENQ\DC2\EOT\239\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\b\ENQ\DC2\EOT\138\STX\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\b\SOH\DC2\EOT\239\SOH\t\DC3\n\
+    \\ENQ\EOT\DC1\STX\b\SOH\DC2\EOT\138\STX\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\b\ETX\DC2\EOT\239\SOH\SYN\ETB\n\
+    \\ENQ\EOT\DC1\STX\b\ETX\DC2\EOT\138\STX\SYN\ETB\n\
     \\252\STX\n\
-    \\EOT\EOT\DLE\STX\t\DC2\EOT\246\SOH\STX\SYN\SUB\237\STX Phase 7 Sprint 7.8: per-context routing for the result-bridge. The\n\
+    \\EOT\EOT\DC1\STX\t\DC2\EOT\145\STX\STX\SYN\SUB\237\STX Phase 7 Sprint 7.8: per-context routing for the result-bridge. The\n\
     \ bridge consumes inference.result.<mode> with a Failover subscription\n\
     \ and writes a ConversationInferenceResultEvent to the per-context\n\
     \ conversation topic; user_id + context_id are the fields the bridge\n\
@@ -8204,40 +8653,40 @@ packedFileDescriptor
     \ separate request-id cache.\n\
     \\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\t\ENQ\DC2\EOT\246\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\t\ENQ\DC2\EOT\145\STX\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\t\SOH\DC2\EOT\246\SOH\t\DLE\n\
+    \\ENQ\EOT\DC1\STX\t\SOH\DC2\EOT\145\STX\t\DLE\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\t\ETX\DC2\EOT\246\SOH\DC3\NAK\n\
+    \\ENQ\EOT\DC1\STX\t\ETX\DC2\EOT\145\STX\DC3\NAK\n\
     \\f\n\
-    \\EOT\EOT\DLE\STX\n\
-    \\DC2\EOT\247\SOH\STX\EM\n\
+    \\EOT\EOT\DC1\STX\n\
+    \\DC2\EOT\146\STX\STX\EM\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\n\
-    \\ENQ\DC2\EOT\247\SOH\STX\b\n\
+    \\ENQ\EOT\DC1\STX\n\
+    \\ENQ\DC2\EOT\146\STX\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\n\
-    \\SOH\DC2\EOT\247\SOH\t\DC3\n\
+    \\ENQ\EOT\DC1\STX\n\
+    \\SOH\DC2\EOT\146\STX\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\DLE\STX\n\
-    \\ETX\DC2\EOT\247\SOH\SYN\CAN\n\
+    \\ENQ\EOT\DC1\STX\n\
+    \\ETX\DC2\EOT\146\STX\SYN\CAN\n\
     \\f\n\
-    \\STX\EOT\DC1\DC2\ACK\250\SOH\NUL\253\SOH\SOH\n\
+    \\STX\EOT\DC2\DC2\ACK\149\STX\NUL\152\STX\SOH\n\
     \\v\n\
-    \\ETX\EOT\DC1\SOH\DC2\EOT\250\SOH\b\NAK\n\
+    \\ETX\EOT\DC2\SOH\DC2\EOT\149\STX\b\NAK\n\
     \\f\n\
-    \\EOT\EOT\DC1\STX\NUL\DC2\EOT\251\SOH\STX\CAN\n\
+    \\EOT\EOT\DC2\STX\NUL\DC2\EOT\150\STX\STX\CAN\n\
     \\r\n\
-    \\ENQ\EOT\DC1\STX\NUL\ENQ\DC2\EOT\251\SOH\STX\b\n\
+    \\ENQ\EOT\DC2\STX\NUL\ENQ\DC2\EOT\150\STX\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DC1\STX\NUL\SOH\DC2\EOT\251\SOH\t\DC3\n\
+    \\ENQ\EOT\DC2\STX\NUL\SOH\DC2\EOT\150\STX\t\DC3\n\
     \\r\n\
-    \\ENQ\EOT\DC1\STX\NUL\ETX\DC2\EOT\251\SOH\SYN\ETB\n\
+    \\ENQ\EOT\DC2\STX\NUL\ETX\DC2\EOT\150\STX\SYN\ETB\n\
     \\f\n\
-    \\EOT\EOT\DC1\STX\SOH\DC2\EOT\252\SOH\STX\NAK\n\
+    \\EOT\EOT\DC2\STX\SOH\DC2\EOT\151\STX\STX\NAK\n\
     \\r\n\
-    \\ENQ\EOT\DC1\STX\SOH\ENQ\DC2\EOT\252\SOH\STX\b\n\
+    \\ENQ\EOT\DC2\STX\SOH\ENQ\DC2\EOT\151\STX\STX\b\n\
     \\r\n\
-    \\ENQ\EOT\DC1\STX\SOH\SOH\DC2\EOT\252\SOH\t\DLE\n\
+    \\ENQ\EOT\DC2\STX\SOH\SOH\DC2\EOT\151\STX\t\DLE\n\
     \\r\n\
-    \\ENQ\EOT\DC1\STX\SOH\ETX\DC2\EOT\252\SOH\DC3\DC4b\ACKproto3"
+    \\ENQ\EOT\DC2\STX\SOH\ETX\DC2\EOT\151\STX\DC3\DC4b\ACKproto3"

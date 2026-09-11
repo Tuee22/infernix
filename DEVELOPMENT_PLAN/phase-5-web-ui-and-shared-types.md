@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Active — Sprints 5.13 add implementation and validation work to this phase's existing scope. No remediation code or new validation result is claimed by this documentation update.
+**Status**: Active — Sprint 5.13 has validated code-side closure. Wave R5 is the remaining cohort gate.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md),
 [system-components.md](system-components.md),
@@ -12,15 +12,15 @@
 
 ## Phase Status
 
-Sprints 5.1–5.12 retain their closed headings and only their established scope. Static file containment and browser evidence require repair. Demo/Api.hs joins decoded paths beneath web/dist without enforcing containment; backend exposure is demonstrated by source inspection, while the deployed Gateway's handling of the payload needs direct verification. A retained Phase 5 accelerator attestation is missing.
+Sprints 5.1–5.12 retain their closed headings and only their established scope. Sprint 5.13 validates each decoded segment and canonicalizes the resolved path against the served root before any read, measures the deployed Gateway's own handling of the same payloads separately, and binds the served bundle and published route inventory to the source under validation. A retained Phase 5 accelerator attestation is missing.
 
 The missing Phase 5 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Remediation code-side closure is incomplete. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R5 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 5.13 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R5 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
-The PureScript SPA, Haskell-generated browser contracts, and routed Playwright harness exist. Sprint 5.13 owns backend and Gateway containment tests plus a browser bundle tied to the tested checkout and launcher. An encoded-path rejection by a Gateway alone cannot establish that the backend file handler is safe.
+The PureScript SPA, Haskell-generated browser contracts, and routed Playwright harness exist. Sprint 5.13 owns backend and Gateway containment tests plus a browser bundle tied to the tested checkout and launcher. An encoded-path rejection by a Gateway alone cannot establish that the backend file handler is safe, and canonicalization does not close the window between the check and the open.
 
 ## Substrate-Driven Demo Catalog Contract
 
@@ -519,12 +519,12 @@ None.
 
 ---
 
-## Sprint 5.13: Static Asset Containment and Source-Bound Browser Proof [Blocked]
+## Sprint 5.13: Static Asset Containment and Source-Bound Browser Proof [Active]
 
-**Status**: Blocked
-**Code-side closure**: Backend containment and browser baseline regressions pending.
+**Status**: Active
+**Code-side closure**: Segment validation and canonicalized containment at the read boundary, routed Gateway outcome measurement, and the source-bound served-bundle and route-inventory reconciliation are implemented.
 **Cohort gate**: Wave R5 — selected `apple-silicon` plus native `linux-cpu`.
-**Blocked by**: Sprint 4.50 code-side closure.
+**Blocked by**: nothing — Sprint 4.50 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Demo/Api.hs`, `web/playwright/inference.spec.js`, `web/playwright.config.js`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/development/testing_strategy.md`
 
@@ -561,12 +561,16 @@ being validated.
 
 ### Remaining Work
 
-Implement containment, establish the source-bound browser baseline, and recover or rerun the
-missing phase evidence. Hardware scheduling alone does not block subsequent implementation.
+Cohort gate only: retain Wave R5's selected `apple-silicon` plus native `linux-cpu` full-suite
+results against one frozen implementation, including the routed Gateway containment outcomes and
+the served-bundle digest reconciliation, and recover or replace the missing Phase 5 attestation.
+Apple hardware is unavailable on this Linux host. No new full-suite result is claimed.
+
+**Code-side evidence**: source `0ec9c57a65b1cc13cea47d6d236c79e8213342aa46aca2e428debb177a901538`; image `sha256:03f2a5e7ffd606d451e0f03aa3273ff5df95e5762784aa81354a162868f65b1b`; lint `.data/runtime/validation/run-CRlS7S/receipt.json`; unit `.data/runtime/validation/run-7cosnY/receipt.json`. Sprints 5.13 and 6.55 share this validated snapshot.
 
 ## Remaining Work
 
-Implement Sprints 5.13, pass their governed machine-independent gates, and retain Wave R5's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. No remediation implementation or new cohort result is supplied by this documentation change. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R5's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 5.13 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

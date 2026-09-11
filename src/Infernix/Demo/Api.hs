@@ -2,10 +2,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Infernix.Demo.Api
-  ( DemoApiOptions (..),
+  ( CacheMutationScope (..),
+    CacheRequestRefusal (..),
+    DemoApiOptions (..),
     DemoBridgeMode (..),
+    StaticAssetRefusal (..),
+    decodeCacheMutationScope,
     renderDispositionForMime,
+    resolveStaticAsset,
     runDemoApiServer,
+    staticAssetRefusalText,
   )
 where
 
@@ -13,22 +19,22 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, fromException, try)
 import Control.Monad (forM, unless)
 import Data.Aeson
-  ( FromJSON (parseJSON),
-    ToJSON,
-    Value,
-    decodeStrict',
+  ( ToJSON,
+    Value (Object, String),
+    decode,
     eitherDecode,
     encode,
     object,
-    withObject,
-    (.:?),
     (.=),
   )
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Aeson.Types (Pair)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.List (nub)
+import Data.List (isPrefixOf, nub)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
@@ -76,7 +82,15 @@ import Infernix.Objects.Presigned
   )
 import Infernix.Objects.Sts qualified as Sts
 import Infernix.Runtime
-  ( evictCache,
+  ( CacheEntryFacts (..),
+    CacheEntryReport (..),
+    CacheEntryState (..),
+    CacheOperationOutcome (..),
+    cacheEntryStateDetail,
+    cacheEntryStateIsReady,
+    cacheEntryStateLabel,
+    evictCache,
+    listCacheEntryReports,
     listCacheManifests,
     rebuildCache,
   )
@@ -92,6 +106,8 @@ import Infernix.Web.Contracts
     ContextId (..),
     ObjectRef (..),
     UserId (..),
+    boundedTextPreviewBytes,
+    boundedTextPreviewRangeEnd,
   )
 import Network.HTTP.Client
   ( RequestBody (RequestBodyLBS),
@@ -132,6 +148,7 @@ import Network.Wai
     Request,
     Response,
     ResponseReceived,
+    mapResponseHeaders,
     pathInfo,
     queryString,
     requestHeaders,
@@ -141,8 +158,8 @@ import Network.Wai
     strictRequestBody,
   )
 import Network.Wai.Handler.Warp (HostPreference, defaultSettings, runSettings, setHost, setPort)
-import System.Directory (doesDirectoryExist, doesFileExist)
-import System.FilePath (takeExtension, (</>))
+import System.Directory (canonicalizePath, doesFileExist)
+import System.FilePath (splitDirectories, takeExtension, (</>))
 import System.IO (hPutStrLn, stderr)
 
 data DemoApiOptions = DemoApiOptions
@@ -364,7 +381,7 @@ application options jwksCache realmConfig maybeClusterConfig maybeBucketsProvisi
           respond (textResponse status200 "ok")
     []
       | requestMethod request == methodGet && demoEnabled ->
-          serveStaticAsset options "index.html" respond
+          serveStaticSegments options ["index.html"] respond
     ["api", "publication"]
       | requestMethod request == methodGet && demoEnabled ->
           servePublication options respond
@@ -859,14 +876,29 @@ handleObjectsDownloadBytes jwksCache realmConfig request respond = do
                       objectReference = ObjectRef {objectBucket = bucket, objectKey = keyValue}
                       mimeType = fromMaybe "application/octet-stream" (lookupQueryText "mimeType" query)
                       disposition = renderDispositionForMime (ArtifactMimeType mimeType)
-                  getResult <- getMinioObjectBytes presigned objectReference
+                      -- Phase 7 Sprint 7.33: the preview intent is explicit.
+                      -- The full-download intent is the same authorized route
+                      -- without it, so a truncated preview always has an
+                      -- unbounded counterpart the caller can ask for by name.
+                      previewIntent = lookupQueryText "intent" query == Just "preview"
+                      maybeRangeEnd =
+                        if previewIntent then Just boundedTextPreviewRangeEnd else Nothing
+                  getResult <- getMinioObjectBytesBounded presigned maybeRangeEnd objectReference
                   case getResult of
                     Left err ->
                       respond (textResponse status502 ("object download failed: " <> err))
                     Right (404, _) ->
                       respond (textResponse status404 "object not found")
-                    Right (200, body) ->
-                      respond (objectBytesResponse mimeType disposition (downloadFilename keyValue) body)
+                    Right (code, body)
+                      | code == 200 || code == 206 ->
+                          respond
+                            ( boundedObjectBytesResponse
+                                previewIntent
+                                mimeType
+                                disposition
+                                (downloadFilename keyValue)
+                                body
+                            )
                     Right (code, _) ->
                       respond (textResponse status502 ("object download failed: MinIO HTTP " <> show code))
 
@@ -972,8 +1004,23 @@ putMinioObjectBytes config objectReference body = do
 -- | Server-side GET of an object's bytes against the internal MinIO endpoint.
 -- Returns @Right (status, body)@ on a completed HTTP exchange (so 404 is
 -- distinguishable from 200) and @Left@ on a transport failure.
-getMinioObjectBytes :: PresignedUrlConfig -> ObjectRef -> IO (Either String (Int, LazyByteString.ByteString))
-getMinioObjectBytes config objectReference = do
+-- | Phase 7 Sprint 7.33 — read an object, optionally stopping at the preview
+-- bound.
+--
+-- The retired preview read the whole object with 'httpLbs' and sliced the
+-- result, so a bounded preview of a multi-gigabyte artifact bought the whole
+-- artifact into the webapp's heap first. A ranged request stops the read at the
+-- object store instead, which is the only place stopping it costs nothing.
+--
+-- An object store that ignores the range header still exists, so the body is
+-- additionally truncated on arrival: the proxy is bounded whether or not the
+-- upstream cooperates.
+getMinioObjectBytesBounded ::
+  PresignedUrlConfig ->
+  Maybe Int ->
+  ObjectRef ->
+  IO (Either String (Int, LazyByteString.ByteString))
+getMinioObjectBytesBounded config maybeRangeEnd objectReference = do
   now <- getCurrentTime
   let signed =
         presignedUrlForRequest
@@ -983,13 +1030,77 @@ getMinioObjectBytes config objectReference = do
               presignedRequestObject = objectReference,
               presignedRequestNow = now
             }
+      rangeHeaders =
+        case maybeRangeEnd of
+          Nothing -> []
+          Just rangeEnd ->
+            [("Range", TextEncoding.encodeUtf8 ("bytes=0-" <> Text.pack (show rangeEnd)))]
   attempt <- try @SomeException $ do
     manager <- newManager defaultManagerSettings
     base <- parseRequest (Text.unpack (unPresignedUrl signed))
-    httpLbs (base {responseTimeout = responseTimeoutMicro 60000000}) manager
+    httpLbs
+      ( base
+          { responseTimeout = responseTimeoutMicro 60000000,
+            HttpClient.requestHeaders = HttpClient.requestHeaders base <> rangeHeaders
+          }
+      )
+      manager
   case attempt of
     Left err -> pure (Left (show err))
-    Right response -> pure (Right (statusCode (responseStatus response), responseBody response))
+    Right response ->
+      pure
+        ( Right
+            ( statusCode (responseStatus response),
+              boundResponseBody maybeRangeEnd (responseBody response)
+            )
+        )
+
+-- | Bound the body on arrival. A range the upstream honoured is already this
+-- short; one it ignored is cut here rather than forwarded.
+boundResponseBody :: Maybe Int -> LazyByteString.ByteString -> LazyByteString.ByteString
+boundResponseBody Nothing body = body
+boundResponseBody (Just rangeEnd) body =
+  LazyByteString.take (fromIntegral rangeEnd + 1) body
+
+-- | Phase 7 Sprint 7.33 — the preview response, truncated at the shared budget
+-- and saying so.
+--
+-- Truncation is decided by the one lookahead byte: a body longer than the
+-- budget means there was more to read. The lookahead is never part of what is
+-- returned, and the truncation flag is a header the browser reads rather than
+-- something it infers from a length it would have to trust.
+boundedObjectBytesResponse ::
+  Bool ->
+  Text ->
+  ArtifactRenderDisposition ->
+  Text ->
+  LazyByteString.ByteString ->
+  Response
+boundedObjectBytesResponse previewIntent mimeType disposition filename body
+  | not previewIntent = objectBytesResponse mimeType disposition filename body
+  | otherwise =
+      addPreviewTruncationHeader
+        truncated
+        (objectBytesResponse mimeType disposition filename bounded)
+  where
+    budget = fromIntegral boundedTextPreviewBytes
+    truncated = LazyByteString.length body > budget
+    bounded = LazyByteString.take budget body
+
+addPreviewTruncationHeader :: Bool -> Response -> Response
+addPreviewTruncationHeader truncated =
+  mapResponseHeaders
+    ( ( ( "X-Infernix-Preview-Truncated",
+          if truncated then "true" else "false"
+        )
+          :
+      )
+        . ( ( "X-Infernix-Preview-Byte-Budget",
+              ByteStringChar8.pack (show boundedTextPreviewBytes)
+            )
+              :
+          )
+    )
 
 -- | Build a byte-streaming response with the correct @Content-Type@ and
 -- @Content-Disposition@. Download-only artifacts force @attachment@; everything
@@ -1453,43 +1564,139 @@ renderDispositionForMime (ArtifactMimeType mimeType)
 
 data CacheMutation = EvictCache | RebuildCache
 
-newtype CacheMutationRequest = CacheMutationRequest
-  { requestedModelId :: Maybe Text.Text
-  }
+-- | Phase 9 Sprint 9.12 — what a cache mutation may select, decided before any
+-- effect.
+--
+-- The retired decoder returned @Maybe Text@ and mapped every decode failure to
+-- 'Nothing', which the mutation read as "all models". So an empty body, a
+-- truncated body, a JSON array, a typo in the field name, and a @null@ model id
+-- all selected every model on the machine — the widest possible scope, reached
+-- by the narrowest possible mistake, on an operation that deletes things.
+--
+-- All-model scope is now something a request says rather than something a
+-- decoder infers: an explicitly empty object selects all, an object with one
+-- nonempty string @modelId@ selects that model, and everything else is refused
+-- before selection.
+data CacheMutationScope
+  = AllConfiguredModels
+  | SingleModel Text.Text
+  deriving (Eq, Show)
 
-instance FromJSON CacheMutationRequest where
-  parseJSON = withObject "CacheMutationRequest" $ \value ->
-    CacheMutationRequest <$> value .:? "modelId"
+-- | Why a cache mutation request was refused. Each arm names what was wrong
+-- with the request; none of them widens the scope.
+data CacheRequestRefusal
+  = CacheRequestNotAnObject
+  | CacheRequestUnknownFields [Text.Text]
+  | CacheRequestModelIdNotAString
+  | CacheRequestModelIdEmpty
+  deriving (Eq, Show)
+
+cacheRequestRefusalText :: CacheRequestRefusal -> String
+cacheRequestRefusalText refusal =
+  case refusal of
+    CacheRequestNotAnObject ->
+      "cache mutation requires a JSON object body: {} selects every configured model, "
+        <> "and {\"modelId\": \"...\"} selects one"
+    CacheRequestUnknownFields fields ->
+      "cache mutation body carries unknown "
+        <> (if length fields == 1 then "field" else "fields")
+        <> ": "
+        <> Text.unpack (Text.intercalate ", " fields)
+    CacheRequestModelIdNotAString -> "cache mutation modelId must be a nonempty string"
+    CacheRequestModelIdEmpty -> "cache mutation modelId must not be empty"
+
+-- | Decode a cache mutation body into its explicit scope.
+decodeCacheMutationScope :: LazyByteString.ByteString -> Either CacheRequestRefusal CacheMutationScope
+decodeCacheMutationScope body =
+  case decode body of
+    Just (Object fields) -> scopeFromFields fields
+    _ -> Left CacheRequestNotAnObject
+
+scopeFromFields :: KeyMap.KeyMap Value -> Either CacheRequestRefusal CacheMutationScope
+scopeFromFields fields =
+  case unknownFields of
+    unknown : rest -> Left (CacheRequestUnknownFields (map Key.toText (unknown : rest)))
+    [] ->
+      case KeyMap.lookup "modelId" fields of
+        Nothing -> Right AllConfiguredModels
+        Just (String modelIdValue)
+          | Text.null (Text.strip modelIdValue) -> Left CacheRequestModelIdEmpty
+          | otherwise -> Right (SingleModel modelIdValue)
+        Just _ -> Left CacheRequestModelIdNotAString
+  where
+    unknownFields = [key | key <- KeyMap.keys fields, key /= "modelId"]
+
+cacheMutationModelId :: CacheMutationScope -> Maybe Text.Text
+cacheMutationModelId scope =
+  case scope of
+    AllConfiguredModels -> Nothing
+    SingleModel modelIdValue -> Just modelIdValue
 
 handleCacheMutation :: DemoApiOptions -> Request -> CacheMutation -> (Response -> IO responseReceived) -> IO responseReceived
 handleCacheMutation options request mutation respond = do
-  maybeModelId <- decodeModelId request
-  activeRuntimeMode <- currentDemoRuntimeMode options
+  body <- strictRequestBody request
+  case decodeCacheMutationScope body of
+    Left refusal ->
+      -- Refused before the runtime mode is read, before any model is selected,
+      -- and before any filesystem or object-store operation.
+      respond
+        ( jsonResponse
+            status400
+            (ErrorResponse "invalid_cache_request" (Text.pack (cacheRequestRefusalText refusal)))
+        )
+    Right scope -> do
+      activeRuntimeMode <- currentDemoRuntimeMode options
+      applyCacheMutation options mutation activeRuntimeMode (cacheMutationModelId scope) respond
+
+applyCacheMutation ::
+  DemoApiOptions ->
+  CacheMutation ->
+  RuntimeMode ->
+  Maybe Text.Text ->
+  (Response -> IO responseReceived) ->
+  IO responseReceived
+applyCacheMutation options mutation activeRuntimeMode maybeModelId respond =
   case mutation of
     EvictCache -> do
-      evictedCount <- evictCache (demoPaths options) activeRuntimeMode maybeModelId
+      outcomes <- evictCache (demoPaths options) activeRuntimeMode maybeModelId
       cachePayload <- buildCachePayload options activeRuntimeMode
       respond
         ( jsonResponse
             status200
-            (object ["evictedCount" .= evictedCount, "entries" .= cachePayload])
+            ( object
+                [ "selectedCount" .= length outcomes,
+                  "evictedCount" .= length (filter cacheOutcomeChanged outcomes),
+                  "outcomes" .= map cacheOutcomeValue outcomes,
+                  "entries" .= cachePayload
+                ]
+            )
         )
     RebuildCache -> do
-      rebuiltEntries <- rebuildCache (demoPaths options) activeRuntimeMode maybeModelId
+      outcomes <- rebuildCache (demoPaths options) activeRuntimeMode maybeModelId
       cachePayload <- buildCachePayload options activeRuntimeMode
       respond
         ( jsonResponse
             status200
-            (object ["rebuiltCount" .= length rebuiltEntries, "entries" .= cachePayload])
+            ( object
+                [ "selectedCount" .= length outcomes,
+                  "rebuiltCount" .= length (filter cacheOutcomeChanged outcomes),
+                  "outcomes" .= map cacheOutcomeValue outcomes,
+                  "entries" .= cachePayload
+                ]
+            )
         )
 
-decodeModelId :: Request -> IO (Maybe Text.Text)
-decodeModelId request = do
-  body <- strictRequestBody request
-  case decodeStrict' (LazyByteString.toStrict body) of
-    Just cacheRequest ->
-      pure (requestedModelId (cacheRequest :: CacheMutationRequest))
-    _ -> pure Nothing
+-- Phase 4 Sprint 4.50: a selected model is not a completed operation. Each
+-- outcome names the model it addressed and the state its cache is in, so a
+-- refused lease or an unobservable owner cannot be counted as a success.
+cacheOutcomeValue :: CacheOperationOutcome -> Value
+cacheOutcomeValue outcome =
+  object
+    [ "modelId" .= cacheOutcomeModelId outcome,
+      "cacheState" .= cacheEntryStateLabel (cacheOutcomeState outcome),
+      "cacheStateDetail" .= cacheEntryStateDetail (cacheOutcomeState outcome),
+      "changed" .= cacheOutcomeChanged outcome
+    ]
 
 servePublication :: DemoApiOptions -> (Response -> IO responseReceived) -> IO responseReceived
 servePublication options respond = do
@@ -1527,42 +1734,57 @@ currentDemoRuntimeMode options =
 
 buildCachePayload :: DemoApiOptions -> RuntimeMode -> IO [Value]
 buildCachePayload options runtimeMode = do
-  manifests <- listCacheManifests (demoPaths options) runtimeMode
-  mapM (cacheEntryValue options) manifests
+  reports <- listCacheEntryReports (demoPaths options) runtimeMode
+  pure (map cacheEntryValue reports)
 
-cacheEntryValue :: DemoApiOptions -> CacheManifest -> IO Value
-cacheEntryValue options manifest = do
-  let cacheRoot =
-        modelCacheRoot (demoPaths options)
-          </> Text.unpack (runtimeModeId (cacheRuntimeMode manifest))
-          </> Text.unpack (cacheModelId manifest)
-          </> "default"
-      maybeEngineBinding =
-        engineBindingForSelectedEngine
-          (cacheRuntimeMode manifest)
-          (cacheSelectedEngine manifest)
-  materialized <- doesDirectoryExist cacheRoot
-  pure
-    ( object
-        [ "runtimeMode" .= cacheRuntimeMode manifest,
-          "modelId" .= cacheModelId manifest,
-          "selectedEngine" .= cacheSelectedEngine manifest,
-          "durableSourceUri" .= cacheDurableSourceUri manifest,
-          "cacheKey" .= cacheCacheKey manifest,
-          "materialized" .= materialized,
-          "engineAdapterId" .= (engineBindingAdapterId <$> maybeEngineBinding),
-          "engineAdapterAvailability"
-            .= maybe
-              ("unsupported" :: String)
-              (const "available")
-              maybeEngineBinding,
-          "sourceArtifactManifestUri" .= sourceArtifactManifestUri manifest,
-          "sourceArtifactSelectionMode" .= ("engine-specific-direct-artifact" :: String),
-          "sourceArtifactAuthoritativeUri" .= cacheDurableSourceUri manifest,
-          "sourceArtifactAuthoritativeKind" .= ("bundle" :: String),
-          "sourceArtifactSelectedArtifacts" .= [object ["artifactKind" .= ("bundle" :: String), "uri" .= cacheDurableSourceUri manifest]]
-        ]
+-- Phase 4 Sprint 4.50: the payload reports the observed state of the cache the
+-- engine loads from, with its measured file and byte counts. The retired
+-- @materialized@ boolean was @doesDirectoryExist@ on a directory nothing read,
+-- so it answered @true@ for an empty tree and could not distinguish an
+-- unavailable cache owner from an empty cache.
+cacheEntryValue :: CacheEntryReport -> Value
+cacheEntryValue report =
+  object
+    ( [ "runtimeMode" .= cacheRuntimeMode manifest,
+        "modelId" .= cacheModelId manifest,
+        "selectedEngine" .= cacheSelectedEngine manifest,
+        "durableSourceUri" .= cacheDurableSourceUri manifest,
+        "cacheKey" .= cacheCacheKey manifest,
+        "cacheState" .= cacheEntryStateLabel state,
+        "cacheStateDetail" .= cacheEntryStateDetail state,
+        "verifiedReady" .= cacheEntryStateIsReady state,
+        "engineAdapterId" .= (engineBindingAdapterId <$> maybeEngineBinding),
+        "engineAdapterAvailability"
+          .= maybe
+            ("unsupported" :: String)
+            (const "available")
+            maybeEngineBinding,
+        "sourceArtifactManifestUri" .= sourceArtifactManifestUri manifest,
+        "sourceArtifactSelectionMode" .= ("engine-specific-direct-artifact" :: String),
+        "sourceArtifactAuthoritativeUri" .= cacheDurableSourceUri manifest,
+        "sourceArtifactAuthoritativeKind" .= ("bundle" :: String),
+        "sourceArtifactSelectedArtifacts" .= [object ["artifactKind" .= ("bundle" :: String), "uri" .= cacheDurableSourceUri manifest]]
+      ]
+        <> observedCounts state
     )
+  where
+    manifest = cacheReportManifest report
+    state = cacheReportState report
+    maybeEngineBinding =
+      engineBindingForSelectedEngine
+        (cacheRuntimeMode manifest)
+        (cacheSelectedEngine manifest)
+
+-- | Counts are reported only when they were measured. An unobservable owner
+-- publishes no count rather than a zero that reads as an empty cache.
+observedCounts :: CacheEntryState -> [Pair]
+observedCounts state =
+  case state of
+    CacheVerifiedReady facts ->
+      [ "observedFileCount" .= cacheEntryFileCount facts,
+        "observedBytes" .= cacheEntryBytes facts
+      ]
+    _ -> []
 
 -- Phase 7 Sprint 7.7 retires the @./.data/object-store/@ tree, so the
 -- cache-status payload no longer points at a synthetic local
@@ -1573,28 +1795,98 @@ sourceArtifactManifestUri :: CacheManifest -> Text.Text
 sourceArtifactManifestUri manifest =
   "minio://infernix-models/" <> cacheModelId manifest <> "/"
 
+-- Phase 5 Sprint 5.13: one decoding and canonicalization contract for every
+-- browser-supplied static path.
+--
+-- The retired form joined WAI's already-percent-decoded 'pathInfo' segments
+-- with '(</>)' and opened the result. Both halves of that are unsafe and they
+-- compose. A segment decoded from @%2f@ carries a separator, and @(</>)@
+-- discards its left operand entirely when the right one is absolute, so
+-- @GET /%2fetc%2fpasswd@ resolved to @\/etc\/passwd@ — the static root was not
+-- a bound on anything. A segment decoded from @%2e%2e@ is @..@, which walks up
+-- out of the root the same way.
+--
+-- Containment is therefore decided twice, and the second decision is the one
+-- that binds. Each segment must be an ordinary file name: non-empty, not a dot
+-- segment, and carrying no separator or NUL. Then the resolved path is
+-- canonicalized — which resolves every symlink and dot segment the filesystem
+-- would have followed — and compared with the canonicalized root by path
+-- component, so neither a symlink pointing outside nor a sibling root whose
+-- name merely begins with the root's name is accepted. The file that is opened
+-- is the canonical path that was checked, not the string the request supplied.
+--
+-- What this does not close: a component renamed between the canonicalization
+-- and the open. The window is the same one every path-based check has, and the
+-- routed Gateway's own normalization is a separate observation rather than a
+-- second layer of this one.
 serveStaticSegments :: DemoApiOptions -> [Text.Text] -> (Response -> IO responseReceived) -> IO responseReceived
 serveStaticSegments options staticSegments respond = do
-  let relativePath = joinPathSegments staticSegments
-  serveStaticAsset options relativePath respond
+  resolved <- resolveStaticAsset (webDistRoot (demoPaths options)) staticSegments
+  case resolved of
+    Left refusal ->
+      respond (textResponse status404 (Text.unpack (staticAssetRefusalText refusal)))
+    Right assetPath ->
+      respond
+        ( responseFile
+            status200
+            [(hContentType, contentTypeForSegments staticSegments)]
+            assetPath
+            Nothing
+        )
 
-serveStaticAsset :: DemoApiOptions -> FilePath -> (Response -> IO responseReceived) -> IO responseReceived
-serveStaticAsset options relativePath respond = do
-  let assetPath = webDistRoot (demoPaths options) relativePath
-  assetExists <- doesFileExist assetPath
-  if assetExists
-    then respond (responseFile status200 [(hContentType, contentTypeForPath relativePath)] assetPath Nothing)
-    else respond (textResponse status500 ("missing web asset: " <> relativePath))
+-- | Why a browser-supplied static path was not served. Every arm is a refusal;
+-- none of them reveals whether the target exists outside the root.
+data StaticAssetRefusal
+  = StaticSegmentRejected Text.Text
+  | StaticAssetOutsideRoot
+  | StaticAssetAbsent
+  deriving (Eq, Show)
 
-webDistRoot :: Paths -> FilePath -> FilePath
-webDistRoot paths relativePath = repoRoot paths </> "web" </> "dist" </> relativePath
+staticAssetRefusalText :: StaticAssetRefusal -> Text.Text
+staticAssetRefusalText refusal =
+  case refusal of
+    StaticSegmentRejected segmentValue ->
+      "static asset path segment is not an ordinary file name: " <> segmentValue
+    StaticAssetOutsideRoot -> "static asset path resolves outside the served root"
+    StaticAssetAbsent -> "static asset not found"
 
-joinPathSegments :: [Text.Text] -> FilePath
-joinPathSegments = foldr appendSegment ""
-  where
-    appendSegment segmentValue suffix =
-      let current = Text.unpack segmentValue
-       in if null suffix then current else current </> suffix
+-- | Resolve a browser-supplied path inside the served root, or refuse.
+resolveStaticAsset :: FilePath -> [Text.Text] -> IO (Either StaticAssetRefusal FilePath)
+resolveStaticAsset staticRoot staticSegments =
+  case traverse validateStaticSegment staticSegments of
+    Left refusal -> pure (Left refusal)
+    Right names -> do
+      canonicalRoot <- canonicalizePath staticRoot
+      let candidate = foldl (</>) canonicalRoot (map Text.unpack names)
+      canonicalCandidate <- canonicalizePath candidate
+      if not (pathWithinRoot canonicalRoot canonicalCandidate)
+        then pure (Left StaticAssetOutsideRoot)
+        else do
+          present <- doesFileExist canonicalCandidate
+          pure (if present then Right canonicalCandidate else Left StaticAssetAbsent)
+
+-- | An ordinary file name and nothing else. A dot segment, a separator that
+-- survived percent-decoding, and an embedded NUL are each refused by name.
+validateStaticSegment :: Text.Text -> Either StaticAssetRefusal Text.Text
+validateStaticSegment segmentValue
+  | Text.null segmentValue = Left (StaticSegmentRejected "<empty>")
+  | segmentValue == "." || segmentValue == ".." = Left (StaticSegmentRejected segmentValue)
+  | Text.any (`elem` ['/', '\\', '\0']) segmentValue = Left (StaticSegmentRejected segmentValue)
+  | otherwise = Right segmentValue
+
+-- | Component-wise containment. A textual prefix test accepts a sibling root
+-- whose name merely starts with the root's name; comparing path components
+-- does not.
+pathWithinRoot :: FilePath -> FilePath -> Bool
+pathWithinRoot root candidate =
+  splitDirectories root `isPrefixOf` splitDirectories candidate
+
+webDistRoot :: Paths -> FilePath
+webDistRoot paths = repoRoot paths </> "web" </> "dist"
+
+contentTypeForSegments :: [Text.Text] -> ByteString.ByteString
+contentTypeForSegments staticSegments =
+  contentTypeForPath (maybe "" Text.unpack (listToMaybe (reverse staticSegments)))
 
 contentTypeForPath :: FilePath -> ByteString.ByteString
 contentTypeForPath relativePath =

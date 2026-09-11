@@ -13,14 +13,15 @@ govern this plan.
 
 ## Current execution gate
 
-Phase 0 remains `Done` and frozen at Sprint 0.36. Phases 1–9 are `Active` because each has
-explicit implementation or evidence obligations in its own scope. Continue with Sprint 3.18; the
-follow-on sprints proceed in natural phase order after their named code-side prerequisites.
-Closed sprint headings remain closed records of their original scope, not proof of the new work.
+Phase 0 remains `Done` and frozen at Sprint 0.36. Phases 1–9 are `Active` because each carries an
+open cohort gate in its own scope; no phase carries an open implementation gate. Closed sprint
+headings remain closed records of their original scope, not proof of the new work.
 
-Sprints 1.44–1.46 have native Linux amd64 code-side closure, with source/image tuples and retained
-checks in Phase 1. Sprint 2.18 has native Linux amd64 code-side closure, with retained evidence in
-Phase 2. Sprint 3.18 is the next implementation gate. No new full-suite cohort result is claimed.
+Every open sprint — 1.44–1.46, 2.18, 3.18, 4.50, 5.13, 6.55, 7.30–7.33, 8.15, and 9.12 — has
+native Linux amd64 code-side closure, with its source/image tuple and retained receipts recorded in
+its own phase document. What remains everywhere is Axis 2: the phase's one chosen accelerator plus
+`linux-cpu` full suite, queued as Waves R1–R9. No new full-suite cohort result is claimed, and
+Wave R1's `apple-silicon` lane has no host available in this workspace.
 [Open waves R1–R9](cohort-validation-waves.md#wave-table) each require one selected accelerator plus
 `linux-cpu`; their hardware sign-off does not block the next phase's code-side work. The
 [phase table](#current-phase-overview) is the sole phase-status summary.
@@ -93,31 +94,19 @@ The worktree contains substantial implementations for the one-binary CLI, platfo
 Pulsar routing, engine adapters, browser application, and role-based access control. The governing
 architecture describes the target contract; it is not evidence that every contract is enforced.
 
-The outstanding findings are owned as follows:
+What each open sprint owns is stated in its own phase document. Every one of them has passed the
+machine-independent gate set; none has passed its accelerator cohort.
 
-| Owning work | Observed gap and required correction |
-|------------|--------------------------------------|
-| [Phase 1: 1.44–1.46](phase-1-repository-and-control-plane-foundation.md) | Source-bound validation and required-check runner, binary-owned seed generation, explicit Apple engine startup, fail-closed cgroup observation, and domain-owned lifecycle authority. |
-| [Phase 2: 2.18](phase-2-kind-cluster-storage-and-lifecycle.md) | Lifecycle consumer containment and cleanup; recover or rerun missing retained lifecycle evidence. |
-| [Phase 3: 3.18](phase-3-platform-services-and-edge-routing.md) | Recover or rerun source-bound platform, routed publication, and registry evidence. |
-| [Phase 4: 4.50](phase-4-inference-service-and-durable-runtime.md) | Real engine-cache hydration and rebuild, complete artifact accounting, and behavioral realness checks. |
-| [Phase 5: 5.13](phase-5-web-ui-and-shared-types.md) | Backend static-file containment and real Gateway negative tests; retained browser evidence. |
-| [Phase 6: 6.55](phase-6-validation-and-e2e-hardening.md) | Required device checks cannot silently skip; bounded fixture-process cleanup and structured execution evidence. |
-| [Phase 7: 7.30–7.33](phase-7-demo-app-durable-context.md) | Dispatcher replay, genuine conversation/KV reconstruction, engine cancellation, bounded previews, and rendered audio/playback evidence. |
-| [Phase 8: 8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md) | Validate sole-binary configuration generation through every consumer, using the Phase 1 bootstrap boundary. |
-| [Phase 9: 9.12](phase-9-access-control-and-monitoring.md) | Reject malformed cache requests before effects; validate real cache operations and admin/tenant isolation. |
-
-Static-asset handling lacks a proven backend containment boundary; the public routed exploitability
-must be measured separately because Gateway path normalization can differ. Generic rank-2 `IO`
-leases do not prove nonescape through deferred effects or reminted markers; private destructive
-consumers limit exposure but do not justify the stronger type claim. Static adapter checks are
-heuristics, not a proof that arbitrary output came from inference.
-
-Launcher source binding, mandatory GPU fixture execution, and retained phase evidence remain under
-validation in Sprint 1.44. Until their owning work is
-closed, an exit code, Markdown status, cache directory, prefix hash, or rendered DOM container is
-insufficient evidence of the corresponding behavior. Removal of the concrete shortcut surfaces is
-tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+Four limits on what that closure establishes, because each is a claim the code deliberately does
+not make. The static-file boundary is enforced at the canonicalized read, which does not close the
+window between that check and the open, and the deployed Gateway's own normalization is measured
+separately rather than assumed to help. A rank-2 `IO` lease does not prove nonescape through
+deferred effects or reminted markers; private destructive consumers limit exposure without
+justifying the stronger type claim. The behavioral realness acceptance bounds accidental
+substitution — a constant transform, a suppressed engine, an empty output — and not a forgery by an
+actor who controls the executor and the evidence store together. And an exit code, a Markdown
+status, a cache directory, a prefix hash, or a rendered DOM container remains insufficient evidence
+of the corresponding behavior wherever a receipt does not name the assertion that produced it.
 
 Beyond the application admin overview and personal dashboard, no general observability stack is
 deployed. Monitoring is not a supported first-class surface.
@@ -199,13 +188,13 @@ trust the phase document.
 | 0 | Done | Frozen at Sprint 0.36; no new Phase 0 work. |
 | 1 | Active | Sprints 1.44–1.46 have native Linux amd64 code-side closure; Wave R1 is validation-only. Wave R1 full-suite sign-off remains open. [Sprints 1.44–1.46](phase-1-repository-and-control-plane-foundation.md) and [Wave R1](cohort-validation-waves.md#wave-table): Source-bound validation and required-check runner, binary-owned seed generation, explicit Apple engine startup, fail-closed cgroup observation, and domain-owned lifecycle authority. |
 | 2 | Active | [Sprints 2.18](phase-2-kind-cluster-storage-and-lifecycle.md) and [Wave R2](cohort-validation-waves.md#wave-table): Lifecycle consumer containment and cleanup; recover or rerun missing retained lifecycle evidence. |
-| 3 | Active | [Sprints 3.18](phase-3-platform-services-and-edge-routing.md) and [Wave R3](cohort-validation-waves.md#wave-table): Recover or rerun source-bound platform, routed publication, and registry evidence. |
-| 4 | Active | [Sprints 4.50](phase-4-inference-service-and-durable-runtime.md) and [Wave R4](cohort-validation-waves.md#wave-table): Real engine-cache hydration and rebuild, complete artifact accounting, and behavioral realness checks. |
-| 5 | Active | [Sprints 5.13](phase-5-web-ui-and-shared-types.md) and [Wave R5](cohort-validation-waves.md#wave-table): Backend static-file containment and real Gateway negative tests; retained browser evidence. |
-| 6 | Active | [Sprints 6.55](phase-6-validation-and-e2e-hardening.md) and [Wave R6](cohort-validation-waves.md#wave-table): Required device checks cannot silently skip; bounded fixture-process cleanup and structured execution evidence. |
-| 7 | Active | [Sprints 7.30–7.33](phase-7-demo-app-durable-context.md) and [Wave R7](cohort-validation-waves.md#wave-table): Dispatcher replay, genuine conversation/KV reconstruction, engine cancellation, bounded previews, and rendered audio/playback evidence. |
-| 8 | Active | [Sprints 8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md) and [Wave R8](cohort-validation-waves.md#wave-table): Validate sole-binary configuration generation through every consumer, using the Phase 1 bootstrap boundary. |
-| 9 | Active | [Sprints 9.12](phase-9-access-control-and-monitoring.md) and [Wave R9](cohort-validation-waves.md#wave-table): Reject malformed cache requests before effects; validate real cache operations and admin/tenant isolation. |
+| 3 | Active | Sprint 3.18 has native Linux amd64 code-side closure; Wave R3 is validation-only. [Sprints 3.18](phase-3-platform-services-and-edge-routing.md) and [Wave R3](cohort-validation-waves.md#wave-table): Recover or rerun source-bound platform, routed publication, and registry evidence. |
+| 4 | Active | Sprint 4.50 has native Linux amd64 code-side closure; Wave R4 is validation-only. [Sprints 4.50](phase-4-inference-service-and-durable-runtime.md) and [Wave R4](cohort-validation-waves.md#wave-table): Real engine-cache hydration and rebuild, complete artifact accounting, and behavioral realness checks. |
+| 5 | Active | Sprint 5.13 has native Linux amd64 code-side closure; Wave R5 is validation-only. [Sprints 5.13](phase-5-web-ui-and-shared-types.md) and [Wave R5](cohort-validation-waves.md#wave-table): Backend static-file containment and real Gateway negative tests; retained browser evidence. |
+| 6 | Active | Sprint 6.55 has native Linux amd64 code-side closure; Wave R6 is validation-only. [Sprints 6.55](phase-6-validation-and-e2e-hardening.md) and [Wave R6](cohort-validation-waves.md#wave-table): Required device checks cannot silently skip; bounded fixture-process cleanup and structured execution evidence. |
+| 7 | Active | Sprints 7.30–7.33 have native Linux amd64 code-side closure; Wave R7 is validation-only. [Sprints 7.30–7.33](phase-7-demo-app-durable-context.md) and [Wave R7](cohort-validation-waves.md#wave-table): Dispatcher replay, genuine conversation/KV reconstruction, engine cancellation, bounded previews, and rendered audio/playback evidence. |
+| 8 | Active | Sprint 8.15 has native Linux amd64 code-side closure; Wave R8 is validation-only. [Sprints 8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md) and [Wave R8](cohort-validation-waves.md#wave-table): Validate sole-binary configuration generation through every consumer, using the Phase 1 bootstrap boundary. |
+| 9 | Active | Sprint 9.12 has native Linux amd64 code-side closure; Wave R9 is validation-only. [Sprints 9.12](phase-9-access-control-and-monitoring.md) and [Wave R9](cohort-validation-waves.md#wave-table): Reject malformed cache requests before effects; validate real cache operations and admin/tenant isolation. |
 
 ## Canonical Outcome
 
