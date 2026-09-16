@@ -17,7 +17,7 @@ Sprints 8.1–8.14 retain their closed headings and only their established scope
 
 The existing Phase 8 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 8.15 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R8 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 8.15 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R8 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
@@ -1147,7 +1147,7 @@ None.
 
 **Status**: Active
 **Code-side closure**: The image-seed predicate is exercised against a reintroduced handwritten record, a payload generated from different defaults is compared by decode against the current producer, and a machine pinned to another system contract is refused rather than adopting the one it found. Marker-only local cache directories cannot supply readiness, which Sprint 4.50's observation establishes.
-**Cohort gate**: Wave R8 — selected `linux-gpu` plus native `linux-cpu`.
+**Cohort gate**: Wave R8 — selected `apple-silicon` plus native `linux-cpu`.
 **Blocked by**: nothing — Sprint 7.33 code-side closure is validated; Sprint 1.44 supplies the sole seed generator and Sprint 4.50 supplies verified local cache behavior.
 **Implementation targets**: `docker/Dockerfile`, `src/Infernix/HostConfig.hs`, `src/Infernix/ProjectInit.hs`, `src/Infernix/ClusterConfig.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/cluster_config_manifest.md`, `documents/development/no_env_vars.md`
@@ -1184,7 +1184,7 @@ configuration contract.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R8's selected `linux-gpu` plus native `linux-cpu` full-suite results
+Cohort gate only: retain Wave R8's selected `apple-silicon` plus native `linux-cpu` full-suite results
 against one frozen implementation, including the clean launcher build and the deployed role mirrors.
 No new full-suite result is claimed.
 
@@ -1192,7 +1192,7 @@ No new full-suite result is claimed.
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R8's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 8.15 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R8's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 8.15 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

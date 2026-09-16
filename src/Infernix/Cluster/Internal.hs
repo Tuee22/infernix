@@ -58,6 +58,8 @@ module Infernix.Cluster.Internal
     authorizeHarnessReservationAccess,
     authorizeRuntimeConfigWriteAccess,
     withDelegatedHarnessChildGroup,
+    captureClusterCommand,
+    clusterWorkloadImageRef,
     uncordonResultsProveReady,
     withPersistedClusterMutation,
     ClusterOwnershipRefusal (..),

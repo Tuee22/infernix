@@ -114,6 +114,7 @@ module Infernix.Cluster.Command
     dockerBuildEngine,
     dockerInspectImage,
     dockerInspectImageField,
+    dockerServedBundleDigest,
     dockerPullImage,
     dockerTagImage,
     dockerCrictlPull,
@@ -493,6 +494,7 @@ data ClusterCommand
   | DockerBuildEngine !EngineBuildSpec
   | DockerInspectImage !ImageRef
   | DockerInspectImageField !ImageRef !ImageInspectField
+  | DockerServedBundleDigest !ImageRef
   | DockerPullImage !Platform !ImageRef
   | DockerTagImage !ImageRef !ImageRef
   | DockerCrictlPull !NodeName !ImageRef
@@ -690,6 +692,14 @@ dockerInspectImage = DockerInspectImage
 
 dockerInspectImageField :: ImageRef -> ImageInspectField -> ClusterCommand
 dockerInspectImageField = DockerInspectImageField
+
+-- | Phase 5 Sprint 5.13: digest the application bundle carried by the cluster
+-- workload image that is actually serving the routed demo.
+--
+-- The path is fixed here rather than supplied by the caller, so this command
+-- offers no executable, argument vector, or working directory to choose.
+dockerServedBundleDigest :: ImageRef -> ClusterCommand
+dockerServedBundleDigest = DockerServedBundleDigest
 
 dockerPullImage :: Platform -> ImageRef -> ClusterCommand
 dockerPullImage = DockerPullImage
@@ -1067,6 +1077,7 @@ clusterCommandOperation = \case
   DockerBuildEngine {} -> DockerBuildOperation
   DockerInspectImage {} -> DockerInspectOperation
   DockerInspectImageField {} -> DockerInspectOperation
+  DockerServedBundleDigest {} -> DockerInspectOperation
   DockerPullImage {} -> DockerPullOperation
   DockerTagImage {} -> DockerTagOperation
   DockerCrictlPull {} -> ContainerRuntimePullOperation
@@ -1236,6 +1247,8 @@ validateClusterCommand = \case
   DockerInspectImage imageRef ->
     validateImageRef imageRef
   DockerInspectImageField imageRef _inspectField ->
+    validateImageRef imageRef
+  DockerServedBundleDigest imageRef ->
     validateImageRef imageRef
   DockerPullImage platform imageRef -> do
     validatePlatform platform
@@ -1880,6 +1893,17 @@ renderClusterCommand resolveTool = \case
         unImageRef imageRef,
         "--format",
         renderImageInspectField inspectField
+      ]
+      ""
+  DockerServedBundleDigest imageRef ->
+    commandSpec
+      HostDocker
+      [ "run",
+        "--rm",
+        "--entrypoint",
+        imageBundleDigestTool,
+        unImageRef imageRef,
+        imageServedBundlePath
       ]
       ""
   DockerPullImage platform imageRef ->
@@ -2608,6 +2632,16 @@ gpuUserspaceSyncScript =
         <> "| \"$1\" exec -i \"$3\" tar -C / -xf -",
       "\"$1\" exec \"$3\" bash -lc 'ldconfig'"
     ]
+
+-- | The cluster workload image is Ubuntu-based, so coreutils sits at this
+-- fixed absolute path. Section U forbids resolving it through @PATH@.
+imageBundleDigestTool :: String
+imageBundleDigestTool = "/usr/bin/sha256sum"
+
+-- | Where the cluster workload image carries the application bundle the routed
+-- edge serves.
+imageServedBundlePath :: String
+imageServedBundlePath = "/workspace/web/dist/app.js"
 
 dockerStreamImportScript :: String
 dockerStreamImportScript =

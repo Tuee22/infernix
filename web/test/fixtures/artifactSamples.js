@@ -26,8 +26,33 @@ export function tinyPdfBuffer() {
   return Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n", "utf8");
 }
 
+// Phase 7 Sprint 7.33: the MIDI preview's observable signal is the note events
+// the renderer decoded, so this fixture carries real notes. The retired literal
+// declared a four-byte track and supplied three, so every decoder rejected it,
+// and even a repaired empty track would render no notes to observe. Generated
+// programmatically, so the bytes stay identical across runs and substrates.
 export function tinyMidiBuffer() {
-  return Buffer.from("TVRoZAAAAAYAAAABAGBNVHJrAAAABAAP/w==", "base64");
+  const ticksPerQuarter = 96;
+  const pitches = [60, 64, 67, 72];
+  const events = [];
+  for (const pitch of pitches) {
+    // Delta times stay below 128, so each is a single-byte variable-length
+    // quantity and the track needs no multi-byte encoding.
+    events.push(0x00, 0x90, pitch, 0x64);
+    events.push(ticksPerQuarter, 0x80, pitch, 0x40);
+  }
+  events.push(0x00, 0xff, 0x2f, 0x00);
+  const track = Buffer.from(events);
+  const buffer = Buffer.alloc(14 + 8 + track.length);
+  buffer.write("MThd", 0, "ascii");
+  buffer.writeUInt32BE(6, 4);
+  buffer.writeUInt16BE(0, 8);
+  buffer.writeUInt16BE(1, 10);
+  buffer.writeUInt16BE(ticksPerQuarter, 12);
+  buffer.write("MTrk", 14, "ascii");
+  buffer.writeUInt32BE(track.length, 18);
+  track.copy(buffer, 22);
+  return buffer;
 }
 
 export function musicXmlBuffer() {

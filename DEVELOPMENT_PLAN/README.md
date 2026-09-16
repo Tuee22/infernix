@@ -20,8 +20,7 @@ headings remain closed records of their original scope, not proof of the new wor
 Every open sprint — 1.44–1.46, 2.18, 3.18, 4.50, 5.13, 6.55, 7.30–7.33, 8.15, and 9.12 — has
 native Linux amd64 code-side closure, with its source/image tuple and retained receipts recorded in
 its own phase document. What remains everywhere is Axis 2: the phase's one chosen accelerator plus
-`linux-cpu` full suite, queued as Waves R1–R9. No new full-suite cohort result is claimed, and
-Wave R1's `apple-silicon` lane has no host available in this workspace.
+`linux-cpu` full suite, queued as Waves R1–R9. No new full-suite cohort result is claimed.
 [Open waves R1–R9](cohort-validation-waves.md#wave-table) each require one selected accelerator plus
 `linux-cpu`; their hardware sign-off does not block the next phase's code-side work. The
 [phase table](#current-phase-overview) is the sole phase-status summary.

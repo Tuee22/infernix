@@ -23,18 +23,16 @@ import Control.Concurrent (ThreadId, forkFinally, killThread)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, tryReadMVar)
 import Control.Exception (IOException, SomeException, catch, displayException, evaluate, mask, throwIO, try)
 import Control.Monad (unless, void, when)
-import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
-import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
+import Data.Char (isHexDigit)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, isInfixOf, isPrefixOf)
 import Data.List qualified as List
 import Data.Text qualified as Text
-import Data.Text.Encoding qualified as TextEncoding
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
@@ -63,8 +61,9 @@ import Infernix.BuildMemory
   )
 import Infernix.BuildMemory qualified as BuildMemory
 import Infernix.Cluster
+import Infernix.Cluster.Command qualified as Command
 import Infernix.Cluster.Discover
-import Infernix.Cluster.Internal (withDelegatedHarnessChildGroup, withHarnessConfigTransaction, withRuntimeConfigWriteAccessAt)
+import Infernix.Cluster.Internal (captureClusterCommand, clusterWorkloadImageRef, withDelegatedHarnessChildGroup, withHarnessConfigTransaction, withRuntimeConfigWriteAccessAt)
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.CommandRegistry
@@ -780,7 +779,7 @@ runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expecte
   -- bytes this checkout produced. The fixture therefore carries this run's
   -- digest of the built bundle and the route inventory the binary owns, and the
   -- browser suite re-derives both from the routed surface.
-  expectedBundleDigestValue <- servedBundleDigest paths
+  expectedBundleDigestValue <- servedBundleDigest paths runtimeMode
   let fixturePath = runtimeRoot paths </> "playwright-fixture.json"
       fixturePayload =
         encode
@@ -806,24 +805,39 @@ runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expecte
 servedBundleRelativePath :: String
 servedBundleRelativePath = "/app.js"
 
--- | This run's digest of the bundle this checkout built.
+-- | This run's digest of the bundle carried by the artifact that serves it.
 --
--- Read from the built tree rather than from the served response, because the
--- point of the comparison is that the two agree: the browser suite fetches the
--- same path through the Gateway and digests what arrives.
-servedBundleDigest :: Paths -> IO Text.Text
-servedBundleDigest paths = do
-  let bundlePath = repoRoot paths </> "web" </> "dist" </> "app.js"
-  present <- doesFileExist bundlePath
-  unless present $
-    ioError
-      ( userError
-          ( "the routed browser gate requires the built application bundle at "
-              <> bundlePath
-          )
-      )
-  bundleBytes <- ByteString.readFile bundlePath
-  pure (TextEncoding.decodeUtf8 (Base16.encode (SHA256.hash bundleBytes)))
+-- Read from the cluster workload image rather than from the host build tree.
+-- The demo is cluster-resident on every substrate, and on @apple-silicon@ the
+-- control plane is host-native while that workload image is a Linux image, so
+-- the two builds differ by exactly the substrate-derived values the contract
+-- generator bakes in. Comparing against the host tree would therefore compare
+-- the served bundle with a build that never serves it. The image carries a
+-- source-fingerprint label and 'cluster up' refuses to reuse one whose label
+-- does not match the current source, so binding the served bytes to the image
+-- keeps the chain from source to browser intact: a bundle from any other build
+-- still fails.
+servedBundleDigest :: Paths -> RuntimeMode -> IO Text.Text
+servedBundleDigest paths runtimeMode = do
+  let imageRef = clusterWorkloadImageRef runtimeMode
+  reported <-
+    captureClusterCommand
+      paths
+      (Command.dockerServedBundleDigest (Command.ImageRef imageRef))
+  case words reported of
+    (digest : _)
+      | length digest == 64,
+        all isHexDigit digest ->
+          pure (Text.pack digest)
+    _ ->
+      ioError
+        ( userError
+            ( "the routed browser gate could not read the served application bundle digest from "
+                <> imageRef
+                <> ": "
+                <> reported
+            )
+        )
 
 -- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
 -- 'Readiness' kernel under the legacy 60-attempt × 1 s budget. A routed surface

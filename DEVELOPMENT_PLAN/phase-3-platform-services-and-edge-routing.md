@@ -15,7 +15,7 @@ Sprints 3.1–3.17 retain their closed headings and only their established scope
 
 The missing Phase 3 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 3.18 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R3 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 3.18 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R3 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Single-Instance Reconcile Surface
 
@@ -947,7 +947,7 @@ None.
 
 **Status**: Active
 **Code-side closure**: Live route-inventory validation, exact demo-off 404 checks, complete demo-route probes, strict admin backend outcomes, post-reschedule blob readback, and isolated missing/corrupt-blob controls are implemented and validated on native Linux amd64 through the governed launcher build, all nine aggregate lint checks, and all seven aggregate unit checks against one source/image pair.
-**Cohort gate**: Wave R3 — selected `linux-gpu` plus native `linux-cpu`.
+**Cohort gate**: Wave R3 — selected `apple-silicon` plus native `linux-cpu`.
 **Blocked by**: nothing — Sprint 2.18 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Routes.hs`, `chart/templates/httproutes.yaml`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/tools/registry.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`, `documents/tools/postgresql.md`
@@ -1002,7 +1002,7 @@ retain the corresponding source-bound results.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R3's selected `linux-gpu` plus native `linux-cpu` full-suite results
+Cohort gate only: retain Wave R3's selected `apple-silicon` plus native `linux-cpu` full-suite results
 against one frozen implementation, covering the deployed platform, routes, browser authorization,
 and registry readback. No new full-suite result is claimed.
 
@@ -1010,7 +1010,7 @@ and registry readback. No new full-suite result is claimed.
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R3's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 3.18 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R3's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 3.18 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

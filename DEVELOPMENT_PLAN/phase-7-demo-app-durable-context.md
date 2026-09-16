@@ -21,7 +21,7 @@ Sprints 7.1–7.29 retain their closed headings and only their established scope
 
 The missing Phase 7 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprints 7.30–7.33 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R7 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprints 7.30–7.33 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R7 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
 
 ## Current Repo Assessment
 
@@ -1843,7 +1843,7 @@ None.
 
 **Status**: Active
 **Code-side closure**: The dispatcher folds the context's retained history from the earliest position before its subscription resumes, and deduplicates the replay/live overlap by durable message identity. An unreadable history refuses visibly rather than resuming empty.
-**Cohort gate**: Wave R7 — selected `linux-gpu` plus native `linux-cpu`.
+**Cohort gate**: Wave R7 — selected `apple-silicon` plus native `linux-cpu`.
 **Blocked by**: nothing — Sprint 6.55 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Dispatch/SingleFlight.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/durable_context_design.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/development/testing_strategy.md`
@@ -1880,7 +1880,7 @@ subscription.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R7's selected `linux-gpu` plus native `linux-cpu` full-suite results
+Cohort gate only: retain Wave R7's selected `apple-silicon` plus native `linux-cpu` full-suite results
 against one frozen implementation, including the real-broker restart with queued work outstanding.
 No new full-suite result is claimed.
 
@@ -2037,7 +2037,7 @@ which a renderer that failed to load an instrument could not produce.
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R7's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. Sprints 7.30–7.33 have code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R7's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprints 7.30–7.33 have code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

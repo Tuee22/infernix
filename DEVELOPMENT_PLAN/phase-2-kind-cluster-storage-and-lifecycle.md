@@ -17,7 +17,7 @@ Sprints 2.1–2.17 retain their closed headings and only their established scope
 
 The missing Phase 2 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 2.18 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `linux-gpu` plus native `linux-cpu`, recorded in Wave R2 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither full-suite lane has validated the new criteria. Wave R2 is validation-only and does not block subsequent code-side implementation.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 2.18 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R2 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither full-suite lane has validated the new criteria. Wave R2 is validation-only and does not block subsequent code-side implementation.
 
 ## Storage Doctrine
 
@@ -1018,7 +1018,7 @@ None.
 
 **Status**: Active
 **Code-side closure**: Exact reservation capture, effect-adjacent state/writer checks, config restoration, snapshot commit custody, retained validation evidence, and checked subprocess pipe cleanup are implemented. Governed build, all nine aggregate lint checks, all seven aggregate unit checks, six focused gates, and fresh independent receipt verification pass. All 122 compiler controls and their logs are retained; missing historical full-suite evidence remains a Wave R2 obligation.
-**Cohort gate**: Wave R2 — selected `linux-gpu` plus native `linux-cpu`.
+**Cohort gate**: Wave R2 — selected `apple-silicon` plus native `linux-cpu`.
 **Blocked by**: nothing — Sprint 1.46 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Cluster/Internal.hs`, `src/Infernix/Cluster/LifecycleLock.hs`, `src/Infernix/Cluster/Subprocess.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `test/compile-fail/`
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/engineering/storage_and_state.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/architecture/configuration_doctrine.md`
@@ -1056,7 +1056,7 @@ evidence for the lifecycle scope.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R2's selected `linux-gpu` plus native `linux-cpu` full-suite results
+Cohort gate only: retain Wave R2's selected `apple-silicon` plus native `linux-cpu` full-suite results
 against one frozen implementation, including actual Kind lifecycle, retained storage, registry-first
 bootstrap, preserved data, and teardown. No new full-suite or historical closure result is claimed.
 
@@ -1064,7 +1064,7 @@ bootstrap, preserved data, and teardown. No new full-suite or historical closure
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R2's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 2.18 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope.
+Cohort gate only: retain Wave R2's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 2.18 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope.
 
 ## Documentation Requirements
 
