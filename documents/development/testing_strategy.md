@@ -64,6 +64,14 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
   [Configuration Doctrine](../architecture/configuration_doctrine.md). The Linux launcher image bakes
   both `./infernix.dhall` and `./infernix.test.dhall`
   at build time so the containerized `docker compose run --rm infernix infernix test all` finds them.
+  The Darwin-hosted native-arm64 `linux-cpu` wrapper keeps tool selection explicit: Homebrew's
+  Docker CLI and `/bin/rm` are selected before immutable launcher construction, while Ubuntu keeps
+  `/usr/bin/docker` and `/usr/bin/rm`. The unit suite checks the host detection and cleanup override
+  ordering so a successful image build cannot fail before its immutable id is consumed. Both Linux
+  wrappers resolve that id through a shared contract: an iidfile digest must equal the inspected
+  `.Id` directly or the inspected manifest descriptor's `config.digest`, and Compose receives the
+  addressable `.Id`. Unit controls exercise both accepted store layouts and reject missing,
+  malformed, or unrelated identities.
   The integration suite's per-variant `internal materialize-substrate` keeps rewriting that same
   harness-owned path across substrate variants. `infernix test lint` and `infernix test unit` remain
   fixture-based at the suite level but still honor command-level initialized-substrate preflight.
@@ -109,7 +117,10 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
   per row with typed `ModelMemoryLimitExceeded`, the breached resource, and explicit MiB quantities
   when admission refuses the row or a watchdog measures an overrun. A plain engine exit stays a
   diagnosable engine failure rather than being inferred as a ceiling refusal (see
-  `## Resource Memory-Bounded Validation`)
+  `## Resource Memory-Bounded Validation`). On Apple, the harness completes intentional
+  broker-reconciling lifecycle checks before starting the host engine daemon. Loss of that daemon's
+  exclusive engine-member claim remains fatal; validation starts a post-reconcile daemon instead
+  of waiting for inference from a correctly exited pre-reconcile child.
 - `infernix test e2e` validates the routed browser surface through the full durable-context
   Playwright flow alongside the SPA root, the `Infernix` heading, and the published platform-state
   JSON endpoints
@@ -236,7 +247,11 @@ Hardware-specific validation runs on the machine that owns the changed path.
   cross-user object-prefix isolation, and the routed download-grant
   MIME disposition matrix. The browser artifact path covers app-owned PKCE login, local context
   creation, bounded text/JSON previews, inline image/audio/video media URL wiring, browser-native
-  PDF URL wiring, actual MIDI playback with self-hosted samples, MusicXML score rendering,
+  PDF URL wiring, and replacement-card preview rehydration after an application render so a late
+  WebSocket patch or file-list refresh cannot erase an issued grant. That rehydration remains keyed
+  by the object key and restores only the routed `/api/objects/download` URL plus the disposition's
+  completed preview evidence; it never retains or exposes a presigned MinIO URL. The same path
+  covers actual MIDI playback with self-hosted samples, MusicXML score rendering,
   explicit generic-binary download-only states, and the per-model smoke
   matrix across every active catalog row. The browser flow asserts each uploaded artifact's
   `ClientRecordUpload`, inbound `ConversationUserUploadEvent` patch, and rendered Chat upload
@@ -373,6 +388,25 @@ A per-model row lands in one of these supported outcomes:
 - **engine failure** — the engine exits non-zero without explicit enforcement evidence. This includes
   a kernel-refused allocation the engine does not report; the last sampled peak cannot distinguish it
   from an ordinary post-load fault, so the result keeps the engine's bounded diagnostics
+
+The Linux pre-launch headroom control is distinct from all four in-run classifications. A fixture
+drives every typed cgroup observation constructor without depending on the validation host's cgroup:
+finite headroom below the installed ceiling must preserve the exact quantities as a pod-RAM
+`ModelMemoryLimitExceeded` sourced from `cgroup-memory-headroom`; unreadable, invalid, and
+usage-greater-than-maximum evidence must preserve the exact observer diagnosis as
+`engine_memory_enforcer_unavailable`. The worker boundary catches only that typed exception.
+An unrelated `IOException` must still escape, and an ordinary successful result must pass through
+unchanged. The routed Linux model matrix is the independent control for the transport ordering: a
+headroom refusal publishes one terminal result before acknowledgement and traversal continues;
+missing publication may be negative-acknowledged and retried, but capacity evidence itself may not.
+
+The Apple observer regression also scripts process turnover between `top` membership discovery and
+per-member `/usr/bin/footprint`. It must prove all three branches under one deadline: a failed PID
+still present fails closed with its exact observer diagnostic; changed nonempty membership discards
+the partial total and restarts the full sum; and an empty refreshed group enters the shared bounded
+terminal settlement rather than publishing `engine_memory_enforcer_unavailable`. Initial complete
+absence takes the same settlement path. These assertions classify membership evidence, never
+particular `/usr/bin/footprint` stderr text.
 
 Two obligations attach to a lane that installs a ceiling, and neither is discharged by inspecting the
 launch that installed it.

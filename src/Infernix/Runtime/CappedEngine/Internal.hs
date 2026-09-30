@@ -2443,12 +2443,13 @@ nvidiaWatchdogOutcomeForTest ceilingMib processGroup =
       classifyWatchdogTermination <$> readIORef terminationRef
 
 -- | The Apple lane's sampler: the fixed public-tool observer reports the
--- process group's physical footprint, and it reports no absence of its own, so
--- an absent group is inferred from the engine having exited.
+-- process group's physical footprint and preserves a complete empty-group
+-- recheck as terminal absence. The shared watchdog then settles that absence
+-- against the independently owned process handle before accepting the exit.
 appleFootprintSampler :: WatchdogSampler
 appleFootprintSampler =
   WatchdogSampler
-    { samplerObserveBytes = fmap (fmap Just) . FixedObserver.processGroupPhysicalFootprintBytes,
+    { samplerObserveBytes = FixedObserver.processGroupPhysicalFootprintSample,
       samplerObservePresence = const (pure (Right False)),
       samplerObserveMemberCount = FixedObserver.processGroupMemberCount,
       samplerAbsentGroupReason =

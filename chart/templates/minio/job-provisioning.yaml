@@ -2,7 +2,7 @@
 Phase 3 Sprint 3.11 (2026-05-29): hand-authored provisioning Job
 replaces the retired bitnami `minio-provisioning` Job.
 
-Uses upstream `minio/mc` to wait for MinIO readiness, register a local
+Uses upstream `quay.io/minio/mc` to wait for MinIO readiness, register a local
 alias against the in-cluster Service, and ensure every required bucket
 exists (idempotent via `--ignore-existing`):
 

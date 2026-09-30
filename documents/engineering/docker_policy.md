@@ -67,7 +67,12 @@ receipt may claim host edits were tested merely because an older baked binary ex
 The binary-owned validation boundary records source and image identities alongside actual check
 execution. The bootstrap owns only prerequisite/build/launcher handoff, not another test runner.
 The bootstrap reconciles the launcher with BuildKit and resolves its immutable image id before
-Compose starts it. The binary compares the independent checkout mount with `/workspace` before
+Compose starts it. A classic image store can return that addressable id directly in BuildKit's
+iidfile. A containerd-backed store can put the OCI configuration digest in the iidfile while
+Docker's inspected `.Id` is the addressable manifest digest. The bootstrap accepts only an iidfile
+digest equal to the inspected `.Id` or its descriptor's `config.digest`, then selects `.Id` for
+Compose; an unavailable, malformed, or unrelated identity refuses. The binary compares the
+independent checkout mount with `/workspace` before
 and after validation and retains the relevant source preimage under
 `./.data/runtime/validation/`. Direct validation commands require the same read-only
 handoff, supplied with `--volume "$(pwd):/opt/infernix/checkout:ro"` on Compose `run`.

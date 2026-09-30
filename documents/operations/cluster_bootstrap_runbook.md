@@ -100,6 +100,9 @@
   host-cache entries fall back to normal chart pulls, and the flow intentionally avoids `docker cp`
   because CUDA-enabled Kind workers can reject copied paths through the NVIDIA runtime mount
   boundary
+- the pinned MinIO server and client images use the official `quay.io/minio/minio` and
+  `quay.io/minio/mc` namespaces; when absent from the host cache they follow the normal chart-pull
+  path before publication into the in-cluster registry
 - after the registry is responsive, confirm that every remaining image is mirrored or published into
   the registry before its workload rolls out, including the active `infernix` runtime image on every
   substrate

@@ -4871,15 +4871,15 @@ preloadHostCachedWarmupImagesOnKindWorker paths state runtimeMode = do
 
 -- | Phase 3 Sprint 3.11 (2026-05-29): the warmup-preload list tracks
 -- the multi-arch upstream image inventory after the `bitnamilegacy/*`
--- retirement. The MinIO server image is `minio/minio` (multi-arch); the
+-- retirement. The MinIO server image is `quay.io/minio/minio` (multi-arch); the
 -- volume-permissions init container uses `busybox` (multi-arch); the
 -- separate `minio-object-browser` Deployment was removed when
 -- `console.enabled` flipped to `false` in `chart/values.yaml`.
 hostCachedWarmupImageRefs :: [String]
 hostCachedWarmupImageRefs =
   [ "docker.io/apachepulsar/pulsar-all:4.0.9",
-    "docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
-    "docker.io/minio/mc:RELEASE.2025-08-13T08-35-41Z",
+    "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
+    "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z",
     "docker.io/busybox:1.36",
     "docker.io/envoyproxy/gateway:v1.7.2",
     "docker.io/percona/percona-distribution-postgresql:18.3-1",

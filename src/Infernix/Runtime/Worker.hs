@@ -7,6 +7,7 @@ module Infernix.Runtime.Worker
   ( WorkerFailure (..),
     WorkerModelCacheConfig (..),
     buildWorkerRequest,
+    cgroupObservationWorkerFailure,
     ensureNativeRunnerContractCacheReady,
     loadWorkerModelCacheConfig,
     nativeModelCacheRelativeKeys,
@@ -16,6 +17,7 @@ module Infernix.Runtime.Worker
     pythonEngineBootstrapManifestRequiredForTest,
     requireHydratedNativeModelCache,
     runExecutableInferenceWorker,
+    withCgroupObservationWorkerFailure,
     workerFailureResponse,
     workerObjectUploadConfig,
     workerRequestModelCacheConfig,
@@ -91,6 +93,10 @@ import Infernix.Runtime.CappedEngine
     runExecutablePythonWorker,
   )
 import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
+import Infernix.Runtime.Enforcer.Internal
+  ( CgroupObservationFailure (CgroupInsufficientHeadroom),
+    renderCgroupObservationFailure,
+  )
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Storage (readClusterStateFile)
@@ -155,20 +161,62 @@ runExecutableInferenceWorker paths executableModel request cacheObservation mayb
   | requestModelId request /= executableModelId executableModel =
       pure (workerFailed (requestModelMismatchError executableModel request))
   | otherwise =
-      -- Phase 8 Sprint 8.9: the adapter type is a closed sum, so this dispatch
-      -- is total and the former "unsupported engine runner" arm is gone. It
-      -- used to be reachable only by a config that named an adapter the runtime
-      -- cannot execute, which the wire language no longer expresses.
-      case engineBindingAdapterType engineBinding of
-        PythonStdio ->
-          withPythonEngineSetupReady paths modelRuntimeMode engineBinding $ \readAuthority ->
-            runPythonWorker readAuthority paths executableModel request cacheObservation maybeVerifiedPrefix
-        NativeProcessRunner ->
-          runNativeWorker paths executableModel request cacheObservation maybeVerifiedPrefix
+      withCgroupObservationWorkerFailure model $
+        -- Phase 8 Sprint 8.9: the adapter type is a closed sum, so this dispatch
+        -- is total and the former "unsupported engine runner" arm is gone. It
+        -- used to be reachable only by a config that named an adapter the runtime
+        -- cannot execute, which the wire language no longer expresses.
+        case engineBindingAdapterType engineBinding of
+          PythonStdio ->
+            withPythonEngineSetupReady paths modelRuntimeMode engineBinding $ \readAuthority ->
+              runPythonWorker readAuthority paths executableModel request cacheObservation maybeVerifiedPrefix
+          NativeProcessRunner ->
+            runNativeWorker paths executableModel request cacheObservation maybeVerifiedPrefix
   where
     model = executableModelDescriptor executableModel
     engineBinding = executableModelEngine executableModel
     modelRuntimeMode = runtimeMode model
+
+-- | Phase 1 Sprint 1.55 — contain only the capped-engine kernel's typed Linux
+-- cgroup refusal inside the terminal worker channel. Any other exception,
+-- including transport failure and asynchronous cancellation, still crosses
+-- this boundary and is handled by its existing owner.
+withCgroupObservationWorkerFailure ::
+  ModelDescriptor ->
+  IO (Either WorkerFailure result) ->
+  IO (Either WorkerFailure result)
+withCgroupObservationWorkerFailure model action = do
+  observed <- try @CgroupObservationFailure action
+  pure $
+    case observed of
+      Left failure -> Left (cgroupObservationWorkerFailure model failure)
+      Right result -> result
+
+-- | Classify evidence without parsing its rendering. A measured live-headroom
+-- shortfall has both quantities needed for the typed capacity result. Every
+-- other constructor says the observation itself is unavailable or
+-- contradictory and therefore keeps the distinct enforcer-unavailable shape.
+cgroupObservationWorkerFailure ::
+  ModelDescriptor ->
+  CgroupObservationFailure ->
+  WorkerFailure
+cgroupObservationWorkerFailure model failure =
+  case failure of
+    CgroupInsufficientHeadroom requiredMib availableMib ->
+      WorkerTypedInferenceFailure
+        ModelMemoryLimitExceeded
+          { inferenceErrorModelId = modelId model,
+            inferenceErrorRequiredMib = requiredMib,
+            inferenceErrorAvailableMib = availableMib,
+            inferenceErrorResource = PodRam,
+            inferenceErrorSource = cgroupMemoryHeadroomSource
+          }
+    _ ->
+      WorkerError
+        ( modelEnforcementUnavailableError
+            model
+            (Text.pack (renderCgroupObservationFailure failure))
+        )
 
 requestModelMismatchError :: ExecutableModel -> InferenceRequest -> ErrorResponse
 requestModelMismatchError executableModel request =
@@ -243,20 +291,33 @@ workerFailureResponse failure =
           { inferenceErrorModelId,
             inferenceErrorRequiredMib,
             inferenceErrorAvailableMib,
-            inferenceErrorResource
+            inferenceErrorResource,
+            inferenceErrorSource
           } ->
             ErrorResponse
               { errorCode = modelMemoryLimitExceededErrorCode,
                 message =
-                  "inference for "
-                    <> inferenceErrorModelId
-                    <> " breached its admitted "
-                    <> resourceText inferenceErrorResource
-                    <> " ceiling of "
-                    <> Text.pack (show inferenceErrorAvailableMib)
-                    <> " MiB (observed "
-                    <> Text.pack (show inferenceErrorRequiredMib)
-                    <> " MiB) and was terminated by the capped-engine kernel"
+                  if inferenceErrorSource == cgroupMemoryHeadroomSource
+                    then
+                      "inference for "
+                        <> inferenceErrorModelId
+                        <> " did not start because its required "
+                        <> resourceText inferenceErrorResource
+                        <> " ceiling of "
+                        <> Text.pack (show inferenceErrorRequiredMib)
+                        <> " MiB exceeds the current cgroup headroom of "
+                        <> Text.pack (show inferenceErrorAvailableMib)
+                        <> " MiB"
+                    else
+                      "inference for "
+                        <> inferenceErrorModelId
+                        <> " breached its admitted "
+                        <> resourceText inferenceErrorResource
+                        <> " ceiling of "
+                        <> Text.pack (show inferenceErrorAvailableMib)
+                        <> " MiB (observed "
+                        <> Text.pack (show inferenceErrorRequiredMib)
+                        <> " MiB) and was terminated by the capped-engine kernel"
               }
 
 -- | A non-breach worker failure in the 'WorkerFailure' channel.
@@ -270,7 +331,7 @@ modelEnforcementUnavailableError model reason =
       message =
         "inference for "
           <> modelId model
-          <> " was terminated because its live memory enforcer became unavailable: "
+          <> " did not run to completion because its live memory enforcer was unavailable: "
           <> reason
     }
 

@@ -13,14 +13,15 @@ govern this plan.
 
 ## Current execution gate
 
-Phase 0 remains `Done` and frozen at Sprint 0.36. Phases 1–9 are `Active` because each carries an
-open cohort gate in its own scope; no phase carries an open implementation gate. Closed sprint
-headings remain closed records of their original scope, not proof of the new work.
+Phase 0 remains `Done` and frozen at Sprint 0.36. Phases 1–9 are `Active`. Phase 1 carries open Wave
+R1; Phases 2–9 carry open cohort gates in their own scope.
+Closed sprint headings remain closed records of their original scope, not proof of the new work.
 
-Every open sprint — 1.44–1.46, 2.18, 3.18, 4.50, 5.13, 6.55, 7.30–7.33, 8.15, and 9.12 — has
-native Linux amd64 code-side closure, with its source/image tuple and retained receipts recorded in
-its own phase document. What remains everywhere is Axis 2: the phase's one chosen accelerator plus
-`linux-cpu` full suite, queued as Waves R1–R9. No new full-suite cohort result is claimed.
+Every open sprint has code-side closure, with its source/image or source/binary tuple and retained
+receipts recorded in its own phase document. Sprint 1.55 repaired the cgroup admission refusal that
+the native Linux CPU full suite had redelivered without a terminal result. The remaining gates are
+Axis 2: each phase's one chosen
+accelerator plus `linux-cpu` full suite, queued as Waves R1–R9. No new cohort closure is claimed.
 [Open waves R1–R9](cohort-validation-waves.md#wave-table) each require one selected accelerator plus
 `linux-cpu`; their hardware sign-off does not block the next phase's code-side work. The
 [phase table](#current-phase-overview) is the sole phase-status summary.
@@ -94,7 +95,7 @@ Pulsar routing, engine adapters, browser application, and role-based access cont
 architecture describes the target contract; it is not evidence that every contract is enforced.
 
 What each open sprint owns is stated in its own phase document. Every one of them has passed the
-machine-independent gate set; none has passed its accelerator cohort.
+machine-independent gate set; none has passed its current accelerator cohort.
 
 Four limits on what that closure establishes, because each is a claim the code deliberately does
 not make. The static-file boundary is enforced at the canonicalized read, which does not close the
@@ -185,7 +186,7 @@ trust the phase document.
 | Phase | Current status | Current gate and retained implementation state |
 |-------|----------------|------------------------------------------------|
 | 0 | Done | Frozen at Sprint 0.36; no new Phase 0 work. |
-| 1 | Active | Sprints 1.44–1.46 have native Linux amd64 code-side closure; Wave R1 is validation-only. Wave R1 full-suite sign-off remains open. [Sprints 1.44–1.46](phase-1-repository-and-control-plane-foundation.md) and [Wave R1](cohort-validation-waves.md#wave-table): Source-bound validation and required-check runner, binary-owned seed generation, explicit Apple engine startup, fail-closed cgroup observation, and domain-owned lifecycle authority. |
+| 1 | Active | Sprints 1.44–1.55 have code-side closure; only Wave R1 remains. [Sprints 1.44–1.55](phase-1-repository-and-control-plane-foundation.md) and [Wave R1](cohort-validation-waves.md#wave-table): Source-bound validation and required-check runner, binary-owned seed generation, explicit Apple engine startup, fail-closed cgroup observation, domain-owned lifecycle authority, official MinIO image distribution, valid browser artifact controls, upload/preview continuity across artifact-list renders, post-reconcile Apple daemon startup, a host-valid native-arm64 Linux CPU launcher, bounded settlement when an engine exits during footprint observation, and terminal result publication for cgroup pre-launch refusals. |
 | 2 | Active | [Sprints 2.18](phase-2-kind-cluster-storage-and-lifecycle.md) and [Wave R2](cohort-validation-waves.md#wave-table): Lifecycle consumer containment and cleanup; recover or rerun missing retained lifecycle evidence. |
 | 3 | Active | Sprint 3.18 has native Linux amd64 code-side closure; Wave R3 is validation-only. [Sprints 3.18](phase-3-platform-services-and-edge-routing.md) and [Wave R3](cohort-validation-waves.md#wave-table): Recover or rerun source-bound platform, routed publication, and registry evidence. |
 | 4 | Active | Sprint 4.50 has native Linux amd64 code-side closure; Wave R4 is validation-only. [Sprints 4.50](phase-4-inference-service-and-durable-runtime.md) and [Wave R4](cohort-validation-waves.md#wave-table): Real engine-cache hydration and rebuild, complete artifact accounting, and behavioral realness checks. |

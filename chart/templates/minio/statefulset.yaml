@@ -11,7 +11,7 @@ StatefulSet replaces the retired bitnami sub-chart.
   distributed set). The on-disk layouts are not interchangeable, so an existing
   cluster's MinIO PV contents are not readable by the collapsed shape. See
   documents/tools/minio.md.
-- Image: upstream `minio/minio` (multi-arch arm64 + amd64). Pulled
+- Image: upstream `quay.io/minio/minio` (multi-arch arm64 + amd64). Pulled
   through the in-cluster registry by the publication path;
   `registryOverridesValue` overrides `image.repository` + `image.tag`
   to the registry-mirrored refs after `cluster up` publishes the

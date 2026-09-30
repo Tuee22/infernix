@@ -26,7 +26,7 @@
 
 | Wave | Phase | Chosen accelerator | Paired lane | Gate | State |
 |------|-------|--------------------|-------------|------|-------|
-| R1 | 1 | `apple-silicon` | `linux-cpu` | Sprints 1.44–1.46; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
+| R1 | 1 | `apple-silicon` | `linux-cpu` | Sprints 1.44–1.55; source-bound `infernix test all` on both lanes | Code-side gates passed after terminal cgroup-refusal repair; full paired suites pending |
 | R2 | 2 | `apple-silicon` | `linux-cpu` | Sprints 2.18; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
 | R3 | 3 | `apple-silicon` | `linux-cpu` | Sprints 3.18; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
 | R4 | 4 | `apple-silicon` | `linux-cpu` | Sprints 4.50; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |

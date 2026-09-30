@@ -246,7 +246,7 @@ demoSplit:
 # StatefulSet under `chart/templates/minio/` replaces the retired
 # `bitnami/minio` v17.0.21 sub-chart. Bitnami moved free multi-arch
 # images to `bitnamilegacy/*` (frozen amd64-only) in late 2025, and the
-# upstream `minio/minio` image is not a drop-in replacement under the
+# upstream `quay.io/minio/minio` image is not a drop-in replacement under the
 # bitnami chart wrapper (the chart invokes the image with no args while
 # the upstream image expects `minio server <path>` as CMD). Hand-
 # authored templates give the platform full control over the StatefulSet
@@ -260,7 +260,7 @@ infernixMinio:
   # not an in-place reconcile. See documents/tools/minio.md.
   replicaCount: 1
   image:
-    repository: docker.io/minio/minio
+    repository: quay.io/minio/minio
     tag: "RELEASE.2025-09-07T16-13-09Z"
     pullPolicy: IfNotPresent
   resources:
@@ -270,7 +270,7 @@ infernixMinio:
     limits:
       memory: 4Gi
   clientImage:
-    repository: docker.io/minio/mc
+    repository: quay.io/minio/mc
     tag: "RELEASE.2025-08-13T08-35-41Z"
     pullPolicy: IfNotPresent
   initImage:

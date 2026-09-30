@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active — Sprints 1.44–1.46 have passed their native Linux amd64 code-side gates. Wave R1 remains open.
+**Status**: Active — Sprints 1.44–1.55 have code-side closure. Wave R1 remains open.
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
@@ -11,15 +11,15 @@
 
 ## Phase Status
 
-Sprints 1.1–1.43 retain their closed headings and only their established scope. Sprint 1.44 provides binary-generated image seeds, immutable launcher selection, an independent checkout observation, and retained suite receipts, validated by the common gates and independent controls. Sprint 1.45 provides validated cgroup availability refusal, engine admission, and initialization context preservation. Sprint 1.46 provides a closed linear lifecycle program, private lease kernel, and validated containment controls; runtime custody and type guarantees remain distinct.
+Sprints 1.1–1.43 retain their closed headings and only their established scope. Sprint 1.44 provides binary-generated image seeds, immutable launcher selection, an independent checkout observation, and retained suite receipts, validated by the common gates and independent controls. Sprint 1.45 provides validated cgroup availability refusal, engine admission, and initialization context preservation. Sprint 1.46 provides a closed linear lifecycle program, private lease kernel, and validated containment controls; runtime custody and type guarantees remain distinct. Sprint 1.47 owns the official multi-arch MinIO image-source inventory required by bootstrap. Sprint 1.48 owns a semantically valid MusicXML positive control so the full-suite browser gate distinguishes working notation rendering from malformed-input refusal. Sprint 1.49 owns per-context upload-draft continuity across artifact-list renders. Sprint 1.50 owns host-daemon lifecycle ordering in the Apple integration harness so an intentional broker reconcile cannot leave the later model matrix waiting on a daemon that has correctly failed closed. Sprint 1.51 owns download-grant preview continuity across the same asynchronous artifact-list replacement boundary. Sprint 1.52 owns host-native Darwin cleanup-tool selection for the native-arm64 Linux CPU outer-container launcher. Sprint 1.53 owns conversion of BuildKit's build identity into the locally addressable immutable Docker image identity used by Compose. Sprint 1.54 owns terminal Darwin footprint turnover when an engine exits during a fixed observation. Sprint 1.55 owns terminal publication of Linux cgroup admission refusals before acknowledgement.
 
 The existing Phase 1 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
 
-Sprints 1.44–1.46 have code-side closure. Phase-wide remediation code-side closure is complete. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R1 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has completed the new full-suite cohort criteria. A pending wave is validation-only once the machine-independent gates pass.
+Sprints 1.44–1.55 have code-side closure. Sprint 1.55 turns the typed cgroup pre-launch refusal into a terminal worker result without catching unrelated failures. The selected sign-off remains `apple-silicon` plus native `linux-cpu`, recorded in Wave R1 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation.
 
 ## Current Repo Assessment
 
-Existing command-registry, host-manifest, native-only bootstrap, and bounded-process implementations remain the baseline. Sprint 1.44 owns source/image binding, clean launcher creation, binary-generated seed configuration, and the explicit Apple host-engine workflow. Sprint 1.45 owns fail-closed availability; Sprint 1.46 owns domain authority and precise lifetime proofs. Sprints 1.44–1.46 have passed their common gates; Wave R1 remains open.
+Existing command-registry, host-manifest, native-only bootstrap, and bounded-process implementations remain the baseline. Sprint 1.44 owns source/image binding, clean launcher creation, binary-generated seed configuration, and the explicit Apple host-engine workflow. Sprint 1.45 owns fail-closed availability; Sprint 1.46 owns domain authority and precise lifetime proofs. Sprint 1.47 owns the MinIO source registry used before registry-first publication can take over. Sprint 1.48 owns the browser suite's valid MusicXML rendering positive control. Sprint 1.49 owns preservation of a selected upload while asynchronous artifact state re-renders the view. Sprint 1.50 owns starting the Apple host daemon only after the integration harness's intentional populated-registry reconcile. Sprint 1.51 owns persistence and rehydration of an issued preview grant when artifact state replaces the rendered cards. Sprint 1.52 owns the Darwin cleanup-tool path needed to enter the outer-container CPU validation lane. Sprint 1.53 owns a verified, locally addressable immutable image handoff for both Linux launchers. Sprint 1.54 owns the distinction between a live member whose footprint cannot be observed and an engine group that became empty during observation. Sprint 1.55 owns classification of typed cgroup pre-launch evidence into one terminal result before acknowledgement, without converting unrelated failures into acknowledgements. Sprints 1.44–1.55 have passed their common gates; only Wave R1 remains open.
 
 ## Substrate Foundation
 
@@ -2976,9 +2976,453 @@ Cohort gate only: retain Wave R1's selected `apple-silicon` plus native `linux-c
 
 **Code-side evidence**: source `c421d4c411c682e4467ab8b56fe8ea9dbb9559ac6680d0b9e56ed2dfea8744ec`; image `sha256:da82cbf1eb5dcfaeb2f5e794ce98f7c6cdf5e914b1e4cb69846024755edf700f`; lint `.data/runtime/validation/run-S8oPSx/receipt.json`; unit `.data/runtime/validation/run-GZlqp9/receipt.json`; controls `.data/runtime/validation/controls/phase1-146/`.
 
+## Sprint 1.47: Use the Official MinIO Image Distribution [Active]
+
+**Status**: Active
+**Code-side closure**: Implemented and validated on Apple Silicon through the governed build, all nine aggregate lint checks, all seven aggregate unit checks, focused files/docs/chart/proto/plan, and docs check.
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: nothing — Sprint 1.46 code-side closure is validated.
+**Implementation**: `chart/values.yaml`, `src/Infernix/Cluster/Internal.hs`, `test/unit/Spec.hs`
+**Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/minio.md`, `DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md`
+
+### Objective
+
+Keep the registry-first bootstrap on publicly pullable, official, multi-architecture MinIO server
+and client artifacts.
+
+### Deliverables
+
+- Pin the supported MinIO server and client release tags under `quay.io/minio/minio` and
+  `quay.io/minio/mc` in the chart defaults and host-cached warmup inventory.
+- Keep the chart, bootstrap warmup, publication overlay, unit fixtures, and governed image
+  inventory aligned on the same source references without changing the pinned releases.
+- Preserve normal chart-pull fallback for non-Docker-Hub warmup images and the subsequent
+  publication of architecture-matched images into the in-cluster registry.
+
+### Validation
+
+- `rg -n 'docker\.io/minio/(minio|mc)' chart/ src/ test/ README.md documents/ DEVELOPMENT_PLAN/`
+  returns zero matches.
+- Run the common build, aggregate lint, unit, focused files/docs/chart/proto/plan, docs-check, web,
+  and Python gates.
+- Wave R1 runs source-bound `infernix test all` on Apple Silicon and native `linux-cpu` against one
+  frozen implementation. MinIO reaches Ready, the provisioning Job completes, publication uses
+  the architecture-matched server and client images, and browser validation executes rather than
+  being skipped behind a storage bootstrap failure.
+- The Apple operator sequence starts the host engine after `cluster up` and returns a real inference
+  result; cluster readiness alone is insufficient.
+
+### Remaining Work
+
+Cohort gate only: retain Wave R1's selected `apple-silicon` plus native `linux-cpu` full-suite
+results and the Apple operator host-engine result against the same frozen source.
+
+**Code-side evidence**: source `35e8c3f757e5647c2323490952621b8f8ff7b26d2267cf9fbb7287286b8dc329`; binary `ff11575c35e782dafe059182a95bd5578dd8225e1fbce839bccf67c66795c605`; lint `.data/runtime/validation/run-gZPTSc/receipt.json`; unit `.data/runtime/validation/run-V1N9I3/receipt.json`; focused files `.data/runtime/validation/run-KcjFTh/receipt.json`; focused docs `.data/runtime/validation/run-ZCqc5V/receipt.json`; focused chart `.data/runtime/validation/run-yDafcj/receipt.json`; focused proto `.data/runtime/validation/run-2aSPVK/receipt.json`; focused plan `.data/runtime/validation/run-n7YR1n/receipt.json`; docs check `.data/runtime/validation/run-0w1ydp/receipt.json`.
+
+## Sprint 1.48: Use a Semantically Valid MusicXML Browser Fixture [Active]
+
+**Status**: Active
+**Code-side closure**: The checked-in positive control is a complete deterministic one-measure MusicXML score. The governed rebuild, all nine aggregate lint checks, and all seven aggregate unit checks pass on Apple Silicon.
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: nothing — the failing browser gate identifies the malformed positive control directly.
+**Implementation targets**: `web/test/fixtures/artifactSamples.js`, `web/playwright/inference.spec.js`
+**Docs to update**: `documents/development/demo_app_test_plan.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Make the required notation-rendering positive control a complete, deterministic MusicXML score
+that a conforming browser renderer can decode and render.
+
+### Deliverables
+
+- Replace the empty `score-partwise` document with a minimal complete score carrying part metadata,
+  measure attributes, and at least one pitched note.
+- Keep the malformed-MusicXML negative path distinct from the positive control so renderer failure
+  remains observable and cannot satisfy the ready assertion.
+- Keep the fixture deterministic, checked in, and shared by the routed browser artifact flow.
+
+### Validation
+
+- The focused browser artifact flow decodes the fixture through the authenticated object route and
+  reaches `data-preview-status="ready"` with rendered notation.
+- The common code-side gates pass before Wave R1 is retried.
+- Wave R1 runs source-bound `infernix test all` on Apple Silicon and native `linux-cpu` against the
+  same frozen implementation.
+
+### Remaining Work
+
+Cohort gate only: retain Wave R1's selected pair and Apple operator host-engine result against the
+same frozen source.
+
+**Code-side evidence**: source `4598b2f342665ae17003439e3c79c006613b25ea644f758cbc68c9a151785fda`; binary `ff11575c35e782dafe059182a95bd5578dd8225e1fbce839bccf67c66795c605`; lint `.data/runtime/validation/run-wHsKg2/receipt.json`; unit `.data/runtime/validation/run-FBwhCN/receipt.json`.
+
+## Sprint 1.49: Preserve Upload Drafts Across Artifact View Renders [Active]
+
+**Status**: Active
+**Code-side closure**: The stable Artifacts and Files roots retain per-context upload drafts while replaceable form nodes render. Governed build, all nine aggregate lint checks, all seven aggregate unit checks, and the focused real-cluster Browser gate pass on Apple Silicon; the browser control proves form replacement before submission.
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: nothing — the browser trace identifies the render/upload race directly.
+**Implementation targets**: `web/src/Infernix/Web/ArtifactTransport.js`, `web/playwright/inference.spec.js`
+**Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/development/demo_app_test_plan.md`
+
+### Objective
+
+Keep a user's selected upload and its metadata intact when asynchronous artifact-library state
+causes the upload form DOM to be replaced before submission.
+
+### Deliverables
+
+- Retain the selected `File`, MIME type, and display name per active context outside the replaceable
+  form node, and use that draft when a render has cleared the current controls.
+- Clear a retained upload draft only after the object POST succeeds; preserve it across a failed
+  attempt so an operator can retry.
+- Keep upload ownership scoped to the selected context and to the bound Artifacts or Files root.
+
+### Validation
+
+- A deterministic browser control forces a session/state re-render after file selection and before
+  submission; the upload still POSTs, appears in the context artifact list, and records its
+  conversation event.
+- The normal artifact flow and full per-model browser matrix remain green without retrying or
+  masking failed HTTP responses.
+- Run the common code-side gates, then Wave R1 on Apple Silicon and native `linux-cpu` against the
+  same frozen implementation.
+
+### Remaining Work
+
+Cohort gate only: retain Wave R1's selected pair and Apple operator host-engine result against the
+same frozen source.
+
+**Code-side evidence**: source `f67805b77f19e874177ea142b424a7732df69c29a2b23ff9fd2bc2269000aa84`; binary `ff11575c35e782dafe059182a95bd5578dd8225e1fbce839bccf67c66795c605`; lint `.data/runtime/validation/run-tU9WFl/receipt.json`; unit `.data/runtime/validation/run-DVphms/receipt.json`; browser `.data/runtime/validation/run-7OP6Jx/receipt.json`.
+
+## Sprint 1.50: Start the Apple Integration Daemon After Broker Reconcile [Active]
+
+**Status**: Active
+**Code-side closure**: Implemented and validated on Apple Silicon. The governed build, all nine
+aggregate lint checks, all seven aggregate unit checks, and the full source-bound Integration gate
+pass; Integration starts the host daemon only after the populated-registry reconcile and completes
+the first SmolLM row plus the full catalog and retained-state tail.
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: nothing — the retained daemon log and stranded request identify the lifecycle edge.
+**Implementation targets**: `test/integration/Spec.hs`
+**Docs to update**: `documents/development/testing_strategy.md`
+
+### Objective
+
+Keep the Apple integration harness's host engine daemon live for every inference assertion without
+weakening the production rule that loss of an exclusive engine-member claim is fatal.
+
+### Deliverables
+
+- Complete the populated-registry second `cluster up` before starting the Apple host engine daemon;
+  that reconcile intentionally closes the broker session and must not be hidden behind a stale
+  readiness marker.
+- Preserve the fail-closed production member-claim contract: a daemon that loses its exclusive
+  machine identity still exits instead of silently reacquiring and risking double admission.
+- Keep the registry tag/readback and pod-reschedule checks ahead of per-model inference while
+  leaving non-Apple lanes on the same integration path.
+- Make a later missing result attributable to a live post-reconcile daemon rather than waiting the
+  full result deadline on a child that exited during an earlier lifecycle step.
+
+### Validation
+
+- A source-bound Apple integration/full-suite run completes the populated-registry reconcile, then
+  starts a fresh host daemon and receives a terminal result for the first SmolLM matrix row.
+- The full Apple catalog integration and routed Browser gates pass from that same source snapshot.
+- Common code-side gates pass before Wave R1 is retried on Apple Silicon and native `linux-cpu`.
+
+### Remaining Work
+
+Cohort gate only: retain Wave R1's selected pair and the already-proven Apple operator host-engine
+sequence against the same frozen source.
+
+**Code-side evidence**: source `a350d60ee87fbc670937787344b321abc4bc762996b597b112855cfb64930505`;
+binary `f1e5e15010eb5c26f7ee3d39b9b9438c73a52e22e657d48ee10bf6f20d5cb819`; lint
+`.data/runtime/validation/run-5aS5Tl/receipt.json`; unit
+`.data/runtime/validation/run-1BKulJ/receipt.json`; Integration
+`.data/runtime/validation/run-npq8DY/receipt.json`.
+
+## Sprint 1.51: Preserve Artifact Preview Grants Across List Re-renders [Active]
+
+**Status**: Active
+**Code-side closure**: Implemented and validated on Apple Silicon. Preview state is retained by
+object key outside replaceable cards, every disposition rehydrates into replacement cards, and the
+focused routed Browser gate passes a forced full application render after the PDF grant.
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: nothing — the retained Playwright trace and DOM snapshot identify the replacement
+boundary.
+**Implementation targets**: `web/src/Infernix/Web/ArtifactTransport.js`,
+`web/playwright/inference.spec.js`
+**Docs to update**: `documents/development/testing_strategy.md`
+
+### Objective
+
+Keep an issued, authenticated artifact preview grant observable after WebSocket patches, file-list
+refreshes, or other application renders replace the artifact cards.
+
+### Deliverables
+
+- Retain successful preview state at the stable artifact-transport root, keyed by the authoritative
+  object key rather than a replaceable card node.
+- Rehydrate replacement cards with the routed object-proxy URL, authoritative render disposition,
+  and the preview-specific readiness evidence without minting readiness before a successful grant.
+- Cover bounded text, inline media, browser-native PDF, in-browser renderers, and download-only
+  artifacts so the repair does not leave another disposition dependent on stale DOM identity.
+- Keep preview URLs routed through `/api/objects/download`; do not persist a presigned MinIO URL or
+  weaken the operator-cookie authorization boundary.
+
+### Validation
+
+- The browser artifact scenario forces an artifact-list replacement after the PDF grant becomes
+  ready and proves the replacement iframe retains `data-preview-status=ready` plus its routed
+  object-proxy `src`.
+- Existing upload-draft continuity and every render-disposition assertion remain green.
+- Common code-side gates pass before Wave R1 is retried on Apple Silicon and native `linux-cpu`.
+
+### Remaining Work
+
+Code-side work is complete. Retain Wave R1's selected `apple-silicon` plus native `linux-cpu`
+full-suite results against one frozen source.
+
+**Discovery evidence**: Apple full suite `.data/runtime/validation/run-pEGFFv/receipt.json`; source
+`0bdcada9f8928c3649751c983ffd3c30d199d726503344eef8004e1da0fc71ce`; binary
+`f1e5e15010eb5c26f7ee3d39b9b9438c73a52e22e657d48ee10bf6f20d5cb819`; all gates through
+Integration passed; Browser failed only at the PDF replacement card's missing
+`data-preview-status=ready`, while the 16-model browser matrix passed.
+
+**Code-side evidence**: source `d8243ab62ffba9e78b928fd32b04a21cbbfd8c983b4590d6c5b712301b39b4d0`;
+binary `f1e5e15010eb5c26f7ee3d39b9b9438c73a52e22e657d48ee10bf6f20d5cb819`; lint
+`.data/runtime/validation/run-u26WPQ/receipt.json`; unit
+`.data/runtime/validation/run-gF66Ke/receipt.json`; Browser
+`.data/runtime/validation/run-4rLiTK/receipt.json`; source-bound image
+`sha256:04c8844ea7f726d199ef55e9abba9754ac3cc70f7b6fb077d254e46cd2b2677f`.
+
+## Sprint 1.52: Select the Darwin Cleanup Tool for the Linux CPU Launcher [Active]
+
+**Status**: Active
+**Implementation targets**: `bootstrap/linux-cpu.sh`, `test/unit/Spec.hs`
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: nothing — the Darwin launcher refusal identifies the unsupported absolute path.
+**Docs to update**: `documents/development/testing_strategy.md`
+
+### Objective
+
+Make the supported Darwin-hosted native-arm64 Linux CPU outer-container entrypoint consume its
+immutable launcher image id with an explicit cleanup executable that exists on the host.
+
+### Deliverables
+
+- Select `/bin/rm` for the Darwin branch before any launcher-image temporary file is removed while
+  retaining `/usr/bin/rm` for the supported Ubuntu host path.
+- Keep the Docker CLI's existing Darwin selection at `/opt/homebrew/bin/docker`; do not widen the
+  bootstrap to inherited `PATH` lookup or host environment configuration.
+- Add a deterministic source-level regression that proves the Darwin override is ordered after host
+  detection and before `build_launcher_image`, and that both cleanup paths remain explicit.
+- Preserve failure cleanup and successful immutable-image-id consumption through the same selected
+  tool.
+
+### Validation
+
+- The regression rejects a Darwin branch that retains `/usr/bin/rm`, omits `/bin/rm`, or applies the
+  override after launcher construction.
+- `./bootstrap/linux-cpu.sh build` succeeds on a Darwin arm64 host and enters the native Linux arm64
+  outer-container launcher using the immutable image id.
+- Run the common build, aggregate lint, aggregate unit, focused files/docs/plan, and docs-check gates.
+- Wave R1 reruns source-bound `infernix test all` on Apple Silicon and native `linux-cpu` against the
+  same post-repair source snapshot.
+
+### Remaining Work
+
+Retain Wave R1's selected pair against the repaired frozen source.
+
+**Discovery evidence**: Apple full suite `.data/runtime/validation/run-8YtVOl/receipt.json`; source
+`96b5345b2935e9410cb7105f062260928e2731a39cc9300019e5df6671ec4bf0`; binary
+`f1e5e15010eb5c26f7ee3d39b9b9438c73a52e22e657d48ee10bf6f20d5cb819`; native-arm64 Linux CPU
+launcher refusal at `bootstrap/linux-cpu.sh:130` after immutable image construction.
+
+## Sprint 1.53: Resolve an Addressable Immutable Launcher Image [Active]
+
+**Status**: Active
+**Implementation targets**: `bootstrap/common.sh`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `test/unit/Spec.hs`
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: nothing — Docker inspection exposes both the build config digest and the locally
+addressable manifest identity.
+**Docs to update**: `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/docker_policy.md`
+
+### Objective
+
+Select the immutable Docker image identity that the active local image store can actually resolve,
+while retaining a checked relationship to BuildKit's iidfile output.
+
+### Deliverables
+
+- After a successful build, inspect the just-built launcher tag and read its immutable `.Id` for
+  the Compose handoff instead of assuming the iidfile digest is locally addressable.
+- Accept the classic-store case where iidfile and `.Id` are equal and the containerd-store case
+  where iidfile equals the manifest descriptor's `config.digest` annotation; reject every other
+  mismatch before Compose starts.
+- Require the selected `.Id` and build identity to be `sha256:` digests, and keep cleanup of the
+  iidfile on build failure and success.
+- Apply the same resolution contract to `linux-cpu` and `linux-gpu` so the foundation does not
+  preserve a latent accelerator-launcher copy of the defect.
+- Add deterministic source-level regression coverage for both launchers and both accepted identity
+  relationships.
+
+### Validation
+
+- Unit controls reject a missing image id, a non-digest identity, and an iidfile value matching
+  neither the inspected `.Id` nor descriptor `config.digest`.
+- `./bootstrap/linux-cpu.sh build` succeeds through immutable digest-selected Compose entry on the
+  Darwin arm64/containerd-backed Docker path.
+- The common build, aggregate lint, aggregate unit, focused files/docs/plan, and docs-check gates
+  pass; Linux GPU source parity is covered without claiming CUDA execution in Phase 1.
+- Wave R1 reruns source-bound `infernix test all` on Apple Silicon and native `linux-cpu` against the
+  same post-repair source snapshot.
+
+### Remaining Work
+
+Retain Wave R1's selected pair against the repaired frozen source.
+
+**Discovery evidence**: the Sprint 1.52 Darwin build produced iidfile config digest
+`sha256:e2247c203221bdddd6c5156b0e8f47a253c565971624757aaecbee81e96bf7a9`; Docker inspection of
+the tagged image produced addressable `.Id`
+`sha256:e8c39f338871118c4343dbe19711b30a93f2f47c83647a3ef05a40355285221a` and linked the iidfile
+value through the manifest descriptor's `config.digest` annotation.
+
+**Code-side evidence**: aggregate lint
+`.data/runtime/validation/run-qp5004/receipt.json`; aggregate unit
+`.data/runtime/validation/run-xii6Mn/receipt.json`; FilesLint
+`.data/runtime/validation/run-goYr8x/receipt.json`; DocsLint
+`.data/runtime/validation/run-zA5waJ/receipt.json`; PlanLint
+`.data/runtime/validation/run-31zQQR/receipt.json`; docs check
+`.data/runtime/validation/run-8JPt8y/receipt.json`; Darwin arm64/containerd image `.Id`
+`sha256:4539f959274a60a6ba8167b59de91e409ef37c50c9a759849856a6a5a03df0d8` entered
+Compose after its iidfile config digest
+`sha256:ff299d9c715991c81cbab90259668bbc55aa8c7c804abe1db8d78ce80c7b4cab` was verified.
+
+## Sprint 1.54: Settle Darwin Footprint Turnover After Engine Exit [Active]
+
+**Status**: Active
+**Implementation targets**: `src/Infernix/Runtime/CappedEngine/FixedObserver.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`, `test/capped-engine-observer/Spec.hs`
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: nothing — a complete refreshed process-group snapshot distinguishes departed-member turnover from a live-member observer failure.
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Treat an engine group that becomes empty while Darwin `/usr/bin/footprint` is inspecting a member
+as terminal turnover, while preserving fail-closed behavior for every live member and unreadable
+membership recheck.
+
+### Deliverables
+
+- Represent a complete footprint sample that observes no remaining live group member as terminal
+  absence rather than a fabricated byte count or observer failure.
+- When a member measurement fails, recheck the complete process-group membership under the same
+  monotonic deadline: preserve the exact failure if that PID remains, restart the full sum from
+  zero if membership changed but remains nonempty, and report terminal absence if the group is
+  empty.
+- Route terminal absence into the shared watchdog's existing bounded settlement, which requires
+  terminal process-handle evidence before accepting the engine exit.
+- Keep arbitrary `/usr/bin/footprint` stderr and nonzero exits fail-closed whenever the refreshed
+  group still contains the measured PID or the membership recheck itself fails.
+- Add deterministic kernel regressions for initial terminal absence, member-turnover restart,
+  terminal member disappearance, retained live-member failure, and membership-recheck failure.
+
+### Validation
+
+- The focused capped-engine observer suite proves every turnover branch without weakening the
+  observer's fixed executable, argument, deadline, output-bound, or cleanup contracts.
+- Aggregate lint, aggregate unit, focused files/docs/plan, and docs-check gates pass.
+- Wave R1 reruns source-bound `infernix test all` on Apple Silicon and native `linux-cpu` against the
+  same post-repair source snapshot; the 16-model integration matrix completes without converting a
+  terminal `/usr/bin/footprint` PID race into `engine_memory_enforcer_unavailable`.
+
+### Remaining Work
+
+Retain Wave R1's selected pair against the repaired frozen source.
+
+**Discovery evidence**: Apple full suite `.data/runtime/validation/run-vmGyC1/receipt.json`; the
+Integration gate reached `llm-qwen15-mlx`, then the engine process exited while `/usr/bin/footprint`
+reported `vm.get_owned_vmobjects - No such process` and `mach_vm_region_recurse - (ipc/send)
+invalid destination port`; the empty-group recheck preserved that tool failure instead of entering
+terminal settlement.
+
+**Code-side evidence**: aggregate unit
+`.data/runtime/validation/run-28QzeU/receipt.json`, including the focused
+`CappedEngineObserver` gate; aggregate lint and build
+`.data/runtime/validation/run-dBYjQj/receipt.json`; docs check
+`.data/runtime/validation/run-BEDyK6/receipt.json`; `git diff --check` passed.
+
+## Sprint 1.55: Publish Terminal Cgroup Admission Refusals [Active]
+
+**Status**: Active
+**Code-side closure**: Implemented and validated through the governed build, all nine aggregate lint
+checks, all seven aggregate unit checks, and the standalone docs check on one source identity.
+**Implementation targets**: `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Types.hs`, `test/unit/Spec.hs`
+**Cohort gate**: Wave R1 — selected `apple-silicon` plus native `linux-cpu`.
+**Blocked by**: nothing — the typed cgroup observation failure already distinguishes measured
+headroom from unavailable evidence.
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Turn a Linux cgroup pre-launch refusal into one clean terminal inference result before the source
+message is acknowledged, instead of letting the exception reach the Pulsar consumer's retry boundary
+and redeliver forever without a result.
+
+### Deliverables
+
+- Catch only the capped-engine kernel's typed `CgroupObservationFailure` at the worker boundary;
+  unrelated exceptions must still escape to the transport boundary for negative acknowledgement.
+- Classify `CgroupInsufficientHeadroom required available` as a typed
+  `ModelMemoryLimitExceeded` for pod RAM, preserving both observed quantities and naming live cgroup
+  headroom as the source. The launch action remains unentered.
+- Classify unreadable, invalid, or contradictory cgroup evidence as
+  `engine_memory_enforcer_unavailable`, preserving the observer's diagnostic without fabricating a
+  capacity measurement.
+- Return either classification through the existing result-publication path so publication precedes
+  acknowledgement. A publication failure remains retryable and must not acknowledge the request.
+- Add deterministic unit controls for the complete constructor classification, exact quantities,
+  resource and source, and the distinction between typed cgroup failures and unrelated exceptions.
+
+### Validation
+
+- Focused and aggregate unit gates prove cgroup refusal classification without requiring a host
+  cgroup fixture or matching rendered stderr.
+- Aggregate lint, build, focused files/docs/plan, docs-check, web, and Python gates pass.
+- Wave R1 reruns source-bound `infernix test all` on Apple Silicon and native `linux-cpu` against the
+  same post-repair source snapshot. On Linux CPU, a row whose 4096 MiB installed ceiling exceeds
+  live cgroup headroom publishes `status=failed` and the catalog traversal continues instead of
+  expiring its result deadline.
+
+### Remaining Work
+
+Code-side work is complete. Retain Wave R1's paired full suites against the repaired frozen source.
+
+**Discovery evidence**: native Linux CPU full suite
+`.data/runtime/validation/run-5M7cXz/receipt.json`; immutable launcher image `.Id`
+`sha256:0776d6200469f5fdf82e97491025f877e2245c9c4958531ea0bae051bf1db250` linked to iidfile
+config digest `sha256:8c80b09fc4017826765c0bb9ea3f1794f84c456e7000f6f606857174d1eb1505`.
+Integration completed `llm-smollm2-safetensors`, then `llm-tinyllama-gguf` repeatedly observed
+roughly 2980–2999 MiB of cgroup headroom against a 4096 MiB launch requirement, negative-acked the
+request on every refusal, and reached the 4200-second missing-result deadline before clean teardown.
+
+**Code-side evidence**: source
+`b2808550afdd6955e2ef97a6999f5b1c3e75db6aa515f29fd3eb41abf557b25e`; binary
+`391201d678a450145e4d56ad694136cb92253a9108262167a305c581488a2037`; aggregate lint
+`.data/runtime/validation/run-pdiHLV/receipt.json`; aggregate unit
+`.data/runtime/validation/run-20wjGG/receipt.json`; docs check
+`.data/runtime/validation/run-RmHa3c/receipt.json`; `git diff --check` passed.
+
 ## Remaining Work
 
-Cohort gate only: retain Wave R1's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprints 1.44–1.46 have code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Retain Wave R1's `apple-silicon` plus native `linux-cpu` full-suite results for the same repaired
+frozen source, including the Apple operator host-engine sequence, Sprint 1.51's replacement-card
+preview continuity, and Sprint 1.55's terminal cgroup refusal. Sprints 1.44–1.55 have code-side
+closure; no new cohort result is claimed.
+Closed sprint headings retain
+only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 
@@ -3010,6 +3454,6 @@ Cohort gate only: retain Wave R1's `apple-silicon` plus native `linux-cpu` full-
 
 **Remediation documentation obligations:**
 
-- Keep the contracts named by Sprints 1.44–1.46 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Keep the contracts named by Sprints 1.44–1.55 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
 - Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
 - Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.

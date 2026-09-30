@@ -146,8 +146,8 @@ of the supported contract.
 
 | Component | Image | Notes |
 |-----------|-------|-------|
-| MinIO server | `minio/minio` | Multi-arch (`linux/amd64`, `linux/arm64`); the chart override pins a specific `RELEASE.*` tag |
-| MinIO client (`mc`) | `minio/mc` | Multi-arch; used by the chart's `minio-provisioning` Job to create buckets at install time |
+| MinIO server | `quay.io/minio/minio` | Official multi-arch distribution (`linux/amd64`, `linux/arm64`); the chart pins a specific `RELEASE.*` tag |
+| MinIO client (`mc`) | `quay.io/minio/mc` | Official multi-arch distribution; used by the chart's `minio-provisioning` Job to create buckets at install time |
 | Volume-permissions init container | `busybox` | Multi-arch; provides the `sh`/`chmod`/`chown` the chart's `defaultInitContainers.volumePermissions` block runs to seed PV permissions before MinIO starts |
 
 The standalone Console deployment (`bitnamilegacy/minio-object-browser`) is disabled

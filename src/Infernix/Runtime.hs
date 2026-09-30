@@ -119,13 +119,12 @@ executeExecutableInferenceWithKVCache paths maybeEngineCache maybeCacheSeed mayb
       recordKVCacheOutcome maybeEngineCache maybeCacheRequest workerResult
       case workerResult of
         -- Phase 4 Sprint 4.37: the worker's own measurement is consumed, not
-        -- re-derived. The retired arm matched a reserved error code and then
-        -- dropped the worker's report whole, rebuilding the payload from the
-        -- 'ExecutableModel' — so everything the sampler measured ended at that
-        -- match, and a device breach was published against the resident host
-        -- resource carrying the pod ceiling.
-        Left (WorkerTypedInferenceFailure breach) -> do
-          let result = failedMemoryResult now model breach
+        -- re-derived. Phase 1 Sprint 1.55 extends the same typed channel to a
+        -- pre-launch cgroup-headroom refusal: both carry their own resource,
+        -- quantities, and source, so neither crosses this boundary as an
+        -- exception or gets reconstructed from the executable model.
+        Left (WorkerTypedInferenceFailure memoryFailure) -> do
+          let result = failedMemoryResult now model memoryFailure
           persistInferenceResult paths result
           pure (Right result)
         Left (WorkerError workerError) -> pure (Left workerError)
@@ -205,11 +204,11 @@ requestModelMismatchError executableModel request =
           <> "."
     }
 
--- | Build the @status=failed@ result carrying a typed
--- 'ModelMemoryLimitExceeded' payload for a runtime ceiling breach. Admission
--- rejection happens before refinement can produce an 'ExecutableModel'. The
--- timestamp is deterministic per request so duplicate redeliveries collapse
--- under producer dedup.
+-- | Build the @status=failed@ result carrying a typed memory payload established
+-- by the worker boundary. This includes both a runtime ceiling breach and the
+-- live cgroup-headroom refusal immediately before launch. The timestamp is
+-- deterministic per request so duplicate redeliveries collapse under producer
+-- dedup.
 failedMemoryResult :: UTCTime -> ModelDescriptor -> InferenceError -> InferenceResult
 failedMemoryResult now model errorValue =
   InferenceResult

@@ -98,6 +98,7 @@ module Infernix.Types
     resourceText,
     inferenceMemoryBudgetSource,
     cappedEngineResidentCeilingSource,
+    cgroupMemoryHeadroomSource,
     modelMemoryLimitExceededErrorCode,
     modelRequirementUnderivableErrorCode,
     mkHostMemoryPartition,
@@ -1476,6 +1477,14 @@ modelRequirementUnderivableErrorCode = "model_requirement_underivable"
 -- reports. Consumers distinguish the two fail-closed paths by this source.
 cappedEngineResidentCeilingSource :: Text
 cappedEngineResidentCeilingSource = "capped-engine-resident-ceiling"
+
+-- | Phase 1 Sprint 1.55 — the source attached to a pre-launch refusal when
+-- the outer cgroup's currently unused memory is smaller than the ceiling the
+-- already-admitted engine launch must install. This is availability evidence,
+-- not a sampled in-run breach, so it must not reuse
+-- 'cappedEngineResidentCeilingSource'.
+cgroupMemoryHeadroomSource :: Text
+cgroupMemoryHeadroomSource = "cgroup-memory-headroom"
 
 data InferenceError
   = ModelMemoryLimitExceeded

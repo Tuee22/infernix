@@ -1088,6 +1088,18 @@ test("browser artifact upload covers preview media PDF and download-only grants"
   }, artifactDownloadOptions);
   await expect(pdfCard).toHaveAttribute("data-render-disposition", "BrowserNativePdf");
   await expectRoutedPreviewSource(pdfCard, ".artifact-preview-pdf");
+  // Phase 1 Sprint 1.51: route changes run the same full application render
+  // that a late ServerArtifactReady/files refresh does. The issued grant is
+  // transport state, so the replacement PDF card must recover its routed src
+  // and readiness evidence without another click.
+  await page.locator("#route-chat").click();
+  await page.locator("#route-artifacts").click();
+  const replacedPdfCard = page
+    .locator("#artifacts-root")
+    .locator(`.artifact-entry[data-display-name="${pdfName}"]`)
+    .first();
+  await expect(replacedPdfCard).toBeVisible();
+  await expectRoutedPreviewSource(replacedPdfCard, ".artifact-preview-pdf");
 
   const midiName = `browser-midi-${randomUUID()}.mid`;
   const midiCard = await uploadAndDownloadArtifact(page, {
@@ -1422,6 +1434,7 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
 
   const matrixToken = randomUUID();
   const contextByModel = new Map();
+  let uploadRerenderControlPending = true;
 
   for (let index = 0; index < modelPickerOptions.length; index += 1) {
     const { value: modelId } = modelPickerOptions[index];
@@ -1478,7 +1491,23 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
       await refreshBrowserSession(page, wsFrames, contextId);
       const uploadSentStart = wsFrames.sent.length;
       const uploadReceivedStart = wsFrames.received.length;
-      await uploadArtifactThroughBrowser(page, inputArtifact);
+      const forceUploadFormReplacement = uploadRerenderControlPending;
+      await uploadArtifactThroughBrowser(
+        page,
+        inputArtifact,
+        forceUploadFormReplacement
+          ? async (artifactsRoot) => {
+              const uploadForm = artifactsRoot.locator("form[data-role='artifact-upload']");
+              await uploadForm.evaluate((form) => {
+                form.dataset.uploadRerenderControl = "original";
+              });
+              await page.locator("#route-chat").click();
+              await page.locator("#route-artifacts").click();
+              await expect(uploadForm).not.toHaveAttribute("data-upload-rerender-control", "original");
+            }
+          : null,
+      );
+      uploadRerenderControlPending = false;
       await page.locator("#route-chat").click();
       await expectConversationUploadVisible(
         page,
@@ -2601,7 +2630,7 @@ async function fillIfPresent(page, selector, value) {
   }
 }
 
-async function uploadArtifactThroughBrowser(page, artifact) {
+async function uploadArtifactThroughBrowser(page, artifact, afterFileSelected = null) {
   // Phase 7 Sprint 7.26 added a Files view that reuses the upload panel, so the
   // upload selectors are scoped to the Artifacts view to stay unambiguous.
   const artifactsRoot = page.locator("#artifacts-root");
@@ -2610,6 +2639,9 @@ async function uploadArtifactThroughBrowser(page, artifact) {
     mimeType: artifact.mimeType,
     buffer: artifact.buffer,
   });
+  if (afterFileSelected) {
+    await afterFileSelected(artifactsRoot);
+  }
   await artifactsRoot.locator("input[name='artifact-mime']").fill(artifact.mimeType);
   await artifactsRoot.locator("input[name='artifact-display-name']").fill(artifact.name);
   await artifactsRoot.locator("form[data-role='artifact-upload']").evaluate((form) => form.requestSubmit());

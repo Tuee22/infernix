@@ -299,17 +299,6 @@ function objectPreviewUrl(objectKey, mimeType) {
   return objectBytesUrl(objectKey, mimeType) + "&intent=preview";
 }
 
-function currentArtifactCards(card, objectKey) {
-  const documentValue = card?.ownerDocument || document;
-  const cards = Array.from(documentValue.querySelectorAll(".artifact-entry")).filter(
-    (entry) => entry.dataset.objectKey === objectKey,
-  );
-  if (cards.length > 0) {
-    return cards;
-  }
-  return card ? [card] : [];
-}
-
 function markDownloadReady(cards, bytesUrl, disposition) {
   for (const card of cards) {
     card.dataset.renderDisposition = disposition || "";
@@ -320,21 +309,159 @@ function markDownloadReady(cards, bytesUrl, disposition) {
   }
 }
 
-async function handleUpload(form, onUploaded) {
+function previewStateStore(root) {
+  const documentValue = root.ownerDocument || document;
+  if (!documentValue.__infernixArtifactPreviewStates) {
+    documentValue.__infernixArtifactPreviewStates = new Map();
+  }
+  return documentValue.__infernixArtifactPreviewStates;
+}
+
+function artifactCardsWithin(scope, objectKey) {
+  return Array.from(scope.querySelectorAll(".artifact-entry")).filter(
+    (entry) => entry.dataset.objectKey === objectKey,
+  );
+}
+
+async function applyPreviewState(scope, objectKey, state) {
+  const cards = artifactCardsWithin(scope, objectKey);
+  if (cards.length === 0) {
+    return;
+  }
+
+  if (state.kind === "text") {
+    for (const card of cards) {
+      const preview = card.querySelector(".artifact-preview-text");
+      if (preview && preview.dataset.previewStatus !== "ready") {
+        preview.textContent = state.text;
+        preview.dataset.previewTruncated = state.truncated ? "true" : "false";
+        preview.dataset.previewByteBudget = String(BOUNDED_TEXT_PREVIEW_BYTES);
+        preview.dataset.previewStatus = "ready";
+      }
+    }
+  } else if (state.kind === "media") {
+    for (const card of cards) {
+      const media = card.querySelector(
+        ".artifact-preview-image, .artifact-preview-audio, .artifact-preview-video, .artifact-preview-pdf",
+      );
+      if (media && media.dataset.previewStatus !== "ready") {
+        // Browser-issued media src GET authenticates via the operator cookie
+        // (Path=/; set at login) since img/audio/video/iframe cannot set headers.
+        media.setAttribute("src", state.bytesUrl);
+        media.dataset.previewStatus = "ready";
+      }
+    }
+  } else if (state.kind === "renderer") {
+    for (const card of cards) {
+      const mount = card.querySelector(state.selector);
+      if (!mount || mount.dataset.previewStatus === "ready") {
+        continue;
+      }
+      if (state.renderer === "midi") {
+        await renderMidiInto(mount, accessToken(), state.bytesUrl);
+      } else if (state.renderer === "musicxml") {
+        await renderMusicXmlInto(mount, accessToken(), state.bytesUrl);
+      } else {
+        await renderZipStemsInto(mount, accessToken(), state.bytesUrl);
+      }
+    }
+  } else {
+    for (const card of cards) {
+      const placeholder = card.querySelector(".artifact-preview-download-only");
+      if (placeholder && placeholder.dataset.previewStatus !== "ready") {
+        placeholder.textContent = "Download ready.";
+        placeholder.dataset.previewStatus = "ready";
+      }
+    }
+  }
+
+  markDownloadReady(cards, state.bytesUrl, state.disposition);
+}
+
+function retainPreviewState(root, objectKey, state) {
+  const states = previewStateStore(root);
+  states.set(objectKey, state);
+  return applyPreviewState(root.ownerDocument || document, objectKey, state);
+}
+
+function bindPreviewStateRehydration(root, onError) {
+  const documentValue = root.ownerDocument || document;
+  const MutationObserverValue = documentValue.defaultView?.MutationObserver;
+  if (!MutationObserverValue) {
+    return;
+  }
+  const states = previewStateStore(root);
+  let scheduled = false;
+  const restore = () => {
+    if (scheduled) {
+      return;
+    }
+    scheduled = true;
+    Promise.resolve().then(() => {
+      scheduled = false;
+      for (const [objectKey, state] of states) {
+        applyPreviewState(root, objectKey, state).catch((error) => {
+          onError(error.message)();
+        });
+      }
+    });
+  };
+  const observer = new MutationObserverValue((records) => {
+    if (records.some((record) => record.addedNodes.length > 0)) {
+      restore();
+    }
+  });
+  observer.observe(root, { childList: true, subtree: true });
+  root.__infernixArtifactPreviewObserver = observer;
+  restore();
+}
+
+function captureUploadDraft(uploadDrafts, event) {
+  const form = event.target?.closest?.("form[data-role='artifact-upload']");
+  const contextId = form?.dataset?.contextId;
+  if (!form || !contextId) {
+    return;
+  }
+  const previous = uploadDrafts.get(contextId) || {
+    file: null,
+    mimeType: "",
+    displayName: "",
+  };
+  const target = event.target;
+  const file = target?.matches?.("input[name='artifact-file']")
+    ? target.files?.[0] || null
+    : previous.file;
+  const mimeType = target?.matches?.("input[name='artifact-mime']")
+    ? target.value
+    : previous.mimeType;
+  const displayName = target?.matches?.("input[name='artifact-display-name']")
+    ? target.value
+    : previous.displayName;
+  if (!file && !mimeType && !displayName) {
+    uploadDrafts.delete(contextId);
+    return;
+  }
+  uploadDrafts.set(contextId, { file, mimeType, displayName });
+}
+
+async function handleUpload(form, onUploaded, uploadDrafts) {
   const token = requireToken();
   const contextId = form.dataset.contextId;
   if (!contextId) {
     throw new Error("Create or select a context before uploading");
   }
+  const retainedDraft = uploadDrafts.get(contextId);
   const fileInput = form.querySelector("input[name='artifact-file']");
-  const file = fileInput?.files?.[0];
+  const file = fileInput?.files?.[0] || retainedDraft?.file;
   if (!file) {
     throw new Error("Choose a file before uploading");
   }
   const mimeInput = form.querySelector("input[name='artifact-mime']");
   const displayInput = form.querySelector("input[name='artifact-display-name']");
-  const mimeType = (mimeInput?.value || file.type || "application/octet-stream").trim();
-  const displayName = (displayInput?.value || file.name).trim();
+  const mimeType = (
+    mimeInput?.value || retainedDraft?.mimeType || file.type || "application/octet-stream"
+  ).trim();
+  const displayName = (displayInput?.value || retainedDraft?.displayName || file.name).trim();
   if (!displayName) {
     throw new Error("Artifact display name is required");
   }
@@ -364,6 +491,7 @@ async function handleUpload(form, onUploaded) {
 
   setUploadProgress(form, 100);
   setUploadStatus(form, "ready", "Uploaded");
+  uploadDrafts.delete(contextId);
   const objectRef = grant.artifactUploadGrantObjectRef;
   onUploaded(
     JSON.stringify({
@@ -376,13 +504,12 @@ async function handleUpload(form, onUploaded) {
   )();
 }
 
-async function handleDownload(button) {
+async function handleDownload(button, root) {
   const token = requireToken();
   const contextId = button.dataset.contextId;
   const mimeType = button.dataset.mimeType || "application/octet-stream";
   const objectKey = button.dataset.objectKey || "";
   const displayName = button.dataset.displayName || displayNameFromKey(objectKey);
-  const card = button.closest(".artifact-entry");
   if (!contextId || !displayName || !objectKey) {
     throw new Error("Artifact download metadata is incomplete");
   }
@@ -405,84 +532,59 @@ async function handleDownload(button) {
       token,
       BOUNDED_TEXT_PREVIEW_BYTES,
     );
-    const cards = currentArtifactCards(card, objectKey);
-    for (const currentCard of cards) {
-      const preview = currentCard.querySelector(".artifact-preview-text");
-      if (preview) {
-        preview.textContent = text;
-        // Truncation is stated rather than left for the reader to notice. The
-        // full object is still one click away on the same authorized route.
-        preview.dataset.previewTruncated = truncated ? "true" : "false";
-        preview.dataset.previewByteBudget = String(BOUNDED_TEXT_PREVIEW_BYTES);
-        preview.dataset.previewStatus = "ready";
-      }
-    }
-    markDownloadReady(cards, bytesUrl, disposition);
+    // Truncation is stated rather than left for the reader to notice. The full
+    // object is still one click away on the same authorized route. Retaining
+    // the completed state makes that evidence survive an application render
+    // which replaces the card after this request finishes.
+    await retainPreviewState(root, objectKey, {
+      kind: "text",
+      text,
+      truncated,
+      bytesUrl,
+      disposition,
+    });
     return;
   }
 
   if (disposition === "RenderInline" || disposition === "BrowserNativePdf") {
-    const cards = currentArtifactCards(card, objectKey);
-    for (const currentCard of cards) {
-      const media = currentCard.querySelector(
-        ".artifact-preview-image, .artifact-preview-audio, .artifact-preview-video, .artifact-preview-pdf",
-      );
-      if (media) {
-        // Browser-issued media src GET authenticates via the operator cookie
-        // (Path=/; set at login) since img/audio/video/iframe cannot set headers.
-        media.setAttribute("src", bytesUrl);
-        media.dataset.previewStatus = "ready";
-      }
-    }
-    markDownloadReady(cards, bytesUrl, disposition);
+    await retainPreviewState(root, objectKey, { kind: "media", bytesUrl, disposition });
     return;
   }
 
   if (disposition === "RenderMidi") {
-    const cards = currentArtifactCards(card, objectKey);
-    for (const currentCard of cards) {
-      const mount = currentCard.querySelector(".artifact-preview-midi");
-      if (mount) {
-        await renderMidiInto(mount, token, bytesUrl);
-      }
-    }
-    markDownloadReady(cards, bytesUrl, disposition);
+    await retainPreviewState(root, objectKey, {
+      kind: "renderer",
+      renderer: "midi",
+      selector: ".artifact-preview-midi",
+      bytesUrl,
+      disposition,
+    });
     return;
   }
 
   if (disposition === "RenderMusicXml") {
-    const cards = currentArtifactCards(card, objectKey);
-    for (const currentCard of cards) {
-      const mount = currentCard.querySelector(".artifact-preview-musicxml");
-      if (mount) {
-        await renderMusicXmlInto(mount, token, bytesUrl);
-      }
-    }
-    markDownloadReady(cards, bytesUrl, disposition);
+    await retainPreviewState(root, objectKey, {
+      kind: "renderer",
+      renderer: "musicxml",
+      selector: ".artifact-preview-musicxml",
+      bytesUrl,
+      disposition,
+    });
     return;
   }
 
   if (disposition === "RenderZipStems") {
-    const cards = currentArtifactCards(card, objectKey);
-    for (const currentCard of cards) {
-      const mount = currentCard.querySelector(".artifact-preview-zip");
-      if (mount) {
-        await renderZipStemsInto(mount, token, bytesUrl);
-      }
-    }
-    markDownloadReady(cards, bytesUrl, disposition);
+    await retainPreviewState(root, objectKey, {
+      kind: "renderer",
+      renderer: "zip",
+      selector: ".artifact-preview-zip",
+      bytesUrl,
+      disposition,
+    });
     return;
   }
 
-  const cards = currentArtifactCards(card, objectKey);
-  for (const currentCard of cards) {
-    const placeholder = currentCard.querySelector(".artifact-preview-download-only");
-    if (placeholder) {
-      placeholder.textContent = "Download ready.";
-      placeholder.dataset.previewStatus = "ready";
-    }
-  }
-  markDownloadReady(cards, bytesUrl, disposition);
+  await retainPreviewState(root, objectKey, { kind: "download", bytesUrl, disposition });
 }
 
 export const bindArtifactTransportImpl = (root) => (onUploaded) => (onError) => () => {
@@ -490,6 +592,17 @@ export const bindArtifactTransportImpl = (root) => (onUploaded) => (onError) => 
     return;
   }
   root.__infernixArtifactTransportBound = true;
+  // Artifact-list polling, WebSocket patches, and route changes all render a
+  // fresh upload form. A File cannot be recovered from the replacement DOM
+  // node, so retain the draft at the stable root and scope it by context.
+  const uploadDrafts = new Map();
+  const rememberUploadDraft = (event) => captureUploadDraft(uploadDrafts, event);
+  root.addEventListener("input", rememberUploadDraft);
+  root.addEventListener("change", rememberUploadDraft);
+  // The PureScript renderer intentionally replaces artifact cards. Download
+  // grants are session state, not node state, so replay completed previews
+  // into each replacement card rather than making a late patch erase them.
+  bindPreviewStateRehydration(root, onError);
 
   root.addEventListener("submit", (event) => {
     const form = event.target?.closest?.("form[data-role='artifact-upload']");
@@ -497,7 +610,7 @@ export const bindArtifactTransportImpl = (root) => (onUploaded) => (onError) => 
       return;
     }
     event.preventDefault();
-    handleUpload(form, onUploaded).catch((error) => {
+    handleUpload(form, onUploaded, uploadDrafts).catch((error) => {
       setUploadProgress(form, 0);
       setUploadStatus(form, "error", error.message);
       onError(error.message)();
@@ -510,7 +623,7 @@ export const bindArtifactTransportImpl = (root) => (onUploaded) => (onError) => 
       return;
     }
     event.preventDefault();
-    handleDownload(button).catch((error) => {
+    handleDownload(button, root).catch((error) => {
       button.dataset.downloadStatus = "error";
       onError(error.message)();
     });

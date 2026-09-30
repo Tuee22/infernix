@@ -56,7 +56,7 @@ Kind worker nodes then pull the architecture-matched image from the registry wit
 cross-architecture translation. Apple Silicon workflows must not create or switch Docker contexts
 or create a Colima VM; Docker-backed Apple work uses the operator's already selected native arm64
 Docker daemon or stops at prerequisite validation. The supported MinIO image inventory uses upstream multi-arch
-images (`minio/minio`, `minio/mc`, `busybox`) instead of single-architecture amd64-only
+images (`quay.io/minio/minio`, `quay.io/minio/mc`, `busybox`) instead of single-architecture amd64-only
 packaging; see [../tools/minio.md](../tools/minio.md) for the canonical
 inventory.
 

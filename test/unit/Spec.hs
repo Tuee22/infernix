@@ -30,7 +30,7 @@ import Data.ByteString.Short qualified as ShortByteString
 import Data.Char (isHexDigit, isSpace, isUpper)
 import Data.Either (fromRight, isLeft, isRight)
 import Data.IORef qualified as IORef
-import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sort, sortOn, tails)
+import Data.List (elemIndex, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sort, sortOn, tails)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
@@ -323,6 +323,7 @@ import Infernix.Runtime.Daemon
   ( runProductionDaemon,
   )
 import Infernix.Runtime.Enforcer qualified as Enforcer
+import Infernix.Runtime.Enforcer.Internal qualified as EnforcerInternal
 import Infernix.Runtime.Enforcer.Properties qualified as EnforcerProperties
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
@@ -371,12 +372,16 @@ import Infernix.Runtime.Pulsar qualified as Pulsar
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Realness qualified as Realness
 import Infernix.Runtime.Worker
-  ( WorkerModelCacheConfig (..),
+  ( WorkerFailure (..),
+    WorkerModelCacheConfig (..),
+    cgroupObservationWorkerFailure,
     loadWorkerModelCacheConfig,
     nativeArtifactMarkerPathsForTest,
     nativeModelCacheObjectKeys,
     pythonEngineBootstrapManifestRequiredForTest,
     requireHydratedNativeModelCache,
+    withCgroupObservationWorkerFailure,
+    workerFailureResponse,
   )
 import Infernix.Service (serviceDemoConfigPath)
 import Infernix.Storage (edgePortPath, readEdgePortMaybe, writeClusterStateFile)
@@ -4443,6 +4448,100 @@ runRegistryBlobServabilityAssertions = do
                 ("actual registry-only readback rejects the changed referenced blob while API/tags remain intact: " <> show mode <> "; " <> show result)
     mapM_ runControl [RegistryBlobsIntact, RegistryBlobsIntact, RegistryBlobMissing, RegistryBlobCorrupt]
 
+-- | Phase 1 Sprint 1.55 — a launch-time cgroup refusal is terminal request
+-- evidence, while unrelated exceptions still belong to the outer retry
+-- boundary. These controls use the classifier directly, so they are independent
+-- of the host's cgroup layout and never classify by rendered stderr.
+runCgroupAdmissionFailureAssertions :: IO ()
+runCgroupAdmissionFailureAssertions = do
+  model <-
+    case catalogForMode LinuxCpu of
+      firstModel : _ -> pure firstModel
+      [] -> ioError (userError "linux-cpu catalog unexpectedly has no model")
+  let requiredMib = 4096
+      availableMib = 2999
+      headroomFailure =
+        EnforcerInternal.CgroupInsufficientHeadroom requiredMib availableMib
+      classifiedHeadroom = cgroupObservationWorkerFailure model headroomFailure
+  case classifiedHeadroom of
+    WorkerTypedInferenceFailure memoryFailure -> do
+      assert
+        ( inferenceErrorModelId memoryFailure == modelId model
+            && inferenceErrorRequiredMib memoryFailure == requiredMib
+            && inferenceErrorAvailableMib memoryFailure == availableMib
+            && inferenceErrorResource memoryFailure == PodRam
+            && inferenceErrorSource memoryFailure == cgroupMemoryHeadroomSource
+        )
+        "Sprint 1.55: live cgroup headroom preserves its model, quantities, pod-RAM resource, and source"
+      let rendered = workerFailureResponse classifiedHeadroom
+      assert
+        ( errorCode rendered == modelMemoryLimitExceededErrorCode
+            && Text.isInfixOf "did not start" (message rendered)
+            && Text.isInfixOf "4096 MiB" (message rendered)
+            && Text.isInfixOf "2999 MiB" (message rendered)
+        )
+        "Sprint 1.55: headroom refusal renders as pre-launch capacity evidence rather than an in-run breach"
+    other ->
+      ioError
+        ( userError
+            ( "cgroup headroom was not classified as a typed terminal memory refusal: "
+                <> show other
+            )
+        )
+  let unavailableObservations =
+        [ EnforcerInternal.CgroupReadFailure
+            EnforcerInternal.CgroupMembership
+            "/proc/self/cgroup"
+            "permission denied",
+          EnforcerInternal.CgroupInvalidObservation
+            EnforcerInternal.CgroupMaximum
+            "/sys/fs/cgroup/fixture/memory.max"
+            "not a counter",
+          EnforcerInternal.CgroupUsageExceedsMaximum
+            "/sys/fs/cgroup/fixture/memory.current"
+            8192
+            4096
+        ]
+  forM_ unavailableObservations $ \observation ->
+    case cgroupObservationWorkerFailure model observation of
+      WorkerError response ->
+        assert
+          ( errorCode response == "engine_memory_enforcer_unavailable"
+              && Text.pack (EnforcerInternal.renderCgroupObservationFailure observation)
+                `Text.isInfixOf` message response
+          )
+          "Sprint 1.55: unreadable, invalid, and contradictory cgroup evidence retain the exact observer diagnosis"
+      other ->
+        ioError
+          ( userError
+              ( "unavailable cgroup evidence was misclassified as measured capacity: "
+                  <> show other
+              )
+          )
+  captured <-
+    withCgroupObservationWorkerFailure
+      model
+      (throwIO headroomFailure :: IO (Either WorkerFailure Text.Text))
+  assert
+    (captured == Left classifiedHeadroom)
+    "Sprint 1.55: the worker boundary contains its typed cgroup refusal"
+  unrelated <-
+    try @IOException
+      ( withCgroupObservationWorkerFailure
+          model
+          (ioError (userError "unrelated worker failure") :: IO (Either WorkerFailure Text.Text))
+      )
+  assert
+    (isLeft unrelated)
+    "Sprint 1.55: unrelated exceptions still escape to the transport retry boundary"
+  successful <-
+    withCgroupObservationWorkerFailure
+      model
+      (pure (Right ("completed" :: Text.Text)))
+  assert
+    (successful == Right "completed")
+    "Sprint 1.55: the typed cgroup boundary preserves successful worker results"
+
 main :: IO ()
 main = do
   -- Test images spawn self-exec children through the same close_fds
@@ -4456,6 +4555,7 @@ main = do
   unitTestRoot <- testRootPath "unit"
   ProcessIdentitySpec.runProcessIdentityTests
     (unitTestRoot </> "process-identity")
+  runCgroupAdmissionFailureAssertions
   runInitializationContextAssertions
   runRegistryBlobServabilityAssertions
   runDeployedRouteInventoryAssertions
@@ -4669,6 +4769,67 @@ main = do
   cabalManifestContents <- readFile "infernix.cabal"
   linuxDockerfileContents <- readFile "docker/Dockerfile"
   appleBootstrapContents <- readFile "bootstrap/apple-silicon.sh"
+  commonBootstrapContents <- readFile "bootstrap/common.sh"
+  linuxCpuBootstrapContents <- readFile "bootstrap/linux-cpu.sh"
+  linuxGpuBootstrapContents <- readFile "bootstrap/linux-gpu.sh"
+  let linuxCpuBootstrapLineIndex needle = elemIndex needle (lines linuxCpuBootstrapContents)
+      darwinHostDetectionLine = "BOOTSTRAP_HOST_OS=\"$(\"${BOOTSTRAP_UNAME}\" -s)\""
+      darwinCleanupOverrideLine = "  BOOTSTRAP_RM=/bin/rm"
+      launcherBuildLine = "build_launcher_image() {"
+  assert
+    ( "BOOTSTRAP_RM=/usr/bin/rm" `isInfixOf` linuxCpuBootstrapContents
+        && case ( linuxCpuBootstrapLineIndex darwinHostDetectionLine,
+                  linuxCpuBootstrapLineIndex darwinCleanupOverrideLine,
+                  linuxCpuBootstrapLineIndex launcherBuildLine
+                ) of
+          (Just hostDetection, Just cleanupOverride, Just launcherBuild) ->
+            hostDetection < cleanupOverride && cleanupOverride < launcherBuild
+          _ -> False
+    )
+    "Sprint 1.52: the Darwin-hosted linux-cpu launcher selects /bin/rm before immutable image construction while Ubuntu retains /usr/bin/rm"
+  let launcherBuildIdentity = "sha256:" <> replicate 64 'b'
+      launcherImageIdentity = "sha256:" <> replicate 64 'a'
+      unrelatedIdentity = "sha256:" <> replicate 64 'c'
+      resolveLauncherIdentity buildIdentity imageIdentity configIdentity =
+        readCreateProcessWithExitCode
+          ( proc
+              "/bin/bash"
+              [ "-c",
+                "source bootstrap/common.sh; bootstrap::resolve_launcher_image_identity \"$@\"",
+                "launcher-identity-control",
+                buildIdentity,
+                imageIdentity,
+                configIdentity
+              ]
+          )
+          ""
+  (classicIdentityExit, classicIdentityOutput, _) <-
+    resolveLauncherIdentity launcherImageIdentity launcherImageIdentity ""
+  (containerdIdentityExit, containerdIdentityOutput, _) <-
+    resolveLauncherIdentity launcherBuildIdentity launcherImageIdentity launcherBuildIdentity
+  (missingIdentityExit, _, _) <-
+    resolveLauncherIdentity launcherBuildIdentity "" launcherBuildIdentity
+  (nonDigestIdentityExit, _, _) <-
+    resolveLauncherIdentity "not-a-digest" launcherImageIdentity "not-a-digest"
+  (mismatchedIdentityExit, _, _) <-
+    resolveLauncherIdentity launcherBuildIdentity launcherImageIdentity unrelatedIdentity
+  let launcherIdentityContractSource launcherContents =
+        "bootstrap::resolve_launcher_image_identity" `isInfixOf` launcherContents
+          && "image inspect --format '{{.Id}}'" `isInfixOf` launcherContents
+          && "{{index .Descriptor \"annotations\" \"config.digest\"}}" `isInfixOf` launcherContents
+  assert
+    ( "bootstrap::resolve_launcher_image_identity()" `isInfixOf` commonBootstrapContents
+        && launcherIdentityContractSource linuxCpuBootstrapContents
+        && launcherIdentityContractSource linuxGpuBootstrapContents
+        && classicIdentityExit == ExitSuccess
+        && classicIdentityOutput == launcherImageIdentity <> "\n"
+        && containerdIdentityExit == ExitSuccess
+        && containerdIdentityOutput == launcherImageIdentity <> "\n"
+        && missingIdentityExit /= ExitSuccess
+        && nonDigestIdentityExit /= ExitSuccess
+        && mismatchedIdentityExit /= ExitSuccess
+    )
+    "Sprint 1.53: both Linux launchers select a verified addressable digest and reject missing, malformed, or unrelated identities"
   assert
     ("run_launcher service --role engine" `isInfixOf` appleBootstrapContents)
     "the manual Apple daemon wrapper explicitly starts the engine role"
@@ -21409,17 +21570,17 @@ sampleRegistryOverlay =
 -- type PublishedImage = (String, String)
 
 -- | Phase 3 Sprint 3.11 (2026-05-29): the supported MinIO image
--- inventory uses upstream multi-arch images (`minio/minio`,
--- `minio/mc`) and `busybox` for the volume-permissions init. The
+-- inventory uses upstream multi-arch images (`quay.io/minio/minio`,
+-- `quay.io/minio/mc`) and `busybox` for the volume-permissions init. The
 -- bitnamilegacy `minio-object-browser` standalone-console image is
 -- absent because the chart's `console` Deployment is disabled.
 samplePublishedImages :: Map.Map String PublishedImage
 samplePublishedImages =
   Map.fromList
     [ ("infernix-linux-cpu:local", ("registry.local/library/infernix-linux-cpu", "sha256-runtime")),
-      ("docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z", ("registry.local/library/minio/minio", "sha256-minio")),
+      ("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z", ("registry.local/library/minio/minio", "sha256-minio")),
       ("docker.io/busybox:1.36", ("registry.local/library/busybox", "sha256-shell")),
-      ("docker.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", ("registry.local/library/minio/mc", "sha256-client")),
+      ("quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", ("registry.local/library/minio/mc", "sha256-client")),
       ("docker.io/apachepulsar/pulsar-all:4.0.9", ("registry.local/library/apachepulsar/pulsar-all", "sha256-pulsar")),
       ("docker.io/percona/percona-postgresql-operator:2.9.0", ("registry.local/library/percona/percona-postgresql-operator", "sha256-pg-operator")),
       ("docker.io/percona/percona-distribution-postgresql:18.3-1", ("registry.local/library/percona/percona-distribution-postgresql", "sha256-pg-db")),

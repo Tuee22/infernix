@@ -158,8 +158,8 @@ installing an engine, creating or switching a context, or provisioning a VM. The
 `bootstrap/linux-gpu.sh` entrypoint still targets native Ubuntu 24.04 Linux hosts (NVIDIA driver
 prerequisites); from an Apple host, exercise the GPU container lane through the `docker compose`
 reference path against the existing Colima daemon. The MinIO sub-chart uses upstream multi-arch
-images (`minio/minio`,
-`minio/mc`, `busybox`) instead of single-architecture amd64-only packaging; see
+images (`quay.io/minio/minio`,
+`quay.io/minio/mc`, `busybox`) instead of single-architecture amd64-only packaging; see
 [documents/architecture/runtime_modes.md](documents/architecture/runtime_modes.md) for the
 substrate → architecture mapping and
 [documents/tools/minio.md](documents/tools/minio.md) for the supported MinIO image inventory.

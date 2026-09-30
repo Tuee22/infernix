@@ -158,8 +158,13 @@ reference path uses the same `compose.yaml` service and prefixes the direct comm
 supported bootstrap installs the recommended Ubuntu compute driver, stops, and instructs the
 operator to reboot before rerunning the same command.
 
-The Linux wrappers reconcile the launcher build before entering its immutable image id. Compose
-launches a baked snapshot; the wrappers mount the checkout read-only at `/opt/infernix/checkout`
+The Linux wrappers reconcile the launcher build before entering its immutable image id. On a
+classic Docker image store, BuildKit's iidfile digest is the locally addressable image id. On a
+containerd-backed store, the iidfile can instead name the OCI configuration while Docker's `.Id`
+names the locally addressable manifest. The wrappers inspect the just-built tag, require the
+iidfile digest to equal either `.Id` or the manifest descriptor's `config.digest`, and give Compose
+the immutable `.Id`; any other relationship refuses before launch. Compose launches a baked
+snapshot; the wrappers mount the checkout read-only at `/opt/infernix/checkout`
 so the binary can compare requested source with the image. The checkout is an observation input;
 compilation and execution use `/workspace`. Direct Compose validation must supply that same
 read-only mount with `--volume "$(pwd):/opt/infernix/checkout:ro"` on `run`. Validation binds the expected relevant

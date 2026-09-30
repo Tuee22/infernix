@@ -112,7 +112,7 @@ compose_run() {
 # BuildKit provenance is disabled so registry publication sees a plain
 # single-platform image rather than an OCI index with attestation metadata.
 build_launcher_image() {
-  local launcher_iidfile launcher_identity
+  local launcher_iidfile launcher_build_identity launcher_image_identity launcher_config_identity resolved_identity
   launcher_iidfile="$("${BOOTSTRAP_MKTEMP}")"
   if ! bootstrap::run "${BOOTSTRAP_DOCKER}" build \
     --file docker/Dockerfile \
@@ -126,10 +126,14 @@ build_launcher_image() {
     "${BOOTSTRAP_RM}" -f "${launcher_iidfile}"
     bootstrap::die "Launcher build failed."
   fi
-  launcher_identity="$(<"${launcher_iidfile}")"
+  launcher_build_identity="$(<"${launcher_iidfile}")"
   "${BOOTSTRAP_RM}" -f "${launcher_iidfile}"
-  [[ "${launcher_identity}" == sha256:* ]] || bootstrap::die "Launcher build identity is unavailable."
-  COMPOSE_IMAGE="${launcher_identity}"
+  launcher_image_identity="$("${BOOTSTRAP_DOCKER}" image inspect --format '{{.Id}}' "${COMPOSE_IMAGE}" 2>/dev/null || true)"
+  launcher_config_identity="$("${BOOTSTRAP_DOCKER}" image inspect --format '{{index .Descriptor "annotations" "config.digest"}}' "${COMPOSE_IMAGE}" 2>/dev/null || true)"
+  if ! resolved_identity="$(bootstrap::resolve_launcher_image_identity "${launcher_build_identity}" "${launcher_image_identity}" "${launcher_config_identity}")"; then
+    bootstrap::die "Launcher image identity could not be verified after the build."
+  fi
+  COMPOSE_IMAGE="${resolved_identity}"
 }
 
 ensure_platform_shape() {

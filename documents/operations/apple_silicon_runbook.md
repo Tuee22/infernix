@@ -264,7 +264,7 @@ layer.
 `clusterWorkloadArchitectureForHostArchitecture AppleSilicon` returns `"arm64"` in `src/Infernix/Cluster.hs`,
 and every registry `docker pull --platform linux/<arch>` and `skopeo copy --override-arch=<arch>`
 invocation reads from that mapping. The chart's MinIO sub-chart uses upstream multi-arch
-images (`minio/minio`, `minio/mc`, `busybox`) — not single-architecture amd64-only packaging.
+images (`quay.io/minio/minio`, `quay.io/minio/mc`, `busybox`) — not single-architecture amd64-only packaging.
 Operators must not enable an emulated Linux lane for Infernix validation, and the Apple
 workflow must not create or switch Docker contexts or create a Colima VM.
 

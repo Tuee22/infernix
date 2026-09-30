@@ -179,6 +179,23 @@ exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
   materializeGeneratedSubstrate runtimeMode True
   withClusterLifecycle runtimeMode $ do
+    -- Phase 1 Sprint 1.50: the populated-registry proof below deliberately
+    -- performs a second complete cluster-up. On the Apple lane that reconcile
+    -- closes the broker WebSocket which holds the host daemon's exclusive
+    -- engine-member claim. Claim loss is correctly fatal: silently reacquiring
+    -- would permit two machines to admit work as one identity. Complete every
+    -- pre-inference reconcile before starting the daemon so the readiness
+    -- marker belongs to the broker generation that serves the model matrix.
+    maybePreDaemonState <- loadClusterState paths
+    preDaemonState <-
+      maybe
+        (fail "cluster state was not available before pre-daemon registry validation")
+        pure
+        maybePreDaemonState
+    reportStep ("registry populated-backing reconcile: " <> showRuntimeMode runtimeMode)
+    validateRegistryPopulatedBackingReconcile paths preDaemonState runtimeMode
+    reportStep ("registry stateless pod reschedule: " <> showRuntimeMode runtimeMode)
+    validateRegistryPodReschedule paths preDaemonState runtimeMode
     withRuntimeServiceDaemonIfNeeded paths runtimeMode $ do
       reportStep ("cluster state reload: " <> showRuntimeMode runtimeMode)
       maybeState <- loadClusterState paths
@@ -270,10 +287,6 @@ exerciseRuntimeMode paths runtimeMode = do
         (demoWebSocketStatus == 401 && "WebSocket upgrade" `isInfixOf` demoWebSocketBody)
         "the demo websocket prefix reaches its JWT-protected upgrade handler"
       assert (objectProxyStatus == 401) "the object-proxy prefix reaches its application authentication boundary"
-      reportStep ("registry populated-backing reconcile: " <> showRuntimeMode runtimeMode)
-      validateRegistryPopulatedBackingReconcile paths state runtimeMode
-      reportStep ("registry stateless pod reschedule: " <> showRuntimeMode runtimeMode)
-      validateRegistryPodReschedule paths state runtimeMode
       reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
       validateCatalogModelInferenceForRuntime paths state runtimeMode compiledPlan
       reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)

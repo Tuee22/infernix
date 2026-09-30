@@ -50,6 +50,31 @@ bootstrap::run() {
   "$@"
 }
 
+# BuildKit's iidfile names the image configuration on containerd-backed
+# stores, while Docker addresses the loaded image by its manifest digest.
+# Classic stores use one digest for both. Accept only those two relationships
+# and return the immutable identity that Docker can resolve locally.
+bootstrap::resolve_launcher_image_identity() {
+  local build_identity="$1"
+  local image_identity="$2"
+  local descriptor_config_identity="${3:-}"
+
+  if [[ ! "${build_identity}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    printf '[error] Launcher build identity is not a sha256 digest.\n' >&2
+    return 1
+  fi
+  if [[ ! "${image_identity}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    printf '[error] Addressable launcher image identity is not a sha256 digest.\n' >&2
+    return 1
+  fi
+  if [[ "${build_identity}" != "${image_identity}" && "${build_identity}" != "${descriptor_config_identity}" ]]; then
+    printf '[error] Launcher build identity does not match the addressable image or its descriptor config digest.\n' >&2
+    return 1
+  fi
+
+  printf '%s\n' "${image_identity}"
+}
+
 bootstrap::require_macos() {
   [[ "$("${BOOTSTRAP_UNAME}" -s)" == "Darwin" ]] || bootstrap::die "This bootstrap entrypoint only supports macOS."
 }

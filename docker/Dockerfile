@@ -153,7 +153,7 @@ COPY --from=nvkind-builder /go/bin/nvkind /usr/local/bin/nvkind
 # retired in favor of the hand-authored MinIO StatefulSet under
 # `chart/templates/minio/`, so this pre-fetch stops pulling
 # `minio-17.0.21.tgz` from charts.bitnami.com. The supported MinIO
-# image inventory uses upstream multi-arch `minio/minio` + `minio/mc`
+# image inventory uses upstream multi-arch `quay.io/minio/minio` + `quay.io/minio/mc`
 # + `busybox` (see chart/values.yaml.infernixMinio).
 RUN set -eu; \
     mkdir -p /opt/infernix/chart/charts; \

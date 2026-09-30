@@ -154,6 +154,12 @@ no device grant is not a constructible term.
   `footprint` sample has a fifteen-second deadline. The wider Darwin bound is deliberate detection-only
   latency: the selected Apple cohort observed a healthy full-host snapshot exceed five seconds while a
   real model loaded, and treating scheduler pressure as enforcement loss killed a valid execution.
+  Darwin member turnover follows that same terminal rule. If `/usr/bin/footprint` loses a PID between
+  the complete `top` membership snapshot and Mach inspection, the observer takes another complete
+  membership snapshot under the original deadline. A still-present PID preserves the exact tool
+  failure; changed nonempty membership discards the partial sum and restarts it from zero; an empty
+  membership becomes terminal absence for the shared four-observation settlement. No diagnostic-text
+  matching grants this transition, and absence is never recorded as a zero-byte sample.
 - **A lane declares the strength it has.** The enforcement mechanism is part of the type, so a lane
   that can install a kernel ceiling and a lane that can only sample are different values, and a
   contract that requires prevention refuses readiness on a lane that offers only detection. The
@@ -182,6 +188,16 @@ derived rather than authored, so the related unmanaged states are also unbuildab
   per grant, so a GPU model can never be admitted against RAM alone or VRAM alone. A `linux-gpu`
   budget that names only one resource is a hard config error (`GpuDualResourceBudgetRequired`), and a
   dual budget whose halves name the wrong resources is rejected by `InvalidMemoryEnforcer`.
+- **Linux launch rechecks live cgroup headroom without turning capacity into a retry loop.** Immediately
+  before the ceiling installation region can enter its launch action, the fixed observer reads the
+  process's cgroup membership, `memory.max`, and `memory.current`. A finite remainder below the
+  required installed ceiling is measured capacity evidence: the worker returns a terminal typed
+  `ModelMemoryLimitExceeded` for pod RAM with the exact required and available MiB and source
+  `cgroup-memory-headroom`; no engine starts. Unreadable, invalid, or contradictory operands carry no
+  capacity measurement and return the distinct terminal `engine_memory_enforcer_unavailable` result.
+  Classification matches the typed observation constructor, never its rendered text. Both outcomes
+  use the normal result publication path, and the request is acknowledged only after publication;
+  unrelated exceptions and result-publication failure still cross the transport retry boundary.
 - **Physical RAM is a checked partition.** `HostMemoryPartition` is minted by a smart constructor over
   observed quantities that splits physical RAM into `vmReserve + hostHeadroom + inferenceCapacity`,
   **rejects oversubscription and a non-positive inference capacity**,

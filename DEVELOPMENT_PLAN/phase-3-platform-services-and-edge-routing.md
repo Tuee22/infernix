@@ -459,8 +459,8 @@ workers dialed `localhost` literally.
 - **`bitnamilegacy/*` retirement.** The upstream bitnami MinIO sub-chart is
   retired in favor of a hand-authored MinIO StatefulSet under
   `chart/templates/minio/`, driven by the `infernixMinio:` block in
-  `chart/values.yaml` (`image.repository: docker.io/minio/minio`,
-  `clientImage.repository: docker.io/minio/mc`,
+  `chart/values.yaml` (`image.repository: quay.io/minio/minio`,
+  `clientImage.repository: quay.io/minio/mc`,
   `initImage.repository: docker.io/busybox`). There is no separate MinIO
   console workload or route. The publication overlay code in `PublishImages.hs`
   overrides `infernixMinio.image` / `clientImage` / `initImage` to the
@@ -517,8 +517,9 @@ workers dialed `localhost` literally.
     the bind-test + increment loop fires.
   - Substrate-aware publication runs every upstream image through `docker pull --platform
     linux/arm64` and `skopeo --override-arch=arm64`; the full platform image set
-    (`infernix-linux-cpu`, `apachepulsar/pulsar-all`, `busybox`, `envoyproxy/gateway`, `minio/mc`,
-    `minio/minio`, `percona/percona-distribution-postgresql`, `percona/percona-pgbackrest`,
+    (`infernix-linux-cpu`, `apachepulsar/pulsar-all`, `busybox`, `envoyproxy/gateway`,
+    `quay.io/minio/mc`, `quay.io/minio/minio`, `percona/percona-distribution-postgresql`,
+    `percona/percona-pgbackrest`,
     `percona/percona-pgbouncer`, `percona/percona-postgresql-operator`, `quay.io/keycloak/keycloak`)
     publishes as native arm64 through the registry.
   - Kind workers pull and run every registry-mirrored image natively; the Percona operator runs as

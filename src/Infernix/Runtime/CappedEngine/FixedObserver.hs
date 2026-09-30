@@ -26,6 +26,7 @@ module Infernix.Runtime.CappedEngine.FixedObserver
     processGroupHasNoLiveMembers,
     processGroupMemberCount,
     processGroupPhysicalFootprintBytes,
+    processGroupPhysicalFootprintSample,
     runFixedObserverFixtureModeIfRequested,
     runFixedObserverKernelTest,
     verifyNvidiaVramObserver,
@@ -143,6 +144,7 @@ data FixedObserverKernelTest
   | ObserverStoppedGroupCleanup
   | ObserverDescendantGroupCleanup
   | ObserverOutputBoundsCleanup
+  | ObserverInitialTerminalAbsence
   | ObserverMemberTurnoverRestart
   | ObserverLiveMemberFailure
   | ObserverTerminalMemberFailure
@@ -260,8 +262,27 @@ processGroupMemberCount processGroup =
     NvidiaFixedObserverLane ->
       pure (Left "Apple process-group member-count observation is unavailable on this platform")
 
+-- | Compatibility surface for build-memory sampling, whose caller enters its
+-- own relay/group settlement after any terminal observation. The engine
+-- watchdog consumes 'processGroupPhysicalFootprintSample' directly so an
+-- empty group remains typed terminal absence rather than an observer failure.
 processGroupPhysicalFootprintBytes :: CPid -> IO (Either Text Word64)
-processGroupPhysicalFootprintBytes processGroup =
+processGroupPhysicalFootprintBytes processGroup = do
+  sampled <- processGroupPhysicalFootprintSample processGroup
+  pure
+    ( sampled
+        >>= maybe
+          (Left "Apple top output omitted every live process-group member")
+          Right
+    )
+
+-- | Observe one complete physical-footprint sample. 'Right Nothing' means a
+-- complete membership observation proved that the group became empty before
+-- or during member measurement. The watchdog must settle that terminal window
+-- against its independently owned process handle; it is not a zero-byte
+-- sample and it is not permission to ignore a failure for a still-live PID.
+processGroupPhysicalFootprintSample :: CPid -> IO (Either Text (Maybe Word64))
+processGroupPhysicalFootprintSample processGroup =
   case currentFixedObserverLane of
     AppleFixedObserverLane ->
       captureSynchronousFailure "Apple physical-footprint observation failed" $ do
@@ -280,21 +301,23 @@ processGroupPhysicalFootprintBytes processGroup =
 -- | Sum one complete process-group membership snapshot. A member can exit
 -- after @top@ publishes the snapshot but before @footprint@ opens that PID. A
 -- failed member is therefore rechecked through another complete snapshot. If
--- it has gone, every partial byte count is discarded and sampling restarts
--- from the refreshed membership; if it remains live, the observer failure is
--- preserved. Production supplies observations and measurements that all share
--- one fixed 'ObserverDeadline', so repeated turnover cannot extend the sample.
+-- it has gone, every partial byte count is discarded: sampling restarts from a
+-- refreshed nonempty membership, while an empty membership reports terminal
+-- absence for the watchdog to settle. If the failed member remains live, the
+-- observer failure is preserved. Production supplies observations and
+-- measurements that all share one fixed 'ObserverDeadline', so repeated
+-- turnover cannot extend the sample.
 sampleCompleteProcessGroupSnapshotWith ::
   IO (Either Text [CPid]) ->
   (CPid -> IO (Either Text Word64)) ->
   [CPid] ->
-  IO (Either Text Word64)
+  IO (Either Text (Maybe Word64))
 sampleCompleteProcessGroupSnapshotWith observeMembers measureMember initialMembers
   | null initialMembers =
-      pure (Left "Apple top output omitted every live process-group member")
+      pure (Right Nothing)
   | otherwise = sampleMembers initialMembers 0
   where
-    sampleMembers [] total = pure (Right total)
+    sampleMembers [] total = pure (Right (Just total))
     sampleMembers (processId : remaining) total = do
       sampled <- measureMember processId
       case sampled of
@@ -313,7 +336,7 @@ sampleCompleteProcessGroupSnapshotWith observeMembers measureMember initialMembe
               | processId `elem` refreshedMembers ->
                   pure (Left footprintFailure)
               | null refreshedMembers ->
-                  pure (Left footprintFailure)
+                  pure (Right Nothing)
               | otherwise ->
                   sampleMembers refreshedMembers 0
         Right physicalBytes ->
@@ -1471,6 +1494,8 @@ runKernelTest testCase =
       testDescendantGroupCleanup
     ObserverOutputBoundsCleanup ->
       testOutputBoundsCleanup
+    ObserverInitialTerminalAbsence ->
+      testInitialTerminalAbsence
     ObserverMemberTurnoverRestart ->
       testMemberTurnoverRestart
     ObserverLiveMemberFailure ->
@@ -1651,6 +1676,14 @@ data MemberSamplingFixtureStep
   | FixtureMeasureMember CPid (Either Text Word64)
   deriving (Eq, Show)
 
+testInitialTerminalAbsence :: IO ()
+testInitialTerminalAbsence =
+  testMemberSamplingFixture
+    "an initially empty complete snapshot reports terminal absence"
+    []
+    []
+    (Right Nothing)
+
 testMemberTurnoverRestart :: IO ()
 testMemberTurnoverRestart =
   testMemberSamplingFixture
@@ -1662,7 +1695,7 @@ testMemberTurnoverRestart =
       FixtureMeasureMember fixtureProcessId42 (Right 100),
       FixtureMeasureMember fixtureProcessId44 (Right 200)
     ]
-    (Right 300)
+    (Right (Just 300))
 
 testLiveMemberFailure :: IO ()
 testLiveMemberFailure =
@@ -1677,12 +1710,12 @@ testLiveMemberFailure =
 testTerminalMemberFailure :: IO ()
 testTerminalMemberFailure =
   testMemberSamplingFixture
-    "an empty refreshed group preserves the failure for terminal settlement"
+    "an empty refreshed group reports terminal absence for bounded settlement"
     [fixtureProcessId42]
     [ FixtureMeasureMember fixtureProcessId42 (Left fixtureFootprintFailure),
       FixtureObserveMembers (Right [])
     ]
-    (Left fixtureFootprintFailure)
+    (Right Nothing)
 
 testMembershipRecheckFailure :: IO ()
 testMembershipRecheckFailure =
@@ -1700,7 +1733,7 @@ testMemberSamplingFixture ::
   String ->
   [CPid] ->
   [MemberSamplingFixtureStep] ->
-  Either Text Word64 ->
+  Either Text (Maybe Word64) ->
   IO ()
 testMemberSamplingFixture label initialMembers steps expected = do
   stepsRef <- newIORef steps
