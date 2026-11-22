@@ -121,15 +121,14 @@ The helper:
 The model cache is ephemeral: pod replacement discards `/model-cache/`, whereas a container restart
 within the same pod preserves its `emptyDir`. The next load verifies retained content or repopulates
 from MinIO. Eviction is permitted only under the cache owner's mutation authority when no active
-execution uses that generation. This LRU policy bounds the on-DISK
-model cache only; resident model memory is governed separately by typed
-runtime admission.
+execution uses that generation. LRU operates on the on-disk model cache;
+resident model memory is governed separately by typed runtime admission.
 
 **RAM admission is a distinct bound from the disk cache quota.** The
 `emptyDir` `/model-cache` `sizeLimit` (`engine.modelCache.sizeLimit` /
-`engineModelCacheQuotaBytes`) LRU quota bounds DISK — how many staged
-model weights sit on the cache mount before least-recently-used weights
-are evicted — and does not govern resident MEMORY. Resident inference
+`engineModelCacheQuotaBytes`) is a DISK quota, not a resident MEMORY
+limit. The adapter's post-download LRU does not itself reserve aggregate space
+before concurrent downloads. Resident inference
 memory is bounded separately by a resource-admission contract: each
 model's requirement is derived from its own artifact, and each substrate
 compiles placements against the executing machine's observed host or pod
@@ -147,6 +146,31 @@ independently indexed RAM and VRAM enforcement fails closed with
 `GpuDualResourceBudgetRequired`. The executable-gated
 capped-engine contract is owned canonically by
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
+
+Checkpoint observation must not pull an entire model into memory merely to test whether an object
+exists or to inspect its header. Existence uses a method-signed HEAD request. A header request retains
+at most its declared prefix bound, rejects encoded or overlong responses, and accepts a partial
+response only when its `Content-Range` proves the returned bytes and total object extent. A complete small object
+may be returned without a range; malformed metadata or an unbounded response is a refusal.
+Native cache hydration streams each object into an exclusively created staging file, caps the
+individual object by the configured cache quota, and requires its declared and observed extents to
+match before renaming it into place. A held per-file lock protects recovery and cleanup of the staging
+name. This per-object check does not by itself establish aggregate cache quota enforcement.
+Native cache rebuild stages its candidate under a private same-filesystem transaction directory,
+checks the candidate with the cache observer, and synchronizes its regular files before replacing
+the prior generation. A recovery record lets the next engine lease restore the prior generation
+or retain the promoted candidate after an interrupted swap. The current observer checks inventory,
+extents, and supported checkpoint headers; those checks do not establish a cryptographic identity
+for every durable object, and the transaction's candidate-size check is not an aggregate reservation.
+An engine execution holds a shared lock under the actual cache root for its model. The Python LRU
+must acquire the corresponding exclusive lock before deleting a different model and must skip
+busy entries and entries without a regular readiness marker. If it cannot free enough space without touching an active or current
+model, it reports quota exhaustion. This post-download eviction check is not a reservation and does
+not bound aggregate concurrent downloads or temporary space.
+Native snapshot inventories are limited to 1 MiB when downloaded and when read locally. Hydration
+and readiness observation use the same UTF-8 parser, which rejects empty, duplicate, conflicting,
+absolute, traversal, control-character, and reserved staging paths before using any indexed key.
+These lexical checks do not establish containment against a substituted directory symlink.
 
 For real per-family artifact inference outputs (source-separation
 stems, audio-to-MIDI and music-transcription MIDI / MusicXML,

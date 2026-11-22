@@ -7,6 +7,7 @@ module Infernix.Cluster
     RecordedNamespaceRelation (..),
     classifyAbsentConfigRecovery,
     clusterWorkloadArchitectureForHostArchitecture,
+    classifyKindMountSources,
     clusterDown,
     clusterDownHarness,
     clusterStatus,

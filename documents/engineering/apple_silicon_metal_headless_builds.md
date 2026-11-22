@@ -165,9 +165,7 @@ the materialization surface. `appleArtifactProvisioningViolations` enforces that
 cannot import `System.Process`, use raw spawn/wait primitives, delegate to unbounded Poetry helpers,
 or bypass the provisioning facade to call the bounded kernel directly.
 
-One materialization attestation binds a reviewed source identity to the focused gates, the complete
-source gate, real Apple rematerialization, installed upstream smokes, runtime loading, and routed
-real-output validation against that same source.
+Materialization evidence covers focused gates, real Apple rematerialization, installed upstream smokes, runtime loading, and routed real-output validation. Agents rebuild packages as appropriate before testing.
 
 ## Cross-References
 

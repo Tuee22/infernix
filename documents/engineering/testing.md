@@ -52,19 +52,9 @@
 
 ## Execution Evidence and Trust Boundary
 
-A gate binds the requested source snapshot to the code it actually executes. Retained evidence
-identifies the commit and reconstructable dirty tracked/untracked inputs, immutable image or native
-executable, configuration, actual lane/architecture/device context, required check inventory,
-per-check execution and terminal outcomes, and logs/output artifacts with integrity digests.
-A source hash without its patch or archive preimage is not reconstructable evidence. Both selected
-lanes use the same source snapshot. [Docker policy](docker_policy.md#source-and-image-identity)
-owns baked-image identity and the explicit build prerequisite.
+Agents rebuild the relevant package or image as appropriate before testing to keep the tested code synchronized with the intended changes. Retained evidence identifies the executable or image, configuration, lane and device context, required checks, outcomes, and logs or output artifacts with integrity digests. [Docker policy](docker_policy.md#source-and-image-identity) describes the launcher handoff.
 
-Report executed successes, expected refusals/breaches, failures, skips, and not-applicable checks
-separately. Missing required interpreter/device/allocation prerequisites, timeouts, stale builds,
-missing receipt artifacts, and skipped mandatory assertions fail closure even when a process
-returns zero. An all-refused catalog cannot prove inference support; designated real-output cases
-must execute successfully.
+Report executed successes, expected refusals or breaches, failures, skips, and not-applicable checks separately. Missing required interpreter/device/allocation prerequisites, timeouts, missing receipt artifacts, and skipped mandatory assertions fail closure even when a process returns zero. An all-refused catalog cannot prove inference support; designated real-output cases must execute successfully.
 
 GPU parser/arithmetic checks are machine-independent. Live GPU observations and CUDA allocation
 checks are mandatory for the selected GPU lane in an explicitly device-capable, binary-owned
@@ -72,14 +62,14 @@ validation context, without requiring NVIDIA access in the ordinary outer launch
 runs can record those device checks as not-applicable, never as GPU PASS. Every spawned fixture
 retains its exact process handle and owns termination and reaping on all exits.
 
-Negative controls demonstrate that stale images, changed relevant source inputs, altered/missing
+Negative controls demonstrate that altered/missing
 receipt artifacts, skipped required checks, constant-output adapters, marker-only caches, and empty
 renderers cannot satisfy their gates. Static lint, compile-fail fixtures, and successful process
 exits prove only their actual checked properties. Domain-owned lifetime tests include delayed
 effects, marker reminting, existential escape, and child-thread cleanup; ordinary rank-2 `IO`
 does not prove all such programs impossible.
 
-This evidence model addresses stale builds and success-shaped substitutes; it is not an absolute
+This evidence model addresses success-shaped substitutes; it is not an absolute
 unspoofability claim. An actor controlling both executor and evidence storage can forge internally
 consistent records. Build/runner review and retained artifact provenance establish the trusted
 boundary. The development plan owns current implementation and attestation status.

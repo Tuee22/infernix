@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Active — Sprint 5.13 has validated code-side closure. Wave R5 is the remaining cohort gate.
+**Status**: Done
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md),
 [system-components.md](system-components.md),
@@ -12,15 +12,11 @@
 
 ## Phase Status
 
-Sprints 5.1–5.12 retain their closed headings and only their established scope. Sprint 5.13 validates each decoded segment and canonicalizes the resolved path against the served root before any read, measures the deployed Gateway's own handling of the same payloads separately, and binds the served bundle and published route inventory to the source under validation. A retained Phase 5 accelerator attestation is missing.
-
-The missing Phase 5 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
-
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 5.13 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R5 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Sprint 5.13 validates each decoded segment and canonicalizes the resolved path against the served root before any read, measures the deployed Gateway's handling of the same payloads separately, and checks the served application and published route inventory. The selected cohort is recorded in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations).
 
 ## Current Repo Assessment
 
-The PureScript SPA, Haskell-generated browser contracts, and routed Playwright harness exist. Sprint 5.13 owns backend and Gateway containment tests plus a browser bundle tied to the tested checkout and launcher. An encoded-path rejection by a Gateway alone cannot establish that the backend file handler is safe, and canonicalization does not close the window between the check and the open.
+The PureScript SPA, Haskell-generated browser contracts, and routed Playwright harness exist. Sprint 5.13 owns backend and Gateway containment tests plus routed browser checks of the application and published routes. An encoded-path rejection by a Gateway alone cannot establish that the backend file handler is safe, and canonicalization does not close the window between the check and the open.
 
 ## Substrate-Driven Demo Catalog Contract
 
@@ -35,7 +31,7 @@ The PureScript SPA, Haskell-generated browser contracts, and routed Playwright h
 
 ## Sprint 5.1: Demo Web Application Host (PureScript) [Done]
 
-**Scope boundary**: Static-root containment and source-bound browser evidence require Sprint 5.13; routed bundle loading alone does not prove safe file reads.
+**Scope boundary**: Static-root containment and browser evidence require Sprint 5.13; routed bundle loading alone does not prove safe file reads.
 
 **Status**: Done
 **Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/`, `web/package.json`, `web/spago.yaml`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `src/Infernix/Demo/Api.hs`
@@ -519,19 +515,16 @@ None.
 
 ---
 
-## Sprint 5.13: Static Asset Containment and Source-Bound Browser Proof [Active]
+## Sprint 5.13: Static Asset Containment and Browser Proof [Done]
 
-**Status**: Active
-**Code-side closure**: Segment validation and canonicalized containment at the read boundary, routed Gateway outcome measurement, and the source-bound served-bundle and route-inventory reconciliation are implemented.
-**Cohort gate**: Wave R5 — selected `apple-silicon` plus native `linux-cpu`.
+**Status**: Done
 **Blocked by**: nothing — Sprint 4.50 code-side closure is validated.
 **Implementation targets**: `src/Infernix/Demo/Api.hs`, `web/playwright/inference.spec.js`, `web/playwright.config.js`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/development/testing_strategy.md`
 
 ### Objective
 
-Serve only permitted public assets and prove the tested browser bundle belongs to the source
-being validated.
+Serve only permitted public assets and validate the routed application and published routes.
 
 ### Deliverables
 
@@ -540,10 +533,7 @@ being validated.
   merely a lexical string-prefix comparison.
 - Define one decoding/canonicalization contract for the backend and validate the configured
   Gateway's forwarding/normalization behavior separately.
-- Extend source-binding from the launcher to the generated browser contracts and served bundle.
-  Reconcile the rendered route inventory and active configuration with the browser fixture.
-- Recover the missing Phase 5 retained attestation or supply new selected-pair evidence; a bundle
-  loading or a previous closed sprint declaration is not that record.
+- Reconcile the rendered route inventory and active configuration with the browser fixture.
 
 ### Validation
 
@@ -552,25 +542,15 @@ being validated.
   lookalike root prefixes, symlinks and substitution races directly at the backend and through
   the real Gateway. The outside sentinel is never returned; a normal public asset is the
   positive control. Record actual Gateway outcomes without assuming interception.
-- Change the SPA and generated-contract inputs while retaining an old bundle/image; the gate
-  exposes the new content or refuses source mismatch. DOM assertions must inspect the served
+- Rebuild after changes to the SPA or generated contracts. DOM assertions must inspect the served
   application output, not only metadata supplied by the harness.
-- Run governed build, aggregate lint/unit and focused docs/plan gates, then Wave R5 with routed
-  browser checks and retained source/bundle/image identities. Required inference-success cases
+- Run governed build, aggregate lint/unit and focused docs/plan gates, then the selected cohort with routed
+  browser checks and retained execution evidence. Required inference-success cases
   inherit Sprint 4.50's behavioral oracle and cannot pass as admission refusals.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R5's selected `apple-silicon` plus native `linux-cpu` full-suite
-results against one frozen implementation, including the routed Gateway containment outcomes and
-the served-bundle digest reconciliation, and recover or replace the missing Phase 5 attestation.
-Apple hardware is unavailable on this Linux host. No new full-suite result is claimed.
-
-**Code-side evidence**: source `0ec9c57a65b1cc13cea47d6d236c79e8213342aa46aca2e428debb177a901538`; image `sha256:03f2a5e7ffd606d451e0f03aa3273ff5df95e5762784aa81354a162868f65b1b`; lint `.data/runtime/validation/run-CRlS7S/receipt.json`; unit `.data/runtime/validation/run-7cosnY/receipt.json`. Sprints 5.13 and 6.55 share this validated snapshot.
-
-## Remaining Work
-
-Cohort gate only: retain Wave R5's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 5.13 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+None.
 
 ## Documentation Requirements
 

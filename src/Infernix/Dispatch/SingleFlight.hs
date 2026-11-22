@@ -18,6 +18,7 @@ import Data.Text qualified as Text
 import Infernix.Conversation.Hash (PrefixHash (..))
 import Infernix.Conversation.Reducer
   ( ReducerState,
+    foldEvents,
     nextDispatchablePrompt,
     reducerContextId,
     reducerMessages,
@@ -48,11 +49,11 @@ import Infernix.Web.Contracts
 --   6.47 narrowed this claim from "exactly-once dispatch").
 -- * @inferenceClientIdempotencyKey@ — carried through so retries surface back
 --   to the original client request.
--- * @inferenceConversationLogOffset@ — the message's broker offset on the
---   conversation topic. The engine uses this with @prefixHash@ to confirm KV
---   cache consistency.
--- * @inferencePrefixHash@ — Merkle-style hash of the projection at dispatch
---   time. Engine compares against its KV cache key; on mismatch it rebuilds.
+-- * @inferenceConversationLogOffset@ — the prompt's index in the
+--   deduplicated conversation projection. The engine reconstructs the same
+--   projection and verifies its prefix with @prefixHash@.
+-- * @inferencePrefixHash@ — Merkle-style hash through the prompt at the
+--   named offset. Later queued or terminal events do not alter this prefix.
 -- * @inferencePromptText@ — the actual prompt payload the engine consumes.
 -- * @inferencePromptUserUploads@ — user-uploaded objects attached to the
 --   prompt. The runtime dispatcher selects from these only for models whose
@@ -128,7 +129,11 @@ envelopeFromPromptMessage userId state messages promptMessageId promptMsg =
             inferenceUserPromptMessageId = promptMessageId,
             inferenceClientIdempotencyKey = promptClientIdempotencyKey payload,
             inferenceConversationLogOffset = conversationOffsetOf messages promptMessageId,
-            inferencePrefixHash = unPrefixHash (reducerPrefixHash state),
+            inferencePrefixHash =
+              unPrefixHash
+                ( reducerPrefixHash
+                    (foldEvents (reducerContextId state) (take (conversationOffsetOf messages promptMessageId + 1) (foldr (:) [] messages)))
+                ),
             inferencePromptText = promptText payload,
             inferencePromptUserUploads = promptUserUploads payload,
             inferenceCausalRef = unMessageId promptMessageId

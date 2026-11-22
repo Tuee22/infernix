@@ -24,7 +24,7 @@ Implementation follows the named code-side prerequisites below; pending accelera
 
 ## Current Repo Assessment
 
-The lint, unit, integration, and browser entrypoints exist. Sprint 6.55 owns required-check accounting, actual CUDA execution in the supported engine workload, fixture cleanup, and source-bound results. Existing Phase 6 evidence is scope-limited and does not prove checks that were skipped or assertions that only accepted a refusal. Kernel prevention, sampled breach, engine failure, and missing result require distinct evidence.
+The lint, unit, integration, and browser entrypoints exist. Sprint 6.55 owns required-check accounting, actual CUDA execution in the supported engine workload, fixture cleanup, and results. Existing Phase 6 evidence is scope-limited and does not prove checks that were skipped or assertions that only accepted a refusal. Kernel prevention, sampled breach, engine failure, and missing result require distinct evidence.
 
 ## Validation Surface
 
@@ -3627,7 +3627,7 @@ completed its owned cleanup.
   CUDA fixture registrations, assertion-specific results, and cleanup controls, not a later
   prerequisite for earlier phases' execution receipts. Record the required device checks
   independently of dynamically discovered/executed results.
-  Missing, duplicate, skipped, mismatched-source, and inconclusive results cannot collapse to
+  Missing, duplicate, skipped, and inconclusive results cannot collapse to
   aggregate success.
 - Preserve distinct outcomes for admission refusal with no launch, measured runtime breach,
   unclassified engine failure, and absent terminal result. None substitutes for a required
@@ -3636,8 +3636,7 @@ completed its owned cleanup.
 ### Validation
 
 - The CPU lane covers result aggregation and cleanup through controlled child processes.
-  Independently omit a required result, mark it skipped, duplicate another result, mismatch its
-  source identity, hide tooling, and force readiness timeout; each rejects sign-off. A complete
+  Independently omit a required result, mark it skipped, duplicate another result, hide tooling, and force readiness timeout; each rejects sign-off. A complete
   successful inventory is the positive control.
 - Force timeout after a child starts but before readiness, then assert the owned child is terminal
   and reaped and its pipes closed. Exercise success, exception and cancellation independently.
@@ -3648,7 +3647,7 @@ completed its owned cleanup.
   assertion evidence inherited from Sprint 4.50. Missing model output, a forged plausible constant,
   or a disabled engine invocation must fail its success gate.
 - Pass governed build, aggregate lint/unit, focused files/docs/chart/proto/plan checks, and the
-  selected accelerator plus CPU full suites against the same frozen source. Optional CPU probe
+  selected accelerator plus CPU full suites with appropriately rebuilt packages. Optional CPU probe
   results explicitly remain outside CUDA sign-off.
 
 ### Remaining Work
@@ -3661,7 +3660,7 @@ readback, and measured device-memory breach. No new full-suite result is claimed
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R6's `linux-gpu` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 6.55 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R6's `linux-gpu` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprint 6.55 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

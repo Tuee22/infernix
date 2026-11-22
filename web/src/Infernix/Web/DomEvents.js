@@ -15,6 +15,15 @@ export const bindChatChromeImpl =
     return;
   }
   root.__infernixChatChromeBound = true;
+  const localDrafts = new Map();
+  // A draft form can render before the active context is known (for example
+  // from a snapshot applied just after a reconnect), leaving its own
+  // data-context-id empty. Key the retained draft by the context the user is
+  // actually looking at so a later stale server redraw cannot erase the edit.
+  const draftContextIdFor = (form) =>
+    form?.dataset.contextId ||
+    root.querySelector(".chat-context-item.active")?.dataset.contextId ||
+    "";
 
   root.addEventListener("click", (event) => {
     const openNewContextButton = event.target?.closest?.("[data-role='open-new-context']");
@@ -79,6 +88,8 @@ export const bindChatChromeImpl =
   root.addEventListener("input", (event) => {
     const draftInput = event.target?.closest?.("form[data-role='chat-draft-editor'] textarea[name='prompt']");
     if (draftInput && root.contains(draftInput)) {
+      const contextId = draftContextIdFor(draftInput.closest("form"));
+      if (contextId) localDrafts.set(contextId, draftInput.value || "");
       onDraftChanged(draftInput.value || "")();
     }
   });
@@ -101,10 +112,25 @@ export const bindChatChromeImpl =
       return;
     }
     form.__infernixDraftSubmitBound = true;
+    const contextId = draftContextIdFor(form);
+    const input = form.querySelector("textarea[name='prompt']");
+    if (input && contextId && localDrafts.has(contextId)) {
+      input.value = localDrafts.get(contextId);
+    }
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      const currentForm = root.querySelector("form[data-role='chat-draft-editor']");
+      if (!currentForm || form.dataset.contextId !== currentForm.dataset.contextId) {
+        return;
+      }
+      // The submitted form can have been detached by a concurrent server
+      // patch. Read the value the user submitted, not a newer form whose
+      // draft may not have been restored yet.
       const draftInput = form.querySelector("textarea[name='prompt']");
-      onSubmitPrompt(draftInput?.value || "")();
+      const draftKey = draftContextIdFor(form);
+      const draft = localDrafts.get(draftKey) ?? draftInput?.value ?? "";
+      localDrafts.delete(draftKey);
+      onSubmitPrompt(draft)();
     });
   };
 

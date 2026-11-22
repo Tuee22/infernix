@@ -47,7 +47,6 @@ import Infernix.Runtime.Cache
     listCacheManifests,
     materializeCache,
     rebuildCache,
-    withModelCacheExecutionLease,
   )
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Worker
@@ -105,13 +104,12 @@ executeExecutableInferenceWithKVCache paths maybeEngineCache maybeCacheSeed mayb
           (Just engineCache, Just cacheRequest) -> Just <$> KVCache.observeKVCachePrefix engineCache cacheRequest
           _ -> pure Nothing
       workerResult <-
-        withModelCacheExecutionLease paths modelRuntimeMode (modelId model) $
-          runExecutableInferenceWorker
-            paths
-            executableModel
-            request
-            cacheObservation
-            maybeVerifiedPrefix
+        runExecutableInferenceWorker
+          paths
+          executableModel
+          request
+          cacheObservation
+          maybeVerifiedPrefix
       -- Validity is published only by a completed execution, and withdrawn by
       -- one that failed. The retired form wrote the requested hash at
       -- observation time, so a request that never reached an engine still left

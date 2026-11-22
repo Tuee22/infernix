@@ -798,6 +798,7 @@ renderDraftEditor
 renderDraftEditor document options state = do
   form <- createElement document "form" "chat-draft-editor"
   Element.setAttribute "data-role" "chat-draft-editor" form
+  Element.setAttribute "data-context-id" (fromMaybe "" (contextIdRawValue <$> options.activeContextId)) form
   textarea <- createElement document "textarea" "chat-draft-input"
   Element.setAttribute "name" "prompt" textarea
   Element.setAttribute "placeholder" "Type a prompt for the selected context" textarea

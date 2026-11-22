@@ -25,7 +25,7 @@ Read and follow the complete
 [Non-Negotiable Rules](documents/development/assistant_workflow.md#non-negotiable-rules)
 in the canonical assistant workflow before making changes. That document is the sole rule list.
 Its [validation handoff requirements](documents/development/assistant_workflow.md#validation-before-handoff)
-cover source-bound evidence and reporting unavailable gates.
+cover validation evidence and reporting unavailable gates.
 
 ## Scope
 
@@ -39,6 +39,9 @@ before continuing, stop at explicit rerun boundaries when a new shell or reboot 
 delegate cluster lifecycle, Kubernetes manifests, cluster workload image pulls, registry
 publication, validation, and teardown behavior to the `infernix` binary.
 
-Linux bootstrap launcher handoff reconciles the build, selects an immutable image id, and supplies
-an independent read-only checkout for source-bound validation. See
-[the source and image identity contract](documents/engineering/docker_policy.md#source-and-image-identity).
+Agents are responsible for rebuilding the relevant package or image as appropriate before testing,
+so the code under test reflects the intended changes. Stop the existing Colima VM when host-only
+tests need its memory; preserve running workloads and retained data through the supported lifecycle
+before stopping it, and restart the VM when Docker-backed work resumes. A change in VM allocation
+may require regenerating the host build-memory plan before governed host tests; preserve existing
+configuration when doing so.

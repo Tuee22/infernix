@@ -157,11 +157,22 @@ The product-agnostic inference executor. Owns:
   `infernix-models` MinIO bucket via the shared adapter helper
   (`python/adapters/model_cache.py`) on first use. Every
   engine, every model, goes through the same helper — no per-engine
-  bytes-loading code. LRU eviction inside the cache keeps usage under
-  `sizeLimit`. This bounds only the on-disk weight footprint; it is not
+  bytes-loading code. LRU eviction operates against `sizeLimit` after a
+  download; it is not an aggregate reservation for concurrent downloads. This quota concerns
+  the on-disk weight footprint; it is not
   a model-memory bound. Resident memory during model execution is governed separately by typed
   runtime admission (see **Failure Semantics per Role** and
   [bounded_inference_memory.md](bounded_inference_memory.md)).
+- **Cache controls** address every eligible engine member from the compiled model placement.
+  The member holding the broker-side engine claim observes or mutates its own cache under the
+  existing per-model lease. Interactive requests and replies use transient internal Pulsar topics;
+  a disconnected owner or incomplete reply is unobservable, and cannot count as a successful
+  operation. Requests carry model IDs and closed actions, never caller-selected cache paths. A
+  timed-out operation may have an unknown outcome and must be observed again before retrying.
+  Dashboard cache observations have a five-second budget; a missing or slow owner yields an
+  unknown count. An engine stops expired read-only observations and releases their lease before
+  handling later requests. Mutations retain their separate deadline and are never interrupted by
+  that read-only budget.
 - Verified conversation reconstruction through the requested offset before execution, including
   prior turns and a checked `prefixHash`. A supported native KV handle is reusable only for the
   matching user/context, model/artifact generation, execution shape, and verified prefix; a

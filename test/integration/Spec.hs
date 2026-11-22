@@ -25,11 +25,13 @@ import Data.Maybe (isJust, isNothing, mapMaybe)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
+import Data.Text.Read qualified as Text.Read
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Infernix.CLI qualified as CLI
 import Infernix.Cluster
-import Infernix.Cluster.Internal (cleanupHarnessRuntimeState, requireBoundedCommandActivitiesQuiescent)
+import Infernix.Cluster.Command qualified as Command
+import Infernix.Cluster.Internal (captureClusterCommand, cleanupHarnessRuntimeState, requireBoundedCommandActivitiesQuiescent)
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..))
@@ -302,6 +304,7 @@ exerciseRuntimeMode paths runtimeMode = do
       assert
         (cacheStatusCode == 401)
         "Phase 9 Sprint 9.3: GET /api/cache is admin-gated and rejects an unauthenticated read with 401"
+      validateEngineCacheLifecycle paths state runtimeMode compiledPlan
 
       reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
       ensureLinuxGpuRepresentativeEngineDeployment runtimeMode activeModels representativeModelId
@@ -310,6 +313,13 @@ exerciseRuntimeMode paths runtimeMode = do
       reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
       ensureLinuxGpuRepresentativeEngineDeployment runtimeMode activeModels representativeModelId
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
+
+      -- Phase 7: reconstructed history reaches the engine, and a coordinator
+      -- killed with queued work outstanding resumes it from durable state.
+      ensureLinuxGpuRepresentativeEngineDeployment runtimeMode activeModels representativeModelId
+      validateMultiTurnConversationReachesEngine paths state runtimeMode (Text.pack representativeModelId)
+      validateCoordinatorRestartWithQueuedPrompt paths state runtimeMode (Text.pack representativeModelId)
+      validateRunningInferenceCancellation paths state runtimeMode (Text.pack representativeModelId)
 
       -- Phase 4 Sprint 4.34 retired the Apple host-engine coexistence case with
       -- the engine-lock waiver that made it runnable. It asserted that two engine
@@ -378,7 +388,8 @@ exerciseRuntimeMode paths runtimeMode = do
       assert ("kubernetesNodeCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes nodes"
       assert ("kubernetesPodCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes pods"
 
-    when (usesDetachedRetainedSnapshot paths runtimeMode) $ do
+    detachedRetainedSnapshot <- usesDetachedRetainedSnapshot paths runtimeMode
+    when detachedRetainedSnapshot $ do
       reportStep ("detached retained snapshot replay: " <> showRuntimeMode runtimeMode)
       validateDetachedRetainedSnapshotReplay paths runtimeMode
 
@@ -387,6 +398,108 @@ exerciseRuntimeMode paths runtimeMode = do
   downStatusOutput <- captureInfernixOutput ["cluster", "status"]
   assert ("clusterPresent: False" `isInfixOf` downStatusOutput) "cluster status reports cluster absence after down"
   assert ("lifecyclePhase: cluster-absent" `isInfixOf` downStatusOutput) "cluster status reports the idle absent lifecycle phase after down"
+
+-- | Phase 4 Sprint 4.50: the cache commands must change the engine-consumed
+-- tree and report what the engine owner observed, and the model must infer
+-- again from the rebuilt tree. The required speech row has a real checkpoint,
+-- so a rebuild that publishes readiness without usable weights cannot pass the
+-- final inference. Durable source objects are not touched by these commands;
+-- inference after the rebuild is only possible if they stayed intact.
+validateEngineCacheLifecycle ::
+  Paths ->
+  ClusterState ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  IO ()
+validateEngineCacheLifecycle paths state runtimeMode compiledPlan = do
+  let modelName = requiredSpeechCohortModelId
+      -- A second required model whose cache the per-model step has just filled:
+      -- evicting and rebuilding the first must leave it verified.
+      untouchedModelName = "audio-demucs-htdemucs"
+      untouchedLine =
+        captureInfernixOutput ["cache", "status", "--model", untouchedModelName] >>= \output ->
+          case [line | line <- lines output, ("cacheEntry: " <> untouchedModelName <> " -> ") `isPrefixOf` line] of
+            [single] -> pure single
+            found -> fail ("expected exactly one cache entry line for " <> untouchedModelName <> " but found " <> show found)
+      entryLine output =
+        case [line | line <- lines output, ("cacheEntry: " <> modelName <> " -> ") `isPrefixOf` line] of
+          [single] -> pure single
+          found -> fail ("expected exactly one cache entry line for " <> modelName <> " but found " <> show found <> " in:\n" <> output)
+  reportStep ("engine cache lifecycle: " <> modelName)
+  durableBefore <- durableModelObjectInventory paths state modelName
+  assert (not (null durableBefore)) ("durable MinIO holds source objects for " <> modelName)
+  initial <- captureInfernixOutput ["cache", "status", "--model", modelName] >>= entryLine
+  assert ("verified-ready" `isInfixOf` initial) ("the engine owner reports a verified cache before eviction: " <> initial)
+  untouchedBefore <- untouchedLine
+  assert ("verified-ready" `isInfixOf` untouchedBefore) ("the second required model's cache is verified before the first is evicted: " <> untouchedBefore)
+  evicted <- captureInfernixOutput ["cache", "evict", "--model", modelName]
+  evictedLine <- entryLine evicted
+  assert ("evictedCacheEntries: 1" `isInfixOf` evicted) ("eviction reports one changed cache entry: " <> evicted)
+  assert ("-> missing" `isInfixOf` evictedLine) ("eviction reports the cache missing: " <> evictedLine)
+  afterEvict <- captureInfernixOutput ["cache", "status", "--model", modelName] >>= entryLine
+  assert
+    ("verified-ready" `notElemString` afterEvict && "missing" `isInfixOf` afterEvict)
+    ("a fresh owner observation after eviction does not report the cache ready: " <> afterEvict)
+  rebuilt <- captureInfernixOutput ["cache", "rebuild", "--model", modelName]
+  rebuiltLine <- entryLine rebuilt
+  assert ("rebuiltCacheEntries: 1" `isInfixOf` rebuilt) ("rebuild reports one changed cache entry: " <> rebuilt)
+  assert ("-> verified-ready" `isInfixOf` rebuiltLine) ("rebuild reports a verified cache: " <> rebuiltLine)
+  afterRebuild <- captureInfernixOutput ["cache", "status", "--model", modelName] >>= entryLine
+  assert ("verified-ready" `isInfixOf` afterRebuild) ("a fresh owner observation after rebuild reports verified: " <> afterRebuild)
+  untouchedAfter <- untouchedLine
+  assert
+    ("verified-ready" `isInfixOf` untouchedAfter)
+    ("evicting and rebuilding one model leaves another model's verified cache intact: " <> untouchedAfter)
+  durableAfter <- durableModelObjectInventory paths state modelName
+  assert
+    (durableAfter == durableBefore)
+    ("evict and rebuild leave every durable source object unchanged (key, ETag, size): " <> show (durableBefore, durableAfter))
+  validateCatalogModelInference paths state runtimeMode compiledPlan modelName
+
+-- | Sorted (key, ETag, size) identities of the durable model objects, read
+-- through a signed bucket listing against the live MinIO. A truncated listing
+-- is refused rather than compared as if it were complete.
+durableModelObjectInventory :: Paths -> ClusterState -> String -> IO [(Text.Text, Text.Text, Text.Text)]
+durableModelObjectInventory paths state modelName =
+  withMinioPortForward paths state $ \localPort -> do
+    now <- getCurrentTime
+    let presigned =
+          Presigned.PresignedUrlConfig
+            { Presigned.presignedScheme = "http",
+              Presigned.presignedEndpoint = Text.pack ("127.0.0.1:" <> show localPort),
+              Presigned.presignedPathPrefix = "",
+              Presigned.presignedRegion = "us-east-1",
+              Presigned.presignedAccessKeyId = "minioadmin",
+              Presigned.presignedSecretAccessKey = "minioadmin123",
+              Presigned.presignedExpirySeconds = 900,
+              Presigned.presignedSessionToken = Nothing
+            }
+        listUrl =
+          Text.unpack
+            ( Presigned.unPresignedUrl
+                ( Presigned.presignedBucketUrlWithQuery
+                    presigned
+                    (Presigned.PresignedBucketRequest Presigned.HttpGet "infernix-models" now)
+                    [("list-type", "2"), ("prefix", Text.pack (modelName <> "/"))]
+                )
+            )
+    (exitCode, body, stderrOutput) <- readProcessWithExitCode "curl" ["-fsS", "--max-time", "60", listUrl] ""
+    when (exitCode /= ExitSuccess) $
+      fail ("durable model listing failed: " <> stderrOutput)
+    let text = Text.pack body
+        between openTag closeTag chunk =
+          case Text.breakOn openTag chunk of
+            (_, rest)
+              | Text.null rest -> Nothing
+              | otherwise -> Just (fst (Text.breakOn closeTag (Text.drop (Text.length openTag) rest)))
+        entries = drop 1 (Text.splitOn "<Contents>" text)
+        identityOf entry =
+          case (between "<Key>" "</Key>" entry, between "<ETag>" "</ETag>" entry, between "<Size>" "</Size>" entry) of
+            (Just key, Just etag, Just size) -> pure (key, etag, size)
+            _ -> fail ("durable model listing entry lacks key, ETag, or size: " <> Text.unpack entry)
+    when ("<IsTruncated>true</IsTruncated>" `Text.isInfixOf` text) $
+      fail "durable model listing was truncated"
+    sort <$> mapM identityOf entries
 
 validateCatalogModelInference ::
   Paths ->
@@ -454,10 +567,10 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
       -- the engine's published result to the shape a refusal must have. The
       -- retired form predicted an exact payload from a declared budget, which is
       -- only possible while the requirement is a constant this process can read.
-      when (modelIdValue == requiredSpeechCohortModelId) $
+      when (modelIdValue `elem` requiredRealOutputCohortModelIds) $
         assert
           (status resultValue == "completed")
-          ( "the selected speech cohort row must produce routed spoken-utterance output for "
+          ( "the selected real-output cohort row must complete inference for "
               <> modelIdValue
               <> failurePayloadSuffix (payload resultValue)
           )
@@ -542,6 +655,7 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
             maybeInputObjectRef
             (requestUserIdValue, requestContextIdValue)
             measuredArtifactBytes
+            (observeEngineExecution paths state runtimeMode)
             resultValue
 
 -- | Phase 4 Sprint 4.50 — put one claimed success to the behavioral acceptance.
@@ -560,9 +674,10 @@ assertRealInferenceSuccess ::
   Maybe Text.Text ->
   (Text.Text, Text.Text) ->
   Maybe Integer ->
+  (Text.Text -> Text.Text -> IO Bool) ->
   InferenceResult ->
   IO ()
-assertRealInferenceSuccess paths compiledPlan model modelIdValue maybeInputObjectRef (requestUserIdValue, requestContextIdValue) measuredArtifactBytes resultValue
+assertRealInferenceSuccess paths compiledPlan model modelIdValue maybeInputObjectRef (requestUserIdValue, requestContextIdValue) measuredArtifactBytes observeEngine resultValue
   | resultFamilyForDescriptor model == LlmText = do
       let secondPrompt =
             Text.pack
@@ -591,12 +706,14 @@ assertRealInferenceSuccess paths compiledPlan model modelIdValue maybeInputObjec
           )
           pure
           maybeSecond
+      firstExecuted <- observeEngine (requestId resultValue) (Text.pack modelIdValue)
+      secondExecuted <- observeEngine (requestId secondResult) (Text.pack modelIdValue)
       let realCase =
             Realness.RealInferenceCase
               { Realness.realCaseModelId = Text.pack modelIdValue,
                 Realness.realCaseObservations =
-                  [ observationFrom firstPrompt resultValue,
-                    observationFrom secondPrompt secondResult
+                  [ observationFrom firstExecuted firstPrompt resultValue,
+                    observationFrom secondExecuted secondPrompt secondResult
                   ]
               }
       case Realness.acceptInputSensitiveInference realCase of
@@ -608,7 +725,13 @@ assertRealInferenceSuccess paths compiledPlan model modelIdValue maybeInputObjec
                 <> " is not evidence of a real inference: "
                 <> Text.unpack (Realness.realnessRefusalText refusal)
             )
-  | otherwise =
+  | otherwise = do
+      executed <- observeEngine (requestId resultValue) (Text.pack modelIdValue)
+      let singleCase =
+            Realness.RealInferenceCase
+              { Realness.realCaseModelId = Text.pack modelIdValue,
+                Realness.realCaseObservations = [observationFrom executed firstPrompt resultValue]
+              }
       case Realness.acceptArtifactInference singleCase of
         Right () -> pure ()
         Left refusal ->
@@ -620,26 +743,264 @@ assertRealInferenceSuccess paths compiledPlan model modelIdValue maybeInputObjec
             )
   where
     firstPrompt = Text.pack ("integration coverage for " <> modelIdValue)
-    singleCase =
-      Realness.RealInferenceCase
-        { Realness.realCaseModelId = Text.pack modelIdValue,
-          Realness.realCaseObservations = [observationFrom firstPrompt resultValue]
-        }
-    -- The published result is the run's execution observation: the daemon
-    -- publishes a terminal result only after the engine invocation it made
-    -- returned, and a request whose engine never ran reaches the missing-result
-    -- branch above rather than this one. The artifact extent is the number this
-    -- run measured by fetching the object, never a stand-in derived from the
-    -- reference existing.
-    observationFrom promptValue observed =
+    -- Whether the engine executed is read from the engine's own log, not from
+    -- the published result: a result and the flag that vouches for it would
+    -- otherwise come from the same self-report. The artifact extent is the
+    -- number this run measured by fetching the object, never a stand-in
+    -- derived from the reference existing.
+    observationFrom executed promptValue observed =
       Realness.InferenceExecutionObservation
         { Realness.observationInput = promptValue,
           Realness.observationResultModelId = resultModelId observed,
           Realness.observationStatus = status observed,
-          Realness.observationEngineExecuted = True,
+          Realness.observationEngineExecuted = executed,
           Realness.observationInlineOutput = inlineOutput (payload observed),
           Realness.observationArtifactBytes = measuredArtifactBytes
         }
+
+-- | Phase 4 Sprint 4.50 — read the engine's own record of one request.
+--
+-- The engine writes @engineProcessed: request=<id> model=<model> status=<s>@
+-- after it has handled a request. The harness reads that line from the engine
+-- log (the host daemon's log file on the Apple lane, the engine pods' logs on
+-- the cluster lanes), which is a channel independent of the result topic the
+-- claimed success arrived on. The line is polled for because a log line can
+-- trail the result it describes.
+observeEngineExecution :: Paths -> ClusterState -> RuntimeMode -> Text.Text -> Text.Text -> IO Bool
+observeEngineExecution paths state runtimeMode requestIdValue modelNameValue = go (30 :: Int)
+  where
+    readEngineLog = readEngineLogText paths state runtimeMode
+    wanted =
+      "engineProcessed: request="
+        <> requestIdValue
+        <> " model="
+        <> modelNameValue
+        <> " status=completed"
+    go attemptsRemaining = do
+      logText <- readEngineLog
+      if wanted `Text.isInfixOf` logText
+        then pure True
+        else
+          if attemptsRemaining <= 0
+            then pure False
+            else threadDelay 2000000 >> go (attemptsRemaining - 1)
+
+-- | The engine's own log: the host daemon's log file on the Apple lane, the
+-- engine pods' logs on the cluster lanes.
+readEngineLogText :: Paths -> ClusterState -> RuntimeMode -> IO Text.Text
+readEngineLogText paths state runtimeMode
+  | requiresHostServiceHarness paths runtimeMode =
+      TextEncoding.decodeUtf8With (\_ _ -> Just '?') <$> ByteString.readFile (hostServiceDaemonLogPath paths)
+  | otherwise =
+      Text.pack
+        <$> kubectlOutputForState
+          state
+          [ "-n",
+            "platform",
+            "logs",
+            "-l",
+            "app.kubernetes.io/name=infernix-engine",
+            "--all-containers=true",
+            "--tail=-1"
+          ]
+
+-- | Phase 7 Sprint 7.31 — reconstructed history must reach the engine.
+--
+-- Two prompts in one durable context: the first runs with no history beyond
+-- itself, the second names the first turn and its result as its verified
+-- prefix. The harness reads the engine's own record of the prefix each
+-- execution ran on, so the claim is about what the engine received, not about
+-- what the dispatcher folded.
+validateMultiTurnConversationReachesEngine :: Paths -> ClusterState -> RuntimeMode -> Text.Text -> IO ()
+validateMultiTurnConversationReachesEngine paths state runtimeMode modelIdText = do
+  reportStep ("multi-turn conversation reaches the engine: " <> showRuntimeMode runtimeMode)
+  context <- createDurablePromptContext paths runtimeMode modelIdText "multiturn"
+  waitForDispatcherDiscovery
+  firstPrompt <- submitDurablePrompt paths runtimeMode context "multiturn-one"
+  firstResult <-
+    waitForConversationResultPayloadForPrompt
+      paths
+      runtimeMode
+      (durablePromptConversationTopic context)
+      (durablePromptRefMessageId firstPrompt)
+  assert (Contracts.inferenceResultStatus firstResult == "completed") "the first turn completes"
+  secondPrompt <- submitDurablePrompt paths runtimeMode context "multiturn-two"
+  secondResult <-
+    waitForConversationResultPayloadForPrompt
+      paths
+      runtimeMode
+      (durablePromptConversationTopic context)
+      (durablePromptRefMessageId secondPrompt)
+  assert (Contracts.inferenceResultStatus secondResult == "completed") "the second turn completes"
+  let contextText = Contracts.unContextId (durablePromptContextId context)
+      fieldValue name line =
+        case [Text.takeWhile (/= ' ') (Text.drop (Text.length name + 1) token) | token <- Text.words line, (name <> "=") `Text.isPrefixOf` token] of
+          value : _ -> either (const Nothing) (Just . fst) (Text.Read.decimal value :: Either String (Int, Text.Text))
+          [] -> Nothing
+      prefixLines logText =
+        [ (offset, turns)
+        | line <- Text.lines logText,
+          ("engineConversationPrefix: context=" <> contextText <> " ") `Text.isPrefixOf` line,
+          Just offset <- [fieldValue "offset" line],
+          Just turns <- [fieldValue "turns" line]
+        ]
+      await attemptsRemaining = do
+        engineLog <- readEngineLogText paths state runtimeMode
+        let observed = prefixLines engineLog
+        if length observed >= 2 || attemptsRemaining <= (0 :: Int)
+          then pure observed
+          else threadDelay 2000000 >> await (attemptsRemaining - 1)
+  observed <- await 30
+  assert (length observed >= 2) ("the engine log records the verified prefix of both turns: " <> show observed)
+  let (firstOffset, firstTurns) = minimum observed
+      (secondOffset, secondTurns) = maximum observed
+  assert
+    (secondOffset > firstOffset && secondTurns > firstTurns && secondTurns >= 3)
+    ( "the second turn ran on a prefix that carries the first turn and its result (offsets "
+        <> show (firstOffset, secondOffset)
+        <> ", turns "
+        <> show (firstTurns, secondTurns)
+        <> ")"
+    )
+
+-- | Phase 7 Sprint 7.32 — cancelling a running inference stops the execution
+-- and releases its authority.
+--
+-- A long generation is submitted and cancelled a few seconds in, after the
+-- engine has registered the execution. The harness reads the engine's own
+-- cancellation record, which must say the running execution was cancelled
+-- (not that nothing was running), and a prompt submitted afterwards must
+-- complete, which it cannot do if the cancelled execution still held its
+-- single-flight authority.
+validateRunningInferenceCancellation :: Paths -> ClusterState -> RuntimeMode -> Text.Text -> IO ()
+validateRunningInferenceCancellation paths state runtimeMode modelIdText = do
+  reportStep ("running inference cancellation: " <> showRuntimeMode runtimeMode)
+  context <- createDurablePromptContext paths runtimeMode modelIdText "cancelrun"
+  waitForDispatcherDiscovery
+  longPrompt <-
+    submitDurablePromptWithText
+      paths
+      runtimeMode
+      context
+      "cancelrun-long"
+      "Write a very long and detailed essay of several thousand words about the history of mathematics. Validation token: "
+  threadDelay 4000000
+  publishDemoClientMessage
+    paths
+    runtimeMode
+    Nothing
+    (durablePromptUserId context)
+    (Contracts.ClientCancelPrompt (durablePromptContextId context) (durablePromptRefMessageId longPrompt))
+  let promptIdText = Contracts.unMessageId (durablePromptRefMessageId longPrompt)
+      wanted = "engineCancellation: " <> promptIdText <> " -> "
+      outcomeOf logText =
+        case [Text.takeWhile (/= ' ') (Text.drop (Text.length wanted) line) | line <- Text.lines logText, wanted `Text.isPrefixOf` line] of
+          outcome : _ -> Just outcome
+          [] -> Nothing
+      await attemptsRemaining = do
+        engineLog <- readEngineLogText paths state runtimeMode
+        case outcomeOf engineLog of
+          Just outcome -> pure (Just outcome)
+          Nothing
+            | attemptsRemaining <= (0 :: Int) -> pure Nothing
+            | otherwise -> threadDelay 2000000 >> await (attemptsRemaining - 1)
+  observed <- await 30
+  assert
+    (observed == Just "cancelled")
+    ("the engine cancelled the running execution and confirmed its cleanup: " <> show observed)
+  nextPrompt <- submitDurablePrompt paths runtimeMode context "cancelrun-next"
+  nextResult <-
+    waitForConversationResultPayloadForPrompt
+      paths
+      runtimeMode
+      (durablePromptConversationTopic context)
+      (durablePromptRefMessageId nextPrompt)
+  assert
+    (Contracts.inferenceResultStatus nextResult == "completed")
+    "a prompt submitted after the cancellation completes, so the cancelled execution released its authority"
+  threadDelay 5000000
+  messages <- readRawTopicPayloads paths runtimeMode Nothing (durablePromptConversationTopic context) 256
+  assert
+    (length (conversationResultPayloadsForPrompt (durablePromptRefMessageId longPrompt) messages) <= 1)
+    "the cancelled prompt has at most one visible terminal result"
+
+-- | Phase 7 Sprint 7.30 — a coordinator killed with work outstanding must
+-- resume that work from durable state.
+--
+-- Prompt A is dispatched and prompt B is durably queued behind it. The
+-- coordinator pod is then killed with no grace, so A is incomplete and its
+-- single-flight state existed only in the dead process. The replacement must
+-- rebuild the reducer from the retained history: A's result must still be
+-- published exactly once and B must dispatch and complete without being
+-- resubmitted.
+validateCoordinatorRestartWithQueuedPrompt :: Paths -> ClusterState -> RuntimeMode -> Text.Text -> IO ()
+validateCoordinatorRestartWithQueuedPrompt paths state runtimeMode modelIdText = do
+  reportStep ("coordinator restart with queued work: " <> showRuntimeMode runtimeMode)
+  context <- createDurablePromptContext paths runtimeMode modelIdText "restart"
+  waitForDispatcherDiscovery
+  firstPrompt <- submitDurablePrompt paths runtimeMode context "restart-a"
+  secondPrompt <- submitDurablePrompt paths runtimeMode context "restart-b"
+  runKubectl
+    state
+    [ "-n",
+      "platform",
+      "delete",
+      "pod",
+      "-l",
+      "app.kubernetes.io/name=infernix-coordinator",
+      "--grace-period=0",
+      "--force",
+      "--wait=false"
+    ]
+  -- Let the deployment controller observe the missing pod before waiting on
+  -- the rollout, so the wait cannot return against the pod that was killed.
+  threadDelay 5000000
+  waitForRollout state "deployment/infernix-coordinator"
+  restartStartedAt <- realToFrac <$> getPOSIXTime
+  -- A replacement coordinator starts, sweeps the model cache, and rediscovers
+  -- the context before it can dispatch, so recovery is given a bound far above
+  -- an ordinary prompt's and its measured duration is recorded.
+  let recoveryDeadline = restartStartedAt + 900
+  firstResult <-
+    waitForConversationResultPayloadForPromptBefore
+      paths
+      runtimeMode
+      (durablePromptConversationTopic context)
+      (durablePromptRefMessageId firstPrompt)
+      recoveryDeadline
+  secondOutcome <-
+    try @SomeException $
+      waitForConversationResultPayloadForPromptBefore
+        paths
+        runtimeMode
+        (durablePromptConversationTopic context)
+        (durablePromptRefMessageId secondPrompt)
+        recoveryDeadline
+  recoveredAt <- realToFrac <$> getPOSIXTime
+  putStrLn ("coordinator-restart-recovery-seconds: " <> show (recoveredAt - restartStartedAt :: Double))
+  secondResult <-
+    case secondOutcome of
+      Right resultPayload -> pure resultPayload
+      Left failure -> do
+        -- The cluster is torn down after a failed run, so the replacement
+        -- coordinator's own account of what it restored is captured here.
+        coordinatorLog <-
+          try @SomeException $
+            kubectlOutputForState
+              state
+              ["-n", "platform", "logs", "-l", "app.kubernetes.io/name=infernix-coordinator", "--all-containers=true", "--tail=400"]
+        putStrLn ("coordinator-log-after-restart:\n" <> either show id coordinatorLog)
+        fail ("the prompt queued behind the killed coordinator's in-flight prompt was never dispatched: " <> show failure)
+  assert (Contracts.inferenceResultStatus firstResult == "completed") "the prompt in flight at the kill completes"
+  assert (Contracts.inferenceResultStatus secondResult == "completed") "the prompt queued behind it dispatches and completes without resubmission"
+  threadDelay 10000000
+  messages <- readRawTopicPayloads paths runtimeMode Nothing (durablePromptConversationTopic context) 256
+  let resultsFor promptRef = length (conversationResultPayloadsForPrompt (durablePromptRefMessageId promptRef) messages)
+  assert
+    (resultsFor firstPrompt == 1 && resultsFor secondPrompt == 1)
+    ( "each prompt has exactly one visible result after the restart: "
+        <> show (resultsFor firstPrompt, resultsFor secondPrompt)
+    )
 
 -- | Phase 5 Sprint 5.13 — the routed half of static containment.
 --
@@ -725,6 +1086,10 @@ assertResultObjectRefFetchable paths state resultFamily modelIdValue expectedOwn
           assert
             (objectMagicBytesPlausible ref fetched)
             ("returned object ref " <> Text.unpack ref <> " for " <> modelIdValue <> " starts with a plausible container signature")
+          when (resultFamily == SourceSeparation) $
+            assert
+              (Realness.sourceSeparationArchiveHasStems fetched)
+              ("source separation for " <> modelIdValue <> " must return at least two distinct non-silent WAV stems")
           pure (Just (toInteger (ByteString.length fetched)))
 
 assertGeneratedObjectRefOwnership :: Maybe (Text.Text, Text.Text) -> Text.Text -> IO ()
@@ -1277,6 +1642,16 @@ expectedSpeechTranscript =
 requiredSpeechCohortModelId :: String
 requiredSpeechCohortModelId = "speech-whisper-small"
 
+-- Required positive controls span text, speech, and generated media. Typed
+-- admission refusals remain useful negative evidence for other catalog rows,
+-- but cannot turn any of these required successes into a passing result.
+requiredRealOutputCohortModelIds :: [String]
+requiredRealOutputCohortModelIds =
+  [ "llm-smollm2-safetensors",
+    requiredSpeechCohortModelId,
+    "audio-demucs-htdemucs"
+  ]
+
 normalizeSpeechTranscript :: Text.Text -> Text.Text
 normalizeSpeechTranscript =
   Text.unwords
@@ -1561,10 +1936,19 @@ waitForDispatcherDiscovery =
   threadDelay 35000000
 
 submitDurablePrompt :: Paths -> RuntimeMode -> DurablePromptContext -> Text.Text -> IO DurablePromptRef
-submitDurablePrompt paths runtimeMode context label = do
+submitDurablePrompt paths runtimeMode context label =
+  submitDurablePromptWithText
+    paths
+    runtimeMode
+    context
+    label
+    "Reply with exactly OK and no other text. Validation token: "
+
+submitDurablePromptWithText :: Paths -> RuntimeMode -> DurablePromptContext -> Text.Text -> Text.Text -> IO DurablePromptRef
+submitDurablePromptWithText paths runtimeMode context label promptPrefix = do
   startedAt <- realToFrac <$> getPOSIXTime
   let promptTextValue =
-        "Reply with exactly OK and no other text. Validation token: "
+        promptPrefix
           <> label
           <> " "
           <> durablePromptToken context
@@ -2294,8 +2678,21 @@ httpGetWithStatus url = do
 -- set must remain unchanged across that reconcile.
 validateRegistryPopulatedBackingReconcile :: Paths -> ClusterState -> RuntimeMode -> IO ()
 validateRegistryPopulatedBackingReconcile paths state runtimeMode = do
+  now <- getPOSIXTime
+  let canaryToken = show (round (now * 1000000) :: Integer)
+      canary =
+        Contracts.ObjectRef
+          { Contracts.objectBucket = "infernix-demo-objects",
+            Contracts.objectKey = Text.pack ("phase2-ownership-canary/" <> canaryToken)
+          }
+      expectedBytes = ByteString8.pack ("retained-minio-ownership-" <> canaryToken)
+  uploadIntegrationInputObject paths state canary expectedBytes
+  beforeBytes <- fetchObjectRefBytes paths state (objectRefText canary)
+  assert (beforeBytes == expectedBytes) "the MinIO ownership canary is readable before live reconciliation"
   tagListBefore <- requireRegistryBusyboxTagList paths state runtimeMode
   clusterUpHarness (Just runtimeMode)
+  afterBytes <- fetchObjectRefBytes paths state (objectRefText canary)
+  assert (afterBytes == expectedBytes) "a live cluster reconciliation preserves readable MinIO object bytes"
   tagListAfter <- requireRegistryBusyboxTagList paths state runtimeMode
   assert
     (tagListAfter == tagListBefore)
@@ -2585,11 +2982,16 @@ reportStep message = do
   putStrLn ("integration-step: " <> message)
   hFlush stdout
 
-usesDetachedRetainedSnapshot :: Paths -> RuntimeMode -> Bool
-usesDetachedRetainedSnapshot paths runtimeMode =
-  case runtimeMode of
-    AppleSilicon -> True
-    _ -> Config.controlPlaneContext paths == Config.HostNative
+usesDetachedRetainedSnapshot :: Paths -> RuntimeMode -> IO Bool
+usesDetachedRetainedSnapshot paths runtimeMode = do
+  source <-
+    captureClusterCommand
+      paths
+      ( Command.dockerInspectContainerField
+          (Command.ContainerName (kindControlPlaneNodeName paths runtimeMode))
+          (Command.MountSourceAt "/var/infernix-data")
+      )
+  pure (all isSpace source)
 
 -- Sprint 2.14 acceptance for the Apple/non-bind lifecycle. A unique canary is
 -- written only to a live non-Patroni MinIO claim. While Kind is live it must not

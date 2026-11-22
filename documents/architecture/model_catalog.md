@@ -143,6 +143,7 @@ return a typed object reference into `infernix-demo-objects`.
 | whisper-small (whisper.cpp / GGML) | Speech transcription | `SpeechTranscription` | `inline_output` |
 | faster-whisper-small (CTranslate2) | Speech transcription | `SpeechTranscription` | `inline_output` |
 | htdemucs (Demucs) | Source separation | `SourceSeparation` | `object_ref` |
+
 | Open-Unmix | Source separation | `SourceSeparation` | `object_ref` |
 | basic-pitch (Core ML) | Audio-to-MIDI | `AudioToMidi` | `object_ref` |
 | basic-pitch (ONNX) | Audio-to-MIDI | `AudioToMidi` | `object_ref` |
@@ -154,6 +155,10 @@ return a typed object reference into `infernix-demo-objects`.
 | Wan2.1-T2V-1.3B (Diffusers / safetensors) | Video generation | `VideoGeneration` | `object_ref` |
 | bark-small (PyTorch / HF) | Audio generation / TTS | `AudioGeneration` | `object_ref` |
 | Audiveris (JVM application) | OMR / notation extraction | `OpticalMusicRecognition` | `object_ref` |
+
+For CPU Demucs inference, overlapping windows use at most two seconds and the model's padding
+segment is reduced to the same length; the complete input is recombined into full-length stems.
+Accelerator execution retains the checkpoint's segment.
 
 The nine `ResultFamily` constructors — `LlmText`, `SpeechTranscription`, `SourceSeparation`,
 `AudioToMidi`, `MusicTranscription`, `ImageGeneration`, `VideoGeneration`, `AudioGeneration`, and
@@ -197,7 +202,7 @@ catalog does not overstate GPU acceleration:
   the same complete requirement or the same explicit unsupported refusal. A verified complete
   artifact and real post-rebuild inference are positive cache controls.
 - The governed lint/unit and integration gates run through the supported binary execution context;
-  [Testing Strategy](../development/testing_strategy.md) owns source-bound result retention.
+  [Testing Strategy](../development/testing_strategy.md) owns result retention.
 
 ## Cross-References
 

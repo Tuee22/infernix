@@ -30,13 +30,7 @@
 
 ## Artifact Layout
 
-The Linux image retains the binary-generated default seed at
-`/opt/infernix/dhall/ImageHostSeed.dhall` and the compiled source/executable association at
-`/opt/infernix/build-identity.json`. Validation retains source preimages, configuration inputs,
-check outcomes, stdout/stderr logs, and their integrity metadata under
-`./.data/runtime/validation/`. The Apple build handoff writes its pending source input to
-`./.build/native-build-start.json` and its verified source/executable association to
-`./.build/native-build-identity.json` after the bounded forced rebuild.
+The Linux image retains the binary-generated default seed at `/opt/infernix/dhall/ImageHostSeed.dhall`. Validation retains configuration inputs, check outcomes, logs, and integrity metadata under `./.data/runtime/validation/`. Agents rebuild the relevant package or image as appropriate before testing.
 
 The host path stages
 `./.build/infernix`, the Linux substrate images own
@@ -103,20 +97,9 @@ of the supported artifact contract.
 
 ## Native Engine Artifacts
 
-### Validation source identity
+### Validation execution evidence
 
-Validation binds its result to a reproducible content snapshot of implementation, tests, schemas,
-chart, build inputs, and governed documentation, including dirty and relevant untracked inputs.
-Record the inventory and digest version, immutable launcher/workload image identities, binary and
-served-bundle identities, configuration/catalog digest, required-check inventory, executed
-results, and skips. Retain reconstructable source bytes or a base revision with its complete patch
-and untracked-input archive; a digest alone cannot reconstruct the tested source.
-
-Launcher reuse compares the actual image snapshot with the requested checkout. Missing or
-mismatched images rebuild or refuse before validation; a mutable `:local` tag or a hash printed by
-the image cannot establish the match. The before/after source identity must agree, so an edit
-during execution invalidates the claimed run. Browser contracts and bundled sample/media assets
-belong to the same validated image and served-bundle identity.
+Agents ensure the relevant package or image is rebuilt as appropriate before validation. Record the executable or image identity, configuration and device context, required checks, results, and skips. Validation does not automatically compare a package with the current checkout.
 
 Required results survive an ephemeral launcher under the durable validation artifact location
 described by [Testing Strategy](../development/testing_strategy.md). Reports distinguish successful
@@ -149,7 +132,7 @@ CTranslate2/ONNX/MLX/Core ML hydrate per-engine venvs, and Audiveris installs th
 app. Validation requires direct upstream MLX and coremltools preflights, pinned-member `Exclusive`
 duplicate rejection, the production `demo_ui = false` shape, and routed real output. One engine runs
 per machine; any multi-host `Shared` claim requires evidence from distinct Apple hosts. The cluster
-image path uses source-fingerprint reuse and Dockerfile dependency caching; long Cabal compilation,
+image path uses local image reuse and Dockerfile dependency caching; long Cabal compilation,
 image export, registry push, and Helm/Pulsar readiness intervals remain healthy only while lifecycle
 heartbeat evidence advances.
 
@@ -264,10 +247,7 @@ that consume the file link the same library through the in-cluster `infernix` bi
 
 ## Validation
 
-- With an old image retained, change source, tests, generated-contract inputs, and assets
-  independently. Each gate rebuilds to expose the change or refuses the mismatch. Retagging the
-  old image, editing source mid-run, and supplying only an inventory/digest without reconstructable
-  inputs cannot produce valid closure evidence. An unchanged matching snapshot is the reuse control.
+- Rebuild the relevant package or image as appropriate before testing changed source, tests, generated contracts, or assets. Verify actual behavior and retain execution evidence.
 
 - `infernix docs check` fails if this governed artifact document loses its required structure or
   metadata contract.

@@ -30,7 +30,7 @@ data Command
   | ClusterDownCommand
   | ClusterStatusCommand
   | ClusterReclaimSlotCommand (Maybe Integer)
-  | CacheStatusCommand
+  | CacheStatusCommand (Maybe String)
   | CacheEvictCommand (Maybe String)
   | CacheRebuildCommand (Maybe String)
   | KubectlCommand [String]
@@ -56,9 +56,6 @@ data Command
   | InternalDemoConfigValidateCommand FilePath
   | InternalDhallSchemaCommand DhallSchema
   | InternalLinuxHostSeedCommand
-  | InternalImageBuildIdentityCommand
-  | InternalNativeBuildBeginCommand
-  | InternalNativeBuildFinishCommand
   | InternalValidateNvidiaCommand FilePath
   | InternalVerifyValidationReceiptCommand Validation.ValidationScope FilePath
   | InternalGeneratePursContractsCommand FilePath
@@ -322,7 +319,10 @@ cacheCommandFamily =
     { familyTopic = "cache",
       familyOverview = "inspects or reconciles manifest-backed derived cache state for the active substrate",
       familyCommands =
-        [ simpleCommand "cache status" "reports the manifest-backed cache inventory for the active substrate" CacheStatusCommand,
+        [ optionalModelCommand
+            "cache status [--model MODEL_ID]"
+            "reports the manifest-backed cache inventory for one model or for the whole active substrate"
+            CacheStatusCommand,
           optionalModelCommand
             "cache evict [--model MODEL_ID]"
             "evicts derived cache state for one model or for the whole active substrate"
@@ -459,18 +459,6 @@ internalCommandFamily =
             "internal linux-host-seed"
             "prints the decoder-owned Linux image host defaults without reading existing configuration"
             InternalLinuxHostSeedCommand,
-          simpleCommand
-            "internal image-build-identity"
-            "prints the compiled image source inventory and executable digest for the build handoff"
-            InternalImageBuildIdentityCommand,
-          simpleCommand
-            "internal native-build-begin"
-            "records the source input before the bounded native launcher rebuild"
-            InternalNativeBuildBeginCommand,
-          simpleCommand
-            "internal native-build-finish"
-            "binds the rebuilt native executable to its unchanged build input"
-            InternalNativeBuildFinishCommand,
           singlePathCommand
             "internal validate-nvidia PATH"
             "executes the closed NVIDIA fixture inventory in an explicit device context"
@@ -478,7 +466,7 @@ internalCommandFamily =
             ["internal", "validate-nvidia"],
           CommandSpec
             { commandUsageSuffix = "internal verify-validation-receipt SCOPE PATH",
-              commandDescription = "verifies a retained receipt against the independent checkout, executable, configuration, and required check scope",
+              commandDescription = "verifies a retained receipt against the execution context, configuration, and required check scope",
               commandParse = \case
                 ["internal", "verify-validation-receipt", scope, path] ->
                   InternalVerifyValidationReceiptCommand <$> Validation.parseValidationScope scope <*> pure path

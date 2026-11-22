@@ -1,12 +1,15 @@
 module Infernix.Web.ArtifactTransport
   ( UploadedArtifact
   , bindArtifactTransport
+  , refreshUploadDraftBindings
   ) where
 
 import Prelude
 
 import Effect (Effect)
 import Web.DOM.Element as Element
+
+foreign import refreshUploadDraftBindings :: Element.Element -> Effect Unit
 
 type UploadedArtifact =
   { contextId :: String

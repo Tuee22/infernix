@@ -80,8 +80,8 @@ strategy) that budget was derived from, directly on the private
 `python/adapters/model_cache.configure()` before `get_model_path(model_id)` obtains the on-disk path
 to weights streamed from the eagerly pre-staged MinIO `infernix-models` bucket. Disk and memory are
 two independently sized quantities carried on the one envelope, and keeping them distinct is the
-point: that quota bounds the on-disk model cache (`python/adapters/model_cache.py` LRU) and nothing
-else, while the memory budget bounds what the engine process may hold resident and is applied by the
+point: that quota governs on-disk model-cache eviction (`python/adapters/model_cache.py` LRU), while
+the memory budget bounds what the engine process may hold resident and is applied by the
 adapter before any weight is loaded. A model's requirement is derived from its own artifact and
 admitted per physical resource against the executing machine's observed capacity. An oversized row
 remains an `UnavailableModel`; a fitting row advances through live-enforcer refinement to

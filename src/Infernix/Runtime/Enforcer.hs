@@ -37,9 +37,10 @@ import Infernix.ExecutionPlan.Internal
       ),
     RuntimeObservation (RuntimeObservation),
   )
-import Infernix.Models.Artifact (artifactHeaderStagedPrefixBytes)
+import Infernix.Models.Artifact (artifactHeaderStagedPrefixBytes, artifactHeaderStagedSuffixBytes, artifactIsTorchZip)
 import Infernix.Models.Requirement
   ( deriveModelRequirement,
+    deriveModelRequirementFromStagedEdges,
     deriveModelRequirementFromStagedPrefix,
     derivedRequirement,
   )
@@ -236,7 +237,7 @@ observeModelRequirements paths compiledPlan = do
           -- prefix enumerated, and a listing that cannot be performed then says
           -- so rather than reporting an absent object.
           payloadPresent <-
-            ObjectUpload.objectExistsViaPresignedGet uploadConfig manager now payloadRef
+            ObjectUpload.objectExistsViaPresignedHead uploadConfig manager now payloadRef
           selected <-
             if payloadPresent
               then pure (Right (objectKey payloadRef))
@@ -268,9 +269,22 @@ observeModelRequirements paths compiledPlan = do
                             <> Text.pack " could not be read"
                         )
                     )
-                Just (prefixBytes, artifactBytes) ->
-                  withArtifactPrefixFile prefixBytes $ \prefixPath ->
-                    deriveModelRequirementFromStagedPrefix model prefixPath artifactBytes
+                Just (prefixBytes, artifactBytes)
+                  | artifactIsTorchZip prefixBytes -> do
+                      edges <-
+                        ObjectUpload.getObjectEdgesWithPresignedUrl
+                          uploadConfig
+                          manager
+                          now
+                          payloadRef {objectKey = checkpointKey}
+                          artifactHeaderStagedPrefixBytes
+                          artifactHeaderStagedSuffixBytes
+                      pure $ case edges of
+                        Nothing -> Left (Text.pack "the staged checkpoint's bounded edges do not identify one object version")
+                        Just (prefix, suffix, total) -> deriveModelRequirementFromStagedEdges model total prefix suffix
+                  | otherwise ->
+                      withArtifactPrefixFile prefixBytes $ \prefixPath ->
+                        deriveModelRequirementFromStagedPrefix model prefixPath artifactBytes
 
 -- | Phase 4 Sprint 4.43 — choose the checkpoint among a model's staged objects.
 --

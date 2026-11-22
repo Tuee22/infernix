@@ -161,8 +161,8 @@
   `emptySubprocessEnvViolations` (`env = Just []`), `unboundedExecViolations` (raw unbounded process
   spawn — `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` and peers — in
   production `src/Infernix/` outside `Infernix.Cluster.Subprocess.runBoundedCommand`),
-  `unboundedHttpViolations` (raw `withResponse` for the upstream model download outside the
-  bounded-HTTP wrapper), `threadDelayViolations` (raw `threadDelay` readiness/poll loops in
+  `unboundedHttpViolations` (raw `withResponse` outside the upstream download wrapper and the
+  single fixed callback in the bounded internal-object reader), `threadDelayViolations` (raw `threadDelay` readiness/poll loops in
   production `src/Infernix/` outside the `Infernix.Evidence.Readiness.awaitReadiness` kernel and a
   deliberately shrinking backoff/heartbeat exemption list), and `unboundedEngineSpawnViolations` (raw
   engine subprocess spawn — `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` —

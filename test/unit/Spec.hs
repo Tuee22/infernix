@@ -9,7 +9,7 @@ module Main (main) where
 
 import Control.Concurrent (forkIO, forkIOWithUnmask, killThread, threadDelay, yield)
 import Control.Concurrent.MVar qualified as MVar
-import Control.Exception (AsyncException (ThreadKilled), IOException, SomeAsyncException, SomeException, catch, displayException, evaluate, finally, fromException, throwIO, throwTo, toException, try, uninterruptibleMask_)
+import Control.Exception (AsyncException (ThreadKilled), IOException, SomeAsyncException, SomeException, bracket, catch, displayException, evaluate, finally, fromException, throwIO, throwTo, toException, try, uninterruptibleMask_)
 import Control.Monad (forM, forM_, unless, void, when)
 import Crypto.Hash.Algorithms qualified
 import Crypto.Hash.SHA256 qualified as SHA256
@@ -23,6 +23,7 @@ import Data.Bits (shiftR, (.&.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Base64.URL qualified
+import Data.ByteString.Builder qualified as Builder
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
@@ -128,9 +129,9 @@ import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
 import Infernix.Cluster.Command qualified as ClusterCommand
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint qualified as ImageFingerprint
-import Infernix.Cluster.Internal (beginHarnessConfigTransaction, cleanupHarnessRuntimeState, reclaimHarnessClusterSlotAt, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, seizeHarnessClusterSlotAt, withClusterLifecycleLock, withHarnessClusterSlotAt, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
+import Infernix.Cluster.Internal (beginHarnessConfigTransaction, cleanupHarnessRuntimeState, reclaimHarnessClusterSlotAt, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, retainedRootPreservesOwnership, seizeHarnessClusterSlotAt, withClusterLifecycleLock, withHarnessClusterSlotAt, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig, writeGeneratedKindConfigWithMountMode)
 import Infernix.Cluster.Internal qualified as ClusterInternal
-import Infernix.Cluster.LifecycleLock (kernelFileLockIsHeld)
+import Infernix.Cluster.LifecycleLock (kernelFileLockIsHeld, withKernelFileLock)
 import Infernix.Cluster.MutationRecovery
   ( InterruptedMutationRecoveryEffects (..),
     runInterruptedMutationRecovery,
@@ -261,7 +262,7 @@ import Infernix.Lint.Files
     isGeneratedHaskellProtoTextSnapshot,
     nativeSourcePathViolations,
   )
-import Infernix.Lint.HaskellStyle (unboundedCeilingInstallViolations, unboundedDescriptorSpawnViolations, unboundedEngineSpawnViolations, unboundedToolchainSpawnViolations, unsafeNativeBoundaryViolations)
+import Infernix.Lint.HaskellStyle (unboundedCeilingInstallViolations, unboundedDescriptorSpawnViolations, unboundedEngineSpawnViolations, unboundedHttpViolations, unboundedToolchainSpawnViolations, unsafeNativeBoundaryViolations)
 import Infernix.Lint.Plan
   ( SprintBlock,
     backwardEdgeViolations,
@@ -285,12 +286,16 @@ import Infernix.Models.Artifact
         artifactHeaderPrefixDigest,
         artifactHeaderWeightBytes
       ),
+    ArtifactHeaderError (ArtifactFamilyUnsupported, ArtifactHeaderMalformed),
     readArtifactHeader,
+    readTorchArtifactEdges,
   )
 import Infernix.Models.Requirement (keyValueCacheBytes, modelRequirementBytesToMib)
+import Infernix.Models.TorchPickle (readTorchStorages)
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
 import Infernix.Objects.Sts qualified as ObjSts
+import Infernix.Objects.Upload qualified as ObjUpload
 import Infernix.ProcessIdentity
   ( ProcessBirthIdentity (..),
     dropInheritedProcessIdentity,
@@ -315,6 +320,7 @@ import Infernix.Routes
 import Infernix.Routes qualified as Routes
 import Infernix.Runtime
 import Infernix.Runtime.Cache qualified as Cache
+import Infernix.Runtime.CacheControl qualified as CacheControl
 import Infernix.Runtime.Cancellation qualified as Cancellation
 import Infernix.Runtime.CappedEngine.Ceiling qualified as Ceiling
 import Infernix.Runtime.CappedEngine.Internal qualified as CappedEngineInternal
@@ -326,6 +332,8 @@ import Infernix.Runtime.Enforcer qualified as Enforcer
 import Infernix.Runtime.Enforcer.Internal qualified as EnforcerInternal
 import Infernix.Runtime.Enforcer.Properties qualified as EnforcerProperties
 import Infernix.Runtime.KVCache qualified as KVCache
+import Infernix.Runtime.ModelCacheLease qualified as ModelCacheLease
+import Infernix.Runtime.ModelCacheReplacement qualified as ModelCacheReplacement
 import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
     DemoClientMessagePublication (..),
@@ -375,6 +383,8 @@ import Infernix.Runtime.Worker
   ( WorkerFailure (..),
     WorkerModelCacheConfig (..),
     cgroupObservationWorkerFailure,
+    ensureContainedCacheDirectories,
+    ensureNativeRunnerContractCacheReady,
     loadWorkerModelCacheConfig,
     nativeArtifactMarkerPathsForTest,
     nativeModelCacheObjectKeys,
@@ -2049,6 +2059,373 @@ runDescriptorSpaceAssertions = do
       (descriptorSpaceBoundLimit preserved == tighter)
       "establishBoundedDescriptorSpace preserves a tighter host-imposed soft limit"
 
+-- The model header reader must not download a complete object for an existence
+-- check or when an object server ignores or forges the requested byte range.
+runBoundedModelObjectReadAssertions :: FilePath -> IO ()
+runBoundedModelObjectReadAssertions unitTestRoot = do
+  let boundedFile = "src/Infernix/Objects/BoundedHttp.hs"
+      allowedStreaming = [(1, "    withResponse,"), (2, "      withResponse request manager $ \\response -> do")]
+  assert (null (unboundedHttpViolations boundedFile allowedStreaming)) "the fixed bounded object reader owns one streaming callback"
+  assert
+    (not (null (unboundedHttpViolations boundedFile (allowedStreaming <> [(3, "withResponse other manager callback")]))))
+    "the object-reader boundary refuses an additional raw streaming callback"
+  assert
+    (not (null (unboundedHttpViolations "src/Infernix/Other.hs" [(1, "withResponse request manager callback")])))
+    "arbitrary production modules cannot introduce raw streaming reads"
+  fixtureMode <- IORef.newIORef (0 :: Int)
+  requests <- IORef.newIORef []
+  requestPaths <- IORef.newIORef []
+  matchHeaders <- IORef.newIORef []
+  streamingStarted <- MVar.newEmptyMVar
+  releaseStreaming <- MVar.newEmptyMVar
+  headStarted <- MVar.newEmptyMVar
+  releaseHead <- MVar.newEmptyMVar
+  let application request respond = do
+        IORef.modifyIORef' requests ((Wai.requestMethod request, lookup "Range" (Wai.requestHeaders request), Wai.rawQueryString request) :)
+        IORef.modifyIORef' requestPaths ((Wai.requestMethod request, Wai.rawPathInfo request) :)
+        IORef.modifyIORef' matchHeaders (lookup "If-Match" (Wai.requestHeaders request) :)
+        mode <- IORef.readIORef fixtureMode
+        case (Wai.requestMethod request, mode) of
+          (methodValue, 14) | methodValue == HTTPTypes.methodHead -> do
+            MVar.putMVar headStarted ()
+            MVar.takeMVar releaseHead
+            respond (Wai.responseLBS HTTPTypes.status200 [] "")
+          (methodValue, 5) | methodValue == HTTPTypes.methodHead && ".infernix-artifact-inventory.json" `BS.isSuffixOf` Wai.rawPathInfo request -> respond (Wai.responseLBS HTTPTypes.status404 [] "")
+          (methodValue, 15) | methodValue == HTTPTypes.methodHead && ".infernix-artifact-inventory.json" `BS.isSuffixOf` Wai.rawPathInfo request -> respond (Wai.responseLBS HTTPTypes.status500 [] "")
+          (methodValue, 16) | methodValue == HTTPTypes.methodHead -> respond (Wai.responseLBS HTTPTypes.status403 [] "")
+          (methodValue, _) | methodValue == HTTPTypes.methodHead -> respond (Wai.responseLBS HTTPTypes.status200 [] "")
+          (_, 0) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 0-3/10")] "abcd")
+          (_, 1) -> respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "1048576")] (Lazy.replicate 1048576 65))
+          (_, 2) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 1-4/10")] "abcd")
+          (_, 3) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 0-3/1x0")] "abcd")
+          (_, 4) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 0-3/10")] "abc")
+          (_, 5) -> respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "3")] "abc")
+          (_, 15) -> respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "3")] "abc")
+          (_, 17)
+            | ".infernix-artifact-inventory.json" `BS.isSuffixOf` Wai.rawPathInfo request ->
+                respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "127")] "{\"version\":1,\"files\":[{\"path\":\"payload\",\"size\":3,\"sha256\":\"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"}]}")
+            | otherwise -> respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "3")] "abc")
+          (_, modeValue) | modeValue `elem` [26, 27, 28, 29] ->
+            case lookup "Range" (Wai.requestHeaders request) of
+              Just "bytes=0-3" ->
+                let tag = if modeValue == 28 then "W/\"v1\"" else "\"v1\""
+                 in respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 0-3/10"), ("ETag", tag)] "abcd")
+              Just "bytes=-4"
+                | lookup "If-Match" (Wai.requestHeaders request) == Just "\"v1\"" && modeValue /= 29 ->
+                    let tag = if modeValue == 27 then "\"v2\"" else "\"v1\""
+                     in respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 6-9/10"), ("ETag", tag)] "ghij")
+              _ -> respond (Wai.responseLBS HTTPTypes.status412 [] "")
+          (_, 30) -> respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "403"), ("ETag", "\"fixture\"")] (Lazy.fromStrict torchZipFixture))
+          (_, 18) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 6-9/10")] "ghij")
+          (_, 19) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 5-8/10")] "fghi")
+          (_, 20) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 6-9/10"), ("Content-Range", "bytes 6-9/10")] "ghij")
+          (_, 21) -> respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "3")] "abc")
+          (_, 22) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 6-9/10"), ("Content-Encoding", "gzip")] "ghij")
+          (_, 23) -> respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "6")] "abcdef")
+          (_, 24) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 6-9/1x")] "ghij")
+          (_, 25) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 6-9/10")] "ghi")
+          (_, 7) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 0-3/10"), ("Content-Encoding", "gzip")] "abcd")
+          (_, 8) -> respond (Wai.responseLBS HTTPTypes.status206 [("Content-Range", "bytes 0-3/10"), ("Content-Range", "bytes 0-3/12")] "abcd")
+          (_, 9) ->
+            respond $
+              Wai.responseStream HTTPTypes.status200 [] $ \write flush -> do
+                write (Builder.byteString "abc")
+                flush
+          (_, 10) ->
+            respond $
+              Wai.responseStream HTTPTypes.status200 [("Content-Length", "6")] $ \write flush -> do
+                write (Builder.byteString "abc")
+                flush
+                MVar.putMVar streamingStarted ()
+                MVar.takeMVar releaseStreaming
+                write (Builder.byteString "def")
+          (_, 11) -> respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "11")] "../outside\n")
+          (_, 12)
+            | ".infernix-native-snapshot-files" `BS.isSuffixOf` Wai.rawPathInfo request ->
+                respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "18")] "weights/model.bin\n")
+            | ".infernix-artifact-inventory.json" `BS.isSuffixOf` Wai.rawPathInfo request ->
+                respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "137")] "{\"version\":1,\"files\":[{\"path\":\"weights/model.bin\",\"size\":3,\"sha256\":\"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"}]}")
+            | otherwise -> respond (Wai.responseLBS HTTPTypes.status200 [("Content-Length", "3")] "abc")
+          _ -> respond (Wai.responseLBS HTTPTypes.status404 [] "")
+  manager <- HTTP.newManager HTTP.defaultManagerSettings
+  now <- getCurrentTime
+  Warp.testWithApplication (pure application) $ \port -> do
+    let endpoint = Text.pack ("127.0.0.1:" <> show port)
+        config =
+          ObjUpload.ObjectUploadConfig
+            { ObjUpload.objectUploadScheme = "http",
+              ObjUpload.objectUploadEndpoint = endpoint,
+              ObjUpload.objectUploadPathPrefix = "",
+              ObjUpload.objectUploadRegion = "us-east-1",
+              ObjUpload.objectUploadAccessKeyId = "fixture-access",
+              ObjUpload.objectUploadSecretAccessKey = "fixture-secret",
+              ObjUpload.objectUploadExpirySeconds = 60
+            }
+        object = Contracts.ObjectRef "models" "checkpoint"
+        signedConfig =
+          ObjPresigned.PresignedUrlConfig
+            { ObjPresigned.presignedScheme = "http",
+              ObjPresigned.presignedEndpoint = endpoint,
+              ObjPresigned.presignedPathPrefix = "",
+              ObjPresigned.presignedRegion = "us-east-1",
+              ObjPresigned.presignedAccessKeyId = "fixture-access",
+              ObjPresigned.presignedSecretAccessKey = "fixture-secret",
+              ObjPresigned.presignedExpirySeconds = 60,
+              ObjPresigned.presignedSessionToken = Nothing
+            }
+        readPrefix = ObjUpload.getObjectPrefixWithPresignedUrl config manager now object 4
+    expectedHead <- HTTP.parseRequest (Text.unpack (ObjPresigned.unPresignedUrl (ObjPresigned.presignedHeadUrl signedConfig now object)))
+    exists <- ObjUpload.objectExistsViaPresignedHead config manager now object
+    seen <- IORef.readIORef requests
+    assert exists "a successful signed HEAD observes the staged object"
+    assert
+      (seen == [(HTTPTypes.methodHead, Nothing, HTTP.queryString expectedHead)])
+      "object existence uses the HEAD signature and transfers no model body"
+    IORef.writeIORef fixtureMode 16
+    forbidden <- ObjUpload.observeObjectViaPresignedHead config manager now object
+    assert (forbidden == ObjUpload.ObjectHeadUnavailable 403) "a forbidden HEAD is unobservable, not a missing object"
+    IORef.writeIORef fixtureMode 0
+    valid <- readPrefix
+    assert (valid == Just ("abcd", 10)) "a valid bounded range retains the exact total object extent"
+    seenAfterRange <- IORef.readIORef requests
+    assert
+      (any (\(methodValue, rangeValue, _) -> methodValue == HTTPTypes.methodGet && rangeValue == Just "bytes=0-3") seenAfterRange)
+      "the checkpoint prefix request sends the requested byte range"
+    forM_ [1, 2, 3, 4, 6, 7, 8] $ \mode -> do
+      IORef.writeIORef fixtureMode mode
+      refused <- readPrefix
+      assert (isNothing refused) ("oversized, malformed, truncated, and missing responses refuse: fixture " <> show mode)
+    IORef.writeIORef fixtureMode 5
+    shortObject <- readPrefix
+    assert (shortObject == Just ("abc", 3)) "a complete short object remains a valid bounded prefix"
+    emptyBound <- ObjUpload.getObjectPrefixWithPresignedUrl config manager now object 0
+    assert (isNothing emptyBound) "a nonpositive prefix bound refuses"
+
+    let readSuffix = ObjUpload.getObjectSuffixWithPresignedUrl config manager now object 4
+    IORef.writeIORef fixtureMode 18
+    suffix <- readSuffix
+    assert (suffix == Just ("ghij", 10)) "a valid bounded suffix retains exact object extent"
+    suffixRequests <- IORef.readIORef requests
+    assert
+      (any (\(methodValue, rangeValue, _) -> methodValue == HTTPTypes.methodGet && rangeValue == Just "bytes=-4") suffixRequests)
+      "the checkpoint suffix request sends a suffix range"
+    forM_ [19, 20, 22, 23, 24, 25] $ \mode -> do
+      IORef.writeIORef fixtureMode mode
+      refusedSuffix <- readSuffix
+      assert (isNothing refusedSuffix) ("invalid bounded suffix refuses: fixture " <> show mode)
+    IORef.writeIORef fixtureMode 21
+    shortSuffix <- readSuffix
+    assert (shortSuffix == Just ("abc", 3)) "a complete short object remains a valid bounded suffix"
+    emptySuffix <- ObjUpload.getObjectSuffixWithPresignedUrl config manager now object 0
+    assert (isNothing emptySuffix) "a nonpositive suffix bound refuses"
+
+    IORef.writeIORef fixtureMode 26
+    edges <- ObjUpload.getObjectEdgesWithPresignedUrl config manager now object 4 4
+    sentMatches <- IORef.readIORef matchHeaders
+    assert (edges == Just ("abcd", "ghij", 10) && take 2 sentMatches == [Just "\"v1\"", Nothing]) "bounded object edges use a conditional request for one strong version"
+    forM_ [27, 28, 29] $ \mode -> do
+      IORef.writeIORef fixtureMode mode
+      refusedEdges <- ObjUpload.getObjectEdgesWithPresignedUrl config manager now object 4 4
+      assert (isNothing refusedEdges) ("object edge reads refuse an unproved version: " <> show mode)
+
+    IORef.writeIORef fixtureMode 30
+    zipEdges <- ObjUpload.getObjectEdgesWithPresignedUrl config manager now object 2097152 1048576
+    let remoteZip = case zipEdges of
+          Just (prefix, suffixBytes, total) -> readTorchArtifactEdges total prefix suffixBytes
+          Nothing -> Left (ArtifactHeaderMalformed "object edge request failed")
+        localZip = readTorchArtifactEdges (toInteger (BS.length torchZipFixture)) torchZipFixture torchZipFixture
+    assert (remoteZip == localZip && fmap artifactHeaderWeightBytes remoteZip == Right 8) "remote and local PyTorch checkpoint accounting agree"
+
+    whisperModel <- maybe (fail "expected an Apple whisper model") pure (findModel AppleSilicon "speech-whisper-small")
+    snapshotModel <- maybe (fail "expected an Apple snapshot model") pure (findModel AppleSilicon "llm-qwen15-mlx")
+    let fixtureRoot = unitTestRoot </> "streamed-native-cache"
+        configuredCache root quota =
+          (nativeModelCacheFixtureConfig root)
+            { workerModelCacheQuotaBytes = quota,
+              workerMinioEndpoint = "http://" <> endpoint
+            }
+        modelRoot root = root </> "speech-whisper-small"
+        payloadAt root = modelRoot root </> "payload"
+        stagingAt root = payloadAt root <> ".incoming"
+        readyAt root = modelRoot root </> ".ready"
+        hydrate root quota = ensureNativeRunnerContractCacheReady whisperModel (Just (configuredCache root quota))
+        successRoot = fixtureRoot </> "success"
+        boundedRoot = fixtureRoot </> "over-bound"
+        noLengthRoot = fixtureRoot </> "no-length"
+        interruptedRoot = fixtureRoot </> "interrupted"
+        contentionRoot = fixtureRoot </> "contention"
+        symlinkStageRoot = fixtureRoot </> "symlink-stage"
+        symlinkPayloadRoot = fixtureRoot </> "symlink-payload"
+        snapshotRoot = fixtureRoot </> "snapshot"
+        badSnapshotRoot = fixtureRoot </> "bad-snapshot"
+        headCancellationRoot = fixtureRoot </> "cancelled-head"
+        failedInventoryHeadRoot = fixtureRoot </> "failed-inventory-head"
+    removeTestPathIfPresent fixtureRoot
+    createDirectoryIfMissing True (modelRoot successRoot)
+    BS.writeFile (stagingAt successRoot) "abandoned transfer"
+    IORef.writeIORef fixtureMode 17
+    hydrated <- hydrate successRoot 1024
+    actualBytes <- BS.readFile (payloadAt successRoot)
+    successReady <- doesFileExist (readyAt successRoot)
+    successStage <- doesFileExist (stagingAt successRoot)
+    assert (isRight hydrated && actualBytes == "abc" && successReady && not successStage) "the native consumer recovers stale staging, streams the full object, and publishes only the verified extent"
+    removeFile (modelRoot successRoot </> ".infernix-artifact-inventory.json")
+    IORef.writeIORef fixtureMode 5
+    missingIdentity <- hydrate successRoot 1024
+    assert (isLeft missingIdentity) "a warm native cache refuses readiness when durable identity is absent"
+    IORef.writeIORef fixtureMode 17
+    reconciledIdentity <- hydrate successRoot 1024
+    assert (isRight reconciledIdentity) "a warm native cache reconciles and verifies its durable identity"
+    let protectedPath = fixtureRoot </> "protected"
+    BS.writeFile protectedPath "protected bytes"
+    protectedAbsolute <- makeAbsolute protectedPath
+    createDirectoryIfMissing True (modelRoot symlinkStageRoot)
+    createFileLink protectedAbsolute (stagingAt symlinkStageRoot)
+    symlinkStaged <- hydrate symlinkStageRoot 1024
+    protectedAfterStage <- BS.readFile protectedPath
+    assert (isRight symlinkStaged && protectedAfterStage == "protected bytes") "stale staging symlinks are removed without following their target"
+    createDirectoryIfMissing True (modelRoot symlinkPayloadRoot)
+    createFileLink protectedAbsolute (payloadAt symlinkPayloadRoot)
+    symlinkPayload <- try @SomeException (hydrate symlinkPayloadRoot 4)
+    protectedAfterPayload <- BS.readFile protectedPath
+    symlinkPayloadReady <- doesFileExist (readyAt symlinkPayloadRoot)
+    assert (isLeft symlinkPayload && protectedAfterPayload == "protected bytes" && not symlinkPayloadReady) "a symlinked cache payload is refused without changing its target"
+    -- Sprint 4.50: a pre-placed directory symlink under the model directory
+    -- is refused rather than followed, and nested directories are created
+    -- component by component.
+    let containedRoot = fixtureRoot </> "contained-model"
+        outsideDirectory = fixtureRoot </> "outside-target"
+    createDirectoryIfMissing True containedRoot
+    createDirectoryIfMissing True outsideDirectory
+    outsideAbsolute <- makeAbsolute outsideDirectory
+    nestedCreated <- try @SomeException (ensureContainedCacheDirectories containedRoot (containedRoot </> "weights" </> "shards" </> "part-1"))
+    nestedExists <- doesDirectoryExist (containedRoot </> "weights" </> "shards")
+    assert (isRight nestedCreated && nestedExists) "native hydration creates nested object directories below the model directory"
+    createDirectoryLink outsideAbsolute (containedRoot </> "linked")
+    linkedRefusal <- try @SomeException (ensureContainedCacheDirectories containedRoot (containedRoot </> "linked" </> "deep" </> "part-2"))
+    outsideEntries <- listDirectory outsideDirectory
+    assert (isLeft linkedRefusal && null outsideEntries) "a pre-placed directory symlink is refused and nothing is created through it"
+    BS.writeFile (containedRoot </> "plain-file") "not a directory"
+    fileRefusal <- try @SomeException (ensureContainedCacheDirectories containedRoot (containedRoot </> "plain-file" </> "part-3"))
+    assert (isLeft fileRefusal) "a non-directory component is refused"
+    escapeRefusal <- try @SomeException (ensureContainedCacheDirectories containedRoot (fixtureRoot </> "elsewhere" </> "part-4"))
+    assert (isLeft escapeRefusal) "an object path outside the model directory is refused"
+    IORef.writeIORef fixtureMode 1
+    overBound <- try @SomeException (hydrate boundedRoot 4)
+    boundedPayload <- doesFileExist (payloadAt boundedRoot)
+    boundedStage <- doesFileExist (stagingAt boundedRoot)
+    boundedReady <- doesFileExist (readyAt boundedRoot)
+    assert (isLeft overBound && not boundedPayload && not boundedStage && not boundedReady) "an oversized object leaves no payload, temporary file, or ready sentinel"
+    IORef.writeIORef fixtureMode 9
+    noLength <- try @SomeException (hydrate noLengthRoot 4)
+    noLengthPayload <- doesFileExist (payloadAt noLengthRoot)
+    noLengthStage <- doesFileExist (stagingAt noLengthRoot)
+    noLengthReady <- doesFileExist (readyAt noLengthRoot)
+    assert (isLeft noLength && not noLengthPayload && not noLengthStage && not noLengthReady) "a response without a verified extent leaves no published cache"
+    IORef.writeIORef fixtureMode 14
+    headCancellationResult <- MVar.newEmptyMVar
+    bracket
+      (forkIO (try @SomeException (hydrate headCancellationRoot 8) >>= MVar.putMVar headCancellationResult))
+      (\headThread -> void (MVar.tryPutMVar releaseHead ()) >> killThread headThread)
+      ( \headThread -> do
+          began <- timeout 10000000 (MVar.takeMVar headStarted)
+          assert (isJust began) "native hydration reaches the signed HEAD request"
+          killThread headThread
+          MVar.putMVar releaseHead ()
+          cancelled <- timeout 10000000 (MVar.takeMVar headCancellationResult)
+          published <- doesFileExist (readyAt headCancellationRoot)
+          assert
+            (maybe False (either (isJust . (fromException :: SomeException -> Maybe SomeAsyncException)) (const False)) cancelled && not published)
+            "cancellation during HEAD propagates instead of being classified as an absent object"
+      )
+    IORef.writeIORef fixtureMode 12
+    snapshotHydrated <- ensureNativeRunnerContractCacheReady snapshotModel (Just (configuredCache snapshotRoot 1048576))
+    snapshotBytes <- BS.readFile (snapshotRoot </> "llm-qwen15-mlx" </> "weights" </> "model.bin")
+    assert (isRight snapshotHydrated && snapshotBytes == "abc") "a valid nested snapshot inventory hydrates through the native consumer"
+    identityBytes <- BS.readFile (snapshotRoot </> "llm-qwen15-mlx" </> ".infernix-artifact-inventory.json")
+    assert ("ba7816bf" `BS.isInfixOf` identityBytes) "native hydration fetches the durable identity sidecar through the bounded object path"
+    BS.writeFile (snapshotRoot </> "llm-qwen15-mlx" </> "weights" </> "model.bin") "abd"
+    corruptedWarm <- ensureNativeRunnerContractCacheReady snapshotModel (Just (configuredCache snapshotRoot 1048576))
+    assert (isLeft corruptedWarm) "native runner refuses a same-length cache corruption when an identity inventory is present"
+    BS.writeFile (snapshotRoot </> "llm-qwen15-mlx" </> "weights" </> "model.bin") "abc"
+    IORef.writeIORef fixtureMode 15
+    failedInventoryHead <- try @SomeException (hydrate failedInventoryHeadRoot 4)
+    failedInventoryReady <- doesFileExist (readyAt failedInventoryHeadRoot)
+    assert (isLeft failedInventoryHead && not failedInventoryReady) "a failed inventory HEAD cannot publish legacy readiness"
+    IORef.writeIORef fixtureMode 12
+    snapshotReplacement <-
+      ModelCacheReplacement.replaceCacheGeneration snapshotRoot (modelId snapshotModel) 1048576 $ \candidateRoot -> do
+        let candidateConfig = configuredCache candidateRoot 1048576
+        candidateHydrated <- ensureNativeRunnerContractCacheReady snapshotModel (Just candidateConfig)
+        candidateState <- Cache.observeCacheEntry candidateConfig snapshotModel
+        pure $
+          if isRight candidateHydrated && Cache.cacheEntryStateIsReady candidateState
+            then Right ()
+            else Left ("candidate did not verify" :: String)
+    assert (snapshotReplacement == Right ()) "the replacement transaction publishes a hydrated and observed native snapshot"
+    IORef.writeIORef fixtureMode 11
+    badReplacement <-
+      try @SomeException $
+        ModelCacheReplacement.replaceCacheGeneration snapshotRoot (modelId snapshotModel) 1048576 $ \candidateRoot -> do
+          _ <- ensureNativeRunnerContractCacheReady snapshotModel (Just (configuredCache candidateRoot 1048576))
+          pure (Right () :: Either String ())
+    preservedSnapshot <- BS.readFile (snapshotRoot </> "llm-qwen15-mlx" </> "weights" </> "model.bin")
+    assert (isLeft badReplacement && preservedSnapshot == "abc") "a malformed durable replacement leaves the prior hydrated snapshot intact"
+    IORef.writeIORef fixtureMode 11
+    IORef.writeIORef requestPaths []
+    badSnapshot <- try @SomeException (ensureNativeRunnerContractCacheReady snapshotModel (Just (configuredCache badSnapshotRoot 1048576)))
+    pathsAfterBadSnapshot <- IORef.readIORef requestPaths
+    assert
+      (isLeft badSnapshot && length [() | (methodValue, _) <- pathsAfterBadSnapshot, methodValue == HTTPTypes.methodGet] == 1)
+      "an invalid durable snapshot inventory refuses before requesting any indexed object"
+    createDirectoryIfMissing True (modelRoot contentionRoot)
+    BS.writeFile (stagingAt contentionRoot) "live owner"
+    IORef.writeIORef fixtureMode 5
+    withKernelFileLock "fixture cache owner" (payloadAt contentionRoot <> ".download.held") $ do
+      contended <- try @SomeException (hydrate contentionRoot 4)
+      ownedStage <- BS.readFile (stagingAt contentionRoot)
+      contentionPayload <- doesFileExist (payloadAt contentionRoot)
+      assert (isLeft contended && ownedStage == "live owner" && not contentionPayload) "a concurrent owner prevents mutation of its live staging file"
+    IORef.writeIORef fixtureMode 10
+    interruptedResult <- MVar.newEmptyMVar
+    bracket
+      (forkIO (try @SomeException (hydrate interruptedRoot 8) >>= MVar.putMVar interruptedResult))
+      ( \hydrationThread -> do
+          void (MVar.tryPutMVar releaseStreaming ())
+          killThread hydrationThread
+      )
+      ( \hydrationThread -> do
+          began <- timeout 10000000 (MVar.takeMVar streamingStarted)
+          assert (isJust began) "the interrupted transfer reaches the streaming boundary"
+          killThread hydrationThread
+          MVar.putMVar releaseStreaming ()
+          interrupted <- timeout 10000000 (MVar.takeMVar interruptedResult)
+          interruptedPayload <- doesFileExist (payloadAt interruptedRoot)
+          interruptedStage <- doesFileExist (stagingAt interruptedRoot)
+          interruptedReady <- doesFileExist (readyAt interruptedRoot)
+          assert (maybe False isLeft interrupted && not interruptedPayload && not interruptedStage && not interruptedReady) "cancelling an in-flight transfer reaps its staging file before it can be advertised"
+      )
+
+-- A small protocol-2 PyTorch ZIP with one four-element half-precision storage.
+torchZipFixture :: BS.ByteString
+torchZipFixture = fixture
+  where
+    zipHex =
+      BS.concat
+        [ "504b0304140000000000cd2b705d249c04c8350000003500000010000000617263686976652f6461",
+          "74612e706b6c800228580700000073746f7261676563746f7263680a48616c6653746f726167650a",
+          "58010000003058030000006370754b0474512e504b0304140000000000cd2b705dafdae09a080000",
+          "00080000000e000000617263686976652f646174612f303132333435363738504b03041400000000",
+          "00cd2b705dd19e675502000000020000000f000000617263686976652f76657273696f6e330a504b",
+          "01021403140000000000cd2b705d249c04c835000000350000001000000000000000000000008001",
+          "00000000617263686976652f646174612e706b6c504b01021403140000000000cd2b705dafdae09a",
+          "08000000080000000e0000000000000000000000800163000000617263686976652f646174612f30",
+          "504b01021403140000000000cd2b705dd19e675502000000020000000f0000000000000000000000",
+          "800197000000617263686976652f76657273696f6e504b05060000000003000300b7000000c60000",
+          "000000"
+        ]
+    fixture = either (error . ("invalid ZIP fixture: " <>)) id (Base16.decode zipHex)
+
 -- | Phase 4 Sprint 4.39 — the artifact-derived memory requirement.
 --
 -- Every fixture builds its artifact in the test rather than checking in a binary
@@ -2059,6 +2436,30 @@ runArtifactRequirementAssertions :: FilePath -> IO ()
 runArtifactRequirementAssertions unitTestRoot = do
   let artifactRoot = unitTestRoot </> "artifact-requirements"
   createDirectoryIfMissing True artifactRoot
+
+  let zipPath = artifactRoot </> "torch-checkpoint.zip"
+      fixture = torchZipFixture
+      extent = toInteger (BS.length fixture)
+      edges = readTorchArtifactEdges extent fixture fixture
+      mutateAt index value bytes = BS.take index bytes <> BS.singleton value <> BS.drop (index + 1) bytes
+  BS.writeFile zipPath fixture
+  localZip <- readArtifactHeader zipPath
+  assert (localZip == edges && fmap artifactHeaderWeightBytes edges == Right 8) "local and staged PyTorch archives derive the same storage weight"
+  assert (isLeft (readTorchArtifactEdges extent (mutateAt 46 0 fixture) fixture)) "a malformed checkpoint pickle is refused"
+  assert (isLeft (readTorchArtifactEdges extent (mutateAt 95 5 fixture) fixture)) "pickle storage sizes must agree with the ZIP directory"
+  let unsupportedZip = readTorchArtifactEdges extent (mutateAt 47 3 fixture) fixture
+      isUnsupported (Left (ArtifactFamilyUnsupported _)) = True
+      isUnsupported _ = False
+  assert (isUnsupported unsupportedZip) "an unsupported pickle protocol is not classified as corrupt"
+
+  assert (isLeft (readTorchArtifactEdges extent fixture (BS.take (BS.length fixture - 10) fixture))) "a truncated ZIP directory is refused"
+  let firstCentral = BS.length (fst (BS.breakSubstring "PK\x01\x02" fixture))
+      secondCentral = firstCentral + 46 + 16
+      overlapping = mutateAt (secondCentral + 42) 0 fixture
+  assert (isLeft (readTorchArtifactEdges extent fixture overlapping)) "overlapping ZIP entries are refused"
+  assert (isLeft (readTorchArtifactEdges (extent + 1) fixture fixture)) "a mismatched ZIP object extent is refused"
+  let deepStack = BS.pack [0x80, 2] <> BS.replicate 100000 0x4e <> "."
+  assert (isLeft (readTorchStorages deepStack)) "a large malformed pickle stack is refused within the opcode budget"
 
   -- The closed cache function, pinned against SmolLM2-135M-Instruct's declared
   -- geometry: thirty layers, three key/value heads, sixty-four wide heads, two
@@ -2148,6 +2549,48 @@ runArtifactRequirementAssertions unitTestRoot = do
   assert
     (either (const False) ((< 4096) . artifactHeaderPrefixBytes) ggufHeader)
     "Sprint 4.39: the GGUF derivation reads only the header prefix"
+
+  -- Length fields are untrusted unsigned 64-bit values. In particular, an
+  -- overflowing conversion must not turn a huge name into a short one.
+  let malformedGgufPath = artifactRoot </> "malformed-metadata.gguf"
+      ggufMetadataHeader =
+        ByteString8.pack "GGUF"
+          <> BS.pack (littleEndianBytes 4 3)
+          <> BS.pack (littleEndianEightBytes 0)
+          <> BS.pack (littleEndianEightBytes 1)
+      nestedArray = BS.pack (littleEndianBytes 4 9) <> BS.pack (littleEndianEightBytes 1)
+      malformedMetadata =
+        [ ("overflowing metadata key", BS.replicate 8 255, "a GGUF string runs past the bounded prefix"),
+          ( "excessively nested metadata arrays",
+            BS.pack (littleEndianEightBytes 1)
+              <> ByteString8.pack "k"
+              <> BS.pack (littleEndianBytes 4 9)
+              <> BS.concat (replicate 32 nestedArray)
+              <> BS.pack (littleEndianBytes 4 0)
+              <> BS.pack (littleEndianEightBytes 0),
+            "the GGUF metadata arrays exceed the nesting bound"
+          )
+        ]
+  forM_ malformedMetadata $ \(label, metadata, reason) -> do
+    BS.writeFile malformedGgufPath (ggufMetadataHeader <> metadata)
+    malformedHeader <- readArtifactHeader malformedGgufPath
+    assert
+      (malformedHeader == Left (ArtifactHeaderMalformed reason))
+      ("Sprint 4.50: the bounded GGUF reader refuses " <> label)
+  let boundedMetadata =
+        ggufMetadataHeader
+          <> BS.pack (littleEndianEightBytes 1)
+          <> ByteString8.pack "k"
+          <> BS.pack (littleEndianBytes 4 9)
+          <> BS.concat (replicate 31 nestedArray)
+          <> BS.pack (littleEndianBytes 4 0)
+          <> BS.pack (littleEndianEightBytes 0)
+      boundedPadding = (32 - BS.length boundedMetadata `mod` 32) `mod` 32
+  BS.writeFile malformedGgufPath (boundedMetadata <> BS.replicate boundedPadding 0)
+  boundedHeader <- readArtifactHeader malformedGgufPath
+  assert
+    (either (const False) (const True) boundedHeader)
+    "Sprint 4.50: GGUF metadata within the nesting bound remains readable"
 
   -- Phase 4 Sprint 4.48 cohort correction: whisper.cpp's legacy GGML format
   -- carries a fixed 48-byte model header, then filter/vocabulary records and
@@ -3427,6 +3870,22 @@ imageSeedIsBinaryOwned dockerfileContents =
 -- selects nothing at all.
 runCacheRequestScopeAssertions :: IO ()
 runCacheRequestScopeAssertions = do
+  lease <- MVar.newMVar ()
+  entered <- MVar.newEmptyMVar
+  result <- MVar.newEmptyMVar
+  completed <- IORef.newIORef False
+  _ <- forkIO $ do
+    observation <- CacheControl.boundedCacheObservation 100000 $
+      MVar.withMVar lease $ \_ -> do
+        MVar.putMVar entered ()
+        threadDelay 1000000
+        IORef.writeIORef completed True
+    MVar.putMVar result observation
+  MVar.takeMVar entered
+  observation <- MVar.takeMVar result
+  stillHeld <- MVar.tryReadMVar lease
+  finished <- IORef.readIORef completed
+  assert (isNothing observation && stillHeld == Just () && not finished) "expired read-only cache observations release their lease and stop work"
   let decodeScope = DemoApi.decodeCacheMutationScope . LazyChar8.pack
       refused body = isLeft (decodeScope body)
 
@@ -3954,17 +4413,180 @@ runStaticAssetContainmentAssertions unitTestRoot = do
     (absent == Left DemoApi.StaticAssetAbsent)
     "an absent public asset is a plain absence, distinct from an escape refusal"
 
+  -- The read boundary itself: bytes come from descriptors opened one
+  -- component at a time with no symlink followed, so a component swapped for a
+  -- symlink after any earlier check is still refused at the open.
+  let readAsset = DemoApi.readStaticAsset servedRoot
+  readPublic <- readAsset ["app.js"]
+  assert (readPublic == Right "console.log('served');\n") "the read boundary returns a public asset's own bytes"
+  readNested <- readAsset ["assets", "nested.css"]
+  assert (readNested == Right ".served {}\n") "the read boundary returns a nested public asset"
+  readLinkedFile <- readAsset ["escape.txt"]
+  assert (readLinkedFile == Left DemoApi.StaticAssetOutsideRoot) "the read boundary refuses a symlinked leaf and never returns the outside sentinel"
+  createDirectoryIfMissing True (fixtureRoot </> "outside-dir")
+  writeFile (fixtureRoot </> "outside-dir" </> "secret.txt") "outside-dir-sentinel\n"
+  outsideDirAbsolute <- makeAbsolute (fixtureRoot </> "outside-dir")
+  createDirectoryLink outsideDirAbsolute (servedRoot </> "linked-dir")
+  readThroughLinkedDirectory <- readAsset ["linked-dir", "secret.txt"]
+  assert (readThroughLinkedDirectory == Left DemoApi.StaticAssetOutsideRoot) "the read boundary refuses a symlinked directory component and never returns the outside file"
+  readMissing <- readAsset ["assets", "missing.css"]
+  assert (readMissing == Left DemoApi.StaticAssetAbsent) "the read boundary reports an absent asset as absence"
+  readDot <- readAsset ["..", "outside.txt"]
+  assert (isLeft readDot) "the read boundary refuses a dot-dot segment before opening anything"
+  -- A leaf that is replaced by a symlink after having been an ordinary file is
+  -- refused on the next read: nothing is cached from the earlier check.
+  writeFile (servedRoot </> "swapped.txt") "ordinary\n"
+  firstRead <- readAsset ["swapped.txt"]
+  removeFile (servedRoot </> "swapped.txt")
+  createSymbolicLink outsidePath (servedRoot </> "swapped.txt")
+  secondRead <- readAsset ["swapped.txt"]
+  assert (firstRead == Right "ordinary\n" && secondRead == Left DemoApi.StaticAssetOutsideRoot) "a leaf swapped for a symlink between reads is refused at the open"
+
 -- | Phase 4 Sprint 4.50 — the derived cache reports what it observes.
 --
 -- Every case here starts from the same fixture directory and changes exactly
 -- one thing, because the interesting claim is not that a good cache passes but
 -- that each specific way of being unusable is distinguished from readiness and
 -- from every other way.
+runCacheReplacementAssertions :: FilePath -> IO ()
+runCacheReplacementAssertions unitTestRoot = do
+  let root = unitTestRoot </> "cache-replacement"
+      modelName = "test-model"
+      current = root </> Text.unpack modelName
+      payload = current </> "payload"
+      build bytes stageRoot = do
+        let candidate = stageRoot </> Text.unpack modelName
+        createDirectoryIfMissing True candidate
+        BS.writeFile (candidate </> "payload") bytes
+        pure (Right () :: Either String ())
+  removeTestPathIfPresent root
+  createDirectoryIfMissing True current
+  BS.writeFile payload "prior"
+  refused <- ModelCacheReplacement.replaceCacheGeneration root modelName 100 (\_ -> pure (Left "not ready" :: Either String ()))
+  retainedAfterRefusal <- BS.readFile payload
+  assert (refused == Left "not ready" && retainedAfterRefusal == "prior") "a refused candidate preserves the prior cache generation"
+  overQuota <- try @SomeException (ModelCacheReplacement.replaceCacheGeneration root modelName 2 (build "new"))
+  retainedAfterQuota <- BS.readFile payload
+  assert (isLeft overQuota && retainedAfterQuota == "prior") "an oversized candidate preserves the prior cache generation"
+  let outside = root </> "outside"
+  BS.writeFile outside "protected"
+  outsideAbsolute <- makeAbsolute outside
+  symlinkCandidate <-
+    try @SomeException $
+      ModelCacheReplacement.replaceCacheGeneration root modelName 100 $ \stageRoot -> do
+        let candidate = stageRoot </> Text.unpack modelName
+        createDirectoryIfMissing True candidate
+        createFileLink outsideAbsolute (candidate </> "payload")
+        pure (Right () :: Either String ())
+  retainedAfterSymlink <- BS.readFile payload
+  protectedBytes <- BS.readFile outside
+  assert (isLeft symlinkCandidate && retainedAfterSymlink == "prior" && protectedBytes == "protected") "a symlinked candidate is refused without modifying the prior generation or link target"
+  failedSwap <-
+    try @SomeException
+      (ModelCacheReplacement.replaceCacheGenerationWithHookForTest root modelName 100 (build "new") (ioError (userError "injected swap failure")) (pure ()))
+  retainedAfterFailure <- BS.readFile payload
+  assert (isLeft failedSwap && retainedAfterFailure == "prior") "a failure after moving the prior generation restores it"
+  swapStarted <- MVar.newEmptyMVar
+  swapRelease <- MVar.newEmptyMVar
+  swapResult <- MVar.newEmptyMVar
+  bracket
+    ( forkIO $
+        try @SomeException
+          (ModelCacheReplacement.replaceCacheGenerationWithHookForTest root modelName 100 (build "new") (MVar.putMVar swapStarted () >> MVar.takeMVar swapRelease) (pure ()))
+          >>= MVar.putMVar swapResult
+    )
+    (\thread -> void (MVar.tryPutMVar swapRelease ()) >> killThread thread)
+    ( \thread -> do
+        started <- timeout 10000000 (MVar.takeMVar swapStarted)
+        assert (isJust started) "replacement reaches the cancellable swap boundary"
+        killThread thread
+        cancelled <- timeout 10000000 (MVar.takeMVar swapResult)
+        retainedAfterCancellation <- BS.readFile payload
+        assert
+          ( maybe False (either (isJust . (fromException :: SomeException -> Maybe SomeAsyncException)) (const False)) cancelled
+              && retainedAfterCancellation == "prior"
+          )
+          "cancellation after moving the prior generation restores it and remains asynchronous"
+    )
+  committed <- ModelCacheReplacement.replaceCacheGeneration root modelName 100 (build "new")
+  committedBytes <- BS.readFile payload
+  assert (isRight committed && committedBytes == "new") "a complete candidate replaces the prior cache generation"
+  let freshRoot = unitTestRoot </> "cache-replacement-fresh"
+  removeTestPathIfPresent freshRoot
+  fresh <- ModelCacheReplacement.replaceCacheGeneration freshRoot modelName 100 (build "fresh")
+  freshBytes <- BS.readFile (freshRoot </> Text.unpack modelName </> "payload")
+  assert (isRight fresh && freshBytes == "fresh") "a complete candidate also publishes when no previous generation exists"
+  discoveredPaths <- Config.discoverPaths
+  let leasePaths = discoveredPaths {runtimeRoot = unitTestRoot </> "cache-replacement-runtime", modelCacheRoot = root}
+  runtimeLock <- ModelCacheLease.prepareMutationLockPath leasePaths LinuxCpu modelName
+  cacheLock <- ModelCacheLease.prepareCacheRootLockPath root modelName
+  let testCrash afterMove = do
+        (readyReader, readyWriter) <- PosixIO.createPipe
+        withGroupedCappedEngineFixture
+          "model cache replacement crash fixture"
+          ( do
+              PosixIO.closeFd readyReader
+              let pause = do
+                    _ <- PosixByteString.fdWrite readyWriter "ready"
+                    PosixIO.closeFd readyWriter
+                    getProcessID >>= signalProcess sigSTOP
+                  (beforePromotion, afterPromotion) = if afterMove then (pure (), pause) else (pause, pure ())
+              _ <-
+                withKernelFileLock "replacement test" runtimeLock $
+                  withKernelFileLock "replacement root test" cacheLock $
+                    ModelCacheReplacement.replaceCacheGenerationWithHookForTest
+                      root
+                      modelName
+                      100
+                      (build "next")
+                      beforePromotion
+                      afterPromotion
+              exitImmediately (ExitFailure 1)
+          )
+          ( \child -> do
+              PosixIO.closeFd readyWriter
+              ready <- timeout 10000000 (PosixByteString.fdRead readyReader 5) `finally` PosixIO.closeFd readyReader
+              assert (ready == Just "ready") "replacement child reached the injected crash boundary"
+              stopped <- timeout 10000000 (getProcessStatus True True (ownedGroupPid child))
+              assert (case stopped of Just (Just (Stopped _)) -> True; _ -> False) "replacement child is stopped at the crash boundary"
+              signalProcess sigKILL (ownedGroupPid child)
+              _ <- ownedGroupReap child
+              pure ()
+          )
+        ModelCacheLease.withModelCacheExecutionLease leasePaths LinuxCpu root modelName (BS.readFile payload)
+  restored <- testCrash False
+  assert (restored == "new") "the next engine lease restores the previous generation after a crash before promotion"
+  promoted <- testCrash True
+  assert (promoted == "next") "the next engine lease retains the verified candidate after a crash following promotion"
+  pending <- ModelCacheReplacement.cacheReplacementPending root modelName
+  assert (not pending) "recovery removes its completed transaction record"
+
 runVerifiedCacheStateAssertions :: FilePath -> IO ()
 runVerifiedCacheStateAssertions unitTestRoot = do
   let cacheRoot = unitTestRoot </> "verified-model-cache"
       cacheConfig = nativeModelCacheFixtureConfig cacheRoot
   removeTestPathIfPresent cacheRoot
+  discoveredPaths <- Config.discoverPaths
+  let isolatedPaths = discoveredPaths {modelCacheRoot = cacheRoot}
+      leasePaths = isolatedPaths {runtimeRoot = unitTestRoot </> "cache-lease-runtime"}
+      rootLease = cacheRoot </> ".infernix-model-locks" </> "llm-tinyllama-gguf.held"
+  ModelCacheLease.withModelCacheExecutionLease leasePaths LinuxCpu cacheRoot "llm-tinyllama-gguf" $ do
+    locked <- kernelFileLockIsHeld rootLease
+    assert locked "an engine execution holds the cache-root lease shared with adapter eviction"
+  released <- kernelFileLockIsHeld rootLease
+  assert (not released) "the cache-root execution lease is released after the engine region"
+  missingManifest <- Cache.rebuildCache isolatedPaths LinuxCpu (Just "llm-tinyllama-gguf")
+  case missingManifest of
+    [outcome] ->
+      assert
+        ( Cache.cacheOutcomeModelId outcome == "llm-tinyllama-gguf"
+            && Cache.cacheEntryStateLabel (Cache.cacheOutcomeState outcome) == "unobservable"
+            && not (Cache.cacheOutcomeChanged outcome)
+        )
+        "a known model without a locally visible cache manifest reports an unobservable owner"
+    _ -> fail "a known model without a cache manifest must return one explicit outcome"
+  unknownModel <- Cache.rebuildCache isolatedPaths LinuxCpu (Just "unknown-model")
+  assert (null unknownModel) "an unknown model is not selected for a cache mutation"
 
   model <-
     maybe (fail "expected a linux-cpu gguf catalog row") pure (findModel LinuxCpu "llm-tinyllama-gguf")
@@ -3987,6 +4609,7 @@ runVerifiedCacheStateAssertions unitTestRoot = do
   assert
     (stateLabel markerOnly == "incomplete")
     "a marker-only directory is incomplete: a line of prose is not a weight file"
+  removeFile (modelDirectory </> "materialized.txt")
 
   BS.writeFile payloadPath BS.empty
   emptyWeights <- Cache.observeCacheEntry cacheConfig model
@@ -4001,6 +4624,11 @@ runVerifiedCacheStateAssertions unitTestRoot = do
     "a complete payload that never published its readiness sentinel is not advertised ready"
 
   writeFile readyPath "native-model-cache-ready\n"
+  let inventoryPath = modelDirectory </> ".infernix-artifact-inventory.json"
+      inventoryBytes = Aeson.encode (Aeson.object ["version" Aeson..= (1 :: Int), "files" Aeson..= [Aeson.object ["path" Aeson..= ("payload" :: Text.Text), "size" Aeson..= BS.length wholeArtifact, "sha256" Aeson..= TextEncoding.decodeUtf8 (Base16.encode (SHA256.hash wholeArtifact))]]])
+  missingIdentity <- Cache.observeCacheEntry cacheConfig model
+  assert (stateLabel missingIdentity == "unobservable") "a complete payload without identity evidence is not verified"
+  Lazy.writeFile inventoryPath inventoryBytes
   complete <- Cache.observeCacheEntry cacheConfig model
   assert
     (stateLabel complete == "verified-ready")
@@ -4008,6 +4636,21 @@ runVerifiedCacheStateAssertions unitTestRoot = do
   assert
     (verifiedCacheFactsMatch 1 (toInteger (BS.length wholeArtifact)) complete)
     "a verified cache reports the file and byte counts it measured, not a declared size"
+  BS.writeFile (modelDirectory </> "unlisted.bin") "extra"
+  unlisted <- Cache.observeCacheEntry cacheConfig model
+  assert (stateLabel unlisted == "corrupt") "an unlisted cache file cannot be reported verified"
+  removeFile (modelDirectory </> "unlisted.bin")
+  createSymbolicLink payloadPath (modelDirectory </> "linked.bin")
+  linked <- Cache.observeCacheEntry cacheConfig model
+  assert (stateLabel linked /= "verified-ready") "a symlinked cache entry cannot be reported verified"
+  removeFile (modelDirectory </> "linked.bin")
+  Lazy.writeFile inventoryPath "{\"version\":1,\"files\":[]}"
+  malformedIdentity <- Cache.observeCacheEntry cacheConfig model
+  assert (stateLabel malformedIdentity == "corrupt") "an empty identity inventory cannot verify cached weights"
+  Lazy.writeFile inventoryPath inventoryBytes
+  BS.writeFile payloadPath (BS.init wholeArtifact <> BS.singleton 1)
+  sameLengthCorruption <- Cache.observeCacheEntry cacheConfig model
+  assert (stateLabel sameLengthCorruption == "corrupt") "same-length payload corruption fails the inventory digest"
 
   -- Truncation is the failure a present-and-nonempty check cannot see: the
   -- file is there, it is not empty, and its own header says it should be
@@ -4038,6 +4681,24 @@ runVerifiedCacheStateAssertions unitTestRoot = do
   assert
     (stateLabel missingShard == "incomplete")
     "a snapshot whose index names a shard the directory does not hold is incomplete"
+  forM_
+    [ "../outside\n",
+      "/absolute\n",
+      "nested/../../outside\n",
+      "nested\\outside\n",
+      ".ready\n",
+      "shard\nshard\n",
+      "nested\nnested/file\n",
+      "nested\nnested-other\nnested/file\n",
+      "shard.incoming\n"
+    ]
+    $ \invalidIndex -> do
+      writeFile snapshotIndexPath invalidIndex
+      rejected <- Cache.observeCacheEntry cacheConfig snapshotModel
+      assert (stateLabel rejected == "unobservable") "an invalid snapshot inventory is refused before it can address cache paths"
+  BS.writeFile snapshotIndexPath (BS.replicate (1024 * 1024 + 1) 97)
+  oversizedIndex <- Cache.observeCacheEntry cacheConfig snapshotModel
+  assert (stateLabel oversizedIndex == "unobservable") "a snapshot inventory exceeding its bounded read is refused"
 
 -- | Phase 4 Sprint 4.50 — the behavioral acceptance a claimed inference success
 -- has to clear, exercised through the substitutions it exists to catch.
@@ -4047,6 +4708,79 @@ runVerifiedCacheStateAssertions unitTestRoot = do
 -- that the fixture was broken.
 runRealnessAcceptanceAssertions :: IO ()
 runRealnessAcceptanceAssertions = do
+  let word width value = BS.pack (littleEndianBytes width value)
+      wav sample =
+        ByteString8.pack "RIFF"
+          <> word 4 38
+          <> ByteString8.pack "WAVEfmt "
+          <> word 4 16
+          <> word 2 1
+          <> word 2 1
+          <> word 4 16000
+          <> word 4 32000
+          <> word 2 2
+          <> word 2 16
+          <> ByteString8.pack "data"
+          <> word 4 2
+          <> BS.pack [sample, 0]
+      entry name payload =
+        BS.pack [80, 75, 3, 4]
+          <> word 2 20
+          <> word 2 0
+          <> word 2 0
+          <> word 2 0
+          <> word 2 0
+          <> word 4 (checksum payload)
+          <> word 4 (BS.length payload)
+          <> word 4 (BS.length payload)
+          <> word 2 (length name)
+          <> word 2 0
+          <> ByteString8.pack name
+          <> payload
+      checksum payload = case BS.index payload (BS.length payload - 2) of
+        0 -> 3471758847
+        1 -> 3623216318
+        _ -> 4242061181
+      central name payload offset =
+        BS.pack [80, 75, 1, 2]
+          <> word 2 20
+          <> word 2 20
+          <> word 2 0
+          <> word 2 0
+          <> word 2 0
+          <> word 2 0
+          <> word 4 (checksum payload)
+          <> word 4 (BS.length payload)
+          <> word 4 (BS.length payload)
+          <> word 2 (length name)
+          <> word 2 0
+          <> word 2 0
+          <> word 2 0
+          <> word 2 0
+          <> word 4 0
+          <> word 4 offset
+          <> ByteString8.pack name
+      makeArchive firstName firstWav secondName secondWav =
+        let first = entry firstName firstWav
+            second = entry secondName secondWav
+            directory = central firstName firstWav 0 <> central secondName secondWav (BS.length first)
+            end =
+              BS.pack [80, 75, 5, 6]
+                <> word 2 0
+                <> word 2 0
+                <> word 2 2
+                <> word 2 2
+                <> word 4 (BS.length directory)
+                <> word 4 (BS.length first + BS.length second)
+                <> word 2 0
+         in first <> second <> directory <> end
+      archive = makeArchive "vocals.wav" (wav 1) "bass.wav" (wav 2)
+  assert (Realness.sourceSeparationArchiveHasStems archive) "two distinct non-silent WAV local entries satisfy the separation stem check"
+  assert (not (Realness.sourceSeparationArchiveHasStems (BS.pack [80, 75, 3, 4]))) "a ZIP signature alone cannot satisfy the separation stem check"
+  assert (not (Realness.sourceSeparationArchiveHasStems (makeArchive "vocals.wav" (wav 1) "vocals.wav" (wav 2)))) "duplicate stem names are refused"
+  assert (not (Realness.sourceSeparationArchiveHasStems (makeArchive "vocals.wav" (wav 0) "bass.wav" (wav 2)))) "a silent WAV stem is refused"
+  assert (not (Realness.sourceSeparationArchiveHasStems (BS.take (BS.length archive - 1) archive))) "a truncated ZIP directory is refused"
+  assert (not (Realness.sourceSeparationArchiveHasStems (BS.take 84 archive <> BS.singleton 3 <> BS.drop 85 archive))) "corrupted ZIP payload bytes are refused"
   let modelIdValue = "llm-qwen25-gguf"
       observationFor inputValue outputValue =
         Realness.InferenceExecutionObservation
@@ -4136,6 +4870,18 @@ runRealnessAcceptanceAssertions = do
     )
     "blank inline output validates for no family and is refused"
 
+  assert
+    ( refusalOf
+        acceptedCase
+          { Realness.realCaseObservations =
+              [ firstObservation {Realness.observationInlineOutput = Just "# # #"},
+                secondObservation
+              ]
+          }
+        == Just (Realness.RealnessEmptyOutput modelIdValue)
+    )
+    "punctuation-only inline output is refused even when it is not blank"
+
   -- A degenerate prompt, which a canned answer would satisfy just as well.
   assert
     ( refusalOf
@@ -4223,6 +4969,13 @@ runDeployedRouteInventoryAssertions =
     assert (isRight (Routes.validateDeployedRoutes demoEnabled healthy)) "matching current-generation routes pass with API defaults"
     refuse "missing deployed route is refused" (inventory (drop 1 observedRoutes))
     refuse "duplicate deployed route is refused" (inventory (take 1 observedRoutes <> observedRoutes))
+    when demoEnabled $ do
+      let cacheFirst = inventory (take 1 (drop 2 observedRoutes) <> take 2 observedRoutes <> drop 3 observedRoutes)
+      altered <- expectRight "alter cache route timeout" (replaceRouteFixtureField ["items", "spec", "rules", "timeouts", "request"] (Aeson.String "15s") cacheFirst)
+      refuse "cache route timeout drift is refused" altered
+      let overviewFirst = inventory (take 1 (drop 3 observedRoutes) <> take 3 observedRoutes <> drop 4 observedRoutes)
+      alteredOverview <- expectRight "alter admin overview timeout" (replaceRouteFixtureField ["items", "spec", "rules", "timeouts", "request"] (Aeson.String "15s") overviewFirst)
+      refuse "admin overview timeout drift is refused" alteredOverview
     assert (isLeft (Routes.validateDeployedRoutes (not demoEnabled) healthy)) "demo visibility must match the active configuration"
     forM_
       [ (["metadata", "name"], Aeson.String "unexpected-minio-route"),
@@ -4261,6 +5014,7 @@ runDeployedRouteInventoryAssertions =
       backendName <- objectValue Aeson..: "serviceName"
       backendPort <- objectValue Aeson..: "servicePort"
       rewriteValue <- objectValue Aeson..: "rewritePrefix"
+      requestTimeout <- objectValue Aeson..: "requestTimeout"
       let filters =
             [ Aeson.object
                 [ "type" Aeson..= ("URLRewrite" :: Text.Text),
@@ -4287,7 +5041,7 @@ runDeployedRouteInventoryAssertions =
               Aeson..= Aeson.object
                 [ "parentRefs" Aeson..= [parent],
                   "rules"
-                    Aeson..= [ Aeson.object
+                    Aeson..= [ Aeson.object $
                                  [ "matches"
                                      Aeson..= [ Aeson.object
                                                   ["path" Aeson..= Aeson.object ["type" Aeson..= ("PathPrefix" :: Text.Text), "value" Aeson..= (prefixValue :: Text.Text)]]
@@ -4295,6 +5049,7 @@ runDeployedRouteInventoryAssertions =
                                    "backendRefs" Aeson..= [Aeson.object ["name" Aeson..= (backendName :: Text.Text), "port" Aeson..= (backendPort :: Int)]],
                                    "filters" Aeson..= filters
                                  ]
+                                   <> ["timeouts" Aeson..= Aeson.object ["request" Aeson..= requestTimeout, "backendRequest" Aeson..= requestTimeout] | not (Text.null requestTimeout)]
                              ]
                 ],
             "status"
@@ -4560,6 +5315,7 @@ main = do
   runRegistryBlobServabilityAssertions
   runDeployedRouteInventoryAssertions
   runRealnessAcceptanceAssertions
+  runCacheReplacementAssertions unitTestRoot
   runVerifiedCacheStateAssertions unitTestRoot
   runStaticAssetContainmentAssertions unitTestRoot
   runFixtureOwnershipAssertions
@@ -4572,6 +5328,7 @@ main = do
   runNativeArtifactMarkerAssertions
   runAppleRuntimeEnvironmentAssertions
   runBuildMemoryAssertions unitTestRoot
+  runBoundedModelObjectReadAssertions unitTestRoot
   runArtifactRequirementAssertions unitTestRoot
   runMissingProcessGroupSettlementAssertions
   runLinuxWatchdogBreachAssertions
@@ -4677,9 +5434,6 @@ main = do
         && not (commandRequiresConfiguredStartup (ClusterReclaimSlotCommand Nothing))
         && not (commandRequiresConfiguredStartup ShowRootHelp)
         && not (commandRequiresConfiguredStartup InternalLinuxHostSeedCommand)
-        && not (commandRequiresConfiguredStartup InternalImageBuildIdentityCommand)
-        && not (commandRequiresConfiguredStartup InternalNativeBuildBeginCommand)
-        && not (commandRequiresConfiguredStartup InternalNativeBuildFinishCommand)
         && commandRequiresConfiguredStartup TestUnitCommand
     )
     "init, test init, cluster-slot recovery, and help remain reachable without configured startup while ordinary operational commands require it"
@@ -5178,6 +5932,10 @@ main = do
         && not (isGeneratedHaskellProtoTextSnapshot "src/Proto/Infernix/Runtime/Handwritten.hs")
     )
     "Phase 1 Sprint 1.24: files lint exempts generator-owned text bytes only for the exact manifest-verified snapshot"
+  demoApiSource <- readFile "src/Infernix/Demo/Api.hs"
+  assert
+    ("setTimeout (cacheControlGatewayTimeoutSeconds + 30)" `isInfixOf` demoApiSource)
+    "Phase 4 Sprint 4.50: the demo server's Warp timeout outlasts the longest cache-control budget, so a mutation handler is not killed mid-request"
   appleMaterializerSource <- readFile "src/Infernix/Engines/AppleSilicon/Internal.hs"
   assert
     ( countNonOverlappingOccurrences
@@ -5190,11 +5948,16 @@ main = do
   -- bounding its heap growth, and this binary is what the validation surface
   -- starts as the host inference daemon. Sized as a toolchain control slot it
   -- stopped that daemon with `out of memory` on the first routed result, so it
-  -- is sized for the host reserve instead. It remains a bounded reservation:
-  -- two orders of magnitude below the runtime's 1024.65 GiB default, and
-  -- address space rather than resident memory.
+  -- is larger than a slot. It is also below the smallest ceiling the planner
+  -- mints, because a runner whose own limit is lowered below its reservation
+  -- dies on its next allocation. It remains a bounded reservation: two orders
+  -- of magnitude below the runtime's 1024.65 GiB default, and address space
+  -- rather than resident memory.
   assert
-    ( "-Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-xr16384M"
+    ( ( "-Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-xr"
+          <> show toolchainAddressSpaceReservationMib
+          <> "M"
+      )
         `isInfixOf` cabalManifestContents
         && not
           ( "-with-rtsopts=-xr1024M"
@@ -5547,7 +6310,7 @@ main = do
       let outerFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot (unitTestRoot </> "outer-container" </> "build")
       outerPaths <- discoverPathsWithHostManifest (Just outerFixture)
       ensureRepoLayout outerPaths
-      generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu singleEngineMachine 30090 30002 30080
+      generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfigWithMountMode outerPaths LinuxGpu singleEngineMachine 30090 30002 30080 True
       generatedLinuxGpuKindConfig <- readFile generatedLinuxGpuKindConfigPath
       let expectedHostKindMount = "hostPath: " <> realRepoRoot </> ".build/test-unit/.data/kind/linux-gpu"
           expectedHostRegistryMount = "hostPath: " <> realRepoRoot </> ".build/kind/linux-gpu/registry"
@@ -5606,9 +6369,9 @@ main = do
       -- is pinned the same way: over every supported mode, against the text
       -- that deploys.
       linuxCpuGeneratedKindConfig <-
-        readFile =<< writeGeneratedKindConfig outerPaths LinuxCpu singleEngineMachine 30090 30002 30080
+        readFile =<< writeGeneratedKindConfigWithMountMode outerPaths LinuxCpu singleEngineMachine 30090 30002 30080 True
       appleGeneratedKindConfig <-
-        readFile =<< writeGeneratedKindConfig outerPaths AppleSilicon singleEngineMachine 30090 30002 30080
+        readFile =<< writeGeneratedKindConfigWithMountMode outerPaths AppleSilicon singleEngineMachine 30090 30002 30080 False
       let generatedWorkerCount configText =
             length (filter (("- role: worker" ==) . dropWhile (== ' ')) (lines configText))
       mapM_
@@ -6957,6 +7720,18 @@ main = do
       assert
         (all (`elem` frameworkEngineNamesForMode LinuxGpu) ["vllm", "diffusers", "pytorch"])
         "Sprint 4.17: the linux-gpu catalog deploys the vllm/diffusers/pytorch framework engines"
+      diffusersAppleProject <- readFile (repoRoot paths </> "python" </> "engines" </> "diffusers" </> "pyproject.toml")
+      diffusersCudaProject <- readFile (repoRoot paths </> "python" </> "engines" </> "diffusers" </> "pyproject.cuda.toml")
+      engineDockerfile <- readFile (repoRoot paths </> "docker" </> "engine.Dockerfile")
+      assert
+        ( "[tool.poetry.group.apple-silicon.dependencies]" `isInfixOf` diffusersAppleProject
+            && not ("[tool.poetry.group.cuda.dependencies]" `isInfixOf` diffusersAppleProject)
+            && "[tool.poetry.group.cuda.dependencies]" `isInfixOf` diffusersCudaProject
+            && not ("[tool.poetry.group.apple-silicon.dependencies]" `isInfixOf` diffusersCudaProject)
+            && "pytorch-cu128" `isInfixOf` diffusersCudaProject
+            && "pyproject.cuda.toml python/engines/diffusers/pyproject.toml" `isInfixOf` engineDockerfile
+        )
+        "Diffusers isolates Apple and CUDA dependency graphs while the GPU image selects its CUDA project"
       transformersEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "transformers" </> "pyproject.toml")
       pytorchEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "pytorch" </> "pyproject.toml")
       pytorchAdapter <- readFile (repoRoot paths </> "python" </> "adapters" </> "pytorch_python.py")
@@ -13850,6 +14625,15 @@ main = do
               else reservationLine
           | reservationLine <- lines originalDeleteBoundaryReservation
           ]
+  originalBoundaryDockerFixture <- System.IO.readFile' fixtureDockerPath
+  writeExecutableFixture
+    fixtureDockerPath
+    ( "#!/bin/sh\n"
+        <> "if [ \"$1\" = inspect ]; then printf '%s\\n' "
+        <> show (ownershipRoot </> ".data" </> "kind" </> "linux-cpu")
+        <> "; exit 0; fi\n"
+        <> originalBoundaryDockerFixture
+    )
   writeExecutableFixture
     fixtureKindPath
     ( "#!/bin/sh\n"
@@ -13867,7 +14651,7 @@ main = do
         <> "  printf '%s\\n' \"$count\" > "
         <> show reservationBoundaryKindReadCount
         <> "\n"
-        <> "  if [ \"$count\" -eq 3 ]; then\n"
+        <> "  if [ \"$count\" -eq 4 ]; then\n"
         <> "    printf '%b' "
         <> show replacementDeleteBoundaryReservation
         <> " > "
@@ -13876,10 +14660,12 @@ main = do
         <> "  fi\n"
         <> "  printf 'infernix-linux-cpu\\n'\n"
         <> "fi\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = nodes ]; then printf 'infernix-linux-cpu-control-plane\\n'; fi\n"
     )
   reservationBoundaryReleaseResult <-
     try @IOException
       (releaseHarnessClusterSlotAt deleteBoundaryPaths (Just LinuxCpu))
+  writeExecutableFixture fixtureDockerPath originalBoundaryDockerFixture
   reservationBoundaryKindInvocations <-
     System.IO.readFile' reservationBoundaryKindLog
   reservationBoundaryReservationRetained <-
@@ -13895,7 +14681,7 @@ main = do
     ( reservationBoundaryIdentityRefused
         && length
           (filter (== "get clusters") (lines reservationBoundaryKindInvocations))
-          >= 3
+          >= 4
         && not ("delete cluster" `isInfixOf` reservationBoundaryKindInvocations)
         && reservationBoundaryReservationRetained
         && fmap clusterOwner reservationBoundaryState == Just HarnessOwned
@@ -14001,6 +14787,14 @@ main = do
           }
   removeTestPathIfPresent deletePostconditionKindLog
   removeTestPathIfPresent deletePostconditionAbsentMarker
+  writeExecutableFixture
+    fixtureDockerPath
+    ( "#!/bin/sh\n"
+        <> "if [ \"$1\" = inspect ]; then printf '%s\\n' "
+        <> show (ownershipRoot </> ".data" </> "kind" </> "linux-cpu")
+        <> "; exit 0; fi\n"
+        <> originalBoundaryDockerFixture
+    )
   writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
   seizeHarnessClusterSlotAt deletePostconditionPaths (Just LinuxCpu)
   writeClusterStateFile ownershipStatePath deleteBoundaryHarnessState
@@ -14024,6 +14818,7 @@ main = do
         <> "  printf 'synthetic terminal delete failure\\n' >&2\n"
         <> "  exit 42\n"
         <> "fi\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = nodes ]; then printf 'infernix-linux-cpu-control-plane\\n'; fi\n"
     )
   deletePostconditionReleaseResult <-
     try @IOException
@@ -14081,6 +14876,7 @@ main = do
         <> "\n"
         <> "  printf '\\300\\057'\n"
         <> "fi\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = nodes ]; then printf 'infernix-linux-cpu-control-plane\\n'; fi\n"
     )
   deleteKernelReleaseResult <-
     try @IOException
@@ -14175,6 +14971,7 @@ main = do
         <> "\n"
         <> "  /bin/sleep 30\n"
         <> "fi\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = nodes ]; then printf 'infernix-linux-cpu-control-plane\\n'; fi\n"
     )
   deleteTimeoutReleaseResult <-
     try @IOException
@@ -14211,6 +15008,7 @@ main = do
     "a Kind-delete timeout cannot be laundered through later absent inventory and retains the harness fence"
   writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
   releaseHarnessClusterSlotAt deleteTimeoutPaths (Just LinuxCpu)
+  writeExecutableFixture fixtureDockerPath originalBoundaryDockerFixture
   let cleanupProofRoot =
         ownershipRoot </> "activity-proof-cleanup"
       cleanupProofRuntimeRoot =
@@ -14482,6 +15280,21 @@ main = do
         && finalClaimRepairFailure == (Left "proof chmod still failed", 6, 4, 6)
     )
     "claim permission repair accepts the final recreation only after one additional bounded chmod succeeds"
+  minioTemplate <- System.IO.readFile' "chart/templates/minio/statefulset.yaml"
+  let minioClaim =
+        PersistentClaim
+          { namespace = "platform",
+            release = "infernix",
+            workload = "minio",
+            ordinal = 0,
+            claim = "data",
+            pvcName = "data-infernix-minio-0",
+            requestedStorage = "64Gi"
+          }
+      minioOwner = ClaimPermissions.claimOwner minioClaim
+  assert
+    (maybe False (\owner -> ("chown -R " <> owner <> " /data") `isInfixOf` minioTemplate) minioOwner)
+    "Kind claim ownership agrees with the MinIO workload's retained-data initializer"
   -- Sprint 2.15: a ClusterMutating position round-trips and renders dirty
   -- (in-progress), never steady-state — lifecyclePhaseOf projects the mutation.
   mutatingNow <- getCurrentTime
@@ -15515,6 +16328,34 @@ main = do
           == RefuseAmbiguousRetainedReplay
     )
     "detached retained replay starts only for absence, resumes only from the exact durable intent, and refuses ambiguous live clusters"
+  assert
+    ( Cluster.classifyKindMountSources "/host/kind" ["/host/kind", "/host/kind"] == Right True
+        && Cluster.classifyKindMountSources "/host/kind" ["", ""] == Right False
+        && isLeft (Cluster.classifyKindMountSources "/host/kind" [])
+        && isLeft (Cluster.classifyKindMountSources "/host/kind" ["/host/kind", ""])
+        && isLeft (Cluster.classifyKindMountSources "/host/kind" ["/other/kind"])
+    )
+    "live Kind nodes must agree on the expected bind source or all use detached state"
+  ownershipProbeRoot <- testRootPath "retained-ownership-probe"
+  removeTestPathIfPresent ownershipProbeRoot
+  let ownershipProbePaths = ownershipPaths {kindRoot = ownershipProbeRoot}
+      absentCurrentRoot = ownershipProbeRoot </> "linux-cpu"
+      previousRoot = absentCurrentRoot <> ".previous"
+      previousCanary = previousRoot </> "canary"
+  createDirectoryIfMissing True previousRoot
+  writeFile previousCanary "committed"
+  _ <- retainedRootPreservesOwnership ownershipProbePaths LinuxCpu
+  currentCreatedByProbe <- doesDirectoryExist absentCurrentRoot
+  previousCanaryContents <- System.IO.readFile' previousCanary
+  probeParentEntries <- listDirectory ownershipProbeRoot
+  assert
+    ( not currentCreatedByProbe
+        && previousCanaryContents == "committed"
+        && probeParentEntries == ["linux-cpu.previous"]
+        && snapshotRecoveryPlan False False True False == [RestorePreviousSnapshot]
+    )
+    "ownership detection leaves an absent current root and committed recovery residue intact"
+  removeTestPathIfPresent ownershipProbeRoot
   assert
     ( retainedReplayPending replayProvisioningState
         && retainedReplayPending replayActivatingState
@@ -19382,6 +20223,7 @@ compiledDaemonProjection daemon =
 
 assertCompiledExecutionPlanRoutes :: DemoConfig -> ExecutionPlan.CompiledRuntimePlan -> IO ()
 assertCompiledExecutionPlanRoutes demoConfig compiledPlan = do
+  now <- getCurrentTime
   let placements = ExecutionPlan.compiledRuntimePlanPlacements compiledPlan
       routeKeys =
         [ ( ExecutionPlan.compiledPlacementId placement,
@@ -19394,6 +20236,29 @@ assertCompiledExecutionPlanRoutes demoConfig compiledPlan = do
   assert
     (length routeKeys == length (nub routeKeys))
     "compiled execution-plan routes are unique by model, pool, and member"
+  assert
+    (isLeft (Cache.cacheEligibleOwnerMembers compiledPlan "not-a-configured-model"))
+    "cache routing refuses a model without an eligible engine placement"
+  assert
+    (isNothing (Aeson.decode "{\"state\":\"verified-ready\",\"fileCount\":0,\"bytes\":12}" :: Maybe Cache.CacheEntryState))
+    "cache control refuses a ready reply without positive measured facts"
+  let multiRequest =
+        CacheControl.CacheControlRequest
+          "multi-owner"
+          now
+          Cache.RebuildOwnedCache
+          (Map.fromList [("member-a", ["model"]), ("member-b", ["model"])])
+      readyOutcome = Cache.CacheOperationOutcome "model" (Cache.CacheVerifiedReady (Cache.CacheEntryFacts 1 32)) True
+      oneReply = Map.singleton ("member-a", "model") readyOutcome
+      bothReplies = Map.insert ("member-b", "model") readyOutcome oneReply
+      partial = CacheControl.cacheControlOutcomes multiRequest ["model"] [] oneReply
+      complete = CacheControl.cacheControlOutcomes multiRequest ["model"] [] bothReplies
+  assert
+    (partial == [Cache.CacheOperationOutcome "model" (Cache.CacheUnobservable "cache owners did not respond: member-b") False])
+    "a missing engine owner cannot count as a completed cache rebuild"
+  assert
+    (complete == [Cache.CacheOperationOutcome "model" (Cache.CacheVerifiedReady (Cache.CacheEntryFacts 2 64)) True])
+    "a multi-owner rebuild succeeds only after both owners report verified facts"
   mapM_
     ( \placement -> do
         let descriptor = ExecutionPlan.compiledPlacementDescriptor placement
@@ -19417,6 +20282,32 @@ assertCompiledExecutionPlanRoutes demoConfig compiledPlan = do
           ( "compiled placement routes preserve exact pool/member/subscription/inflight fields for "
               <> Text.unpack (modelId descriptor)
           )
+        assert
+          ( Cache.cacheEligibleOwnerMembers compiledPlan (modelId descriptor)
+              == Right (sort (nub [member | (_, member, _, _) <- expectedRoutes]))
+          )
+          "cache routing selects each configured eligible engine owner once"
+        let ownerNames = sort (nub [member | (_, member, _, _) <- expectedRoutes])
+            (targets, refused) = CacheControl.cacheControlTargets compiledPlan [modelId descriptor, "not-a-configured-model"]
+            request = CacheControl.CacheControlRequest "request-1" now Cache.RebuildOwnedCache targets
+            ready = Cache.CacheVerifiedReady (Cache.CacheEntryFacts 2 128)
+        assert
+          (sort (Map.keys targets) == ownerNames && length refused == 1)
+          "cache control selects all eligible owners and retains an unknown-model refusal"
+        assert
+          (Aeson.decode (Aeson.encode request) == Just request)
+          "cache control requests retain their closed action and target map across the wire"
+        mapM_
+          ( \owner -> do
+              let outcome = Cache.CacheOperationOutcome (modelId descriptor) ready True
+                  reply = CacheControl.CacheControlReply "request-1" owner outcome
+                  forged = CacheControl.CacheControlReply "request-1" owner (Cache.CacheOperationOutcome (modelId descriptor) (Cache.CacheUnobservable "offline") True)
+              assert (Aeson.decode (Aeson.encode reply) == Just reply) "cache control replies retain observed facts across the wire"
+              assert (CacheControl.cacheControlReplyIsExpected request reply) "the expected owner and verified outcome are accepted"
+              assert (not (CacheControl.cacheControlReplyIsExpected request forged)) "an unobservable owner cannot claim a successful rebuild"
+              assert (not (CacheControl.cacheControlReplyIsExpected request (reply {CacheControl.cacheReplyRequestId = "other"}))) "a reply from another request cannot satisfy this request"
+          )
+          ownerNames
         mapM_
           (assertCompiledRouteOwnedByDaemon compiledPlan)
           (NonEmpty.toList (ExecutionPlan.compiledPlacementRoutes placement))
@@ -20228,10 +21119,13 @@ assertSingleFlightDispatcher = do
   let twoState = ConversationReducer.foldEvents contextId [promptMsg "p-1" "a" "idem-1", promptMsg "p-2" "b" "idem-2"]
       decision2 = Dispatch.buildDispatchDecision userId twoState
   case decision2 of
-    Dispatch.DispatchPrompt envelope ->
+    Dispatch.DispatchPrompt envelope -> do
       assert
         (Dispatch.inferenceUserPromptMessageId envelope == Contracts.MessageId "p-1")
         "single-flight dispatcher picks the earliest unmatched prompt when two are queued"
+      assert
+        (isRight (Prefix.reconstructVerifiedPrefix contextId (Dispatch.inferenceConversationLogOffset envelope) (ConversationHash.PrefixHash (Dispatch.inferencePrefixHash envelope)) [promptMsg "p-1" "a" "idem-1", promptMsg "p-2" "b" "idem-2"]))
+        "a queued prompt does not change the dispatched prefix through the first prompt"
     _ -> fail "single-flight dispatcher should dispatch p-1 even when p-2 is queued"
 
   -- Once the first prompt has a result, dispatcher promotes the second
@@ -20241,10 +21135,14 @@ assertSingleFlightDispatcher = do
           [promptMsg "p-1" "a" "idem-1", promptMsg "p-2" "b" "idem-2", resultMsg "r-1" "p-1"]
       decision3 = Dispatch.buildDispatchDecision userId afterResultState
   case decision3 of
-    Dispatch.DispatchPrompt envelope ->
+    Dispatch.DispatchPrompt envelope -> do
       assert
         (Dispatch.inferenceUserPromptMessageId envelope == Contracts.MessageId "p-2")
         "single-flight dispatcher promotes the second prompt once the first has a matching result"
+      let retained = [promptMsg "p-1" "a" "idem-1", promptMsg "duplicate" "a" "idem-1", promptMsg "p-2" "b" "idem-2", resultMsg "r-1" "p-1"]
+      assert
+        (isRight (Prefix.reconstructVerifiedPrefix contextId (Dispatch.inferenceConversationLogOffset envelope) (ConversationHash.PrefixHash (Dispatch.inferencePrefixHash envelope)) retained))
+        "reconstruction uses the same deduplicated prompt prefix when a result arrives after the queued prompt"
     _ -> fail "single-flight dispatcher should dispatch p-2 after p-1's result lands"
 
   -- Subscription naming is per-context and stable
@@ -21570,17 +22468,17 @@ sampleRegistryOverlay =
 -- type PublishedImage = (String, String)
 
 -- | Phase 3 Sprint 3.11 (2026-05-29): the supported MinIO image
--- inventory uses upstream multi-arch images (`quay.io/minio/minio`,
--- `quay.io/minio/mc`) and `busybox` for the volume-permissions init. The
+-- inventory uses upstream multi-arch images (`cgr.dev/chainguard/minio`,
+-- `cgr.dev/chainguard/minio-client`) and `busybox` for the volume-permissions init. The
 -- bitnamilegacy `minio-object-browser` standalone-console image is
 -- absent because the chart's `console` Deployment is disabled.
 samplePublishedImages :: Map.Map String PublishedImage
 samplePublishedImages =
   Map.fromList
     [ ("infernix-linux-cpu:local", ("registry.local/library/infernix-linux-cpu", "sha256-runtime")),
-      ("quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z", ("registry.local/library/minio/minio", "sha256-minio")),
+      ("cgr.dev/chainguard/minio:latest@sha256:db3f583fa49121942168bd6383a773b2cde3384c9a99bf7193560b9a0f3a28fd", ("registry.local/library/minio/minio", "sha256-minio")),
       ("docker.io/busybox:1.36", ("registry.local/library/busybox", "sha256-shell")),
-      ("quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", ("registry.local/library/minio/mc", "sha256-client")),
+      ("cgr.dev/chainguard/minio-client:latest@sha256:6630e209cc3d49ec347ddeba55f581c1af6c8b708b65d11435c69115607e458b", ("registry.local/library/minio/mc", "sha256-client")),
       ("docker.io/apachepulsar/pulsar-all:4.0.9", ("registry.local/library/apachepulsar/pulsar-all", "sha256-pulsar")),
       ("docker.io/percona/percona-postgresql-operator:2.9.0", ("registry.local/library/percona/percona-postgresql-operator", "sha256-pg-operator")),
       ("docker.io/percona/percona-distribution-postgresql:18.3-1", ("registry.local/library/percona/percona-distribution-postgresql", "sha256-pg-db")),

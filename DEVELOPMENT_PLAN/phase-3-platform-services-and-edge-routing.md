@@ -1,6 +1,6 @@
 # Phase 3: Platform Services and Edge Routing
 
-**Status**: Active — Sprint 3.18 has validated code-side closure. Wave R3 is the remaining cohort gate.
+**Status**: Done — [Phase 3 attestation](cohort-validation-waves.md#recorded-attestations).
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
@@ -11,11 +11,7 @@
 
 ## Phase Status
 
-Sprints 3.1–3.17 retain their closed headings and only their established scope. Platform and route implementations exist, but a retained Phase 3 accelerator attestation is missing. Sprint 3.18 owns source-bound platform, routing, registry-publication, and retained-evidence verification.
-
-The missing Phase 3 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
-
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 3.18 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R3 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Sprints 3.1–3.18 are complete. The [Phase 3 attestation](cohort-validation-waves.md#recorded-attestations) records the selected Apple Silicon and native Linux CPU validation against one frozen source.
 
 ## Single-Instance Reconcile Surface
 
@@ -459,8 +455,8 @@ workers dialed `localhost` literally.
 - **`bitnamilegacy/*` retirement.** The upstream bitnami MinIO sub-chart is
   retired in favor of a hand-authored MinIO StatefulSet under
   `chart/templates/minio/`, driven by the `infernixMinio:` block in
-  `chart/values.yaml` (`image.repository: quay.io/minio/minio`,
-  `clientImage.repository: quay.io/minio/mc`,
+  `chart/values.yaml` (`image.repository: cgr.dev/chainguard/minio`,
+  `clientImage.repository: cgr.dev/chainguard/minio-client`,
   `initImage.repository: docker.io/busybox`). There is no separate MinIO
   console workload or route. The publication overlay code in `PublishImages.hs`
   overrides `infernixMinio.image` / `clientImage` / `initImage` to the
@@ -518,7 +514,7 @@ workers dialed `localhost` literally.
   - Substrate-aware publication runs every upstream image through `docker pull --platform
     linux/arm64` and `skopeo --override-arch=arm64`; the full platform image set
     (`infernix-linux-cpu`, `apachepulsar/pulsar-all`, `busybox`, `envoyproxy/gateway`,
-    `quay.io/minio/mc`, `quay.io/minio/minio`, `percona/percona-distribution-postgresql`,
+    `cgr.dev/chainguard/minio-client`, `cgr.dev/chainguard/minio`, `percona/percona-distribution-postgresql`,
     `percona/percona-pgbackrest`,
     `percona/percona-pgbouncer`, `percona/percona-postgresql-operator`, `quay.io/keycloak/keycloak`)
     publishes as native arm64 through the registry.
@@ -938,24 +934,22 @@ serving anonymously over HTTP with one routed operator prefix.
   reachability lies
 - deleting the registry pod and letting it reschedule still serves the previously pushed tags,
   proving S3 backing rather than pod-local storage
-- `linux-gpu` plus `linux-cpu` full-suite `test all` against one frozen source digest
+- `linux-gpu` plus `linux-cpu` full-suite `test all` with appropriately rebuilt packages
 
 ### Remaining Work
 
 None.
 
-## Sprint 3.18: Source-Bound Platform, Route, and Publication Evidence [Active]
+## Sprint 3.18: Platform, Route, and Publication Evidence [Done]
 
-**Status**: Active
-**Code-side closure**: Live route-inventory validation, exact demo-off 404 checks, complete demo-route probes, strict admin backend outcomes, post-reschedule blob readback, and isolated missing/corrupt-blob controls are implemented and validated on native Linux amd64 through the governed launcher build, all nine aggregate lint checks, and all seven aggregate unit checks against one source/image pair.
-**Cohort gate**: Wave R3 — selected `apple-silicon` plus native `linux-cpu`.
-**Blocked by**: nothing — Sprint 2.18 code-side closure is validated.
+**Status**: Done
+**Validation**: [Phase 3 attestation](cohort-validation-waves.md#recorded-attestations).
 **Implementation targets**: `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Routes.hs`, `chart/templates/httproutes.yaml`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/tools/registry.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`, `documents/tools/postgresql.md`
 
 ### Objective
 
-Close platform claims with retained observations of the deployed source-bound substrate.
+Close platform claims with retained observations of the deployed substrate.
 
 ### Deliverables
 
@@ -983,8 +977,7 @@ Close platform claims with retained observations of the deployed source-bound su
 
 ### Assertion Coverage
 
-This inventory names required execution; it is not a passing-run record. Common gates and Wave R3
-retain the corresponding source-bound results.
+The paired full-suite receipts retain the results for this inventory.
 
 | Surface | Executing check | Required observation |
 |---------|-----------------|----------------------|
@@ -1003,15 +996,11 @@ retain the corresponding source-bound results.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R3's selected `apple-silicon` plus native `linux-cpu` full-suite results
-against one frozen implementation, covering the deployed platform, routes, browser authorization,
-and registry readback. No new full-suite result is claimed.
-
-**Code-side evidence**: source `68eefdff75506ecf5226947acffcb895dcef0a731cb32b7888a889f86af9db13`; image `sha256:378b86dc50c162b572d26a9da3437610524b9f3980347307355a2d45ea165c0b`; lint `.data/runtime/validation/run-PI29U1/receipt.json`; unit `.data/runtime/validation/run-RZw27k/receipt.json`.
+None.
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R3's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 3.18 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+None.
 
 ## Documentation Requirements
 

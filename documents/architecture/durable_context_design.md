@@ -360,7 +360,8 @@ deterministic, and no completed output is manufactured to resolve a cancellation
 ## Engine Cache Consistency
 
 Inference request envelopes carry `prefixHash`, a content hash of the deterministic projection at
-`conversationLogOffset`. The engine obtains the authorized conversation history through exactly that
+`conversationLogOffset`. The offset indexes the reducer's deduplicated projection, and the hash
+covers the prefix through the selected prompt, even if later events have arrived before dispatch. The engine obtains the authorized conversation history through exactly that
 offset, folds the canonical projection, and verifies the hash before using the resulting prompt,
 prior turns, or artifact references. A supplied hash is a claim to verify, not evidence of history.
 Missing, divergent, or truncated history fails closed rather than executing only the newest prompt.

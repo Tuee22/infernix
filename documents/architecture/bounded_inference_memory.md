@@ -33,7 +33,10 @@
   first allocation, because such a limit is as intrinsic to a process as a deadline is.
 - **A requirement is derived, never authored.** A model's memory requirement is computed from the
   artifact's own bytes. Safetensors and GGUF expose a prefix-indexed tensor table that gives exact
-  weight bytes; whisper.cpp's legacy GGML container interleaves tensor records with their payloads,
+  weight bytes; supported PyTorch ZIP checkpoints declare storage sizes in pickle metadata, which
+  is inspected without execution and checked against the bounded ZIP directory. Remote reads
+  require both archive edges to identify the same strong object version. Whisper.cpp's legacy GGML
+  container interleaves tensor records with their payloads,
   so its fixed header establishes the family and geometry while the actual object extent is the
   conservative host-resident weight charge. Declared geometry plus the execution shape gives exact
   key/value cache bytes where that cache exists. Every reader is bounded and fails closed on a
@@ -208,14 +211,20 @@ derived rather than authored, so the related unmanaged states are also unbuildab
   occupant rather than as a headroom tenant; the exclusive host claim that keeps the two from being
   resident together is owned by [bounded_host_memory.md](bounded_host_memory.md).
 - **Every model's requirement is derived from its artifact, and the derivation fails closed.** The
-  weight term is the sum over the artifact's own prefix-indexed tensor table of each tensor's element
-  count times its element width. The legacy Whisper GGML exception has no prefix-indexed table, so a
+  weight term is the sum of the artifact's validated tensor or storage extents. Safetensors and
+  GGUF carry prefix-indexed tensor tables; supported PyTorch ZIP files pair non-executed storage
+  declarations with their bounded directory. The legacy Whisper GGML format has no such table, so a
   validated fixed header plus the actual object extent yields a conservative host-resident charge
   without reading or trusting an authored family constant. The cache term is the closed function of
   the model's declared geometry and the execution shape the engine will actually run under. The
   derivation refuses an artifact whose header overruns its file, whose tensor extents disagree with
   their declared shapes, whose offsets do not tile densely, or whose geometry disagrees with its own
   header, so an artifact that misdescribes itself yields no requirement rather than a small one. The
+  PyTorch ZIP reader checks bounded, non-executed storage declarations against unique uncompressed
+  archive entries and rejects inconsistent extents; local and conditional remote reads apply the
+  same parser. The GGUF reader checks unsigned lengths against the remaining bounded prefix before converting them to
+  host offsets, and refuses metadata arrays nested beyond 32 levels. This bounds the reader's input
+  and nesting; it does not establish the identity of the unread weight payload. The
   resulting quantity is resource-indexed and its constructor is hidden, so a host
   quantity cannot be admitted against a device limit; a requirement that is absent, zero, or built from
   anything but a verified artifact is unrepresentable.

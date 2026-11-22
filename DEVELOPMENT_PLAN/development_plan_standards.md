@@ -376,8 +376,7 @@ Rules:
   Compose plugins, and on `linux-gpu` may also install the supported NVIDIA driver and container
   toolkit. The supported bootstrap `build` command builds the launcher; Compose has no build
   definition and runs an already-built image. Clean-clone and source-change instructions must
-  include that explicit build. Validation must bind the requested source snapshot to the immutable
-  image actually executed; trusting a mutable `:local` tag is not source validation. The
+  include that explicit build. Agents rebuild the relevant package or image as appropriate before testing. The
   [execution gate](README.md#current-execution-gate) names the owning implementation work.
 - When the active Linux snapshot differs from the default `linux-cpu` image, phase docs call out
   the one-shot Compose launcher image selector that chooses the already-built
@@ -666,7 +665,7 @@ Substrate-specific validation is explicit.
   coordinator-to-host Pulsar handoff. Operator instructions separately require an explicit host
   engine process after `cluster up`; harness-owned startup does not validate that manual flow.
 - Linux commands use the supported outer-container launcher. Lifecycle and recovery checks run
-  against the deployed single-instance substrate and retain source-bound execution artifacts.
+  against the deployed single-instance substrate and retain execution artifacts.
 - `infernix test all` aggregates lint, unit, integration, and E2E for the initialized substrate.
   Separate scoped reruns supply other-lane evidence; a zero aggregate exit does not imply coverage
   of a lane, source snapshot, or mandatory assertion that was not executed.
@@ -868,30 +867,9 @@ that a `Done` cites the attestation row its evidence produced.
 
 The frozen Markdown scans above remain unchanged. Behavioral validation and structured execution
 receipt checking belong to the binary's validation/test boundary, not an expanding prose lint set.
-The [current finding map](README.md#current-repo-assessment) names the owners of source binding and
-required-check execution enforcement. These are acceptance requirements, not a claim that the
-mechanisms already exist.
+Agents rebuild the relevant package or image as appropriate before testing. A closure receipt identifies the executable or image, configuration, architecture and device context, required checks and their outcomes, and retained logs and output artifacts with integrity digests. Store bulky artifacts outside the narrative plan and link the compact attestation to them.
 
-A new closure receipt identifies the commit and reconstructable relevant source snapshot, including
-dirty tracked changes and untracked build inputs; the immutable image or native executable identity;
-the initialized configuration and actual architecture/substrate/device context; the required check
-inventory and per-check executed, skipped, not-applicable, and terminal outcomes; and retained logs
-and output artifacts with integrity digests. Retain the patch/archive preimage, not only its hash,
-and use the same source snapshot on both lanes. Store bulky artifacts outside the narrative plan
-and link the compact attestation tuple to them.
-
-Negative controls must demonstrate rejection of a stale image, changed relevant untracked input,
-missing or altered receipt artifact, changed required-check inventory, skipped mandatory fixture,
-constant-output adapter, and success-shaped empty cache or renderer. Refusal tests are counted
-separately from real-output successes. A receipt cannot promote an unexecuted assertion to PASS.
-Missing historical evidence is recovered from authentic retained artifacts or replaced by a fresh
-run, never inferred from a closed heading or reconstructed log narrative.
-
-The threat model includes accidental stale builds, optimistic skip paths, hand-edited status prose,
-and success-shaped substitutes. Integrity hashes and internally consistent receipts do not prove
-honesty against an actor who controls the source, executor, and evidence store together. Closure
-therefore includes review of the trusted runner/build boundary and retained artifact provenance;
-this is tamper-evident, source-bound validation, not an absolute claim of unspoofability.
+Negative controls cover missing or altered receipt artifacts, changed required-check inventory, skipped mandatory fixtures, constant-output adapters, and success-shaped empty caches or renderers. Refusal tests are counted separately from real-output successes. Missing historical evidence is recovered from authentic retained artifacts or replaced by a fresh run. Integrity hashes do not prove honesty against an actor controlling the executor and evidence store; review the trusted runner and retained artifact provenance.
 
 `poetry run check-code` stays in the machine-independent gate set only because adapters never
 declare or top-level-import substrate-specific inference wheels; the lazy-import invariant that

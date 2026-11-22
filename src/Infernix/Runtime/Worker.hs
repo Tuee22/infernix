@@ -8,6 +8,7 @@ module Infernix.Runtime.Worker
     WorkerModelCacheConfig (..),
     buildWorkerRequest,
     cgroupObservationWorkerFailure,
+    ensureContainedCacheDirectories,
     ensureNativeRunnerContractCacheReady,
     loadWorkerModelCacheConfig,
     nativeModelCacheRelativeKeys,
@@ -25,30 +26,33 @@ module Infernix.Runtime.Worker
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, displayException, throwIO, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (filterM, unless, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Bifunctor (first)
+import Data.Bits ((.|.))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Char8 qualified as ByteString8
-import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
+import Data.Char (isAsciiLower, isAsciiUpper, isControl, isDigit)
 import Data.Int (Int64)
 import Data.List (dropWhileEnd)
 import Data.Maybe (fromMaybe)
 import Data.ProtoLens (decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Data.Word (Word64)
+import Infernix.Cluster.LifecycleLock (withKernelFileLock)
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Conversation.Hash (unPrefixHash)
 import Infernix.Conversation.Prefix qualified as Prefix
-import Infernix.Error (InfernixError (ClusterStateDecodeFailure))
+import Infernix.Error (InfernixError (ClusterStateDecodeFailure), bracketPreservingPrimary, finallyPreservingPrimary, onExceptionPreservingPrimary)
 import Infernix.ExecutionPlan
   ( ExecutableModel,
     executableModelDescriptor,
@@ -98,6 +102,8 @@ import Infernix.Runtime.Enforcer.Internal
     renderCgroupObservationFailure,
   )
 import Infernix.Runtime.KVCache qualified as KVCache
+import Infernix.Runtime.ModelCacheIdentity qualified as Identity
+import Infernix.Runtime.ModelCacheLease qualified as ModelCacheLease
 import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Storage (readClusterStateFile)
 import Infernix.Types
@@ -106,10 +112,13 @@ import Lens.Family2 (set, view)
 import Network.HTTP.Client (defaultManagerSettings, newManager)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
-import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, renamePath)
+import System.Directory (createDirectory, createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, removeFile, renamePath)
 import System.Exit (ExitCode (ExitFailure, ExitSuccess))
-import System.FilePath (takeDirectory, takeExtension, (</>))
-import System.IO (IOMode (ReadMode), hFileSize, withFile)
+import System.FilePath (isRelative, makeRelative, splitDirectories, takeDirectory, takeExtension, (</>))
+import System.IO (Handle, IOMode (ReadMode), hClose, hIsClosed, withBinaryFile)
+import System.IO.Error (catchIOError, isAlreadyExistsError, isDoesNotExistError)
+import System.Posix.Files (fileSize, getSymbolicLinkStatus, isDirectory, isRegularFile, ownerReadMode, ownerWriteMode)
+import System.Posix.IO (OpenFileFlags (cloexec, creat, exclusive, nofollow), OpenMode (WriteOnly), closeFd, defaultFileFlags, fdToHandle, openFd)
 import System.Posix.Process (getProcessID)
 
 data WorkerModelCacheConfig = WorkerModelCacheConfig
@@ -160,18 +169,21 @@ runExecutableInferenceWorker ::
 runExecutableInferenceWorker paths executableModel request cacheObservation maybeVerifiedPrefix
   | requestModelId request /= executableModelId executableModel =
       pure (workerFailed (requestModelMismatchError executableModel request))
-  | otherwise =
-      withCgroupObservationWorkerFailure model $
-        -- Phase 8 Sprint 8.9: the adapter type is a closed sum, so this dispatch
-        -- is total and the former "unsupported engine runner" arm is gone. It
-        -- used to be reachable only by a config that named an adapter the runtime
-        -- cannot execute, which the wire language no longer expresses.
-        case engineBindingAdapterType engineBinding of
-          PythonStdio ->
-            withPythonEngineSetupReady paths modelRuntimeMode engineBinding $ \readAuthority ->
-              runPythonWorker readAuthority paths executableModel request cacheObservation maybeVerifiedPrefix
-          NativeProcessRunner ->
-            runNativeWorker paths executableModel request cacheObservation maybeVerifiedPrefix
+  | otherwise = do
+      maybeModelCacheConfig <- loadWorkerModelCacheConfig paths modelRuntimeMode
+      let cacheRoot = maybe (modelCacheRoot paths) (Text.unpack . workerModelCacheRoot) maybeModelCacheConfig
+      ModelCacheLease.withModelCacheExecutionLease paths modelRuntimeMode cacheRoot (modelId model) $
+        withCgroupObservationWorkerFailure model $
+          -- Phase 8 Sprint 8.9: the adapter type is a closed sum, so this dispatch
+          -- is total and the former "unsupported engine runner" arm is gone. It
+          -- used to be reachable only by a config that named an adapter the runtime
+          -- cannot execute, which the wire language no longer expresses.
+          case engineBindingAdapterType engineBinding of
+            PythonStdio ->
+              withPythonEngineSetupReady paths modelRuntimeMode engineBinding $ \readAuthority ->
+                runPythonWorker readAuthority paths maybeModelCacheConfig executableModel request cacheObservation maybeVerifiedPrefix
+            NativeProcessRunner ->
+              runNativeWorker paths maybeModelCacheConfig executableModel request cacheObservation maybeVerifiedPrefix
   where
     model = executableModelDescriptor executableModel
     engineBinding = executableModelEngine executableModel
@@ -376,19 +388,18 @@ engineOutputStreamLabel outputStream =
 runPythonWorker ::
   Python.PreparedPythonEnvironmentReadAuthority s ->
   Paths ->
+  Maybe WorkerModelCacheConfig ->
   ExecutableModel ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
   Maybe Prefix.VerifiedConversationPrefix ->
   IO (Either WorkerFailure Text)
-runPythonWorker readAuthority paths executableModel request cacheObservation maybeVerifiedPrefix = do
-  maybeModelCacheConfig <- loadWorkerModelCacheConfig paths modelRuntimeMode
+runPythonWorker readAuthority paths maybeModelCacheConfig executableModel request cacheObservation maybeVerifiedPrefix = do
   let workerRequest = encodeMessage (buildWorkerRequest paths maybeModelCacheConfig executableModel request cacheObservation maybeVerifiedPrefix)
   workerResult <- runWorkerInvocation readAuthority paths executableModel model workerRequest
   pure (workerResultToOutput executableModel workerResult)
   where
     model = executableModelDescriptor executableModel
-    modelRuntimeMode = runtimeMode model
 
 workerResultToOutput ::
   ExecutableModel ->
@@ -514,16 +525,17 @@ pythonEngineBootstrapManifestRequiredForTest =
 -- unit-check.
 runNativeWorker ::
   Paths ->
+  Maybe WorkerModelCacheConfig ->
   ExecutableModel ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
   Maybe Prefix.VerifiedConversationPrefix ->
   IO (Either WorkerFailure Text)
-runNativeWorker paths executableModel request _cacheObservation _maybeVerifiedPrefix = do
+runNativeWorker paths maybeModelCacheConfig executableModel request _cacheObservation _maybeVerifiedPrefix = do
   preparation <- prepareNativeArtifactInvocation
   case preparation of
     Left preparationError -> pure (workerFailed preparationError)
-    Right (maybeModelCacheConfig, invocation, processEnvironment) -> do
+    Right (preparedCacheConfig, invocation, processEnvironment) -> do
       launchOutcome <-
         runExecutableNativeArtifact
           paths
@@ -638,16 +650,14 @@ runNativeWorker paths executableModel request _cacheObservation _maybeVerifiedPr
                   model
                   engineBinding
                   request
-                  maybeModelCacheConfig
+                  preparedCacheConfig
                   exitCode
                   stdoutOutput
                   stderrOutput
   where
     model = executableModelDescriptor executableModel
-    modelRuntimeMode = runtimeMode model
     engineBinding = executableModelEngine executableModel
     prepareNativeArtifactInvocation = do
-      maybeModelCacheConfig <- loadWorkerModelCacheConfig paths modelRuntimeMode
       cacheReady <- ensureNativeRunnerContractCacheReady model maybeModelCacheConfig
       inputFileResult <-
         case cacheReady of
@@ -729,10 +739,29 @@ ensureNativeRunnerContractCacheReady model (Just modelCacheConfig) = do
   case verified of
     Left failure -> pure (Left failure)
     Right () -> do
-      unless localReady $ do
-        createDirectoryIfMissing True (takeDirectory readyPath)
-        writeFile readyPath "native-model-cache-ready\n"
-      pure (Right ())
+      let modelDirectory = Text.unpack (workerModelCacheRoot modelCacheConfig) </> Text.unpack (modelId model)
+      requiredKeys <- nativeModelCacheRelativeKeys model modelCacheConfig
+      let artifactKeys = filter (/= nativeSnapshotIndexName) requiredKeys
+      inventoryPresent <- doesFileExist (modelDirectory </> Text.unpack nativeArtifactInventoryName)
+      unless (inventoryPresent || null artifactKeys) $ do
+        upstreamInventory <- nativeModelInventoryExists modelCacheConfig (modelId model)
+        when upstreamInventory $
+          downloadNativeModelCacheObject modelCacheConfig (modelId model) nativeArtifactInventoryName
+      reconciledInventory <- doesFileExist (modelDirectory </> Text.unpack nativeArtifactInventoryName)
+      identity <-
+        if null artifactKeys
+          then pure (Right ())
+          else
+            if reconciledInventory
+              then Identity.verifyModelCacheIdentity modelDirectory artifactKeys
+              else pure (Left "durable artifact identity inventory is missing")
+      case identity of
+        Left reason -> pure (Left ErrorResponse {errorCode = "model_cache_not_populated", message = reason})
+        Right () -> do
+          unless localReady $ do
+            createDirectoryIfMissing True (takeDirectory readyPath)
+            writeFile readyPath "native-model-cache-ready\n"
+          pure (Right ())
 
 -- | Prove every local file this model's native runner will open is present and
 -- non-empty, or report the classified cache miss naming exactly what is absent.
@@ -788,14 +817,8 @@ nativeModelCacheRelativeKeys model modelCacheConfig
       if not indexPresent
         then pure [nativeSnapshotIndexName]
         else do
-          indexPayload <- readFile indexPath
-          pure
-            ( nativeSnapshotIndexName
-                : [ Text.pack relativeKey
-                  | relativeKey <- lines indexPayload,
-                    not (null relativeKey)
-                  ]
-            )
+          relativeKeys <- readNativeSnapshotIndex indexPath
+          pure (nativeSnapshotIndexName : relativeKeys)
   | otherwise = pure (nativeModelCacheObjectKeys model)
 
 nativeModelCacheEntryPresent :: FilePath -> IO Bool
@@ -804,10 +827,14 @@ nativeModelCacheEntryPresent path = do
   pure (maybe False (> 0) observed)
 
 hydrateNativeModelCache :: ModelDescriptor -> WorkerModelCacheConfig -> IO ()
-hydrateNativeModelCache model modelCacheConfig =
+hydrateNativeModelCache model modelCacheConfig = do
   if modelId model `elem` nativeSnapshotModelIds
     then hydrateNativeModelSnapshotCache model modelCacheConfig
     else mapM_ (downloadNativeModelCacheObject modelCacheConfig (modelId model)) (nativeModelCacheObjectKeys model)
+  when (not (null (nativeModelCacheObjectKeys model)) || modelId model `elem` nativeSnapshotModelIds) $ do
+    inventoryPresent <- nativeModelInventoryExists modelCacheConfig (modelId model)
+    when inventoryPresent $
+      downloadNativeModelCacheObject modelCacheConfig (modelId model) nativeArtifactInventoryName
 
 nativeModelCacheObjectKeys :: ModelDescriptor -> [Text]
 nativeModelCacheObjectKeys model
@@ -830,6 +857,9 @@ nativeSnapshotModelIds =
 nativeSnapshotIndexName :: Text
 nativeSnapshotIndexName = ".infernix-native-snapshot-files"
 
+nativeArtifactInventoryName :: Text
+nativeArtifactInventoryName = ".infernix-artifact-inventory.json"
+
 hydrateNativeModelSnapshotCache :: ModelDescriptor -> WorkerModelCacheConfig -> IO ()
 hydrateNativeModelSnapshotCache model modelCacheConfig = do
   let modelIdValue = modelId model
@@ -838,13 +868,52 @@ hydrateNativeModelSnapshotCache model modelCacheConfig = do
           </> Text.unpack modelIdValue
           </> Text.unpack nativeSnapshotIndexName
   downloadNativeModelCacheObject modelCacheConfig modelIdValue nativeSnapshotIndexName
-  indexPayload <- readFile indexPath
-  let relativeKeys =
-        [ Text.pack relativeKey
-        | relativeKey <- lines indexPayload,
-          not (null relativeKey)
-        ]
+  relativeKeys <- readNativeSnapshotIndex indexPath
   mapM_ (downloadNativeModelCacheObject modelCacheConfig modelIdValue) relativeKeys
+
+-- The index is durable input, not authority to address arbitrary host paths.
+-- Bound the read itself and validate the entire inventory before downloading
+-- any indexed object. Both hydration and later readiness observation use this
+-- same parser.
+readNativeSnapshotIndex :: FilePath -> IO [Text]
+readNativeSnapshotIndex indexPath = do
+  bytes <- withBinaryFile indexPath ReadMode (\handle -> ByteString.hGet handle (nativeSnapshotIndexLimit + 1))
+  when (ByteString.length bytes > nativeSnapshotIndexLimit) $
+    ioError (userError "native snapshot index exceeds its size bound")
+  payload <- either (const (ioError (userError "native snapshot index is not UTF-8"))) pure (TextEncoding.decodeUtf8' bytes)
+  let keys = Text.lines payload
+      keySet = Set.fromList keys
+      conflicts = Set.size keySet /= length keys || any (hasIndexedParent keySet) keys
+  when (null keys || not (all validNativeSnapshotKey keys) || conflicts) $
+    ioError (userError "native snapshot index contains invalid or conflicting paths")
+  pure keys
+
+hasIndexedParent :: Set.Set Text -> Text -> Bool
+hasIndexedParent keys key =
+  case Text.breakOnEnd "/" key of
+    ("", _) -> False
+    (parentWithSlash, _) ->
+      let parent = Text.dropEnd 1 parentWithSlash
+       in Set.member parent keys || hasIndexedParent keys parent
+
+nativeSnapshotIndexLimit :: Int
+nativeSnapshotIndexLimit = 1024 * 1024
+
+validNativeSnapshotKey :: Text -> Bool
+validNativeSnapshotKey key =
+  not (Text.null key)
+    && Text.length key <= 4096
+    && not (Text.any (\character -> isControl character || character == '\\') key)
+    && all validComponent (Text.splitOn "/" key)
+    && key /= nativeSnapshotIndexName
+    && key /= ".ready"
+  where
+    validComponent component =
+      not (Text.null component)
+        && component /= "."
+        && component /= ".."
+        && not (".incoming" `Text.isSuffixOf` component)
+        && not (".download.held" `Text.isSuffixOf` component)
 
 downloadNativeModelCacheObject :: WorkerModelCacheConfig -> Text -> Text -> IO ()
 downloadNativeModelCacheObject modelCacheConfig modelIdValue relativeKey = do
@@ -857,76 +926,141 @@ downloadNativeModelCacheObject modelCacheConfig modelIdValue relativeKey = do
           { Contracts.objectBucket = workerMinioModelsBucket modelCacheConfig,
             Contracts.objectKey = modelIdValue <> "/" <> relativeKey
           }
-  -- The retired form wrote the object straight to its final path and guarded
-  -- the whole download behind `doesFileExist destination`. Neither half is
-  -- safe on its own and together they fail open permanently: `writeFile` is
-  -- not atomic, so a download interrupted by a container restart, an OOM kill,
-  -- or a timeout leaves a short or empty file at the destination — and the
-  -- existence check then treats that wreckage as a populated cache forever,
-  -- because nothing ever re-downloads a path that exists. `.ready` is stamped
-  -- immediately afterwards, so the cache reports itself populated while the
-  -- model file is unusable. Observed on the `linux-cpu` cohort as
-  -- `gguf_init_from_reader: failed to read magic` against a
-  -- `/model-cache/<id>/payload` whose upstream MinIO object was verified
-  -- intact.
-  --
-  -- Staging into a sibling and renaming makes the destination's existence mean
-  -- what the existence check assumes: rename is atomic within one directory, so
-  -- a destination is either absent or complete. An interrupted attempt leaves
-  -- only the sibling, which the next attempt discards.
-  destinationBytes <- observedFileSize destination
-  case destinationBytes of
-    Just presentBytes | presentBytes > 0 -> pure ()
-    _ -> do
-      manager <- newManager defaultManagerSettings
-      now <- getCurrentTime
-      payload <- ObjectUpload.getObjectWithPresignedUrl (workerObjectUploadConfig modelCacheConfig) manager now objectRef
-      createDirectoryIfMissing True (takeDirectory destination)
-      -- An empty object is never a valid model file, and publishing one costs a
-      -- whole cohort cycle to diagnose. Refuse it here, where the bucket, key,
-      -- and destination are all still in hand, rather than letting the engine
-      -- discover it as an unreadable magic number.
-      when (ByteString.null payload) $
-        ioError
-          ( userError
-              ( "native model cache hydration refused an empty object: s3://"
-                  <> Text.unpack (workerMinioModelsBucket modelCacheConfig)
-                  <> "/"
-                  <> Text.unpack modelIdValue
-                  <> "/"
-                  <> Text.unpack relativeKey
-                  <> " -> "
-                  <> destination
-              )
+  ensureContainedCacheDirectories
+    (Text.unpack (workerModelCacheRoot modelCacheConfig) </> Text.unpack modelIdValue)
+    destination
+  -- The lock owns this exact staging name, including recovery after an
+  -- interrupted transfer. A concurrent owner refuses instead of overwriting
+  -- another transfer, and exclusive creation refuses a substituted path.
+  withKernelFileLock "native model cache download" (destination <> ".download.held") $ do
+    destinationBytes <- observedFileSize destination
+    case destinationBytes of
+      Just presentBytes | presentBytes > 0 -> pure ()
+      _ -> do
+        manager <- newManager defaultManagerSettings
+        now <- getCurrentTime
+        let stagingPath = destination <> ".incoming"
+        removeNativeCacheStaging stagingPath
+        bracketPreservingPrimary
+          (openNativeCacheStaging stagingPath)
+          (cleanupNativeCacheStaging stagingPath)
+          ( \stagingHandle -> do
+              copied <-
+                ObjectUpload.copyObjectToHandleWithPresignedUrl
+                  (workerObjectUploadConfig modelCacheConfig)
+                  manager
+                  now
+                  objectRef
+                  ( min
+                      (toInteger (workerModelCacheQuotaBytes modelCacheConfig))
+                      (if relativeKey `elem` [nativeSnapshotIndexName, nativeArtifactInventoryName] then toInteger nativeSnapshotIndexLimit else toInteger (workerModelCacheQuotaBytes modelCacheConfig))
+                  )
+                  stagingHandle
+              copiedBytes <-
+                either
+                  ( \reason ->
+                      ioError
+                        ( userError
+                            ( "native model cache hydration refused s3://"
+                                <> Text.unpack (workerMinioModelsBucket modelCacheConfig)
+                                <> "/"
+                                <> Text.unpack modelIdValue
+                                <> "/"
+                                <> Text.unpack relativeKey
+                                <> ": "
+                                <> Text.unpack reason
+                            )
+                        )
+                  )
+                  pure
+                  copied
+              hClose stagingHandle
+              stagedBytes <- observedFileSize stagingPath
+              unless (stagedBytes == Just copiedBytes) $
+                ioError (userError "native model cache staging extent changed before publication")
+              renamePath stagingPath destination
           )
-      let stagingPath = destination <> ".incoming"
-      ByteString.writeFile stagingPath payload
-      stagedBytes <- observedFileSize stagingPath
-      unless (stagedBytes == Just (ByteString.length payload)) $
-        ioError
-          ( userError
-              ( "native model cache hydration wrote "
-                  <> show stagedBytes
-                  <> " bytes for "
-                  <> destination
-                  <> " but the fetched object is "
-                  <> show (ByteString.length payload)
-                  <> " bytes"
-              )
-          )
-      renamePath stagingPath destination
+
+-- | Create the parent directories of one hydrated object a component at a
+-- time, below the model directory, refusing any component that already exists
+-- as a symbolic link or as anything but a directory. The retired
+-- @createDirectoryIfMissing True@ followed a pre-placed directory symlink and
+-- wrote the object outside the model directory. This check is made per
+-- component immediately before use; it does not pin the ancestors against a
+-- concurrent substitution, which the descriptor-relative reads that follow do
+-- not claim to do either.
+ensureContainedCacheDirectories :: FilePath -> FilePath -> IO ()
+ensureContainedCacheDirectories modelDirectory destination = do
+  ensureRealDirectory modelDirectory
+  let relativeParent = makeRelative modelDirectory (takeDirectory destination)
+      components = filter (/= ".") (splitDirectories relativeParent)
+  when (".." `elem` components || not (isRelative relativeParent)) $
+    ioError (userError ("native cache object escapes its model directory: " <> destination))
+  walk modelDirectory components
+  where
+    walk _ [] = pure ()
+    walk parent (component : rest) = do
+      let current = parent </> component
+      ensureRealDirectory current
+      walk current rest
+
+ensureRealDirectory :: FilePath -> IO ()
+ensureRealDirectory path = do
+  observed <- catchIOError (Just <$> getSymbolicLinkStatus path) (\err -> if isDoesNotExistError err then pure Nothing else ioError err)
+  case observed of
+    Just status
+      | isDirectory status -> pure ()
+      | otherwise -> ioError (userError ("native cache directory component is a symbolic link or not a directory: " <> path))
+    Nothing -> do
+      createResult <- try @SomeException (createDirectory path)
+      case createResult of
+        Right () -> pure ()
+        Left err
+          | Just ioErr <- fromException err, isAlreadyExistsError ioErr -> ensureRealDirectory path
+          | otherwise -> throwIO err
+
+openNativeCacheStaging :: FilePath -> IO Handle
+openNativeCacheStaging stagingPath = do
+  descriptor <-
+    openFd
+      stagingPath
+      WriteOnly
+      defaultFileFlags
+        { exclusive = True,
+          nofollow = True,
+          creat = Just (ownerReadMode .|. ownerWriteMode),
+          cloexec = True
+        }
+  onExceptionPreservingPrimary (fdToHandle descriptor) (closeFd descriptor)
+
+-- The held download lock gives cleanup custody of this exact staging name.
+-- The renamed destination is never removed here.
+cleanupNativeCacheStaging :: FilePath -> Handle -> IO ()
+cleanupNativeCacheStaging stagingPath stagingHandle = do
+  closed <- hIsClosed stagingHandle
+  finallyPreservingPrimary (unless closed (hClose stagingHandle)) (removeNativeCacheStaging stagingPath)
+
+removeNativeCacheStaging :: FilePath -> IO ()
+removeNativeCacheStaging stagingPath =
+  catchIOError
+    (removeFile stagingPath)
+    (\err -> if isDoesNotExistError err then pure () else ioError err)
 
 -- | The size of a regular file, or 'Nothing' when it is absent. Used to tell
 -- an absent cache entry from a present-but-empty one, which the retired
 -- existence check could not distinguish.
-observedFileSize :: FilePath -> IO (Maybe Int)
-observedFileSize path = do
-  present <- doesFileExist path
-  if present
-    then do
-      sizeResult <- try @SomeException (withFile path ReadMode hFileSize)
-      pure (either (const Nothing) (Just . fromIntegral) sizeResult)
-    else pure Nothing
+observedFileSize :: FilePath -> IO (Maybe Integer)
+observedFileSize path =
+  catchIOError observe classifyFailure
+  where
+    observe = do
+      status <- getSymbolicLinkStatus path
+      if isRegularFile status
+        then pure (Just (toInteger (fileSize status)))
+        else ioError (userError ("native cache entry is not a regular file: " <> path))
+    classifyFailure err
+      | isDoesNotExistError err = pure Nothing
+      | otherwise = ioError err
 
 nativeRunnerContractReadyPath :: WorkerModelCacheConfig -> Text -> FilePath
 nativeRunnerContractReadyPath modelCacheConfig modelIdValue =
@@ -935,20 +1069,45 @@ nativeRunnerContractReadyPath modelCacheConfig modelIdValue =
     </> ".ready"
 
 nativeModelReadySentinelExists :: WorkerModelCacheConfig -> Text -> IO Bool
-nativeModelReadySentinelExists modelCacheConfig modelIdValue = do
+nativeModelReadySentinelExists modelCacheConfig modelIdValue =
+  nativeModelObjectExists modelCacheConfig modelIdValue ".ready"
+
+nativeModelObjectExists :: WorkerModelCacheConfig -> Text -> Text -> IO Bool
+nativeModelObjectExists modelCacheConfig modelIdValue relativeKey = do
   manager <- newManager defaultManagerSettings
   now <- getCurrentTime
   let objectRef =
         Contracts.ObjectRef
           { Contracts.objectBucket = workerMinioModelsBucket modelCacheConfig,
-            Contracts.objectKey = modelIdValue <> "/.ready"
+            Contracts.objectKey = modelIdValue <> "/" <> relativeKey
           }
   responseResult <-
     try @SomeException
-      (ObjectUpload.objectExistsViaPresignedGet (workerObjectUploadConfig modelCacheConfig) manager now objectRef)
+      (ObjectUpload.objectExistsViaPresignedHead (workerObjectUploadConfig modelCacheConfig) manager now objectRef)
   case responseResult of
     Right objectPresent -> pure objectPresent
-    Left _ -> pure False
+    Left failure ->
+      case fromException failure :: Maybe SomeAsyncException of
+        Just _ -> throwIO failure
+        Nothing -> pure False
+
+-- A failed inventory probe must not silently choose the legacy no-inventory
+-- path. Only an explicit 404 establishes that the sidecar is absent.
+nativeModelInventoryExists :: WorkerModelCacheConfig -> Text -> IO Bool
+nativeModelInventoryExists modelCacheConfig modelIdValue = do
+  manager <- newManager defaultManagerSettings
+  now <- getCurrentTime
+  let objectRef =
+        Contracts.ObjectRef
+          { Contracts.objectBucket = workerMinioModelsBucket modelCacheConfig,
+            Contracts.objectKey = modelIdValue <> "/" <> nativeArtifactInventoryName
+          }
+  observed <- ObjectUpload.observeObjectViaPresignedHead (workerObjectUploadConfig modelCacheConfig) manager now objectRef
+  case observed of
+    ObjectUpload.ObjectHeadPresent -> pure True
+    ObjectUpload.ObjectHeadMissing -> pure False
+    ObjectUpload.ObjectHeadUnavailable status ->
+      ioError (userError ("native artifact inventory HEAD failed with HTTP " <> show status))
 
 nativeArtifactCacheFromWorker ::
   WorkerModelCacheConfig ->

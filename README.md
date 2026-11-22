@@ -218,7 +218,7 @@ The supported local platform is built around:
 
 <!-- infernix:route-registry:readme:start -->
 - always-published routed prefixes: `/registry`, `/pulsar/admin`, `/pulsar/ws`
-- demo-only routed prefixes (present when `.dhall` `demo_ui = True`): `/`, `/api`, `/auth`, `/ws`, `/api/objects`
+- demo-only routed prefixes (present when `.dhall` `demo_ui = True`): `/`, `/api`, `/api/cache`, `/api/admin/overview`, `/auth`, `/ws`, `/api/objects`
 - registry-owned rewrites: `/registry` -> `/v2`; `/pulsar/admin` -> `/`; `/pulsar/ws` -> `/ws`
 <!-- infernix:route-registry:readme:end -->
 
@@ -578,8 +578,7 @@ by reinitializing and rerunning the same complete suite for each supported subst
 
 Hardware-specific claims require the relevant full-suite gate on the machine that owns the
 accelerator: Apple behavior on the Apple Silicon host-native lane and CUDA behavior on a
-CUDA-capable Linux host. A cross-hardware claim requires both gates against the same source
-fingerprint; `linux-cpu` is a portable CPU lane and does not substitute for either accelerator.
+CUDA-capable Linux host. A cross-hardware claim requires both gates with packages rebuilt as appropriate; `linux-cpu` is a portable CPU lane and does not substitute for either accelerator.
 
 Bare host Cabal is not a supported validation path. Apple clean-clone and rebuild work goes through
 `./bootstrap/apple-silicon.sh build`, whose fixed stage-0 preflight uses
@@ -782,7 +781,7 @@ The canonical supported CLI surface is the single `infernix` binary.
   record. A killed `test all` inside a launcher container leaves a reservation whose pid, process
   group, and boot identity are all indistinguishable from a fresh container's; this is the
   supported way out
-- `infernix cache status`
+- `infernix cache status [--model MODEL_ID]`
 - `infernix cache evict [--model MODEL_ID]`
 - `infernix cache rebuild [--model MODEL_ID]`
 - `infernix kubectl ...` (allowlisted read-only diagnostics)
@@ -1046,8 +1045,7 @@ contracts.
   audio-generation, and OMR object-reference artifacts), with typed refusals and measured breaches
   tested separately from required successful output. Unexpected failures fail the gate; an expected
   refusal never counts as real inference. Static checks cannot prove arbitrary adapter realness.
-  Each validation receipt binds the reconstructable source snapshot, immutable build, generated
-  catalog, and actual required-check execution; a mismatch invalidates the receipt. A row is
+  Each validation receipt records the build, generated catalog, and actual required-check execution. Agents rebuild the relevant package or image as appropriate before testing. A row is
   an explicit residual only when its achievability is uncertain; a row that is merely
   unbuilt stays declared-runnable and fails closed. One DRY
   substrate-aware integration suite traverses the README matrix and the union across the
@@ -1186,6 +1184,5 @@ its [Non-Negotiable Rules](documents/development/assistant_workflow.md#non-negot
 
 [MIT](LICENSE)
 
-Linux bootstrap launcher handoff reconciles the build, selects an immutable image id, and supplies
-an independent read-only checkout for source-bound validation. See
+Linux bootstrap launcher handoff reconciles the build and selects an immutable image id for validation. See
 [the source and image identity contract](documents/engineering/docker_policy.md#source-and-image-identity).

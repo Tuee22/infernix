@@ -120,7 +120,10 @@ own isolated in-project venv:
   Darwin prepares `transformers`, `pytorch`, and `diffusers` with `apple-silicon`, while the Linux
   CPU base image prepares `transformers` and `pytorch` with `linux-cpu`. Linux GPU remains
   engine-image-owned and selects `cuda` in `docker/engine.Dockerfile`; the shared base materializer
-  is intentionally a no-op for that lane.
+  is intentionally a no-op for that lane. Diffusers keeps separate Apple and CUDA project inputs:
+  the host project is `pyproject.toml`, and the GPU image installs `pyproject.cuda.toml` as its
+  project file before provisioning. This prevents Poetry from solving CUDA-only markers on Apple
+  while retaining the same engine-local interpreter path.
 - The producer gives each project its own environment before the bounded install runs. Poetry
   resolves the environment it installs into from the running interpreter when the project owns
   none, and a sealed bounded run points `PYTHONHOME` at the sealed copy of Poetry's own environment,

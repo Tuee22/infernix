@@ -1085,6 +1085,15 @@ def run_check_code() -> int:
         [sys.executable, "-m", "mypy", "--strict", "adapters"],
         [sys.executable, "-m", "black", "--check", "adapters"],
         [sys.executable, "-m", "ruff", "check", "adapters"],
+        [
+            sys.executable,
+            "-m",
+            "unittest",
+            "adapters.test_model_cache",
+            "adapters.test_model_bootstrap_inventory",
+            "adapters.test_transformers_prompt",
+            "adapters.test_demucs_segment",
+        ],
     ]
     for command in commands:
         subprocess.run(command, cwd=project_root, check=True, env=env)

@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active — Sprint 2.18 has validated code-side closure. Wave R2 is the remaining cohort gate.
+**Status**: Done
 
 **Referenced by**: [README.md](README.md),
 [00-overview.md](00-overview.md), [system-components.md](system-components.md),
@@ -13,11 +13,7 @@
 
 ## Phase Status
 
-Sprints 2.1–2.17 retain their closed headings and only their established scope. Sprint 2.18 applies and validates the corrected authority boundary at lifecycle consumer effects. A retained Phase 2 accelerator attestation is missing; source inspection and existing closed sprint declarations do not supply that evidence.
-
-The missing Phase 2 entry in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) remains unresolved. Preserve closed sprint headings; recover verifiable underlying evidence or rerun the required gates before phase closure.
-
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 2.18 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R2 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither full-suite lane has validated the new criteria. Wave R2 is validation-only and does not block subsequent code-side implementation.
+Sprints 2.1–2.19 are complete. Sprint 2.19 aligned retained MinIO claim ownership with the pinned workload user and validated access across reconciliation. Earlier [Phase 2 attestations](cohort-validation-waves.md#recorded-attestations) remain scoped to their recorded source.
 
 ## Storage Doctrine
 
@@ -52,7 +48,7 @@ These rules close in this phase and remain mandatory afterward:
 
 ## Current Repo Assessment
 
-The Kind lifecycle, storage reconciler, bounded subprocess kernel, and ownership checks exist. Sprint 2.18 owns their consumer containment/cleanup regressions and the evidence gap. The orphan harness backup without a reservation is refused by `src/Infernix/Cluster/Internal.hs`; it is not automatically restored. Reservation-backed recovery and explicit operator resolution of ambiguous files remain distinct contracts.
+The Kind lifecycle, storage reconciler, bounded subprocess kernel, and ownership checks exist. Sprint 2.18 validates their consumer containment and cleanup. The orphan harness backup without a reservation is refused by `src/Infernix/Cluster/Internal.hs`; it is not automatically restored. Reservation-backed recovery and explicit operator resolution of ambiguous files remain distinct contracts.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -1006,7 +1002,7 @@ lifecycle state names a registry port.
   `infernix lint files/chart/proto/docs/plan` pass
 - a fresh `cluster up` reaches a ready registry in its bootstrap phase and a retained-state second
   `cluster up` reconciles without a dirty-migration path to repair
-- `linux-gpu` plus `linux-cpu` full-suite `test all` against one frozen source digest
+- `linux-gpu` plus `linux-cpu` full-suite `test all` with appropriately rebuilt packages
 
 ### Remaining Work
 
@@ -1014,12 +1010,10 @@ None.
 
 ---
 
-## Sprint 2.18: Lifecycle Consumer Containment and Verifiable Closure [Active]
+## Sprint 2.18: Lifecycle Consumer Containment and Verifiable Closure [Done]
 
-**Status**: Active
-**Code-side closure**: Exact reservation capture, effect-adjacent state/writer checks, config restoration, snapshot commit custody, retained validation evidence, and checked subprocess pipe cleanup are implemented. Governed build, all nine aggregate lint checks, all seven aggregate unit checks, six focused gates, and fresh independent receipt verification pass. All 122 compiler controls and their logs are retained; missing historical full-suite evidence remains a Wave R2 obligation.
-**Cohort gate**: Wave R2 — selected `apple-silicon` plus native `linux-cpu`.
-**Blocked by**: nothing — Sprint 1.46 code-side closure is validated.
+**Status**: Done
+**Validation**: [Phase 2 attestation](cohort-validation-waves.md#recorded-attestations); compiler controls: `.data/runtime/validation/controls/phase2-218/`.
 **Implementation targets**: `src/Infernix/Cluster/Internal.hs`, `src/Infernix/Cluster/LifecycleLock.hs`, `src/Infernix/Cluster/Subprocess.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `test/compile-fail/`
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/engineering/storage_and_state.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/architecture/configuration_doctrine.md`
 
@@ -1056,15 +1050,66 @@ evidence for the lifecycle scope.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R2's selected `apple-silicon` plus native `linux-cpu` full-suite results
-against one frozen implementation, including actual Kind lifecycle, retained storage, registry-first
-bootstrap, preserved data, and teardown. No new full-suite or historical closure result is claimed.
+None.
 
-**Code-side evidence**: source `1d2a5a5d1205c5f98b6f3a56d319e8f2237afb3f649f8a5ddd2b7bf860084e41`; image `sha256:3aeef786ea7da77eb9929c7a5ff26f9ed15192c5bfb979f227114f45dc1d1505`; lint `.data/runtime/validation/run-fak8ac/receipt.json`; unit `.data/runtime/validation/run-Nimeza/receipt.json`; controls `.data/runtime/validation/controls/phase2-218/`.
+## Sprint 2.19: Retained MinIO Workload Ownership [Done]
 
-## Remaining Work
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster/ClaimPermissions.hs`, `src/Infernix/Cluster/Internal.hs`, `src/Infernix/Models/Artifact.hs`, `src/Infernix/Models/TorchPickle.hs`, `src/Infernix/Models/TorchZip.hs`, `src/Infernix/Objects/BoundedHttp.hs`, `src/Infernix/Runtime/Enforcer.hs`, `python/adapters/pytorch_python.py`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`, `documents/architecture/model_catalog.md`.
 
-Cohort gate only: retain Wave R2's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 2.18 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope.
+### Objective
+
+Keep retained MinIO data owned by the pinned workload user during node claim reconciliation, including when the pod is already running.
+
+### Deliverables
+
+- Apply UID and GID 65532 to MinIO data claim trees on Kind nodes, matching the chart initializer and container identity.
+- Check the lifecycle owner against the chart's initialization command, and preserve existing retained objects.
+- Derive the required Demucs checkpoint memory from bounded PyTorch ZIP metadata, refusing malformed, unsupported, incomplete, or inconsistent archives on both local and remote paths; do not infer a safe allocation from compressed file size alone.
+- Keep real CPU Demucs inference within its enforced execution budget using the engine's supported segmentation controls, preserving full-input output and refusing failures explicitly.
+
+### Validation
+
+- Run the governed build, unit suite, aggregate lint, and focused plan and documentation gates.
+- On each Wave R2 lane, write a retained MinIO canary, reconcile the live cluster, and prove the original bytes remain readable and unchanged under the running workload identity.
+- Exercise the PyTorch reader against the real checkpoint and malformed, truncated, oversized, and inconsistent metadata; demonstrate equivalent local and remote accounting and real Demucs output.
+
+### Remaining Work
+
+None. Closure evidence is the Phase 2 row appended to the [Recorded Attestations](cohort-validation-waves.md#recorded-attestations): the Apple full suite [run-BI4ZTC](../.data/runtime/validation/run-BI4ZTC/receipt.json) (4 GiB Colima VM with in-VM swap, regenerated 4096 MiB build plan) and the `linux-cpu` full suite [run-WneyCm](../.data/runtime/validation/run-WneyCm/receipt.json) (15 GiB VM), each passing every required gate with a stable source.
+
+---
+
+## Documentation Requirements
+
+**Engineering docs to create/update:**
+- `documents/engineering/k8s_native_dev_policy.md` - Kind bootstrap, registry-first image flow, GPU-enabled `linux-gpu`, and `nvkind` closure
+- `documents/engineering/k8s_storage.md` - manual PV policy, PVC ownership, and `infernix-manual`
+- `documents/engineering/build_artifacts.md` - generated demo-config staging and generated input material policy
+- `documents/engineering/storage_and_state.md` - durable-versus-derived state inventory for cluster assets
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) - managed state-transition doctrine this phase now references for Sprint 2.14
+- `documents/tools/registry.md` - local registry contract
+
+**Product or reference docs to create/update:**
+- `documents/reference/cli_reference.md` - cluster lifecycle commands
+- `documents/reference/cli_surface.md` - short cluster-lifecycle and status-surface overview
+- `documents/operations/apple_silicon_runbook.md` - Apple first-run bootstrap and teardown timing expectations
+- `documents/operations/cluster_bootstrap_runbook.md` - bootstrap, reconcile, teardown, and
+  long-running image publication or preload workflow
+- `documents/development/testing_strategy.md` - active-substrate generated catalog and GPU-enabled `linux-gpu` contract
+
+**Cross-references to add:**
+- keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned
+  when storage, image-flow, generated-input, or GPU-lifecycle assumptions change
+- keep [phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md)
+  aligned when lifecycle progress surfaces or failure-classification doctrine changes
+
+**Remediation documentation obligations:**
+
+- Keep the contracts named by Sprints 2.18 prescriptive in `documents/`; implementation state and validation evidence stay in this plan.
+- Document positive behavior, explicit refusal/unsupported behavior, resource and trust boundaries, and the independent controls that establish each claim.
+- Keep [README.md](README.md), [cohort-validation-waves.md](cohort-validation-waves.md), and [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned with actual outstanding work; delete removal rows only after the named implementation surface is gone.
 
 ## Documentation Requirements
 

@@ -27,11 +27,13 @@ module Infernix.Models.Requirement
     deriveModelRequirement,
     deriveModelRequirementFromHeader,
     deriveModelRequirementFromStagedPrefix,
+    deriveModelRequirementFromStagedEdges,
     keyValueCacheBytes,
     modelRequirementBytesToMib,
   )
 where
 
+import Data.ByteString (ByteString)
 import Data.Char (isDigit)
 import Data.List (nub)
 import Data.Text (Text)
@@ -49,6 +51,7 @@ import Infernix.Models.Artifact
     artifactHeaderErrorText,
     readArtifactHeader,
     readArtifactHeaderWithSize,
+    readTorchArtifactEdges,
   )
 import Infernix.Types
   ( ModelDescriptor (modelExecutionShape, modelGeometry, modelId),
@@ -72,9 +75,8 @@ import Text.Read (readMaybe)
 
 -- | A requirement together with the evidence it was derived from.
 --
--- The digest covers the header prefix that was read and explicitly not the
--- payload, so this value is a statement about one exact header rather than about
--- whatever currently sits at a path.
+-- The digest covers the bounded metadata that was read and does not establish
+-- the identity of unread weight payload bytes.
 data DerivedModelRequirement = DerivedModelRequirement
   { derivedRequirement :: ModelResourceRequirement,
     derivedWeightBytes :: Integer,
@@ -119,6 +121,12 @@ deriveModelRequirementFromStagedPrefix ::
 deriveModelRequirementFromStagedPrefix model prefixPath artifactBytes = do
   headerResult <- readArtifactHeaderWithSize prefixPath artifactBytes
   pure (completeDerivation model headerResult)
+
+-- | Derive from bounded edges of the same staged PyTorch object.
+deriveModelRequirementFromStagedEdges ::
+  ModelDescriptor -> Integer -> ByteString -> ByteString -> Either Text DerivedModelRequirement
+deriveModelRequirementFromStagedEdges model total prefix suffix =
+  completeDerivation model (readTorchArtifactEdges total prefix suffix)
 
 -- | The pure half: everything except reading the file.
 deriveModelRequirementFromHeader ::

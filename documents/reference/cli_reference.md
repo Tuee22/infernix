@@ -25,7 +25,7 @@
 
 ### `cache`
 
-- `infernix cache status` - reports the manifest-backed cache inventory for the active substrate
+- `infernix cache status [--model MODEL_ID]` - reports the manifest-backed cache inventory for one model or for the whole active substrate
 - `infernix cache evict [--model MODEL_ID]` - evicts derived cache state for one model or for the whole active substrate
 - `infernix cache rebuild [--model MODEL_ID]` - rebuilds derived cache state from durable manifests for one model or for the whole active substrate
 
@@ -71,11 +71,8 @@
 - `infernix internal demo-config validate PATH` - validates one generated demo config file
 - `infernix internal dhall-schema host|cluster|secrets|substrate` - prints the Dhall type expression reflected from the binary's decoder for one packaged schema
 - `infernix internal linux-host-seed` - prints the decoder-owned Linux image host defaults without reading existing configuration
-- `infernix internal image-build-identity` - prints the compiled image source inventory and executable digest for the build handoff
-- `infernix internal native-build-begin` - records the source input before the bounded native launcher rebuild
-- `infernix internal native-build-finish` - binds the rebuilt native executable to its unchanged build input
 - `infernix internal validate-nvidia PATH` - executes the closed NVIDIA fixture inventory in an explicit device context
-- `infernix internal verify-validation-receipt SCOPE PATH` - verifies a retained receipt against the independent checkout, executable, configuration, and required check scope
+- `infernix internal verify-validation-receipt SCOPE PATH` - verifies a retained receipt against the execution context, configuration, and required check scope
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result
 - `infernix internal playwright prepare-engine MODEL_ID` - selects the generated model's closed engine deployment under harness ownership
 <!-- infernix:command-registry:end -->
@@ -128,8 +125,8 @@
   supported explicit substrate-file override for targeted daemon validation and diagnostics. The
   Webapp role serves the demo HTTP/WebSocket surface through `src/Infernix/Demo/Api.hs` and is
   normally deployed as the demo-gated `infernix-demo` workload
-- `infernix cache status` reports the manifest-backed cache inventory for the active runtime
-  mode; `cache evict` and `cache rebuild` only affect derived cache state
+- `infernix cache status [--model MODEL_ID]` reports the manifest-backed cache inventory for the active runtime
+  mode (one model with `--model`, because a whole-catalog observation shares one 30-second owner budget); `cache evict` and `cache rebuild` only affect derived cache state
 - `infernix kubectl ...` wraps the allowlisted read-only diagnostic subset of upstream `kubectl`
   and injects the repo-local kubeconfig; mutating verbs and `exec` are rejected
 - `cluster up` publishes the closed engine bindings generated in `infernix.dhall`; engine

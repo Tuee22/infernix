@@ -13,6 +13,7 @@ module Infernix.Lint.HaskellStyle
     provisioningKernelOwnershipViolations,
     unsafeNativeBoundaryViolations,
     unboundedCeilingInstallViolations,
+    unboundedHttpViolations,
     unboundedDescriptorSpawnViolations,
     unboundedToolchainSpawnViolations,
     unboundedEngineSpawnViolations,
@@ -1410,25 +1411,36 @@ unboundedToolchainSpawnExemptedFiles =
     "src/Infernix/Cluster/Subprocess.hs"
   ]
 
--- | Sprint 4.29 (managed-state-transition doctrine) — reject raw streaming HTTP
--- reads of an upstream body outside the bounded model-download wrapper. The
--- model-weight download from an untrusted third-party origin must go through
--- 'Infernix.Runtime.Pulsar.downloadUpstreamModelToFile', which sends a
--- User-Agent, bounds the transfer, and classifies the status into a total
--- @DownloadOutcome@ (so a rate-limit is retried with a bounded backoff, not
--- hammered forever). @withResponse@ — the streaming-body reader that pattern
--- powers — is therefore forbidden elsewhere in production code; trusted
--- in-cluster MinIO/registry calls use @httpLbs@ and are unaffected. Canonical
--- doctrine: documents/architecture/managed_state_transitions.md.
+-- | Reject arbitrary streaming HTTP outside the upstream download kernel and
+-- the fixed, bounded internal-object reader. The latter owns exactly one
+-- response callback; extra streaming entrypoints remain a lint violation.
 unboundedHttpViolations :: FilePath -> [(Int, String)] -> [String]
 unboundedHttpViolations sourceFile numberedLines
   | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
+  | sourceFile == "src/Infernix/Objects/BoundedHttp.hs" = boundedObjectStreamingViolations numberedLines
   | sourceFile `elem` unboundedHttpExemptedFiles = []
   | otherwise =
-      [ sourceFile <> ":" <> show lineNumber <> ": forbidden raw streaming HTTP read `withResponse`; route an upstream download through Infernix.Runtime.Pulsar.downloadUpstreamModelToFile (User-Agent + bounded transfer + total DownloadOutcome) so a rate-limited fetch is retried with backoff, not hammered forever (see documents/architecture/managed_state_transitions.md)"
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden raw streaming HTTP read `withResponse`; use the owning bounded HTTP kernel"
       | (lineNumber, lineValue) <- numberedLines,
         not (isCommentLine lineValue),
         containsToken "withResponse" lineValue
+      ]
+
+boundedObjectStreamingViolations :: [(Int, String)] -> [String]
+boundedObjectStreamingViolations numberedLines =
+  [ "src/Infernix/Objects/BoundedHttp.hs: the bounded object reader must own exactly its one streaming response callback"
+  | sort streamingLines /= sort allowedLines
+  ]
+  where
+    streamingLines =
+      [ dropWhile isSpace lineValue
+      | (_, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        containsToken "withResponse" lineValue
+      ]
+    allowedLines =
+      [ "withResponse,",
+        "withResponse request manager $ \\response -> do"
       ]
 
 -- | Sprint 4.34 (machine-local admission) — keep memory admission on the
@@ -1459,8 +1471,7 @@ predictedAdmissionExemptedFiles =
 
 unboundedHttpExemptedFiles :: [FilePath]
 unboundedHttpExemptedFiles =
-  [ -- Owns the single bounded upstream-download wrapper
-    -- ('downloadUpstreamModelToFile'), the sole legitimate 'withResponse'.
+  [ -- Owns the bounded upstream-download wrapper.
     "src/Infernix/Runtime/Pulsar.hs",
     -- Names the forbidden token as a literal; exempt it.
     "src/Infernix/Lint/HaskellStyle.hs"

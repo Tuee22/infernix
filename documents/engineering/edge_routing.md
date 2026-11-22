@@ -47,6 +47,8 @@
 |---------------|------------|---------|---------|---------|
 | `/` | demo-only | Demo SPA | `infernix-demo:80` | no rewrite |
 | `/api` | demo-only | Demo API | `infernix-demo:80` | no rewrite |
+| `/api/cache` | demo-only | Demo model-cache controls | `infernix-demo:80` | no rewrite |
+| `/api/admin/overview` | demo-only | Demo admin overview | `infernix-demo:80` | no rewrite |
 | `/registry` | always published | Image registry API | `infernix-registry:5000` | `/registry` -> `/v2` |
 | `/pulsar/admin` | always published | Pulsar admin surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/admin` -> `/` |
 | `/pulsar/ws` | always published | Pulsar websocket surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/ws` -> `/ws` |
@@ -54,6 +56,10 @@
 | `/ws` | demo-only | Demo durable-context WebSocket | `infernix-demo:80` | no rewrite |
 | `/api/objects` | demo-only | Demo webapp object-proxy (upload/download/list/delete) | `infernix-demo:80` | no rewrite |
 <!-- infernix:route-registry:edge-routing:end -->
+
+The `/api/cache` route allows up to 600 seconds for owner-directed cache operations;
+a timeout leaves the outcome unknown until the owner is observed again. The `/api/admin/overview`
+route allows 60 seconds for cache-owner observations and the remaining overview work.
 
 - when the demo surface is enabled, `/`, the demo `/api*` routes, `/auth`, `/ws`, and
   `/api/objects` target the `infernix-demo` workload (or the routed Keycloak release in the

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import tempfile
 import time
 import urllib.parse
@@ -14,6 +15,8 @@ from typing import Any
 
 READY_SENTINEL_NAME = ".ready"
 NATIVE_SNAPSHOT_INDEX_NAME = ".infernix-native-snapshot-files"
+ARTIFACT_INVENTORY_NAME = ".infernix-artifact-inventory.json"
+SNAPSHOT_INVENTORY_LIMIT = 1024 * 1024
 
 # Open-Unmix `umxhq` is published as four first-party per-target state dicts on
 # Zenodo (record 3370489), not a single file or a HuggingFace repo. The catalog
@@ -65,7 +68,10 @@ def run_model_bootstrap_from_argv() -> int:
         args.model_id,
         args.download_url,
     ):
-        _write_ready_sentinel(client, args.models_bucket, args.model_id)
+        if not _is_package_backed_native_model(args.model_id):
+            _ensure_retained_artifact_inventory(
+                client, args.models_bucket, args.model_id, args.download_url
+            )
         return 0
     if _is_package_backed_native_model(args.model_id):
         _write_ready_sentinel(client, args.models_bucket, args.model_id)
@@ -86,6 +92,9 @@ def run_model_bootstrap_from_argv() -> int:
             _download_single_payload(args.download_url, payload_path)
             _upload_file(
                 client, args.models_bucket, args.model_id, payload_path, "payload"
+            )
+            _upload_artifact_inventory(
+                client, args.models_bucket, args.model_id, [("payload", payload_path)]
             )
         else:
             snapshot_root = Path(temp_root) / "snapshot"
@@ -111,11 +120,15 @@ def _s3_client(*, endpoint: str, access_key: str, secret_key: str, region: str) 
 
 
 def _sentinel_exists(client: Any, bucket: str, model_id: str) -> bool:
+    from botocore.exceptions import ClientError
+
     try:
         client.head_object(Bucket=bucket, Key=f"{model_id}/{READY_SENTINEL_NAME}")
         return True
-    except Exception:
-        return False
+    except ClientError as exc:
+        if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+            return False
+        raise
 
 
 class CacheValidity(Enum):
@@ -427,19 +440,260 @@ def _download_open_unmix_umxhq(destination: Path) -> None:
 
 
 def _upload_directory(client: Any, bucket: str, model_id: str, root: Path) -> None:
-    uploaded_keys: list[str] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or _skip_snapshot_file(root, path):
-            continue
-        relative_key = path.relative_to(root).as_posix()
+    uploaded_files = _snapshot_inventory_sources(root)
+    uploaded_keys = [name for name, _ in uploaded_files]
+    for relative_key, path in uploaded_files:
         _upload_file(client, bucket, model_id, path, relative_key)
-        uploaded_keys.append(relative_key)
     client.put_object(
         Bucket=bucket,
         Key=f"{model_id}/{NATIVE_SNAPSHOT_INDEX_NAME}",
         Body=("\n".join(uploaded_keys) + "\n").encode("utf-8"),
         ContentType="text/plain; charset=utf-8",
     )
+    _upload_artifact_inventory(client, bucket, model_id, uploaded_files)
+
+
+def _upload_artifact_inventory(
+    client: Any,
+    bucket: str,
+    model_id: str,
+    files: list[tuple[str, Path]],
+    *,
+    only_if_missing: bool = False,
+) -> None:
+    """Publish the producer's file identities before the ready sentinel.
+
+    The inventory describes the local upload sources. Consumers must still
+    verify the downloaded bytes against it; publishing it alone does not prove
+    the object store or a cache contains those bytes.
+    """
+    entries = []
+    for relative_key, source in sorted(files):
+        digest = hashlib.sha256()
+        size = 0
+        with source.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+        entries.append(
+            {"path": relative_key, "size": size, "sha256": digest.hexdigest()}
+        )
+    payload = json.dumps(
+        {"version": 1, "files": entries}, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    if not entries or len(payload) > 1024 * 1024:
+        raise ValueError("artifact inventory is empty or exceeds its size bound")
+    request: dict[str, Any] = {
+        "Bucket": bucket,
+        "Key": f"{model_id}/{ARTIFACT_INVENTORY_NAME}",
+        "Body": payload,
+        "ContentType": "application/json",
+    }
+    if only_if_missing:
+        request["IfNoneMatch"] = "*"
+    client.put_object(**request)
+
+
+def _ensure_retained_artifact_inventory(
+    client: Any, bucket: str, model_id: str, download_url: str
+) -> None:
+    """Add identity only after retained bytes match a fresh upstream copy.
+
+    This operation never removes or replaces retained model objects. Failures
+    preserve the existing sentinel and do not publish a new inventory.
+    """
+    from botocore.exceptions import ClientError
+
+    try:
+        client.head_object(Bucket=bucket, Key=f"{model_id}/{ARTIFACT_INVENTORY_NAME}")
+        return
+    except ClientError as exc:
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if status != 404:
+            raise
+
+    with tempfile.TemporaryDirectory(
+        prefix="infernix-retained-inventory-"
+    ) as temporary:
+        root = Path(temporary)
+        repo_id = _hugging_face_repo_id(download_url)
+        is_snapshot = True
+        if _is_mt3_pytorch_pretrained(download_url):
+            snapshot = root / "snapshot"
+            _download_mt3_pytorch_pretrained(snapshot)
+            files = _snapshot_inventory_sources(snapshot)
+        elif _is_open_unmix_umxhq(download_url):
+            snapshot = root / "snapshot"
+            _download_open_unmix_umxhq(snapshot)
+            files = _snapshot_inventory_sources(snapshot)
+        elif repo_id is None:
+            is_snapshot = False
+            payload = root / "payload"
+            _download_single_payload(download_url, payload)
+            files = [("payload", payload)]
+        else:
+            snapshot = root / "snapshot"
+            _download_hugging_face_snapshot(repo_id, snapshot)
+            files = _snapshot_inventory_sources(snapshot)
+        _verify_retained_artifacts(
+            client, bucket, model_id, files, require_index=is_snapshot
+        )
+        _upload_artifact_inventory(
+            client, bucket, model_id, files, only_if_missing=True
+        )
+
+
+def _snapshot_inventory_sources(root: Path) -> list[tuple[str, Path]]:
+    files: list[tuple[str, Path]] = []
+    count = 0
+    index_size = 0
+    inventory_size = len(b'{"files":[],"version":1}')
+
+    def visit(directory: Path, depth: int) -> None:
+        nonlocal count, index_size, inventory_size
+        if depth > 64:
+            raise ValueError("upstream snapshot exceeds its directory depth bound")
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                count += 1
+                if count > 100000:
+                    raise ValueError("upstream snapshot exceeds its entry count bound")
+                path = Path(entry.path)
+                if _skip_snapshot_file(root, path):
+                    continue
+                name = path.relative_to(root).as_posix()
+                if (
+                    len(name) > 4096
+                    or "\\" in name
+                    or any(ord(c) < 32 or ord(c) == 127 for c in name)
+                ):
+                    raise ValueError("upstream snapshot contains an invalid path")
+                if entry.is_symlink():
+                    raise ValueError("upstream snapshot contains a symbolic link")
+                if entry.is_dir(follow_symlinks=False):
+                    visit(path, depth + 1)
+                elif entry.is_file(follow_symlinks=False):
+                    index_size += len(name.encode("utf-8")) + 1
+                    encoded_entry = json.dumps(
+                        {
+                            "path": name,
+                            "size": entry.stat(follow_symlinks=False).st_size,
+                            "sha256": "0" * 64,
+                        },
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode("utf-8")
+                    inventory_size += len(encoded_entry) + (1 if files else 0)
+                    if (
+                        index_size > SNAPSHOT_INVENTORY_LIMIT
+                        or inventory_size > SNAPSHOT_INVENTORY_LIMIT
+                    ):
+                        raise ValueError(
+                            "upstream snapshot inventory exceeds its size bound"
+                        )
+                    files.append((name, path))
+                else:
+                    raise ValueError("upstream snapshot contains a non-regular entry")
+
+    visit(root, 0)
+    files.sort(key=lambda item: item[0])
+    if not files or any(
+        name
+        in {READY_SENTINEL_NAME, ARTIFACT_INVENTORY_NAME, NATIVE_SNAPSHOT_INDEX_NAME}
+        for name, _ in files
+    ):
+        raise ValueError("upstream snapshot has no files or contains reserved names")
+    return files
+
+
+def _verify_retained_artifacts(
+    client: Any,
+    bucket: str,
+    model_id: str,
+    files: list[tuple[str, Path]],
+    *,
+    require_index: bool,
+) -> None:
+    """Compare complete retained inventory and bytes without mutating it."""
+    prefix = f"{model_id}/"
+    observed: set[str] = set()
+    for page in client.get_paginator("list_objects_v2").paginate(
+        Bucket=bucket, Prefix=prefix
+    ):
+        for item in page.get("Contents", []) or []:
+            key = item.get("Key")
+            if not isinstance(key, str) or not key.startswith(prefix):
+                raise ValueError("retained object listing contains an invalid key")
+            relative = key[len(prefix) :]
+            if relative in observed or len(observed) >= 100000:
+                raise ValueError(
+                    "retained object listing is duplicated or exceeds its bound"
+                )
+            observed.add(relative)
+    expected = {name for name, _ in files}
+    metadata = {READY_SENTINEL_NAME, NATIVE_SNAPSHOT_INDEX_NAME}
+    unsafe = any(
+        not name
+        or len(name) > 4096
+        or "\\" in name
+        or any(not part or part in {".", ".."} for part in name.split("/"))
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+        for name in expected
+    )
+    if (
+        unsafe
+        or not expected
+        or len(expected) != len(files)
+        or observed - metadata != expected
+        or READY_SENTINEL_NAME not in observed
+        or (require_index and NATIVE_SNAPSHOT_INDEX_NAME not in observed)
+    ):
+        raise ValueError("retained artifact inventory differs from upstream")
+    if require_index:
+        index_response = client.get_object(
+            Bucket=bucket, Key=prefix + NATIVE_SNAPSHOT_INDEX_NAME
+        )
+        index_body = index_response["Body"]
+        try:
+            index = index_body.read(1024 * 1024 + 1)
+        finally:
+            index_body.close()
+        try:
+            index_names = index.decode("utf-8").splitlines()
+        except UnicodeDecodeError as exc:
+            raise ValueError("retained snapshot index is not UTF-8") from exc
+        if (
+            len(index) > 1024 * 1024
+            or len(index_names) != len(expected)
+            or set(index_names) != expected
+        ):
+            raise ValueError("retained snapshot index differs from upstream")
+    for name, source in files:
+        local_digest = hashlib.sha256()
+        local_size = 0
+        with source.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                local_digest.update(chunk)
+                local_size += len(chunk)
+        response = client.get_object(Bucket=bucket, Key=prefix + name)
+        body = response["Body"]
+        try:
+            if (
+                type(response.get("ContentLength")) is not int
+                or response.get("ContentLength") != local_size
+            ):
+                raise ValueError("retained object extent differs from upstream")
+            remote_digest = hashlib.sha256()
+            size = 0
+            while chunk := body.read(min(1024 * 1024, local_size - size + 1)):
+                size += len(chunk)
+                if size > local_size:
+                    raise ValueError("retained object exceeds its declared extent")
+                remote_digest.update(chunk)
+            if size != local_size or remote_digest.digest() != local_digest.digest():
+                raise ValueError("retained object bytes differ from upstream")
+        finally:
+            body.close()
 
 
 def _skip_snapshot_file(root: Path, path: Path) -> bool:

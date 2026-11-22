@@ -133,10 +133,9 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
 
 ## Evidence Preconditions
 
-Every lane records reconstructable source and build identity plus actual check execution under
+Every lane records build identity and actual check execution under
 [the testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary).
-A stale baked image, missing retained artifact, skipped required fixture, directory marker, or DOM
-mount node does not demonstrate the requested behavior. Memory probes fail closed when required
+Agents rebuild packages and images as appropriate before testing. A missing retained artifact, skipped required fixture, directory marker, or DOM mount node does not demonstrate the requested behavior. Memory probes fail closed when required
 usage observations are unavailable. Local and remote artifact accounting exercise the same complete
 supported layout and explicitly refuse unsupported shards.
 
@@ -259,7 +258,9 @@ Hardware-specific validation runs on the machine that owns the changed path.
   `ClientCreateContext` plus the broker-backed context summary, context rename/soft-delete
   through `ClientRenameContext` / `ClientSoftDeleteContext` and `ServerContextListPatch`, and a
   routed unknown-model `ClientCreateContext` backend rejection with typed `ServerError`. Browser
-  artifact payloads live in `web/test/fixtures/artifactSamples.js`.
+  artifact payloads live in `web/test/fixtures/artifactSamples.js`. A focused browser regression
+  also verifies that a file-selection event arriving after an upload form is replaced retains the
+  file and produces exactly one upload.
 - the Apple host-native routed E2E lane also fails if the clustered routed surface cannot keep
   `apiUpstream.mode = cluster-demo`, preserve one browser-visible base URL, match the Apple
   publication payload `daemonLocation = cluster-pod`, advertise

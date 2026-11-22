@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — Sprint 4.50 has validated code-side closure. Wave R4 is the remaining cohort gate.
+**Status**: Done
 
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
@@ -12,15 +12,15 @@
 
 ## Phase Status
 
-Sprints 4.1–4.49 retain their closed headings and only their established scope. Sprint 4.50 makes the cache commands address the engine-consumed tree and report observed state, publishes readiness only after verification, applies one checkpoint-selection policy to the local and staged-object paths, and adds the behavioral acceptance a claimed inference success must clear.
+Sprints 4.1–4.50 are complete. Sprint 4.50 made the cache commands address the engine-consumed tree and report observed state, published readiness only after verification, applied one checkpoint-selection policy to the local and staged-object paths, and added the behavioral acceptance a claimed inference success must clear.
 
-The existing Phase 4 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) is retained for the source and assertions it records; it does not close these new criteria.
+The newest Phase 4 row in [Recorded Attestations](cohort-validation-waves.md#recorded-attestations) closes Sprint 4.50; the earlier row remains scoped to the source and assertions it records.
 
-Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 4.50 code-side closure is implemented and validated on native Linux amd64. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R4 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. Neither lane has validated the new criteria. A pending wave is validation-only once the machine-independent gates pass.
+Implementation follows the named code-side prerequisites below; pending accelerator scheduling alone does not block subsequent implementation. Sprint 4.50 requires a real cache lifecycle integration check and explicit required-success inference cases. The selected sign-off is `apple-silicon` plus native `linux-cpu`, recorded in Wave R4 in [cohort-validation-waves.md](cohort-validation-waves.md), against one frozen implementation. The current paired suites pass while the cache lifecycle step checks only unauthenticated access and the per-model loop accepts typed refusals. Those outcomes do not establish the required cache cycle or inference successes. The realness harness also sets its engine-executed observation unconditionally, so it needs independent execution evidence.
 
 ## Current Repo Assessment
 
-The engine, Pulsar, artifact reader, and memory-admission modules exist. Sprint 4.50 owns real engine-consumed cache materialization/inspection/eviction/rebuild, consistent local and remote checkpoint accounting, and behavioral realness controls. A static guard reads source and cannot prove a model produced an output; a typed admission refusal is a refusal result and does not satisfy a required inference-success assertion. The behavioral acceptance bounds the accidental substitutions, not a forgery by an actor controlling the executor and the evidence store together.
+The engine, Pulsar, artifact reader, and memory-admission modules exist. Sprint 4.50 owns real engine-consumed cache materialization/inspection/eviction/rebuild, consistent local and remote checkpoint accounting, and behavioral realness controls. A static guard reads source and cannot prove a model produced an output; a typed admission refusal is a refusal result and does not satisfy a required inference-success assertion. The current realness harness must obtain an independent execution observation before it can establish the behavioral acceptance.
 
 ## Substrate Config Ownership Contract
 
@@ -3371,13 +3371,13 @@ None.
 
 ---
 
-## Sprint 4.50: Real Artifact Cache Lifecycle, Complete Accounting, and Behavioral Realness [Active]
+## Sprint 4.50: Real Artifact Cache Lifecycle, Complete Accounting, and Behavioral Realness [Done]
 
-**Status**: Active
-**Code-side closure**: The engine-consumed cache is observed rather than marked, readiness is published only after verification, one artifact-selection policy governs the local and staged-object paths, and the behavioral realness acceptance and its negative controls are implemented.
+**Status**: Done
+**Implementation state**: The engine-consumed cache is observed rather than marked, readiness is published only after verification, and one artifact-selection policy governs the local and staged-object paths. The integration harness exercises the real cache lifecycle (evict, rebuild, and inference against an unchanged durable inventory), takes each success's engine-execution flag from the engine's own log, and distinguishes required inference successes from refusal controls.
 **Cohort gate**: Wave R4 — selected `apple-silicon` plus native `linux-cpu`.
 **Blocked by**: nothing — Sprint 3.18 code-side closure is validated.
-**Implementation targets**: `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Enforcer.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Demo/Api.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Implementation targets**: `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Enforcer.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Objects/Upload.hs`, `src/Infernix/Demo/Api.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/realness_contract.md`, `documents/architecture/bounded_inference_memory.md`, `documents/architecture/model_catalog.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -3393,6 +3393,50 @@ establish a model-specific behavior.
 - Make status, eviction, and rebuild address that same cache and report typed missing, corrupt,
   unobservable, in-use, and verified-ready outcomes as appropriate. Preserve durable source
   objects; serialize replacement/eviction with execution and bound temporary space and cleanup.
+- Bound remote checkpoint observation and native hydration: existence checks use signed HEAD;
+  header reads retain no more than their requested prefix; and native cache downloads stream into
+  a locked staging file with a per-object cache-quota bound and verified extent. Refuse encoded,
+  overlong, truncated, or unverified responses before publishing a cache file.
+- Bound native snapshot inventory reads and downloads; validate all indexed paths before hydration
+  and use the same inventory parser for readiness observation.
+- Publish a bounded producer inventory of artifact paths, byte extents, and SHA-256 identities
+  before the durable readiness sentinel; consumers verify their downloaded bytes against it.
+- Validate the complete bounded upstream snapshot file set, including reserved names and non-regular
+  entries, before uploading any snapshot object.
+- For retained durable generations lacking an inventory, compare a fresh upstream download with
+  the complete retained object set before conditionally publishing identity metadata; preserve the
+  retained objects and sentinel on mismatch or observation failure.
+- Require a native artifact inventory before runner readiness, fetching it for warm legacy caches
+  and verifying the local generation before accepting it.
+- Fetch an available native artifact identity inventory through the bounded object downloader;
+  native readiness and cache observation must verify it before reporting verified state.
+- Distinguish an absent native identity sidecar from an unauthorized or failed HEAD response;
+  only an explicit not-found response may select the legacy no-inventory path.
+- Require the native cache observer to match all runner-required files against the producer inventory
+  and stream their SHA-256 digests through descriptor-relative file reads.
+- Traverse native inventory-bearing cache generations with bounded descriptor-relative enumeration,
+  refusing unlisted files, unexpected directories, and non-regular entries.
+- Validate the entire Python download key list for unsafe, duplicate, and conflicting paths before
+  creating cache directories or writing downloaded objects; cap collected object names and lengths.
+- Write Python cache objects through descriptor-relative directories and exclusive staging files,
+  refusing symlinked intermediate components and preserving the prior file on transfer failure.
+- Verify Python cache inventories and publish readiness relative to the held model-directory
+  descriptor; refuse symlinked inventory and weight paths.
+- Refuse fresh Python hydration when the durable generation lacks an identity inventory, before
+  creating the local destination or downloading any payload.
+- Reconcile a warm Python legacy cache by fetching the bounded durable inventory and verifying
+  every local file and the complete tree before publishing that inventory locally.
+- Refuse concurrent Python population or warm-cache reconciliation of the same model using a
+  cache-root population lease that rejects substituted lock files.
+- Refuse unlisted files, directories, or special entries in inventory-bearing Python cache
+  generations, using a bounded descriptor-relative traversal before readiness and on warm cache hits.
+- Bound a Python hydration's cumulative streamed object bytes by its configured cache quota and
+  refuse responses whose actual extents differ from their declared lengths.
+- Bound GGUF metadata lengths before host-offset conversion and limit nested metadata arrays.
+- Serialize Python LRU eviction with engine execution and cache mutation through a shared
+  cache-root model lease; report exhaustion when no idle eligible victim can free enough space.
+- Stage a native rebuild in a private candidate, retain the prior generation through verification,
+  and reconcile interrupted swaps under the model lease before an engine reads that cache.
 - Apply one artifact-selection/accounting policy to local and remote paths. Support a sharded
   model only with complete shard inventory, verified extents and aggregate resource requirements;
   otherwise reject it consistently. Warm cache state cannot select a smaller requirement.
@@ -3400,6 +3444,8 @@ establish a model-specific behavior.
 - Treat AST lint as a limited syntactic guard. Require independently chosen nondegenerate inputs,
   artifact/output validation, model identity, and an execution observation for each asserted
   inference success. A self-reported execution flag or well-shaped constant output is insufficient.
+- Validate source-separation ZIP local entries, central directory, extents, and CRCs for at least
+  two distinct non-silent PCM WAV stems; independent engine observation remains required.
 - Keep exact expected admission/requirement refusals in dedicated negative cases with no launch.
   Required success cases use supported models and adequate resources; refusal of such a case
   leaves its inference proof unmet.
@@ -3411,6 +3457,10 @@ establish a model-specific behavior.
 - Hydrate, infer, evict, and rebuild a real engine cache; verify changed local artifacts and real
   inference after rebuild while durable MinIO source identity is unchanged. Inject interruption
   before publication and assert no partial cache is advertised ready.
+- Exercise Python hydration against a controlled object-store fixture with valid, same-length
+  corrupt, and unlisted payloads; failures publish no local readiness marker.
+- Reconnect the artifact-bearing browser draft, replace its text in the same context, and verify
+  that submission carries the replacement text and selected uploads.
 - Present the same sharded artifact remotely and locally in different enumeration orders.
   Admission produces the same complete requirement or the same typed unsupported refusal.
 - Replace an adapter transform with a plausible constant, suppress the engine invocation, feed
@@ -3423,16 +3473,11 @@ establish a model-specific behavior.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R4's selected `apple-silicon` plus native `linux-cpu` full-suite
-results against one frozen implementation, including the hydrate-infer-evict-rebuild cycle against
-a real engine cache and the per-row behavioral acceptance. Apple hardware is unavailable on this
-Linux host. No new full-suite result is claimed.
-
-**Code-side evidence**: source `1ed8b3649558efa2ba74b8b3b5c72ea3f36504e08b08236bff140e52b4043fd2`; image `sha256:171ae789e19593cf1b3aed825e252c313e85049f4a29144d400d55e48352a5f1`; lint `.data/runtime/validation/run-Yw8iif/receipt.json`; unit `.data/runtime/validation/run-9HRNxB/receipt.json`.
+None. Closure evidence is the newest Phase 4 row in the [Recorded Attestations](cohort-validation-waves.md#recorded-attestations).
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R4's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 4.50 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+None. Closure evidence is the newest Phase 4 row in the [Recorded Attestations](cohort-validation-waves.md#recorded-attestations): the Apple full suite [run-gSQPVS](../.data/runtime/validation/run-gSQPVS/receipt.json) and the `linux-cpu` full suite [run-1F5B8L](../.data/runtime/validation/run-1F5B8L/receipt.json), each passing all 18 required gates and 21 of 21 browser tests on one source (inventory SHA-256 `41b02982c4d46e90196030ace41210a2dfb6c50973da0d0cfee4e22c776163d5`) with a stable source.
 
 ## Documentation Requirements
 

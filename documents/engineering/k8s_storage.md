@@ -70,3 +70,8 @@ prove reconstructed engine state; see [model lifecycle](model_lifecycle.md) and
 - [../tools/postgresql.md](../tools/postgresql.md)
 - [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
+
+Linux launcher clusters use direct retained-state bind mounts only when the retained root preserves
+non-root file ownership. When it does not, the lifecycle uses detached snapshot replay. For an
+existing cluster, it inspects every Kind node and refuses inconsistent or unexpected mount sources
+before choosing a storage transition.

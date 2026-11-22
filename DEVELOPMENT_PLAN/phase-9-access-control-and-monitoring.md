@@ -390,7 +390,7 @@ cross-user denial checks against the real backend. No new full-suite result is c
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R9's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 9.12 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R9's `apple-silicon` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprint 9.12 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

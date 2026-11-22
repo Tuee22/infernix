@@ -597,8 +597,15 @@ export const bindArtifactTransportImpl = (root) => (onUploaded) => (onError) => 
   // node, so retain the draft at the stable root and scope it by context.
   const uploadDrafts = new Map();
   const rememberUploadDraft = (event) => captureUploadDraft(uploadDrafts, event);
-  root.addEventListener("input", rememberUploadDraft);
-  root.addEventListener("change", rememberUploadDraft);
+  const bindUploadDraft = (form) => {
+    if (form.__infernixUploadDraftBound) return;
+    form.__infernixUploadDraftBound = true;
+    form.addEventListener("input", rememberUploadDraft);
+    form.addEventListener("change", rememberUploadDraft);
+  };
+  root.__infernixBindUploadDrafts = () =>
+    root.querySelectorAll("form[data-role='artifact-upload']").forEach(bindUploadDraft);
+  root.__infernixBindUploadDrafts();
   // The PureScript renderer intentionally replaces artifact cards. Download
   // grants are session state, not node state, so replay completed previews
   // into each replacement card rather than making a late patch erase them.
@@ -628,4 +635,9 @@ export const bindArtifactTransportImpl = (root) => (onUploaded) => (onError) => 
       onError(error.message)();
     });
   });
+};
+
+// Renderers replace forms, so bind before a file selection can outlive its node.
+export const refreshUploadDraftBindings = (root) => () => {
+  root.__infernixBindUploadDrafts?.();
 };

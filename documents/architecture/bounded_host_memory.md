@@ -147,7 +147,12 @@ exists to prevent; the inference half is owned by
 [bounded_inference_memory.md](bounded_inference_memory.md).
 
 The shipped operator image declares its own bounded reservation for the same reason, and that
-reservation is sized for the host reserve rather than for a toolchain slot. It is address space
+reservation is larger than a toolchain slot (8192 MiB, against the 1024 MiB slot-sized value that
+stopped the host inference daemon with `out of memory`) but must stay at least 4096 MiB below the smallest
+per-process ceiling the planner mints (12288 MiB). A runner that lowers its own address-space limit
+below a reservation it already holds dies on its next allocation with
+`Unable to commit 1048576 bytes of memory`; an earlier 16384 MiB reservation did exactly that,
+intermittently, on every Linux pool below about 15.8 GiB. It is address space
 rather than resident memory, but it is also the only thing bounding that image's heap growth,
 because the runtime cannot grow a heap past the address space it reserved. The validation surface
 starts the host inference daemon from this image, and the daemon is a host-reserve claimant that

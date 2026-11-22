@@ -2,40 +2,45 @@
 
 module Infernix.Objects.Upload
   ( ObjectUploadConfig (..),
+    ObjectHeadOutcome (..),
     putObjectWithPresignedUrl,
     getObjectWithPresignedUrl,
     getObjectPrefixWithPresignedUrl,
+    getObjectSuffixWithPresignedUrl,
+    getObjectEdgesWithPresignedUrl,
+    copyObjectToHandleWithPresignedUrl,
     listObjectKeysWithPresignedUrl,
-    objectExistsViaPresignedGet,
+    objectExistsViaPresignedHead,
+    observeObjectViaPresignedHead,
   )
 where
 
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
-import Data.Char (isDigit)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
 import Data.Time (UTCTime)
+import Infernix.Objects.BoundedHttp qualified as BoundedHttp
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Web.Contracts qualified as Contracts
 import Network.HTTP.Client
   ( Manager,
     RequestBody (RequestBodyLBS),
     ResponseTimeout,
+    checkResponse,
     httpLbs,
+    httpNoBody,
     method,
     parseRequest,
     requestBody,
-    requestHeaders,
     responseBody,
-    responseHeaders,
     responseStatus,
     responseTimeout,
     responseTimeoutMicro,
   )
 import Network.HTTP.Types.Status (statusCode)
-import Text.Read (readMaybe)
+import System.IO (Handle)
 
 data ObjectUploadConfig = ObjectUploadConfig
   { objectUploadScheme :: Text,
@@ -84,10 +89,6 @@ getObjectWithPresignedUrl uploadConfig manager now objectRef = do
     then pure (LazyByteString.toStrict (responseBody response))
     else fail ("MinIO artifact download returned HTTP " <> show responseCode)
 
--- | Probe whether an object exists by issuing a presigned GET and treating an
--- HTTP 200 as present. Keeps the @Infernix.Objects.Presigned@ dependency inside
--- this object-access wrapper so engine runtime modules stay off the presign
--- boundary enforced by the Haskell-style gate.
 -- | Phase 4 Sprint 4.43 — the object keys staged under one prefix.
 --
 -- A model is staged one of two ways: a single upstream file becomes one
@@ -173,26 +174,42 @@ maximumObjectListingKeysPerPage = 1000
 maximumObjectListingPages :: Int
 maximumObjectListingPages = 8
 
-objectExistsViaPresignedGet :: ObjectUploadConfig -> Manager -> UTCTime -> Contracts.ObjectRef -> IO Bool
-objectExistsViaPresignedGet uploadConfig manager now objectRef = do
-  request <-
+-- | Test existence without downloading the model object. S3 authorizes HEAD
+-- using the same object-read permission as GET, but the method must be signed.
+objectExistsViaPresignedHead :: ObjectUploadConfig -> Manager -> UTCTime -> Contracts.ObjectRef -> IO Bool
+objectExistsViaPresignedHead uploadConfig manager now objectRef =
+  (== ObjectHeadPresent) <$> observeObjectViaPresignedHead uploadConfig manager now objectRef
+
+-- | Absence is distinct from an authorization or service failure. A caller
+-- that uses absence to choose a legacy path must inspect this outcome.
+data ObjectHeadOutcome = ObjectHeadPresent | ObjectHeadMissing | ObjectHeadUnavailable Int
+  deriving (Eq, Show)
+
+observeObjectViaPresignedHead :: ObjectUploadConfig -> Manager -> UTCTime -> Contracts.ObjectRef -> IO ObjectHeadOutcome
+observeObjectViaPresignedHead uploadConfig manager now objectRef = do
+  initialRequest <-
     parseRequest
       ( Text.unpack
           ( Presigned.unPresignedUrl
-              (Presigned.presignedGetUrl (presignedUrlConfig uploadConfig) now objectRef)
+              (Presigned.presignedHeadUrl (presignedUrlConfig uploadConfig) now objectRef)
           )
       )
-  response <- httpLbs request manager
-  pure (statusCode (responseStatus response) == 200)
+  let request =
+        initialRequest
+          { method = "HEAD",
+            checkResponse = \_ _ -> pure (),
+            responseTimeout = objectRequestTimeout
+          }
+  response <- httpNoBody request manager
+  pure $
+    case statusCode (responseStatus response) of
+      200 -> ObjectHeadPresent
+      404 -> ObjectHeadMissing
+      other -> ObjectHeadUnavailable other
 
--- | Phase 4 Sprint 4.39 — read a bounded leading prefix of a staged object, and
--- report the object's own total size alongside it.
---
--- This is how a machine derives a model's memory requirement from a checkpoint
--- it has not downloaded: the tensor table lives in the artifact's first few
--- kilobytes, and a ranged read fetches exactly those. Returns 'Nothing' when the
--- object is absent, so a model the coordinator has not staged yet is a missing
--- observation rather than a failed one.
+-- | Retain at most the requested prefix, even if a server ignores Range or lies
+-- about Content-Length. A partial response must describe exactly the bytes
+-- returned and the object's total extent; an unproved extent is a refusal.
 getObjectPrefixWithPresignedUrl ::
   ObjectUploadConfig ->
   Manager ->
@@ -200,7 +217,48 @@ getObjectPrefixWithPresignedUrl ::
   Contracts.ObjectRef ->
   Int ->
   IO (Maybe (ByteString.ByteString, Integer))
-getObjectPrefixWithPresignedUrl uploadConfig manager now objectRef requestedBytes = do
+getObjectPrefixWithPresignedUrl uploadConfig manager now objectRef requestedBytes
+  | requestedBytes <= 0 = pure Nothing
+  | otherwise = do
+      initialRequest <-
+        parseRequest
+          ( Text.unpack
+              ( Presigned.unPresignedUrl
+                  (Presigned.presignedGetUrl (presignedUrlConfig uploadConfig) now objectRef)
+              )
+          )
+      BoundedHttp.readObjectPrefix initialRequest manager objectRequestTimeout requestedBytes
+
+-- | Read and verify a bounded tail without downloading the entire object.
+getObjectSuffixWithPresignedUrl ::
+  ObjectUploadConfig ->
+  Manager ->
+  UTCTime ->
+  Contracts.ObjectRef ->
+  Int ->
+  IO (Maybe (ByteString.ByteString, Integer))
+getObjectSuffixWithPresignedUrl uploadConfig manager now objectRef requestedBytes
+  | requestedBytes <= 0 = pure Nothing
+  | otherwise = do
+      initialRequest <-
+        parseRequest
+          ( Text.unpack
+              ( Presigned.unPresignedUrl
+                  (Presigned.presignedGetUrl (presignedUrlConfig uploadConfig) now objectRef)
+              )
+          )
+      BoundedHttp.readObjectSuffix initialRequest manager objectRequestTimeout requestedBytes
+
+-- | Read both edges conditionally from the same strong object version.
+getObjectEdgesWithPresignedUrl ::
+  ObjectUploadConfig ->
+  Manager ->
+  UTCTime ->
+  Contracts.ObjectRef ->
+  Int ->
+  Int ->
+  IO (Maybe (ByteString.ByteString, ByteString.ByteString, Integer))
+getObjectEdgesWithPresignedUrl uploadConfig manager now objectRef prefixBytes suffixBytes = do
   initialRequest <-
     parseRequest
       ( Text.unpack
@@ -208,39 +266,27 @@ getObjectPrefixWithPresignedUrl uploadConfig manager now objectRef requestedByte
               (Presigned.presignedGetUrl (presignedUrlConfig uploadConfig) now objectRef)
           )
       )
-  let rangeHeader =
-        ByteString.concat
-          [ "bytes=0-",
-            Text.encodeUtf8 (Text.pack (show (max 0 (requestedBytes - 1))))
-          ]
-      request =
-        initialRequest
-          { requestHeaders = ("Range", rangeHeader) : requestHeaders initialRequest,
-            responseTimeout = objectRequestTimeout
-          }
-  response <- httpLbs request manager
-  let responseCode = statusCode (responseStatus response)
-      body = LazyByteString.toStrict (responseBody response)
-  if responseCode < 200 || responseCode >= 300
-    then pure Nothing
-    else
-      pure
-        ( fmap
-            (body,)
-            (objectTotalBytes (responseHeaders response) (ByteString.length body))
-        )
+  BoundedHttp.readObjectEdges initialRequest manager objectRequestTimeout prefixBytes suffixBytes
 
--- | The object's total size: from @Content-Range@ when the server honoured the
--- range, and otherwise the length of what it actually returned, because a server
--- that ignores the range answers with the whole object.
-objectTotalBytes :: [(a, ByteString.ByteString)] -> Int -> Maybe Integer
-objectTotalBytes headers bodyLength =
-  case [value | (_, value) <- headers, "bytes " `ByteString.isPrefixOf` value] of
-    value : _ ->
-      case Text.splitOn "/" (Text.decodeUtf8Lenient value) of
-        [_, totalText] -> readMaybe (Text.unpack (Text.filter isDigit totalText))
-        _ -> Just (toInteger bodyLength)
-    [] -> Just (toInteger bodyLength)
+-- | Stream a complete signed object into the caller's staging handle. The
+-- bounded kernel verifies the response extent before reporting success.
+copyObjectToHandleWithPresignedUrl ::
+  ObjectUploadConfig ->
+  Manager ->
+  UTCTime ->
+  Contracts.ObjectRef ->
+  Integer ->
+  Handle ->
+  IO (Either Text Integer)
+copyObjectToHandleWithPresignedUrl uploadConfig manager now objectRef limit handle = do
+  request <-
+    parseRequest
+      ( Text.unpack
+          ( Presigned.unPresignedUrl
+              (Presigned.presignedGetUrl (presignedUrlConfig uploadConfig) now objectRef)
+          )
+      )
+  BoundedHttp.copyObjectToHandle request manager objectRequestTimeout limit handle
 
 presignedUrlConfig :: ObjectUploadConfig -> Presigned.PresignedUrlConfig
 presignedUrlConfig uploadConfig =

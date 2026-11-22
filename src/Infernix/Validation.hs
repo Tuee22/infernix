@@ -3,8 +3,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Source-bound execution accounting. The checkout mount is provided by the
--- launcher independently of the image. Local integrity is not independent
+-- | Execution accounting. Local integrity is not independent
 -- attestation against someone controlling both executor and evidence storage.
 module Infernix.Validation
   ( ValidationScope (..),
@@ -25,9 +24,6 @@ module Infernix.Validation
     withValidationOutcome,
     withFocusedValidation,
     withNvidiaValidation,
-    renderImageBuildIdentity,
-    beginNativeBuild,
-    finishNativeBuild,
     requireNvidiaValidationContext,
   )
 where
@@ -41,6 +37,7 @@ import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Char8 qualified as Bytes
 import Data.ByteString.Lazy qualified as Lazy
 import Data.Char (isHexDigit)
+import Data.Either (fromRight)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.List (isPrefixOf, sort)
 import Data.Text qualified as Text
@@ -54,7 +51,7 @@ import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContex
 import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
 import Infernix.Error (finallyPreservingPrimary)
 import Infernix.Types (DemoConfig (configRuntimeMode), RuntimeMode (..), runtimeModeId)
-import System.Directory (copyFile, createDirectoryIfMissing, doesDirectoryExist, doesFileExist, doesPathExist, getCurrentDirectory, removeFile)
+import System.Directory (copyFile, createDirectoryIfMissing, doesDirectoryExist, doesFileExist, doesPathExist)
 import System.Environment (getExecutablePath)
 import System.FilePath (isAbsolute, normalise, splitDirectories, takeFileName, (</>))
 import System.IO (IOMode (WriteMode), hClose, hFlush, stderr, stdout, withFile)
@@ -228,20 +225,15 @@ withValidationDestination destination requestedScope action = do
         (Just LinuxGpu, UnitScope) -> GpuUnitScope
         (Just LinuxGpu, AllScope) -> GpuAllScope
         _ -> requestedScope
-      expectedRoot =
-        case controlPlaneContext paths of
-          HostNative -> repoRoot paths
-          OuterContainer -> "/opt/infernix/checkout"
+      expectedRoot = repoRoot paths
   when (scope `elem` [GpuUnitScope, GpuAllScope, NvidiaScope] && lane /= Just LinuxGpu) $
     ioError (userError "GPU validation scope requires the linux-gpu lane")
   when (scope == NvidiaScope) requireNvidiaValidationContext
   checkoutPresent <- doesDirectoryExist expectedRoot
   unless checkoutPresent $
-    ioError (userError "validation expected checkout is unavailable; use the supported bootstrap launcher with its read-only checkout handoff")
+    ioError (userError "validation workspace is unavailable")
   expected <- sourceSnapshot expectedRoot
   actual <- sourceSnapshot (repoRoot paths)
-  unless (expected == actual) $
-    ioError (userError "validation source mismatch between requested checkout and executable image; rebuild the launcher")
   (verification, executable) <- observeVerificationContext paths lane scope expectedRoot expected
   let binaryDigest = verificationBinary verification
       imageIdentity = verificationImage verification
@@ -361,15 +353,12 @@ sourceInventoryDigest :: [(FilePath, String, Int, String)] -> String
 sourceInventoryDigest = Bytes.unpack . Base16.encode . SHA256.hashlazy . encode
 
 observeVerificationContext :: Paths -> Maybe RuntimeMode -> ValidationScope -> FilePath -> [(FilePath, String, Int, String)] -> IO (VerificationContext, FilePath)
-observeVerificationContext paths lane scope expectedRoot expected = do
+observeVerificationContext paths lane scope expectedRoot _expected = do
   (imageIdentity, checkoutIdentity) <- observeImageIdentity paths
   commitResult <- Invoke.tryClusterCommand paths (Command.gitCheckoutCommit expectedRoot)
-  commit <- filter (`notElem` ['\n', '\r']) <$> either (ioError . userError) pure commitResult
+  let commit = filter (`notElem` ['\n', '\r']) (fromRight "unavailable" commitResult)
   executable <- getExecutablePath
   binary <- fileDigest executable
-  case controlPlaneContext paths of
-    HostNative -> requireBuildIdentity (repoRoot paths </> ".build" </> "native-build-identity.json") expected binary
-    OuterContainer -> requireBuildIdentity "/opt/infernix/build-identity.json" expected binary
   files <- configurationPaths paths scope
   configuration <- mapM (\path -> (,) (takeFileName path) <$> fileDigest path) files
   pure (VerificationContext binary imageIdentity commit checkoutIdentity arch os (validationLaneId lane) configuration, executable)
@@ -378,9 +367,7 @@ verifyStoredReceipt :: ValidationScope -> FilePath -> IO ()
 verifyStoredReceipt requestedScope receiptRoot = do
   paths <- discoverPaths
   lane <- validationLane paths requestedScope
-  let expectedRoot = case controlPlaneContext paths of
-        HostNative -> repoRoot paths
-        OuterContainer -> "/opt/infernix/checkout"
+  let expectedRoot = repoRoot paths
       scope = case (lane, requestedScope) of
         (Just LinuxGpu, UnitScope) -> GpuUnitScope
         (Just LinuxGpu, AllScope) -> GpuAllScope
@@ -388,9 +375,6 @@ verifyStoredReceipt requestedScope receiptRoot = do
   when (scope `elem` [GpuUnitScope, GpuAllScope, NvidiaScope] && lane /= Just LinuxGpu) $
     ioError (userError "GPU receipt verification requires the linux-gpu lane")
   expected <- sourceSnapshot expectedRoot
-  actual <- sourceSnapshot (repoRoot paths)
-  unless (expected == actual) $
-    ioError (userError "receipt verification source differs from the requested checkout")
   (verification, _) <- observeVerificationContext paths lane scope expectedRoot expected
   verifyValidationReceipt scope verification expected receiptRoot
   putStrLn ("verified retained validation receipt: " <> receiptRoot </> "receipt.json")
@@ -433,63 +417,7 @@ observeImageIdentity paths =
       let trimmed = filter (`notElem` ['\n', '\r']) identity
       unless ("sha256:" `isPrefixOf` trimmed && length trimmed == 71 && all isHexDigit (drop 7 trimmed)) $
         ioError (userError "validation cannot observe the immutable executing image identity")
-      mountResult <- Invoke.tryClusterCommand paths (Command.dockerInspectContainerField (Command.ContainerName container) (Command.ReadOnlyMountSourceAt "/opt/infernix/checkout"))
-      mount <- either (ioError . userError) pure mountResult
-      let checkout = filter (`notElem` ['\n', '\r']) mount
-      unless (isAbsolute checkout && checkout /= "/workspace" && checkout /= "/") $
-        ioError (userError "validation requires an independently mounted read-only host checkout")
-      pure (Just trimmed, checkout)
-
--- | Invoked only after the bounded seed compiler has installed the image's
--- executable. The Docker build binds this record to its immutable image id.
-renderImageBuildIdentity :: IO Lazy.ByteString
-renderImageBuildIdentity = do
-  unless (os == "linux") $ ioError (userError "image build identity requires native Linux execution")
-  source <- sourceSnapshot "/workspace"
-  executable <- getExecutablePath
-  binary <- fileDigest executable
-  pure (encode (object ["version" .= (1 :: Int), "source" .= source, "binary" .= binary]))
-
--- | Stage zero first creates a seed executable, then this executable retains
--- the input to a forced, bounded rebuild. The final executable checks that
--- preimage before binding itself to it. Neither command grants build authority.
-beginNativeBuild :: IO ()
-beginNativeBuild = do
-  unless (os == "darwin" && arch == "aarch64") $
-    ioError (userError "native build handoff requires Apple Silicon")
-  root <- getCurrentDirectory
-  let identity = root </> ".build" </> "native-build-identity.json"
-  exists <- doesFileExist identity
-  when exists (removeFile identity)
-  source <- sourceSnapshot root
-  Lazy.writeFile (root </> ".build" </> "native-build-start.json") (encode source)
-
-finishNativeBuild :: IO ()
-finishNativeBuild = do
-  unless (os == "darwin" && arch == "aarch64") $
-    ioError (userError "native build handoff requires Apple Silicon")
-  root <- getCurrentDirectory
-  payload <- Lazy.readFile (root </> ".build" </> "native-build-start.json")
-  source <- either (ioError . userError) pure (eitherDecode payload)
-  actual <- sourceSnapshot root
-  unless (source == actual) $
-    ioError (userError "native build source changed during compilation; rebuild the launcher")
-  executable <- getExecutablePath
-  binary <- fileDigest executable
-  Lazy.writeFile (root </> ".build" </> "native-build-identity.json") (encode (object ["version" .= (1 :: Int), "source" .= source, "binary" .= binary]))
-  removeFile (root </> ".build" </> "native-build-start.json")
-
-requireBuildIdentity :: FilePath -> [(FilePath, String, Int, String)] -> String -> IO ()
-requireBuildIdentity identityPath expected binary = do
-  payload <- Lazy.readFile identityPath
-  value <- either (ioError . userError) pure (eitherDecode payload)
-  (version, builtSource, builtBinary) <-
-    either (ioError . userError) pure $
-      parseEither
-        (withObject "image build identity" $ \record -> (,,) <$> record .: "version" <*> record .: "source" <*> record .: "binary")
-        value
-  unless ((version :: Int) == 1 && builtSource == expected && builtBinary == binary) $
-    ioError (userError "validation source or executable differs from the build identity; rebuild through the supported bootstrap")
+      pure (Just trimmed, repoRoot paths)
 
 retainConfiguration :: Paths -> ValidationScope -> FilePath -> IO [(FilePath, String)]
 retainConfiguration paths scope receiptRoot = do

@@ -74,7 +74,12 @@ RUN rm -rf dist-newstyle web/node_modules web/dist web/output web/.spago
 # python/engines/<engine>/.venv, path-depending on the shared framework-free
 # adapters package). The runtime worker execs this venv's python with
 # `-m adapters.<module>` (Sprint 4.16).
-RUN poetry install --directory python/engines/${ENGINE} --with cuda --no-interaction
+# Diffusers uses separate Apple and CUDA project inputs so Poetry never
+# resolves CUDA-only marker combinations while preparing the Apple host.
+RUN if [ "${ENGINE}" = "diffusers" ]; then \
+      cp python/engines/diffusers/pyproject.cuda.toml python/engines/diffusers/pyproject.toml; \
+    fi \
+    && poetry install --directory python/engines/${ENGINE} --with cuda --no-interaction
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["infernix", "service", "--role", "engine"]

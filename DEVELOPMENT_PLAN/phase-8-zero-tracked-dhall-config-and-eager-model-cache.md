@@ -1171,7 +1171,7 @@ configuration contract.
 
 ### Validation
 
-- Build a clean launcher from source-bound inputs, decode its actual generated defaults, and
+- Build a clean launcher from inputs, decode its actual generated defaults, and
   exercise explicit initialization plus deployed role mirrors. Zero tracked Dhall alone is
   insufficient.
 - Reintroduce a handwritten seed record, change a default/policy without regeneration, remove a
@@ -1192,7 +1192,7 @@ No new full-suite result is claimed.
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R8's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprint 8.15 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R8's `apple-silicon` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprint 8.15 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

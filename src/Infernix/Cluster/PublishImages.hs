@@ -1086,9 +1086,9 @@ buildRegistryOverridesValue publishedImages = do
   -- `infernixMinio.image` / `clientImage` / `initImage` to the
   -- registry-mirrored refs after publication, replacing the retired
   -- bitnami sub-chart's per-component overlay structure.
-  minioImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/minio:RELEASE.2025-09-07T16-13-09Z" publishedImages)
+  minioImage <- requireDiscoveredImage (Map.lookup "cgr.dev/chainguard/minio:latest@sha256:db3f583fa49121942168bd6383a773b2cde3384c9a99bf7193560b9a0f3a28fd" publishedImages)
   minioInitImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/busybox:1.36" publishedImages)
-  minioClientImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/mc:RELEASE.2025-08-13T08-35-41Z" publishedImages)
+  minioClientImage <- requireDiscoveredImage (Map.lookup "cgr.dev/chainguard/minio-client:latest@sha256:6630e209cc3d49ec347ddeba55f581c1af6c8b708b65d11435c69115607e458b" publishedImages)
   pulsarImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/pulsar-all:4.0.9" publishedImages)
   postgresOperatorPublished <- requireDiscoveredImage (Map.lookup postgresOperatorImage publishedImages)
   postgresDatabasePublished <- requireDiscoveredImage (Map.lookup postgresDatabaseImage publishedImages)

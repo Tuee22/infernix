@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Phase 4 Sprint 4.39 — read a model checkpoint's tensor table from a bounded
--- prefix of the artifact, without loading the checkpoint.
+-- | Read model checkpoint tensor or storage metadata from bounded artifact
+-- regions, without loading the checkpoint.
 --
 -- Nothing here estimates. A checkpoint header states, per tensor, the dtype, the
 -- shape, and the byte range those elements occupy, and those are the bytes the
@@ -10,9 +10,10 @@
 -- streamed load has to hold at once — a different quantity from the total, which
 -- is why both are reported.
 --
--- Three formats are read: safetensors, GGUF, and whisper.cpp's legacy GGML
--- container. Safetensors and GGUF put a complete tensor table in a bounded
--- prefix. Legacy Whisper interleaves tensor records with tensor payloads, so
+-- Four formats are read: safetensors, GGUF, PyTorch ZIP, and whisper.cpp's
+-- legacy GGML container. Safetensors and GGUF put a complete tensor table in a bounded
+-- prefix. PyTorch ZIP pairs non-executed pickle storage declarations with a
+-- bounded directory. Legacy Whisper interleaves tensor records with payloads, so
 -- its fixed header can establish the family and execution geometry but not a
 -- prefix-indexed tensor sum. For that host-resident format the actual object
 -- extent is the conservative weight charge; it is still a fact of the
@@ -25,6 +26,9 @@ module Infernix.Models.Artifact
     artifactHeaderPrefixBudgetBytes,
     artifactHeaderErrorText,
     artifactHeaderStagedPrefixBytes,
+    artifactHeaderStagedSuffixBytes,
+    artifactIsTorchZip,
+    readTorchArtifactEdges,
     readArtifactHeader,
     readArtifactHeaderWithSize,
     readGgufHeaderBytes,
@@ -33,6 +37,7 @@ module Infernix.Models.Artifact
 where
 
 import Control.Exception (IOException, try)
+import Control.Monad (when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson (FromJSON (parseJSON), Value (Object), withObject, (.:))
 import Data.Aeson qualified as Aeson
@@ -42,11 +47,12 @@ import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
-import Data.List (sortOn)
+import Data.List (mapAccumL, sortOn)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import System.IO (IOMode (ReadMode), hFileSize, withBinaryFile)
+import Infernix.Models.TorchZip (readTorchZip)
+import System.IO (IOMode (ReadMode), SeekMode (AbsoluteSeek), hFileSize, hSeek, withBinaryFile)
 
 -- | One entry of a checkpoint's tensor table.
 data ArtifactTensor = ArtifactTensor
@@ -63,7 +69,7 @@ data ArtifactTensor = ArtifactTensor
   }
   deriving (Eq, Show)
 
--- | A checkpoint's tensor table plus the exact prefix it was read from.
+-- | A checkpoint's tensor or storage table and the metadata read to derive it.
 data ArtifactHeader = ArtifactHeader
   { artifactHeaderTensors :: [ArtifactTensor],
     -- | Total weight bytes: the sum over the table.
@@ -71,14 +77,11 @@ data ArtifactHeader = ArtifactHeader
     -- | The largest single entry — the staging bound a streamed load holds at
     -- once, which is not the total and is not derivable from it.
     artifactHeaderLargestTensorBytes :: Integer,
-    -- | How many bytes of the artifact this derivation actually read.
+    -- | How many metadata bytes this derivation actually read.
     artifactHeaderPrefixBytes :: Integer,
-    -- | The digest of exactly those bytes.
-    --
-    -- It covers the prefix and deliberately not the payload: digesting the whole
-    -- artifact to avoid reading the whole artifact is circular. A requirement is
-    -- therefore a statement about one exact header rather than about whatever
-    -- currently sits at a path.
+    -- | Digest of the bounded metadata read. For ZIP this covers the prefix
+    -- followed by the suffix; for other formats it covers the prefix. It does
+    -- not establish the identity of unread weight payload bytes.
     artifactHeaderPrefixDigest :: Text,
     artifactHeaderFileBytes :: Integer
   }
@@ -188,6 +191,7 @@ readArtifactHeaderWithSize path fileBytes = do
     Right leading
       | leading == ggufMagic -> readGgufHeaderBytes path fileBytes
       | leading == whisperGgmlMagic -> readWhisperGgmlHeaderBytes path fileBytes
+      | leading == zipLocalFileMagic -> readTorchArtifactFile path fileBytes
       | otherwise -> readSafetensorsHeaderBytes path fileBytes
 
 -- | How many leading bytes a machine fetches when it derives a requirement from
@@ -195,6 +199,71 @@ readArtifactHeaderWithSize path fileBytes = do
 -- which is the larger of the two readers' needs and inside the prefix budget.
 artifactHeaderStagedPrefixBytes :: Int
 artifactHeaderStagedPrefixBytes = fromInteger ggufPrefixReadBytes
+
+-- PyTorch stores its tensor directory at the end of a ZIP archive. Both
+-- bounded edges are needed, and the pickle metadata is interpreted without
+-- importing or executing any of its named Python objects.
+artifactHeaderStagedSuffixBytes :: Int
+artifactHeaderStagedSuffixBytes = 1024 * 1024
+
+artifactIsTorchZip :: ByteString -> Bool
+artifactIsTorchZip = (== zipLocalFileMagic) . ByteString.take ggufMagicLength
+
+readTorchArtifactFile :: FilePath -> Integer -> IO (Either ArtifactHeaderError ArtifactHeader)
+readTorchArtifactFile path expectedBytes = do
+  result <- try $ withBinaryFile path ReadMode $ \handle -> do
+    actual <- hFileSize handle
+    prefix <- ByteString.hGet handle artifactHeaderStagedPrefixBytes
+    hSeek handle AbsoluteSeek (max 0 (actual - toInteger artifactHeaderStagedSuffixBytes))
+    suffix <- ByteString.hGet handle artifactHeaderStagedSuffixBytes
+    final <- hFileSize handle
+    pure (actual, final, prefix, suffix)
+  pure $ case result of
+    Left ioError' -> Left (ArtifactUnreadable (Text.pack (show (ioError' :: IOException))))
+    Right (actual, final, prefix, suffix)
+      | actual /= expectedBytes || final /= actual -> Left (ArtifactExtentMismatch expectedBytes actual)
+      | otherwise -> readTorchArtifactEdges actual prefix suffix
+
+readTorchArtifactEdges :: Integer -> ByteString -> ByteString -> Either ArtifactHeaderError ArtifactHeader
+readTorchArtifactEdges fileBytes prefix suffix = do
+  storages <- either (Left . torchArchiveError) Right (readTorchZip fileBytes prefix suffix)
+  let makeTensor offset (name, size) =
+        (offset + size, ArtifactTensor name [size] size offset)
+      (weightBytes, tensors) = mapAccumL makeTensor 0 storages
+      metadata = prefix <> suffix
+  pure
+    ArtifactHeader
+      { artifactHeaderTensors = tensors,
+        artifactHeaderWeightBytes = weightBytes,
+        artifactHeaderLargestTensorBytes = maximum (map snd storages),
+        artifactHeaderPrefixBytes = toInteger (ByteString.length metadata),
+        artifactHeaderPrefixDigest = prefixDigest metadata,
+        artifactHeaderFileBytes = fileBytes
+      }
+
+-- An unsupported reader feature is not evidence that retained bytes are
+-- corrupt. Proven structural contradictions remain malformed and may be
+-- repaired by the cache's existing integrity path.
+torchArchiveError :: Text -> ArtifactHeaderError
+torchArchiveError reason
+  | Text.isPrefixOf "unsupported " reason || reason `elem` unsupportedLimits =
+      ArtifactFamilyUnsupported ("PyTorch ZIP checkpoint: " <> reason)
+  | otherwise = ArtifactHeaderMalformed reason
+  where
+    unsupportedLimits =
+      [ "pickle missing from ZIP",
+        "checkpoint pickle is not protocol 2",
+        "pickle metadata exceeds the bounded checkpoint metadata budget",
+        "checkpoint pickle exceeds interpreter bounds",
+        "pickle string exceeds its bound",
+        "pickle memo index exceeds its bound",
+        "checkpoint storage exceeds its bound",
+        "ZIP directory outside bounded suffix",
+        "pickle outside bounded prefix"
+      ]
+
+zipLocalFileMagic :: ByteString
+zipLocalFileMagic = ByteString.pack [0x50, 0x4b, 0x03, 0x04]
 
 ggufMagic :: ByteString
 ggufMagic = "GGUF"
@@ -618,55 +687,60 @@ skipGgufMetadata prefix start count
 
 skipGgufString :: ByteString -> Int -> Either ArtifactHeaderError Int
 skipGgufString prefix offset
-  | offset + 8 > ByteString.length prefix =
+  | offset < 0 || offset > ByteString.length prefix - 8 =
       Left (ArtifactHeaderMalformed "a GGUF string length runs past the bounded prefix")
   | otherwise =
       let declared = decodeLittleEndian (sliceAt prefix offset 8)
-          end = offset + 8 + fromInteger declared
-       in if declared < 0 || end > ByteString.length prefix
+          available = ByteString.length prefix - offset - 8
+       in if declared > toInteger available
             then Left (ArtifactHeaderMalformed "a GGUF string runs past the bounded prefix")
-            else Right end
+            else Right (offset + 8 + fromInteger declared)
 
 skipGgufValue :: ByteString -> Int -> Integer -> Either ArtifactHeaderError Int
-skipGgufValue prefix offset valueType =
-  case valueType of
-    0 -> fixed 1
-    1 -> fixed 1
-    2 -> fixed 2
-    3 -> fixed 2
-    4 -> fixed 4
-    5 -> fixed 4
-    6 -> fixed 4
-    7 -> fixed 1
-    8 -> skipGgufString prefix offset
-    9 -> skipArray
-    10 -> fixed 8
-    11 -> fixed 8
-    12 -> fixed 8
-    _ ->
-      Left
-        ( ArtifactHeaderMalformed
-            ("the GGUF metadata declares the unknown value type " <> Text.pack (show valueType))
-        )
+skipGgufValue prefix = go (0 :: Int)
   where
-    fixed width
-      | offset + width <= ByteString.length prefix = Right (offset + width)
-      | otherwise =
-          Left (ArtifactHeaderMalformed "a GGUF scalar runs past the bounded prefix")
+    go depth cursor kind
+      | kind == 9 && depth >= 32 = Left (ArtifactHeaderMalformed "the GGUF metadata arrays exceed the nesting bound")
+      | otherwise = skipValue depth cursor kind
 
-    skipArray
-      | offset + 12 > ByteString.length prefix =
+    skipValue depth cursor kind =
+      case kind of
+        0 -> fixed cursor 1
+        1 -> fixed cursor 1
+        2 -> fixed cursor 2
+        3 -> fixed cursor 2
+        4 -> fixed cursor 4
+        5 -> fixed cursor 4
+        6 -> fixed cursor 4
+        7 -> fixed cursor 1
+        8 -> skipGgufString prefix cursor
+        9 -> skipArray depth cursor
+        10 -> fixed cursor 8
+        11 -> fixed cursor 8
+        12 -> fixed cursor 8
+        _ ->
+          Left
+            ( ArtifactHeaderMalformed
+                ("the GGUF metadata declares the unknown value type " <> Text.pack (show kind))
+            )
+
+    fixed cursor width
+      | cursor >= 0 && cursor <= ByteString.length prefix - width = Right (cursor + width)
+      | otherwise = Left (ArtifactHeaderMalformed "a GGUF scalar runs past the bounded prefix")
+
+    skipArray depth cursor
+      | cursor < 0 || cursor > ByteString.length prefix - 12 =
           Left (ArtifactHeaderMalformed "a GGUF array header runs past the bounded prefix")
       | otherwise =
-          let elementType = decodeLittleEndian (sliceAt prefix offset 4)
-              elementCount = decodeLittleEndian (sliceAt prefix (offset + 4) 8)
-           in skipArrayElements (offset + 12) elementType elementCount
+          let elementType = decodeLittleEndian (sliceAt prefix cursor 4)
+              elementCount = decodeLittleEndian (sliceAt prefix (cursor + 4) 8)
+           in skipArrayElements depth (cursor + 12) elementType elementCount
 
-    skipArrayElements cursor elementType remaining
+    skipArrayElements depth cursor elementType remaining
       | remaining <= 0 = Right cursor
       | otherwise = do
-          next <- skipGgufValue prefix cursor elementType
-          skipArrayElements next elementType (remaining - 1)
+          next <- go (depth + 1) cursor elementType
+          skipArrayElements depth next elementType (remaining - 1)
 
 readGgufTensorInfos ::
   ByteString ->
@@ -685,7 +759,9 @@ readGgufTensorInfos prefix start count
               tensorName = TextEncoding.decodeUtf8Lenient nameBytes
           dimensionCount <- requireScalar nameEnd 4
           let dimensionsStart = nameEnd + 4
-              dimensionWords = fromInteger dimensionCount
+          when (dimensionCount > toInteger ((ByteString.length prefix - dimensionsStart) `div` 8)) $
+            Left (ArtifactHeaderMalformed "the GGUF dimensions run past the bounded prefix")
+          let dimensionWords = fromInteger dimensionCount
           _ <- requireScalar dimensionsStart (8 * dimensionWords)
           let shape =
                 [ decodeLittleEndian (sliceAt prefix (dimensionsStart + 8 * index) 8)
@@ -708,7 +784,7 @@ readGgufTensorInfos prefix start count
             )
 
     requireScalar offset width
-      | offset + width <= ByteString.length prefix =
+      | offset >= 0 && width >= 0 && offset <= ByteString.length prefix - width =
           Right (decodeLittleEndian (sliceAt prefix offset width))
       | otherwise =
           Left

@@ -302,9 +302,6 @@ build_launcher() {
   ensure_build_prerequisites
   require_stage0_build_memory
   compile_launcher '+RTS -M4096M -xr12288M -RTS'
-  run_launcher internal native-build-begin
-  compile_launcher '-fforce-recomp +RTS -M4096M -xr12288M -RTS'
-  run_launcher internal native-build-finish
 }
 
 ensure_launcher_ready() {

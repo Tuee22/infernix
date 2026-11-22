@@ -28,7 +28,7 @@
   buildx and Compose plugins, and the GPU path adds only the supported NVIDIA driver and
   container-toolkit setup
 - hardware-specific validation runs on the machine that owns the accelerator; a cross-hardware
-  claim requires both Apple Silicon and CUDA Linux gates against the same source fingerprint
+  claim requires both Apple Silicon and CUDA Linux gates with appropriately rebuilt packages
 - the target bootstrap responsibility boundary keeps shell scripts out of Kind, Kubernetes
   manifests, and cluster workload image-pull orchestration: after prerequisites and the
   substrate-specific launcher are available, lifecycle commands are ordinary `infernix` binary
@@ -91,11 +91,7 @@ The first supported Apple host-native command that needs Kubernetes tooling, Nod
 Poetry reconciles those prerequisites automatically. Docker must already use the operator's native
 arm64 daemon; the workflow does not provision or switch Docker virtualization.
 
-The Apple bootstrap first builds a seed executable under the fixed stage-zero memory ceiling.
-That executable records the source input, then the bootstrap forces a second bounded compilation.
-The rebuilt executable checks that the source stayed unchanged and writes
-`./.build/native-build-identity.json`. Aggregate validation requires that identity to match both
-the current source and the running executable. A source edit requires another bootstrap build.
+The Apple bootstrap builds the host executable under the fixed stage-zero memory ceiling. Agents rebuild the relevant package or image as appropriate before testing to keep the executed code synchronized with the intended changes.
 
 ### Config Is Created by Explicit `init`
 
@@ -163,12 +159,7 @@ classic Docker image store, BuildKit's iidfile digest is the locally addressable
 containerd-backed store, the iidfile can instead name the OCI configuration while Docker's `.Id`
 names the locally addressable manifest. The wrappers inspect the just-built tag, require the
 iidfile digest to equal either `.Id` or the manifest descriptor's `config.digest`, and give Compose
-the immutable `.Id`; any other relationship refuses before launch. Compose launches a baked
-snapshot; the wrappers mount the checkout read-only at `/opt/infernix/checkout`
-so the binary can compare requested source with the image. The checkout is an observation input;
-compilation and execution use `/workspace`. Direct Compose validation must supply that same
-read-only mount with `--volume "$(pwd):/opt/infernix/checkout:ro"` on `run`. Validation binds the expected relevant
-source snapshot to the immutable image actually used, retaining dirty-source preimages when needed.
+the immutable `.Id`; any other relationship refuses before launch. Compose launches the baked image. Agents rebuild the image as appropriate before testing; validation does not compare it to the checkout.
 
 Aggregate, integration, and browser validation require runtime and test configuration to select the
 same lane. A mismatch refuses before checks start. The selected lane is rechecked before each gate,
@@ -178,7 +169,7 @@ For the `linux-gpu` suite, the binary dispatches the mandatory NVIDIA fixtures i
 container using that immutable image and explicitly requested devices. The ordinary outer launcher
 does not require a device mount. Each selected device fixture fails when its required observation
 is unavailable; CPU and Apple machine-independent suites do not claim NVIDIA execution.
-A mutable local tag alone does not establish freshness. See
+For the build handoff, see
 [Docker policy](../engineering/docker_policy.md#source-and-image-identity) and
 [execution evidence](../engineering/testing.md#execution-evidence-and-trust-boundary).
 
@@ -262,7 +253,7 @@ vectors internally; callers cannot supply a Cabal target or arbitrary test optio
   provisioning a VM. It is never exercised through cross-architecture emulation and does not
   replace CUDA Linux for GPU-sensitive claims.
 - Full cross-hardware evidence requires the Apple Silicon and CUDA Linux full-suite gates against
-  the same source fingerprint.
+  appropriately rebuilt packages.
 
 ## Engine Adapter Testing
 

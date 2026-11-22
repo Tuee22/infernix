@@ -12,6 +12,7 @@ module Infernix.Cluster.Internal
     RecordedNamespaceRelation (..),
     classifyAbsentConfigRecovery,
     clusterWorkloadArchitectureForHostArchitecture,
+    classifyKindMountSources,
     clusterDown,
     clusterDownHarness,
     clusterStatus,
@@ -35,6 +36,7 @@ module Infernix.Cluster.Internal
     RetainedReplayPlan (..),
     retainedReplayPlan,
     retainedReplayPending,
+    retainedRootPreservesOwnership,
     preWorkloadRecoveryIntentMatches,
     KindKubeconfigRecoveryPlan (..),
     kindKubeconfigRecoveryPlan,
@@ -79,6 +81,7 @@ module Infernix.Cluster.Internal
     runPlaywrightPrepareEngine,
     runKubectlCompat,
     writeGeneratedKindConfig,
+    writeGeneratedKindConfigWithMountMode,
   )
 where
 
@@ -93,7 +96,7 @@ import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isAlphaNum, isSpace)
-import Data.Either (isRight)
+import Data.Either (fromRight, isRight)
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List qualified as List
 import Data.List.NonEmpty qualified as NonEmpty
@@ -190,6 +193,7 @@ import System.FilePath (addTrailingPathSeparator, dropTrailingPathSeparator, nor
 import System.IO (hClose, hIsClosed, hPutStr, openBinaryTempFile)
 import System.IO.Error (isDoesNotExistError)
 import System.Info qualified
+import System.Posix.Files (fileGroup, fileOwner, getFileStatus, setOwnerAndGroup)
 import System.Posix.Process (createProcessGroupFor, getProcessGroupID, getProcessID)
 import System.Posix.Signals (nullSignal, signalProcessGroup)
 import Text.Read (readMaybe)
@@ -3917,7 +3921,7 @@ ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
   -- Repo-local claim mirrors stay broadly writable so Apple can sync them into Linux Kind nodes
   -- even though the macOS host filesystem cannot model those node-local container owners.
   chmodClaimDirectory paths directoryPath
-  case claimOwner persistentClaim of
+  case ClaimPermissions.claimOwner persistentClaim of
     Nothing -> pure ()
     Just owner
       | hostClaimOwnershipAlignmentSupported paths -> do
@@ -3975,12 +3979,6 @@ stripChownFailureNoise = takeWhile (/= '\n')
 hostClaimOwnershipAlignmentSupported :: Paths -> Bool
 hostClaimOwnershipAlignmentSupported paths =
   Config.controlPlaneContext paths == OuterContainer
-
-claimOwner :: PersistentClaim -> Maybe String
-claimOwner claimSpec
-  | workload claimSpec == "minio" && claim claimSpec == "data" = Just "1001:1001"
-  | "keycloak-postgresql" `List.isPrefixOf` Text.unpack (workload claimSpec) = Just "26:26"
-  | otherwise = Nothing
 
 ensureKindCluster ::
   Lease s ClusterMutationLocked ->
@@ -4721,25 +4719,10 @@ dockerImageReusableForHostBuild =
   dockerImageReusableWithSourceFingerprint
 
 dockerImageReusableWithSourceFingerprint :: String -> String -> String -> String -> IO Bool
-dockerImageReusableWithSourceFingerprint imageRef runtimeModeName targetArchitecture sourceFingerprint = do
+dockerImageReusableWithSourceFingerprint imageRef _runtimeModeName targetArchitecture _sourceFingerprint = do
   pushReusable <- dockerImageReusableForRegistryPush imageRef
   architectureMatches <- dockerImageInspectFieldEquals imageRef Command.ImageArchitecture targetArchitecture
-  fingerprintVersionMatches <-
-    dockerImageInspectFieldEquals
-      imageRef
-      Command.ClusterFingerprintVersion
-      clusterImageFingerprintVersion
-  runtimeModeMatches <-
-    dockerImageInspectFieldEquals imageRef Command.ClusterRuntimeMode runtimeModeName
-  fingerprintMatches <-
-    dockerImageInspectFieldEquals imageRef Command.ClusterSourceFingerprint sourceFingerprint
-  pure
-    ( pushReusable
-        && architectureMatches
-        && fingerprintVersionMatches
-        && runtimeModeMatches
-        && fingerprintMatches
-    )
+  pure (pushReusable && architectureMatches)
 
 -- Docker 29 + BuildKit may leave local repo-owned images as OCI indexes
 -- with provenance attestations. Registry publication is still Docker-push
@@ -4871,15 +4854,15 @@ preloadHostCachedWarmupImagesOnKindWorker paths state runtimeMode = do
 
 -- | Phase 3 Sprint 3.11 (2026-05-29): the warmup-preload list tracks
 -- the multi-arch upstream image inventory after the `bitnamilegacy/*`
--- retirement. The MinIO server image is `quay.io/minio/minio` (multi-arch); the
+-- retirement. The MinIO server image is `cgr.dev/chainguard/minio` (multi-arch); the
 -- volume-permissions init container uses `busybox` (multi-arch); the
 -- separate `minio-object-browser` Deployment was removed when
 -- `console.enabled` flipped to `false` in `chart/values.yaml`.
 hostCachedWarmupImageRefs :: [String]
 hostCachedWarmupImageRefs =
   [ "docker.io/apachepulsar/pulsar-all:4.0.9",
-    "quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
-    "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z",
+    "cgr.dev/chainguard/minio:latest@sha256:db3f583fa49121942168bd6383a773b2cde3384c9a99bf7193560b9a0f3a28fd",
+    "cgr.dev/chainguard/minio-client:latest@sha256:6630e209cc3d49ec347ddeba55f581c1af6c8b708b65d11435c69115607e458b",
     "docker.io/busybox:1.36",
     "docker.io/envoyproxy/gateway:v1.7.2",
     "docker.io/percona/percona-distribution-postgresql:18.3-1",
@@ -6520,12 +6503,18 @@ reconcilePersistentVolumes state =
 -- by the lifecycle step that has already validated it.
 writeGeneratedKindConfig :: Paths -> RuntimeMode -> EngineMachineCount -> Int -> Int -> Int -> IO FilePath
 writeGeneratedKindConfig paths runtimeMode machineCount edgePortValue registryPortValue pulsarHttpPortValue = do
+  usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
+  writeGeneratedKindConfigWithMountMode paths runtimeMode machineCount edgePortValue registryPortValue pulsarHttpPortValue usesHostBindMounts
+
+-- The lifecycle chooses the mount mode from observed storage; the explicit
+-- renderer is also useful to exercise both configurations without a daemon.
+writeGeneratedKindConfigWithMountMode :: Paths -> RuntimeMode -> EngineMachineCount -> Int -> Int -> Int -> Bool -> IO FilePath
+writeGeneratedKindConfigWithMountMode paths runtimeMode machineCount edgePortValue registryPortValue pulsarHttpPortValue usesHostBindMounts = do
   let outputPath =
         buildRoot paths
           </> "kind"
           </> ("cluster-" <> Text.unpack (runtimeModeId runtimeMode) <> ".generated.yaml")
   hostKindRoot <- resolveHostKindRoot paths runtimeMode
-  usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
   writeRegistryHostsConfig paths runtimeMode registryPortValue
   hostRegistryHostsDirectory <- resolveHostRegistryHostsRoot paths runtimeMode
   writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode machineCount edgePortValue registryPortValue pulsarHttpPortValue hostKindRoot hostRegistryHostsDirectory usesHostBindMounts))
@@ -6773,12 +6762,70 @@ kindWorkerCount runtimeMode machineCount =
 -- @Paths.controlPlaneContext@ already derived from 'HostConfig'; no
 -- env consultation is needed.
 kindUsesHostBindMounts :: Paths -> RuntimeMode -> IO Bool
--- Linux outer-container runs can hand the host Docker daemon host-resolved paths, so Kind nodes
--- can mount retained state directly. Apple keeps explicit sync to avoid macOS uid/gid issues.
 kindUsesHostBindMounts paths runtimeMode =
   case runtimeMode of
     AppleSilicon -> pure False
-    _ -> pure (Config.controlPlaneContext paths == OuterContainer)
+    _
+      | Config.controlPlaneContext paths /= OuterContainer -> pure False
+      | otherwise -> do
+          present <- kindClusterExists paths runtimeMode
+          if present
+            then do
+              nodes <- kindNodeNames paths runtimeMode
+              expectedSource <- resolveHostKindRoot paths runtimeMode
+              sources <-
+                mapM
+                  ( \nodeName ->
+                      trim
+                        <$> captureClusterCommand
+                          paths
+                          ( Command.dockerInspectContainerField
+                              (Command.ContainerName nodeName)
+                              (Command.MountSourceAt nodeMountedKindRoot)
+                          )
+                  )
+                  nodes
+              either (ioError . userError) pure (classifyKindMountSources expectedSource sources)
+            else retainedRootPreservesOwnership paths runtimeMode
+
+-- A live cluster's actual mounts, not a fresh capability probe, determine
+-- whether its retained tree is a live writer or a detached snapshot target.
+classifyKindMountSources :: FilePath -> [FilePath] -> Either String Bool
+classifyKindMountSources expectedSource sources
+  | null sources = Left "cannot determine retained-state topology: the Kind cluster has no inspectable nodes"
+  | all null sources = Right False
+  | all (\source -> not (null source) && normalise source == normalise expectedSource) sources = Right True
+  | otherwise = Left "cannot determine retained-state topology: Kind node mounts are inconsistent or point to an unexpected source"
+
+-- Some Docker hosts expose a writable bind mount but silently discard chown.
+-- Such a mount cannot safely back non-root workloads that need file ownership.
+-- Probe the actual retained root before Kind exists; a failed ownership change
+-- selects the already-supported detached snapshot path.
+retainedRootPreservesOwnership :: Paths -> RuntimeMode -> IO Bool
+retainedRootPreservesOwnership paths runtimeMode = do
+  let root = kindRuntimeRoot paths runtimeMode
+  rootExists <- doesDirectoryExist root
+  let probeDirectory = if rootExists then root else takeDirectory root
+  createDirectoryIfMissing True probeDirectory
+  bracket
+    (openBinaryTempFile probeDirectory ".ownership-probe-")
+    ( \(probePath, handle) -> do
+        closed <- hIsClosed handle
+        unless closed (hClose handle)
+        removeFile probePath
+    )
+    ( \(probePath, handle) -> do
+        hClose handle
+        result <-
+          try
+            ( do
+                setOwnerAndGroup probePath 65532 65532
+                status <- getFileStatus probePath
+                pure (fileOwner status == 65532 && fileGroup status == 65532)
+            ) ::
+            IO (Either IOException Bool)
+        pure (fromRight False result)
+    )
 
 prepareKindNodeRuntimePaths :: Paths -> ClusterState -> RuntimeMode -> IO ()
 prepareKindNodeRuntimePaths paths state runtimeMode = do
@@ -7271,7 +7318,7 @@ prepareKindNodeClaimDirectories paths _state runtimeMode persistentClaims = do
       runClusterCommand
         paths
         (Command.dockerMakeDirectoryWritable (Command.NodeName nodeName) directoryPath)
-      case claimOwner persistentClaim of
+      case ClaimPermissions.claimOwner persistentClaim of
         Nothing -> pure ()
         Just owner ->
           runClusterCommand

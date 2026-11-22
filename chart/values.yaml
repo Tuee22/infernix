@@ -260,8 +260,8 @@ infernixMinio:
   # not an in-place reconcile. See documents/tools/minio.md.
   replicaCount: 1
   image:
-    repository: quay.io/minio/minio
-    tag: "RELEASE.2025-09-07T16-13-09Z"
+    repository: cgr.dev/chainguard/minio
+    tag: "latest@sha256:db3f583fa49121942168bd6383a773b2cde3384c9a99bf7193560b9a0f3a28fd"
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -270,8 +270,8 @@ infernixMinio:
     limits:
       memory: 4Gi
   clientImage:
-    repository: quay.io/minio/mc
-    tag: "RELEASE.2025-08-13T08-35-41Z"
+    repository: cgr.dev/chainguard/minio-client
+    tag: "latest@sha256:6630e209cc3d49ec347ddeba55f581c1af6c8b708b65d11435c69115607e458b"
     pullPolicy: IfNotPresent
   initImage:
     repository: docker.io/busybox

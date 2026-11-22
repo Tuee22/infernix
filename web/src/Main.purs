@@ -40,6 +40,7 @@ import Generated.Contracts
 import Infernix.Web.ArtifactTransport
   ( UploadedArtifact
   , bindArtifactTransport
+  , refreshUploadDraftBindings
   )
 import Infernix.Web.Artifacts
   ( ArtifactEntry
@@ -137,7 +138,7 @@ type AdminOverview =
   , engineBindingCount :: Int
   , enginePoolCount :: Int
   , engineMemberCount :: Int
-  , modelCacheEntryCount :: Int
+  , modelCacheEntryCount :: Maybe Int
   , usersWithObjects :: Maybe Int
   }
 
@@ -1255,7 +1256,7 @@ renderAdminDashboard refs state = do
       setText refs.adminEngineCount (show overview.engineBindingCount)
       setText refs.adminPoolCount (show overview.enginePoolCount)
       setText refs.adminMemberCount (show overview.engineMemberCount)
-      setText refs.adminCacheCount (show overview.modelCacheEntryCount)
+      setText refs.adminCacheCount (fromMaybe "–" (show <$> overview.modelCacheEntryCount))
       setText refs.adminUserCount
         ( case overview.usersWithObjects of
             Just userCount -> show userCount
@@ -1290,20 +1291,22 @@ renderChatSection refs state =
     state.chat
 
 renderArtifactsSection :: Refs -> AppState -> Effect Unit
-renderArtifactsSection refs state =
+renderArtifactsSection refs state = do
   renderArtifactsView
     refs.document
     refs.artifactsRoot
     { activeContextId: state.activeContextId }
     state.artifacts
+  refreshUploadDraftBindings refs.artifactsRoot
 
 renderFilesSection :: Refs -> AppState -> Effect Unit
-renderFilesSection refs state =
+renderFilesSection refs state = do
   renderFilesView
     refs.document
     refs.filesRoot
     { activeContextId: state.activeContextId }
     state.files
+  refreshUploadDraftBindings refs.filesRoot
 
 renderSummary :: Refs -> AppState -> Effect Unit
 renderSummary refs state = do

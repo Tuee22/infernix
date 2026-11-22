@@ -26,15 +26,10 @@
 
 | Wave | Phase | Chosen accelerator | Paired lane | Gate | State |
 |------|-------|--------------------|-------------|------|-------|
-| R1 | 1 | `apple-silicon` | `linux-cpu` | Sprints 1.44–1.55; source-bound `infernix test all` on both lanes | Code-side gates passed after terminal cgroup-refusal repair; full paired suites pending |
-| R2 | 2 | `apple-silicon` | `linux-cpu` | Sprints 2.18; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
-| R3 | 3 | `apple-silicon` | `linux-cpu` | Sprints 3.18; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
-| R4 | 4 | `apple-silicon` | `linux-cpu` | Sprints 4.50; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
-| R5 | 5 | `apple-silicon` | `linux-cpu` | Sprints 5.13; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
-| R6 | 6 | `linux-gpu` | `linux-cpu` | Sprints 6.55; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
-| R7 | 7 | `apple-silicon` | `linux-cpu` | Sprints 7.30–7.33; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
-| R8 | 8 | `apple-silicon` | `linux-cpu` | Sprints 8.15; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
-| R9 | 9 | `apple-silicon` | `linux-cpu` | Sprints 9.12; source-bound `infernix test all` on both lanes | Code-side gates passed; full suites pending |
+| R6 | 6 | `linux-gpu` | `linux-cpu` | Sprints 6.55; `infernix test all` on both lanes | Code-side gates passed; full suites pending |
+| R7 | 7 | `apple-silicon` | `linux-cpu` | Sprints 7.30–7.33; `infernix test all` on both lanes | Code-side gates passed; full suites pending |
+| R8 | 8 | `apple-silicon` | `linux-cpu` | Sprints 8.15; `infernix test all` on both lanes | Code-side gates passed; full suites pending |
+| R9 | 9 | `apple-silicon` | `linux-cpu` | Sprints 9.12; `infernix test all` on both lanes | Code-side gates passed; full suites pending |
 
 All rows are open obligations, not scheduled or completed runs. The paired CPU lane is native arm64
 or amd64 as recorded by the actual run; emulated Apple/Linux execution does not qualify. Hardware
@@ -56,6 +51,16 @@ commit, or an outcome — the account of how a run went belongs to nothing in th
 | 6 | `linux-gpu` | `infernix test all` + native-amd64 `linux-cpu` full suite | `2687b50de9b9d4cdaa879e0421c3186e1c796331` + uncommitted code-patch SHA-256 `201533827a747598838260794ae7a1da02bbd6a0a805ef16929c278db3d84075` | PASS; exit 0 and 16/16 browser tests per lane |
 | 8 | `linux-gpu` | `infernix test all` + native-amd64 `linux-cpu` full suite | `2687b50de9b9d4cdaa879e0421c3186e1c796331` + uncommitted code-patch SHA-256 `201533827a747598838260794ae7a1da02bbd6a0a805ef16929c278db3d84075` | PASS; exit 0 and 16/16 browser tests per lane |
 | 9 | `linux-gpu` | `infernix test all` + native-amd64 `linux-cpu` full suite | `2687b50de9b9d4cdaa879e0421c3186e1c796331` + uncommitted code-patch SHA-256 `201533827a747598838260794ae7a1da02bbd6a0a805ef16929c278db3d84075` | PASS; exit 0 and 16/16 browser tests per lane |
+| 1 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea`; source inventory SHA-256 `28dd0cd5e9468425669f19051cdd1deac58b658884ef771add4afe41f886dea0` | PASS; [Apple receipt](../.data/runtime/validation/run-KvlQcS/receipt.json); [Linux receipt](../.data/runtime/validation/run-vmpHdp/receipt.json); [source preimage](../.data/runtime/validation/run-KvlQcS/source/) |
+
+| 2 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea`; source inventory SHA-256 `28dd0cd5e9468425669f19051cdd1deac58b658884ef771add4afe41f886dea0` | PASS; [Apple receipt](../.data/runtime/validation/run-KvlQcS/receipt.json); [Linux receipt](../.data/runtime/validation/run-vmpHdp/receipt.json); [source preimage](../.data/runtime/validation/run-KvlQcS/source/) |
+
+| 3 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea`; source inventory SHA-256 `28dd0cd5e9468425669f19051cdd1deac58b658884ef771add4afe41f886dea0` | PASS; [Apple receipt](../.data/runtime/validation/run-KvlQcS/receipt.json); [Linux receipt](../.data/runtime/validation/run-vmpHdp/receipt.json); [source preimage](../.data/runtime/validation/run-KvlQcS/source/) |
+
+| 2 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea` + uncommitted changes; Apple source inventory SHA-256 `d8c727ebd0a090e9a66f9acbc0557c08b31a62cb7d05dcb30a91cce3db05e55f`; Linux source inventory SHA-256 `99c79695898a695e84ac4c2884fd600c31f4a8137b3d1608b49b12c63d1465f6` | PASS; [Apple receipt](../.data/runtime/validation/run-BI4ZTC/receipt.json); [Linux receipt](../.data/runtime/validation/run-WneyCm/receipt.json) |
+
+| 4 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea` + uncommitted changes; source inventory SHA-256 `41b02982c4d46e90196030ace41210a2dfb6c50973da0d0cfee4e22c776163d5` | PASS; [Apple receipt](../.data/runtime/validation/run-gSQPVS/receipt.json); [Linux receipt](../.data/runtime/validation/run-1F5B8L/receipt.json) |
+| 5 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea` + uncommitted changes; source inventory SHA-256 `027ae4d21e98f40403485ebfed895fe4f1d59947b6fefc5bbc3c38028ed41c8b` | PASS; [Apple receipt](../.data/runtime/validation/run-jdRbDx/receipt.json); [Linux receipt](../.data/runtime/validation/run-P6BDqb/receipt.json); [source preimage](../.data/runtime/validation/run-jdRbDx/source/) |
 
 ## Cadence Rule
 
@@ -91,21 +96,12 @@ available cohort during the active wave and record only the phase's chosen accel
 The Wave Table is the sole open-cohort index. Phase 0 has no accelerator gate.
 Phase status remains in [README.md](README.md#current-phase-overview).
 
-Phases 2, 3, 5, and 7 have no retained closure tuple in Recorded Attestations. Their waves require
-recovery of authentic source and run artifacts or fresh runs. The five existing rows are preserved
+Phase 7 has no retained closure tuple in Recorded Attestations. Its wave requires
+recovery of authentic source and run artifacts or fresh runs. The historical rows are preserved
 verbatim; their uncommitted-patch digests require the retained patch preimages to be reproducible,
 and the rows do not establish that the new remediation criteria passed.
 
-For new closure evidence, retain the machine-readable execution receipt and referenced artifacts
-outside this narrative plan, and append a compact tuple linking them here. The receipt binds the
-commit plus reconstructable relevant worktree snapshot (including untracked build inputs), image
-digest or native executable identity, configuration and lane/device context, required check
-inventory, executed/skipped/not-applicable counts, terminal outcomes, and artifact digests.
-Both lanes must test the same source snapshot. A digest without its preimage is not recovery
-evidence. A skipped required check, missing artifact, stale image, or mismatched source blocks
-closure even when the aggregate process exits zero. Receipt consistency is not protection against
-an actor who controls both executor and evidence storage; trust is rooted in the retained runner
-and artifact provenance described by Section Q.
+For new closure evidence, retain the execution receipt and referenced artifacts outside this plan, and append a compact tuple linking them here. Record the executable or image, configuration, lane and device context, required checks, outcomes, and artifact digests. Agents rebuild packages and images as appropriate before testing each lane. A skipped required check or missing artifact blocks closure. Receipt consistency depends on trust in the runner and artifact provenance described by Section Q.
 
 ## Cross-References
 

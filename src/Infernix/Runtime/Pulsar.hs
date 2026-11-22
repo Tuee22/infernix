@@ -19,6 +19,9 @@ module Infernix.Runtime.Pulsar
     clearServiceReadinessMarker,
     consumeTopicForever,
     runEngineCancellationConsumer,
+    runRemoteCacheAction,
+    runRemoteCacheOverviewObservation,
+    withEngineCacheControlConsumer,
     coordinatorTopicCapabilities,
     DemoUserTopicDeletion (..),
     authorizedGeneratedResultObjectRefs,
@@ -101,8 +104,8 @@ module Infernix.Runtime.Pulsar
 where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent (forkIO, killThread, myThreadId, threadDelay, throwTo)
-import Control.Concurrent.MVar (MVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, takeMVar)
+import Control.Concurrent (forkFinally, forkIO, killThread, myThreadId, threadDelay, throwTo)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, takeMVar, tryPutMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, toException, try)
 import Control.Monad (forM_, forever, unless, void, when)
 import Crypto.Hash.SHA256 qualified as SHA256
@@ -131,6 +134,7 @@ import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
+import Data.Char (isDigit)
 import Data.Either (fromLeft, fromRight)
 import Data.IORef (IORef, atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (find, intercalate, sort)
@@ -144,7 +148,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time (UTCTime, addUTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
+import Data.Time (UTCTime, addUTCTime, defaultTimeLocale, diffUTCTime, formatTime, getCurrentTime, parseTimeM)
 import Data.Word (Word8)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
@@ -207,6 +211,8 @@ import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Runtime (executeExecutableInferenceWithKVCache)
+import Infernix.Runtime.Cache qualified as Cache
+import Infernix.Runtime.CacheControl qualified as CacheControl
 import Infernix.Runtime.Cancellation qualified as Cancellation
 import Infernix.Runtime.CappedEngine
   ( EngineExecutionPlan,
@@ -267,7 +273,7 @@ import System.Directory
     removeFile,
   )
 import System.FilePath (dropExtension, takeDirectory, (<.>), (</>))
-import System.IO (Handle, IOMode (ReadMode), hClose, hFileSize, hPutStrLn, openBinaryTempFile, stderr, withBinaryFile)
+import System.IO (Handle, IOMode (ReadMode), hClose, hFileSize, hFlush, hPutStrLn, openBinaryTempFile, stderr, stdout, withBinaryFile)
 import System.Posix.Process (getProcessID)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
@@ -3120,6 +3126,10 @@ consumeTopicSession transport paths capability maybeEngineKVCache = do
                   <> " status="
                   <> Text.unpack (status publishedResult)
               )
+            -- The trace is evidence the harness reads independently of the
+            -- result topic, so it must reach the log when written and not when
+            -- a block buffer happens to fill.
+            hFlush stdout
             let publishedResultContextId = resultContextId publishedResult
                 resultProducerScope =
                   if Text.null publishedResultContextId
@@ -4040,6 +4050,24 @@ runDispatcherForContext transport runtimeMode requestTopic conversationTopic use
     contextIdValue
     reducerStateRef
     seenMessageIdsRef
+  -- The restored state may already hold a free execution slot and a queued
+  -- prompt: the in-flight prompt's result can have reached the log before this
+  -- replay finished. Nothing live will arrive to prompt a decision then, so one
+  -- is taken here. A prompt the previous coordinator had already dispatched is
+  -- published again under the same producer and sequence id, which the broker's
+  -- deduplication drops.
+  restoredState <- readIORef reducerStateRef
+  case Dispatch.buildDispatchDecision userIdValue restoredState of
+    Dispatch.DispatchNoOp -> pure ()
+    Dispatch.DispatchPrompt inferenceEnvelope -> do
+      modelIdValue <- resolveContextModelIdForDispatch contextModelMap contextIdValue
+      publishDispatchedInferenceRequest
+        transport
+        runtimeMode
+        requestTopic
+        modelCatalog
+        modelIdValue
+        inferenceEnvelope
   let consumerPath =
         buildFailoverConsumerSocketPath
           (pulsarWebSocketBase transport)
@@ -4735,21 +4763,23 @@ processBootstrapRequest transport systemNamespace (AuthorizedBootstrapRequest re
       now <- getCurrentTime
       let downloadUrl = BootstrapModels.bootstrapRequestDownloadUrl request
       sentinelPresent <- minioObjectExists presigned manager sentinelObject
-      if isMultiFileModelRepoUrl downloadUrl
+      if isMultiFileModelRepoUrl downloadUrl || isHuggingFaceModelRepoUrl downloadUrl
         then do
           runModelBootstrapSnapshotHelper presigned request
           publishBootstrapReadyEvent transport systemNamespace request
         else
           if sentinelPresent
-            then publishBootstrapReadyEvent transport systemNamespace request
+            then do
+              unless (isPackageBackedNativeModel modelId) $
+                runModelBootstrapSnapshotHelper presigned request
+              publishBootstrapReadyEvent transport systemNamespace request
             else do
               if isPackageBackedNativeModel modelId
                 then commitPackageBackedReadySentinel presigned manager now modelId sentinelObject
-                else
-                  if isHuggingFaceModelRepoUrl downloadUrl
-                    then runModelBootstrapSnapshotHelper presigned request
-                    else withDownloadedUpstreamModel manager downloadUrl $ \downloadedPath downloadedBytes ->
-                      commitDownloadedReadySentinel presigned manager now modelId payloadObject sentinelObject downloadedPath downloadedBytes
+                else do
+                  withDownloadedUpstreamModel manager downloadUrl $ \downloadedPath downloadedBytes ->
+                    commitDownloadedReadySentinel presigned manager now modelId payloadObject sentinelObject downloadedPath downloadedBytes
+                  runModelBootstrapSnapshotHelper presigned request
               publishBootstrapReadyEvent transport systemNamespace request
 
 -- | Sprint 4.28 (managed-state-transition doctrine) — evidence that a model's
@@ -4853,7 +4883,7 @@ commitDownloadedReadySentinel presigned manager now modelId payloadObject sentin
 -- ever races a cold cache. Reuses the idempotent
 -- download/upload/@.ready@-sentinel logic ('processBootstrapRequest'), which
 -- short-circuits when the sentinel is already present for single-payload
--- sources. Multi-file snapshot sources still enter the helper so retained
+-- sources. Hugging Face and multi-file snapshot sources enter the helper so retained
 -- content validators can repair a stale prefix before the ready event. The lazy
 -- 'runModelBootstrapLoop' remains the on-demand fallback. Each model is
 -- staged independently: a failure is logged and does not abort the sweep, so
@@ -5875,7 +5905,23 @@ executeInferenceWithModelBootstrapRetry maybeTransport paths runtimePlan maybeEn
           verifiedPrefix <- verifyRequestConversationPrefix maybeTransport maybeKVCacheRequest
           case verifiedPrefix of
             Left refusal -> pure (Left refusal)
-            Right maybeVerifiedPrefix ->
+            Right maybeVerifiedPrefix -> do
+              -- Recorded engine input: the verified prefix this execution is
+              -- about to run on. A harness reads this line from the engine log
+              -- to establish that reconstructed history reached the engine and
+              -- not only the dispatcher.
+              forM_ ((,) <$> maybeVerifiedPrefix <*> maybeKVCacheRequest) $ \(verified, seed) -> do
+                putStrLn
+                  ( "engineConversationPrefix: context="
+                      <> Text.unpack (KVCache.kvSeedContextId seed)
+                      <> " offset="
+                      <> show (KVCache.kvSeedConversationLogOffset seed)
+                      <> " turns="
+                      <> show (length (Prefix.verifiedPrefixTurns verified))
+                      <> " bytes="
+                      <> show (Prefix.verifiedPrefixBytes verified)
+                  )
+                hFlush stdout
               executeExecutableInferenceWithKVCache
                 paths
                 maybeEngineKVCache
@@ -6067,6 +6113,313 @@ modelCacheBootstrapRetryableError errorValue =
 -- The machine running it stops it; the others report that they hold nothing by
 -- that identity, which is a different answer from "cancelled" and is recorded
 -- as one.
+-- Cache controls are transient operator requests. A non-persistent topic cannot
+-- replay a stale eviction after a disconnected engine rejoins. The caller
+-- subscribes before publishing, names every compiled owner, and treats every
+-- missing or malformed reply as unobservable rather than as an empty cache.
+cacheControlTopic :: RuntimeMode -> Text.Text -> Text.Text
+cacheControlTopic mode suffix =
+  let namespace = ConversationTopic.systemTopicNamespace
+   in Text.concat
+        [ "non-persistent://",
+          ConversationTopic.topicNamespaceTenant namespace,
+          "/",
+          ConversationTopic.topicNamespaceName namespace,
+          "/cache.control.",
+          runtimeModeId mode,
+          ".",
+          suffix
+        ]
+
+cacheControlTimeoutMicros :: Cache.CacheAction -> Int
+cacheControlTimeoutMicros action =
+  case action of
+    Cache.ObserveCache -> cacheControlObservationTimeoutSeconds * 1000000
+    Cache.EvictOwnedCache -> cacheControlMutationTimeoutSeconds * 1000000
+    Cache.RebuildOwnedCache -> cacheControlMutationTimeoutSeconds * 1000000
+
+cacheControlFrameLimit :: Int
+cacheControlFrameLimit = 131072
+
+-- | How long a mutation waits for its replies before it is published again.
+cacheControlRepublishMicros :: Int
+cacheControlRepublishMicros = 15 * 1000000
+
+-- | Route one closed operation to each eligible engine member. Successful
+-- replies must match this request, an expected owner/model pair, and the
+-- operation's postcondition. A lost message or disconnected owner is reported
+-- as unobservable; it is never inferred to have succeeded.
+runRemoteCacheAction ::
+  PulsarTransport ->
+  CompiledRuntimePlan ->
+  Cache.CacheAction ->
+  [Text.Text] ->
+  IO [Cache.CacheOperationOutcome]
+runRemoteCacheAction transport compiledPlan action =
+  runRemoteCacheActionWithin (cacheControlTimeoutMicros action) transport compiledPlan action
+
+-- Overview is advisory: missing or slow owners produce an unknown count rather
+-- than delaying unrelated dashboard fields or occupying an engine indefinitely.
+runRemoteCacheOverviewObservation ::
+  PulsarTransport -> CompiledRuntimePlan -> [Text.Text] -> IO [Cache.CacheOperationOutcome]
+runRemoteCacheOverviewObservation transport plan = runRemoteCacheActionWithin (5 * 1000000) transport plan Cache.ObserveCache
+
+runRemoteCacheActionWithin ::
+  Int -> PulsarTransport -> CompiledRuntimePlan -> Cache.CacheAction -> [Text.Text] -> IO [Cache.CacheOperationOutcome]
+runRemoteCacheActionWithin timeoutMicros transport compiledPlan action requestedModels = do
+  nonce <- getRandomBytes 16
+  now <- getCurrentTime
+  let requestIdValue = TextEncoding.decodeUtf8 (Base16.encode nonce)
+      selectedModelNames = Set.toAscList (Set.fromList requestedModels)
+      (targets, refused) = CacheControl.cacheControlTargets compiledPlan selectedModelNames
+      deadline = addUTCTime (fromIntegral timeoutMicros / 1000000) now
+      request = CacheControl.CacheControlRequest requestIdValue deadline action targets
+      mode = compiledPlanRuntimeMode compiledPlan
+      requestTopic = cacheControlTopic mode "requests"
+      replyTopic = cacheControlTopic mode "replies"
+      expected =
+        Set.fromList
+          [ (owner, modelName)
+          | (owner, modelNames) <- Map.toList targets,
+            modelName <- modelNames
+          ]
+  repliesRef <- newIORef Map.empty
+  unless (Set.null expected) $ do
+    let exchange = do
+          replyRef <- requireTopicRef replyTopic
+          let subscription = "cache-reply-" <> Text.unpack requestIdValue
+              socketPath =
+                buildServiceConsumerSocketPath
+                  (pulsarWebSocketBase transport)
+                  replyRef
+                  subscription
+                  subscription
+                  ConsumerExclusive
+          runPulsarWebSocketClient (pulsarWebSocketBase transport) socketPath $ \connection -> do
+            let publishRequest :: Int -> IO ()
+                publishRequest attempt =
+                  publishTopicPayload
+                    transport
+                    requestTopic
+                    (defaultPublishOptions ("cache-request-" <> requestIdValue <> "-" <> Text.pack (show attempt)))
+                    requestIdValue
+                    (Lazy.toStrict (encode request))
+                -- A transient request is lost if no consumer is attached at the
+                -- instant it is published. A mutation is therefore republished
+                -- until every expected owner has replied; the engine runs a
+                -- request id once, so a repeat is harmless.
+                republish attempt = do
+                  threadDelay cacheControlRepublishMicros
+                  received <- readIORef repliesRef
+                  unless (expected `Set.isSubsetOf` Map.keysSet received) $ do
+                    _ <- try @SomeException (publishRequest attempt)
+                    republish (attempt + 1)
+            publishRequest 0
+            republisher <-
+              if action == Cache.ObserveCache
+                then pure Nothing
+                else Just <$> forkIO (republish 1)
+            let stopRepublisher = forM_ republisher killThread
+            let receiveReplies = do
+                  received <- readIORef repliesRef
+                  unless (expected `Set.isSubsetOf` Map.keysSet received) $ do
+                    raw <- receiveJsonFrame "cache control reply" connection
+                    if Text.length raw > cacheControlFrameLimit
+                      then ioError (userError "cache control reply frame exceeds its bound")
+                      else do
+                        envelope <- decodeJsonText "cache control reply" raw
+                        bytes <- conversationPayloadBytes envelope
+                        sendAck connection (envelopeMessageId envelope)
+                        when (ByteString.length bytes <= cacheControlFrameLimit) $
+                          case eitherDecodeStrict' bytes of
+                            Right reply
+                              | CacheControl.cacheControlReplyIsExpected request reply ->
+                                  let outcome = CacheControl.cacheReplyOutcome reply
+                                      key = (CacheControl.cacheReplyMemberId reply, Cache.cacheOutcomeModelId outcome)
+                                   in modifyIORef' repliesRef (Map.insertWith (\_ previous -> previous) key outcome)
+                            _ -> pure ()
+                        receiveReplies
+            receiveReplies `finally` stopRepublisher
+    result <- try @SomeException (timeout timeoutMicros exchange)
+    case result of
+      Left err | isAsyncException err -> throwIO err
+      _ -> pure ()
+  replies <- readIORef repliesRef
+  pure (CacheControl.cacheControlOutcomes request selectedModelNames refused replies)
+
+-- | Keep the transient cache-control consumer inside the engine's live member
+-- claim. Its child is stopped and joined before the claim bracket can leave.
+withEngineCacheControlConsumer ::
+  PulsarTransport ->
+  Paths ->
+  EngineExecutionPlan ->
+  EngineMemberClaim ->
+  IO a ->
+  IO a
+withEngineCacheControlConsumer transport paths executionPlan claim action = do
+  ready <- newEmptyMVar
+  finished <- newEmptyMVar
+  parent <- myThreadId
+  -- Request ids this engine has already accepted. A requester republishes a
+  -- mutation until it hears back, because a transient request can be lost
+  -- while the consumer is reconnecting, so a repeat must not run twice.
+  handledRequestIds <- newIORef []
+  let memberIdValue = engineMemberClaimId claim
+      compiledPlan = runtimePlanCompiledPlan (engineExecutionRuntimePlan executionPlan)
+      mode = compiledPlanRuntimeMode compiledPlan
+      requestTopic = cacheControlTopic mode "requests"
+      memberHash = TextEncoding.decodeUtf8 (Base16.encode (SHA256.hash (TextEncoding.encodeUtf8 memberIdValue)))
+      subscription = "cache-owner-" <> Text.unpack memberHash
+      worker = forever $ do
+        session <- try @SomeException $ do
+          requestRef <- requireTopicRef requestTopic
+          let socketPath =
+                buildServiceConsumerSocketPath
+                  (pulsarWebSocketBase transport)
+                  requestRef
+                  subscription
+                  subscription
+                  ConsumerExclusive
+          runPulsarWebSocketClient (pulsarWebSocketBase transport) socketPath $ \connection -> do
+            void (tryPutMVar ready ())
+            forever (handleCacheControlRequest transport paths compiledPlan memberIdValue handledRequestIds connection)
+        case session of
+          Left err | isAsyncException err -> throwIO err
+          Left err -> hPutStrLn stderr ("cache control consumer reconnecting: " <> displayException err)
+          Right () -> pure ()
+        threadDelay 1000000
+  workerId <-
+    forkFinally worker $ \result -> do
+      putMVar finished ()
+      case result of
+        Left err | not (isAsyncException err) -> throwTo parent err
+        Right () -> throwTo parent (userError "cache control consumer stopped unexpectedly")
+        _ -> pure ()
+  ( do
+      started <- timeout 60000000 (takeMVar ready)
+      case started of
+        Nothing -> ioError (userError "timed out starting the engine cache control consumer")
+        Just () -> action
+    )
+    `finally` (killThread workerId >> takeMVar finished)
+
+handleCacheControlRequest ::
+  PulsarTransport ->
+  Paths ->
+  CompiledRuntimePlan ->
+  Text.Text ->
+  IORef [Text.Text] ->
+  WebSockets.Connection ->
+  IO ()
+handleCacheControlRequest transport paths compiledPlan memberIdValue handledRequestIds connection = do
+  raw <- receiveJsonFrame "cache control request" connection
+  frameReceivedAt <- getCurrentTime
+  putStrLn ("cacheControlFrame: at=" <> show frameReceivedAt <> " bytes=" <> show (Text.length raw))
+  hFlush stdout
+  if Text.length raw > cacheControlFrameLimit
+    then ioError (userError "cache control request frame exceeds its bound")
+    else do
+      envelope <- decodeJsonText "cache control request" raw
+      bytes <- conversationPayloadBytes envelope
+      -- A transient request is acknowledged before execution: if the engine
+      -- dies the requester receives no reply and reports an unknown outcome.
+      -- Re-delivery must not evict a newer generation after a later rebuild.
+      sendAck connection (envelopeMessageId envelope)
+      when (ByteString.length bytes <= cacheControlFrameLimit) $
+        case eitherDecodeStrict' bytes of
+          Left decodeFailure -> do
+            putStrLn ("cacheControlRejected: undecodable request: " <> take 200 decodeFailure)
+            hFlush stdout
+          Right request -> do
+            now <- getCurrentTime
+            let requestIdValue = CacheControl.cacheRequestId request
+                validId =
+                  Text.length requestIdValue == 32
+                    && Text.all (\character -> isDigit character || character >= 'a' && character <= 'f') requestIdValue
+                deadline = CacheControl.cacheRequestDeadline request
+                targetModels = Map.findWithDefault [] memberIdValue (CacheControl.cacheRequestTargets request)
+                catalogSize = length (compiledPlanConfiguredModels compiledPlan)
+                accepted = validId && deadline > now && deadline <= addUTCTime (fromIntegral cacheControlMutationTimeoutSeconds) now && length targetModels <= catalogSize
+            duplicate <-
+              if accepted
+                then
+                  atomicModifyIORef'
+                    handledRequestIds
+                    ( \ids ->
+                        if requestIdValue `elem` ids
+                          then (ids, True)
+                          else (take 256 (requestIdValue : ids), False)
+                    )
+                else pure False
+            when duplicate $ do
+              putStrLn ("cacheControlDuplicate: request=" <> Text.unpack requestIdValue)
+              hFlush stdout
+            unless accepted $ do
+              putStrLn
+                ( "cacheControlRejected: request="
+                    <> Text.unpack requestIdValue
+                    <> " action="
+                    <> show (CacheControl.cacheRequestAction request)
+                    <> " validId="
+                    <> show validId
+                    <> " deadline="
+                    <> show deadline
+                    <> " now="
+                    <> show now
+                    <> " targetsForThisMember="
+                    <> show (length targetModels)
+                    <> " catalogSize="
+                    <> show catalogSize
+                )
+              hFlush stdout
+            when (accepted && not duplicate) $
+              forM_ (Set.toAscList (Set.fromList targetModels)) $ \modelName -> do
+                current <- getCurrentTime
+                putStrLn
+                  ( "cacheControlReceived: request="
+                      <> Text.unpack requestIdValue
+                      <> " model="
+                      <> Text.unpack modelName
+                      <> " action="
+                      <> show (CacheControl.cacheRequestAction request)
+                      <> " remainingSeconds="
+                      <> show (diffUTCTime deadline current)
+                  )
+                hFlush stdout
+                when (current < deadline) $ do
+                  let action = CacheControl.cacheRequestAction request
+                      perform = Cache.executeOwnedCacheAction paths compiledPlan memberIdValue modelName action
+                      remainingMicros = max 1 (ceiling (diffUTCTime deadline current * 1000000))
+                      expired = Cache.CacheOperationOutcome modelName (Cache.CacheUnobservable "cache observation exceeded its deadline") False
+                      bounded = case action of
+                        Cache.ObserveCache -> fromMaybe expired <$> CacheControl.boundedCacheObservation remainingMicros perform
+                        _ -> perform
+                  result <- try @SomeException bounded
+                  outcome <-
+                    case result of
+                      Left err | isAsyncException err -> throwIO err
+                      Left err -> pure (Cache.CacheOperationOutcome modelName (Cache.CacheUnobservable (Text.take 512 (Text.pack (displayException err)))) False)
+                      Right observed -> pure observed
+                  let reply = CacheControl.CacheControlReply requestIdValue memberIdValue outcome
+                  finished <- getCurrentTime
+                  putStrLn
+                    ( "cacheControlReplied: request="
+                        <> Text.unpack requestIdValue
+                        <> " model="
+                        <> Text.unpack modelName
+                        <> " state="
+                        <> Text.unpack (Cache.cacheEntryStateLabel (Cache.cacheOutcomeState outcome))
+                        <> " elapsedSeconds="
+                        <> show (diffUTCTime finished current)
+                    )
+                  hFlush stdout
+                  publishTopicPayload
+                    transport
+                    (cacheControlTopic (compiledPlanRuntimeMode compiledPlan) "replies")
+                    (defaultPublishOptions ("cache-reply-" <> requestIdValue <> "-" <> memberIdValue))
+                    requestIdValue
+                    (Lazy.toStrict (encode reply))
+
 runEngineCancellationConsumer ::
   PulsarTransport ->
   RuntimeMode ->
@@ -6119,6 +6472,7 @@ handleEngineCancellation executionPlan connection = do
                     <> " -> "
                     <> Text.unpack (Cancellation.cancellationOutcomeLabel outcome)
                 )
+              hFlush stdout
       )
   case handled of
     Right _ -> sendAck connection (envelopeMessageId envelope)

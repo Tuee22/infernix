@@ -304,9 +304,9 @@ processGroupPhysicalFootprintSample processGroup =
 -- it has gone, every partial byte count is discarded: sampling restarts from a
 -- refreshed nonempty membership, while an empty membership reports terminal
 -- absence for the watchdog to settle. If the failed member remains live, the
--- observer failure is preserved. Production supplies observations and
--- measurements that all share one fixed 'ObserverDeadline', so repeated
--- turnover cannot extend the sample.
+-- observer gets one fresh complete-snapshot retry; a repeated failure is
+-- preserved. Production supplies observations and measurements that all share
+-- one fixed 'ObserverDeadline', so retries and turnover cannot extend the sample.
 sampleCompleteProcessGroupSnapshotWith ::
   IO (Either Text [CPid]) ->
   (CPid -> IO (Either Text Word64)) ->
@@ -315,10 +315,10 @@ sampleCompleteProcessGroupSnapshotWith ::
 sampleCompleteProcessGroupSnapshotWith observeMembers measureMember initialMembers
   | null initialMembers =
       pure (Right Nothing)
-  | otherwise = sampleMembers initialMembers 0
+  | otherwise = sampleMembers True initialMembers 0
   where
-    sampleMembers [] total = pure (Right (Just total))
-    sampleMembers (processId : remaining) total = do
+    sampleMembers _ [] total = pure (Right (Just total))
+    sampleMembers retryAvailable (processId : remaining) total = do
       sampled <- measureMember processId
       case sampled of
         Left footprintFailure -> do
@@ -334,18 +334,20 @@ sampleCompleteProcessGroupSnapshotWith observeMembers measureMember initialMembe
                 )
             Right refreshedMembers
               | processId `elem` refreshedMembers ->
-                  pure (Left footprintFailure)
+                  if retryAvailable
+                    then sampleMembers False refreshedMembers 0
+                    else pure (Left footprintFailure)
               | null refreshedMembers ->
                   pure (Right Nothing)
               | otherwise ->
-                  sampleMembers refreshedMembers 0
+                  sampleMembers retryAvailable refreshedMembers 0
         Right physicalBytes ->
           case checkedAddWord64 total physicalBytes of
             Nothing ->
               pure
                 (Left "Apple process-group physical-footprint total overflowed Word64")
             Just nextTotal ->
-              sampleMembers remaining nextTotal
+              sampleMembers retryAvailable remaining nextTotal
 
 verifyPhysicalFootprintObserver :: IO Bool
 verifyPhysicalFootprintObserver = do
@@ -1498,8 +1500,9 @@ runKernelTest testCase =
       testInitialTerminalAbsence
     ObserverMemberTurnoverRestart ->
       testMemberTurnoverRestart
-    ObserverLiveMemberFailure ->
+    ObserverLiveMemberFailure -> do
       testLiveMemberFailure
+      testTransientLiveMemberFailure
     ObserverTerminalMemberFailure ->
       testTerminalMemberFailure
     ObserverMembershipRecheckFailure ->
@@ -1703,9 +1706,24 @@ testLiveMemberFailure =
     "a still-live failed member preserves the footprint failure"
     [fixtureProcessId42]
     [ FixtureMeasureMember fixtureProcessId42 (Left fixtureFootprintFailure),
+      FixtureObserveMembers (Right [fixtureProcessId42]),
+      FixtureMeasureMember fixtureProcessId42 (Left fixtureFootprintFailure),
       FixtureObserveMembers (Right [fixtureProcessId42])
     ]
     (Left fixtureFootprintFailure)
+
+testTransientLiveMemberFailure :: IO ()
+testTransientLiveMemberFailure =
+  testMemberSamplingFixture
+    "a transient live-member failure retries the entire snapshot"
+    [fixtureProcessId42, fixtureProcessId43]
+    [ FixtureMeasureMember fixtureProcessId42 (Right 100),
+      FixtureMeasureMember fixtureProcessId43 (Left fixtureFootprintFailure),
+      FixtureObserveMembers (Right [fixtureProcessId42, fixtureProcessId43]),
+      FixtureMeasureMember fixtureProcessId42 (Right 110),
+      FixtureMeasureMember fixtureProcessId43 (Right 200)
+    ]
+    (Right (Just 310))
 
 testTerminalMemberFailure :: IO ()
 testTerminalMemberFailure =

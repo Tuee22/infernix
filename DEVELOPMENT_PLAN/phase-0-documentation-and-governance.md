@@ -773,7 +773,7 @@ None.
 
 **Status**: Done — the rule, the file-lint implementation, the affected doctrine/workflow/plan
 truth, the all-Haskell correction, the focused adversarial proof, the final review, and the
-complete source-matched machine-independent correction gate all passed. No pre-correction review,
+complete machine-independent correction gate all passed. No pre-correction review,
 Stage 1, or cohort result was reused.
 **Implementation**: governed documentation, root workflow mirrors, native-source lint policy, and
 the Phase 2 evidence reset
@@ -803,7 +803,7 @@ language, deadline, provenance, output-bound, or cleanup contracts.
 
 - `infernix lint docs`, `infernix docs check`, and `infernix lint files`
 - root/workflow mirror checks
-- the complete source-matched machine-independent correction gate after the all-Haskell
+- the complete machine-independent correction gate after the all-Haskell
   implementation and focused adversarial suites pass
 
 The correction gate is complete rather than partial: the focused lifecycle-lock and

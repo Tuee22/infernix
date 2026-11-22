@@ -100,8 +100,8 @@
   host-cache entries fall back to normal chart pulls, and the flow intentionally avoids `docker cp`
   because CUDA-enabled Kind workers can reject copied paths through the NVIDIA runtime mount
   boundary
-- the pinned MinIO server and client images use the official `quay.io/minio/minio` and
-  `quay.io/minio/mc` namespaces; when absent from the host cache they follow the normal chart-pull
+- the pinned MinIO server and client images use the digest-pinned `cgr.dev/chainguard/minio` and
+  `cgr.dev/chainguard/minio-client` namespaces; when absent from the host cache they follow the normal chart-pull
   path before publication into the in-cluster registry
 - after the registry is responsive, confirm that every remaining image is mirrored or published into
   the registry before its workload rolls out, including the active `infernix` runtime image on every
@@ -339,8 +339,7 @@ See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) and
 
 Build the Linux launcher with the supported `bootstrap/linux-cpu.sh build` or
 `bootstrap/linux-gpu.sh build` command before a clean-clone run and after source changes.
-Compose runs the baked image; it neither rebuilds it nor mounts the host checkout. Source-bound
-validation follows [Docker policy](../engineering/docker_policy.md#source-and-image-identity).
+Compose runs the baked image; it neither rebuilds it nor mounts the host checkout. Validation follows [Docker policy](../engineering/docker_policy.md#source-and-image-identity).
 
 On Apple Silicon, cluster bring-up does not launch the host engine. Follow the separate-terminal
 `./bootstrap/apple-silicon.sh run-daemon` step in the

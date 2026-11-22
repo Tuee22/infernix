@@ -51,9 +51,11 @@ surface the repository no longer has.
 
 The architecture below is the target contract, not an assertion that every implementation or
 validation obligation is complete. [README.md](README.md#current-phase-overview) owns phase status
-and the current finding-to-sprint map. Phase 0 is frozen; follow-on work in Phases 1–9 addresses
+and the current finding-to-sprint map. Phase 0 is frozen; follow-on work in Phases 5–9 addresses
 validation provenance, lifecycle authority, artifact reality, web containment, memory observation,
 durable replay, cancellation, media bounds, configuration generation, and evidence retention.
+
+Phases 1 through 4 retain their recorded cohort attestations.
 
 The existing platform and engine implementations remain the starting point. No code change or
 new validation result is implied by the documentation refactor. In particular, a cache marker is

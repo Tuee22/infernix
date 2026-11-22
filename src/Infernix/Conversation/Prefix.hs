@@ -98,7 +98,7 @@ prefixVerificationFailureText failure =
         <> Text.pack (show requested)
         <> " but only "
         <> Text.pack (show available)
-        <> " retained events are readable"
+        <> " projected events are readable"
     PrefixHashMismatch expected observed ->
       "the reconstructed projection hashes to "
         <> observed
@@ -112,7 +112,8 @@ prefixVerificationFailureText failure =
 -- | Reconstruct and verify the prefix a request names.
 --
 -- @retained@ is the context's ordered retained history as read from the
--- conversation topic that this context's identity selects. The prefix is
+-- conversation topic that this context's identity selects. The offset indexes
+-- the deduplicated reducer projection. The prefix is
 -- everything through @offset@ inclusive: the prompt being executed together
 -- with every turn before it.
 reconstructVerifiedPrefix ::
@@ -122,8 +123,8 @@ reconstructVerifiedPrefix ::
   [ConversationMessage] ->
   Either PrefixVerificationFailure VerifiedConversationPrefix
 reconstructVerifiedPrefix contextIdValue offset statedHash retained
-  | offset < 0 || offset >= length retained =
-      Left (PrefixOffsetOutOfRange offset (length retained))
+  | offset < 0 || offset >= length projected =
+      Left (PrefixOffsetOutOfRange offset (length projected))
   | not (promptAt offset prefixMessages) = Left (PrefixOffsetNotAPrompt offset)
   | recomputed /= statedHash =
       Left (PrefixHashMismatch (unPrefixHash statedHash) (unPrefixHash recomputed))
@@ -136,7 +137,8 @@ reconstructVerifiedPrefix contextIdValue offset statedHash retained
             verifiedPrefixBytes = sum (map turnBytes turns)
           }
   where
-    prefixMessages = take (offset + 1) retained
+    projected = foldr (:) [] (Reducer.reducerMessages (Reducer.foldEvents contextIdValue retained))
+    prefixMessages = take (offset + 1) projected
     recomputed = Reducer.reducerPrefixHash (Reducer.foldEvents contextIdValue prefixMessages)
     turns = concatMap conversationTurnsFor prefixMessages
 

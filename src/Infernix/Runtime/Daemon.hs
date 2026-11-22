@@ -69,6 +69,7 @@ import Infernix.Runtime.Pulsar
     runModelBootstrapLoop,
     runResultBridgeLoop,
     sweepEagerModelCacheForPlan,
+    withEngineCacheControlConsumer,
     withEngineMemberClaim,
     writeServiceReadinessMarker,
   )
@@ -259,66 +260,67 @@ runWebSocketPulsarDaemon paths daemonPlan topicCapabilities engineKVCache transp
   -- readiness sentinel and every pool subscription, so a machine refused for
   -- adopting another machine's identity never reports ready and never takes a
   -- message a second machine might answer too.
-  withDaemonEngineMemberClaim transport daemonPlan $ \_memberClaim -> do
-    writeServiceReadinessMarker paths
-    putStrLn "serviceSubscriptionMode: websocket-pulsar"
-    putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
-    -- Phase 7 Sprint 7.32: an engine also reads the substrate's cancel topic,
-    -- because a cancellation is a conversation event the coordinator owns and an
-    -- execution this machine owns. Without this consumer a cancelled prompt
-    -- stopped only in the projection while the engine ran it to completion.
-    case daemonPlan of
-      ExecutingDaemonPlan _ executionPlan ->
-        void
-          ( forkIO
-              ( runEngineCancellationConsumer
-                  transport
-                  (compiledPlanRuntimeMode compiledPlan)
-                  executionPlan
-              )
-          )
-      RoutingDaemonPlan _ -> pure ()
-    case (daemonPlan, compiledPlanRuntimeMode compiledPlan, topicCapabilities) of
-      (ExecutingDaemonPlan {}, AppleSilicon, primaryCapability : extraCapabilities) -> do
-        forM_
-          extraCapabilities
-          ( \capability ->
-              forkIO
-                ( consumeTopicForever
+  withDaemonEngineMemberClaim transport daemonPlan $ \memberClaim ->
+    withDaemonCacheControl transport paths daemonPlan memberClaim $ do
+      writeServiceReadinessMarker paths
+      putStrLn "serviceSubscriptionMode: websocket-pulsar"
+      putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
+      -- Phase 7 Sprint 7.32: an engine also reads the substrate's cancel topic,
+      -- because a cancellation is a conversation event the coordinator owns and an
+      -- execution this machine owns. Without this consumer a cancelled prompt
+      -- stopped only in the projection while the engine ran it to completion.
+      case daemonPlan of
+        ExecutingDaemonPlan _ executionPlan ->
+          void
+            ( forkIO
+                ( runEngineCancellationConsumer
                     transport
-                    paths
-                    capability
-                    (Just engineKVCache)
+                    (compiledPlanRuntimeMode compiledPlan)
+                    executionPlan
                 )
-          )
-        consumeTopicForever transport paths primaryCapability (Just engineKVCache)
-      (ExecutingDaemonPlan {}, _, capabilities) -> do
-        forM_
-          capabilities
-          ( \capability ->
-              forkIO
-                ( consumeTopicForever
-                    transport
-                    paths
-                    capability
-                    (Just engineKVCache)
-                )
-          )
-        forever (threadDelay 60000000)
-      (RoutingDaemonPlan routingPlan, _, capabilities) -> do
-        forM_
-          capabilities
-          ( \capability ->
-              forkIO
-                ( consumeTopicForever
-                    transport
-                    paths
-                    capability
-                    (Just engineKVCache)
-                )
-          )
-        startCoordinatorLoops transport routingPlan
-        forever (threadDelay 60000000)
+            )
+        RoutingDaemonPlan _ -> pure ()
+      case (daemonPlan, compiledPlanRuntimeMode compiledPlan, topicCapabilities) of
+        (ExecutingDaemonPlan {}, AppleSilicon, primaryCapability : extraCapabilities) -> do
+          forM_
+            extraCapabilities
+            ( \capability ->
+                forkIO
+                  ( consumeTopicForever
+                      transport
+                      paths
+                      capability
+                      (Just engineKVCache)
+                  )
+            )
+          consumeTopicForever transport paths primaryCapability (Just engineKVCache)
+        (ExecutingDaemonPlan {}, _, capabilities) -> do
+          forM_
+            capabilities
+            ( \capability ->
+                forkIO
+                  ( consumeTopicForever
+                      transport
+                      paths
+                      capability
+                      (Just engineKVCache)
+                  )
+            )
+          forever (threadDelay 60000000)
+        (RoutingDaemonPlan routingPlan, _, capabilities) -> do
+          forM_
+            capabilities
+            ( \capability ->
+                forkIO
+                  ( consumeTopicForever
+                      transport
+                      paths
+                      capability
+                      (Just engineKVCache)
+                  )
+            )
+          startCoordinatorLoops transport routingPlan
+          forever (threadDelay 60000000)
 
 -- | Phase 8 Sprint 8.12 — take the broker-side member claim when, and only
 -- when, this daemon is an engine.
@@ -343,6 +345,22 @@ withDaemonEngineMemberClaim transport daemonPlan action =
             (compiledPlanRuntimeMode (runtimePlanCompiledPlan runtimePlan))
             memberIdValue
             (action . Just)
+
+-- | The control consumer exists only while the live broker-side engine claim
+-- is held. Its private child is joined before the claim can be released.
+withDaemonCacheControl ::
+  PulsarTransport ->
+  Paths ->
+  DaemonExecutionPlan ->
+  Maybe EngineMemberClaim ->
+  IO a ->
+  IO a
+withDaemonCacheControl transport paths daemonPlan maybeClaim action =
+  case (daemonPlan, maybeClaim) of
+    (RoutingDaemonPlan _, Nothing) -> action
+    (ExecutingDaemonPlan _ executionPlan, Just claim) ->
+      withEngineCacheControlConsumer transport paths executionPlan claim action
+    _ -> ioError (userError "daemon cache control requires its matching engine member claim")
 
 startCoordinatorLoops ::
   PulsarTransport ->

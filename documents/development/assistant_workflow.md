@@ -213,9 +213,10 @@ aligned with this canonical authority.
   `./bootstrap/linux-gpu.sh`, or
   `docker compose run --rm infernix infernix <command>`; the bootstrap does not manage Kind or
   images directly
-- Linux bootstrap handoff selects an immutable image id and supplies the independent checkout
-  read-only for source observation; validation compares it with the baked execution tree and retains
-  its preimage. See [Docker policy](../engineering/docker_policy.md#source-and-image-identity)
+- Agents rebuild the relevant package or image as appropriate before testing so the executed code
+  reflects the intended changes. Existing Colima VMs may be stopped to free memory for host-only
+  tests; first preserve workloads and retained data through the supported lifecycle, and restart
+  the VM for Docker-backed work.
 - never use cross-architecture emulation for development or validation. Apple Silicon must not run
   an emulated amd64 Linux lane, create or switch Docker contexts, or create a Colima VM
 - on Apple Silicon, the `linux-cpu` and `linux-gpu` outer-container lanes run through the operator's
@@ -282,9 +283,8 @@ aligned with this canonical authority.
 
 - run `infernix lint docs` and `infernix docs check` for documentation changes, plus
   `infernix lint plan` when the plan changes, through the supported execution context
-- bind validation to the actual source snapshot and immutable image or native executable; retain
-  reconstructable dirty-source inputs, required-check execution results, and referenced artifacts
-  under [the testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary)
+- rebuild packages and images as appropriate before testing, and retain required-check results and
+  referenced artifacts under [the testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary)
 - report unavailable gates and skipped mandatory checks explicitly; do not substitute static
   inspection, an older image, a status heading, or an aggregate zero exit for missing execution
 - keep documentation-only changes distinct from implementation closure and new hardware evidence

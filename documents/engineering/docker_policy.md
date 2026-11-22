@@ -56,27 +56,7 @@ operations have a buildx-capable CLI when needed.
 
 ## Source and Image Identity
 
-A launcher validation run binds its expected source to the immutable image it executes. The source
-inventory includes tracked files and relevant untracked build inputs, plus build recipes and
-dependency locks. A dirty worktree is admissible only with a retained reconstructable snapshot or
-base commit plus patch and untracked payloads. Its digest alone is not the source.
-
-A mutable `:local` tag and an image-internal filename inventory are not freshness evidence.
-A mismatch or unavailable image refuses validation and names the supported rebuild step; no
-receipt may claim host edits were tested merely because an older baked binary exited zero.
-The binary-owned validation boundary records source and image identities alongside actual check
-execution. The bootstrap owns only prerequisite/build/launcher handoff, not another test runner.
-The bootstrap reconciles the launcher with BuildKit and resolves its immutable image id before
-Compose starts it. A classic image store can return that addressable id directly in BuildKit's
-iidfile. A containerd-backed store can put the OCI configuration digest in the iidfile while
-Docker's inspected `.Id` is the addressable manifest digest. The bootstrap accepts only an iidfile
-digest equal to the inspected `.Id` or its descriptor's `config.digest`, then selects `.Id` for
-Compose; an unavailable, malformed, or unrelated identity refuses. The binary compares the
-independent checkout mount with `/workspace` before
-and after validation and retains the relevant source preimage under
-`./.data/runtime/validation/`. Direct validation commands require the same read-only
-handoff, supplied with `--volume "$(pwd):/opt/infernix/checkout:ro"` on Compose `run`.
-See [testing doctrine](testing.md#execution-evidence-and-trust-boundary).
+Agents rebuild the relevant package or launcher image as appropriate before testing so the executed code reflects the intended changes. The Linux bootstrap builds the launcher and selects an immutable, locally addressable image ID for Compose. It checks the build result's image identity for correct handoff; it does not compare the image against the checkout. The binary owns validation and records execution results and artifacts. See [testing doctrine](testing.md#execution-evidence-and-trust-boundary).
 
 The outer launcher does not require NVIDIA runtime access. Required device assertions execute in
 an explicitly device-equipped context owned by the binary and report that context in their
@@ -136,11 +116,7 @@ receipt; an ordinary launcher without GPU access cannot silently discharge them.
   `infernix-linux-<mode>:local` snapshot selected by the launcher and publishes that image into
   the registry before final rollout instead of asking the shell bootstrap to build or push images
   directly
-- on the Apple host-native path, `cluster up` computes a deterministic source fingerprint for the
-  `infernix-linux-cpu:local` cluster workload image inputs and reuses the local image only when the
-  fingerprint label, fingerprint-version label, runtime-mode label, target architecture, and
-  non-index manifest shape match; otherwise it rebuilds and stamps the refreshed image before
-  registry publication
+- on the Apple host-native path, `cluster up` reuses a locally available cluster workload image when its architecture and manifest shape are suitable. Agents rebuild it as appropriate after changes before testing.
 - `docker/Dockerfile` installs Cabal/NPM/Poetry dependency layers from package metadata before the
   full source copy, then performs protobuf generation, project build, native-engine materialization,
   web build, and Python checks after the full source is present

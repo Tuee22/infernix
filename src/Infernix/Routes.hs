@@ -53,13 +53,13 @@ validateDeployedRoutes :: Bool -> Aeson.Value -> Either String ()
 validateDeployedRoutes demoEnabled payload = do
   observed <- Aeson.parseEither (Aeson.withObject "HTTPRouteList" (\objectValue -> objectValue Aeson..: "items" >>= mapM parseDeployedRoute)) payload
   let expected =
-        [ (routeName spec, routePathPrefix spec, routeServiceName spec, routeServicePort spec, routeRewritePrefix spec)
+        [ (routeName spec, routePathPrefix spec, routeServiceName spec, routeServicePort spec, routeRewritePrefix spec, routeTimeout spec, routeTimeout spec)
         | spec <- publishedRoutes demoEnabled
         ]
   unless (sort observed == sort expected) $
     Left ("deployed HTTPRoute inventory differs from the route registry; expected " <> show (sort expected) <> "; observed " <> show (sort observed))
 
-type DeployedRoute = (Text, Text, Text, Int, Maybe Text)
+type DeployedRoute = (Text, Text, Text, Int, Maybe Text, Maybe Text, Maybe Text)
 
 parseDeployedRoute :: Aeson.Value -> Aeson.Parser DeployedRoute
 parseDeployedRoute = Aeson.withObject "HTTPRoute" $ \objectValue -> do
@@ -101,6 +101,9 @@ parseDeployedRoute = Aeson.withObject "HTTPRoute" $ \objectValue -> do
     (fail "HTTPRoute backend has unexpected namespace, kind, weight, or filters")
   filters <- rule Aeson..:? "filters" Aeson..!= []
   rewriteValue <- parseRouteRewrite filters
+  timeouts <- rule Aeson..:? "timeouts" Aeson..!= KeyMap.empty
+  requestTimeout <- timeouts Aeson..:? "request"
+  backendTimeout <- timeouts Aeson..:? "backendRequest"
   statusValue <- objectValue Aeson..: "status"
   parentStatus <- statusValue Aeson..: "parents" >>= oneRouteValue "status.parents"
   parentStatus Aeson..: "parentRef" >>= parseRouteParent
@@ -108,7 +111,7 @@ parseDeployedRoute = Aeson.withObject "HTTPRoute" $ \objectValue -> do
   unless (controller == ("gateway.envoyproxy.io/gatewayclass-controller" :: Text)) (fail "HTTPRoute is not reconciled by the Envoy Gateway controller")
   conditions <- parentStatus Aeson..: "conditions"
   mapM_ (requireRouteCondition generation conditions) ["Accepted", "ResolvedRefs"]
-  pure (routeNameValue, prefixValue, backendName, backendPort, rewriteValue)
+  pure (routeNameValue, prefixValue, backendName, backendPort, rewriteValue, requestTimeout, backendTimeout)
 
 oneRouteValue :: String -> [value] -> Aeson.Parser value
 oneRouteValue _ [value] = pure value
@@ -271,8 +274,15 @@ renderRouteValueLines routeSpec =
     "    serviceName: " <> Text.unpack (routeServiceName routeSpec),
     "    servicePort: " <> show (routeServicePort routeSpec),
     "    demoOnly: " <> yamlBool (routeDemoOnly routeSpec),
-    "    rewritePrefix: " <> maybe "\"\"" showText (routeRewritePrefix routeSpec)
+    "    rewritePrefix: " <> maybe "\"\"" showText (routeRewritePrefix routeSpec),
+    "    requestTimeout: " <> maybe "\"\"" showText (routeTimeout routeSpec)
   ]
+
+routeTimeout :: RouteSpec -> Maybe Text
+routeTimeout spec
+  | routePathPrefix spec == "/api/cache" = Just (Text.pack (show cacheControlGatewayTimeoutSeconds <> "s"))
+  | routePathPrefix spec == "/api/admin/overview" = Just (Text.pack (show (cacheControlObservationTimeoutSeconds + 30) <> "s"))
+  | otherwise = Nothing
 
 routeSpecs :: [RouteSpec]
 routeSpecs =
@@ -291,6 +301,28 @@ routeSpecs =
       "infernix-demo-api"
       "/api"
       "Demo API"
+      "infernix-demo"
+      80
+      Nothing
+      True
+      Nothing
+      Nothing
+      Nothing,
+    RouteSpec
+      "infernix-demo-cache-api"
+      "/api/cache"
+      "Demo model-cache controls"
+      "infernix-demo"
+      80
+      Nothing
+      True
+      Nothing
+      Nothing
+      Nothing,
+    RouteSpec
+      "infernix-demo-admin-overview"
+      "/api/admin/overview"
+      "Demo admin overview"
       "infernix-demo"
       80
       Nothing

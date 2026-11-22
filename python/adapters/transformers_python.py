@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 from adapters.common import (
@@ -74,8 +75,8 @@ def _tokenize_prompt(tokenizer: Any, turns: list[ConversationTurn]) -> dict[str,
             )
         except TypeError:
             templated = None
-        if isinstance(templated, dict):
-            return templated
+        if isinstance(templated, Mapping):
+            return dict(templated)
     flattened = "\n".join(f"{turn.role}: {turn.text}" for turn in turns)
     return cast(dict[str, Any], tokenizer(flattened, return_tensors="pt"))
 

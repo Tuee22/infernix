@@ -109,14 +109,7 @@ Kind creation through worker copy and claim preparation. A live pre-workload clu
 with matching owner/runtime intent; ambiguous state fails closed. An unreadable kubeconfig
 authorizes delete/recreate only for that exact pending pre-workload intent, never for an ordinary
 live cluster. Do not manually alter these transaction roots while a lifecycle command is active.
-- On host-native Apple, `build-cluster-images` reuses `infernix-linux-cpu:local` only when the local
-image carries the current source fingerprint, runtime-mode label, architecture, and pushable
-manifest shape; the first run after source changes may rebuild, while unchanged-source reruns should
-reuse the stamped image before registry publication.
-- `infernix test integration` may perform several
-internal cluster cycles. A source edit changes the fingerprint and forces one rebuild; subsequent
-cycles in the same run should print `reusing cluster image for linux-cpu: infernix-linux-cpu:local`
-when source is unchanged.
+- On host-native Apple, `build-cluster-images` can reuse a local image with suitable architecture and manifest shape. Rebuild the image as appropriate before testing source changes.
 - `publish-registry-images` includes readiness-gated bounded retries for
 Docker push failures, so a transient registry reset during large-image publication is not a hard
 failure unless the retry budget is exhausted and the image is still neither tagged nor pullable;
@@ -264,7 +257,7 @@ layer.
 `clusterWorkloadArchitectureForHostArchitecture AppleSilicon` returns `"arm64"` in `src/Infernix/Cluster.hs`,
 and every registry `docker pull --platform linux/<arch>` and `skopeo copy --override-arch=<arch>`
 invocation reads from that mapping. The chart's MinIO sub-chart uses upstream multi-arch
-images (`quay.io/minio/minio`, `quay.io/minio/mc`, `busybox`) — not single-architecture amd64-only packaging.
+images (`cgr.dev/chainguard/minio`, `cgr.dev/chainguard/minio-client`, `busybox`) — not single-architecture amd64-only packaging.
 Operators must not enable an emulated Linux lane for Infernix validation, and the Apple
 workflow must not create or switch Docker contexts or create a Colima VM.
 

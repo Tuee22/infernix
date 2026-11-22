@@ -44,12 +44,12 @@ import System.FilePath (normalise)
 import System.Info qualified as SystemInfo
 
 -- | Initialization must remain reachable with an obsolete or missing host
--- manifest. The supported Linux image's build marker and fixed workspace
+-- manifest. The supported Linux image's host configuration seed and fixed workspace
 -- identify its context independently of the record being replaced.
 discoverInitializationPaths :: IO Paths
 discoverInitializationPaths = do
   unconfigured <- discoverPathsWithHostManifest Nothing
-  imageBuildPresent <- doesFileExist "/opt/infernix/build-identity.json"
+  imageBuildPresent <- doesFileExist "/opt/infernix/dhall/ImageHostSeed.dhall"
   hostConfig <- either (ioError . userError) pure (initializationHostConfig SystemInfo.os (repoRoot unconfigured) imageBuildPresent)
   discoverPathsWithHostManifest hostConfig
 
@@ -58,7 +58,7 @@ initializationHostConfig "darwin" _ _ = Right Nothing
 initializationHostConfig "linux" root True
   | normalise root == "/workspace" = Right (Just (HostConfig.defaultLinuxOuterContainerHostConfig "/root"))
 initializationHostConfig platform _ _ =
-  Left ("initialization requires the supported Apple host or Linux outer-container workspace and build handoff; platform=" <> platform)
+  Left ("initialization requires the supported Apple host or Linux outer-container workspace and host configuration seed; platform=" <> platform)
 
 -- | @infernix init@. Writes @./infernix.dhall@ (runtime substrate for the
 -- resolved mode) and @./infernix-host.dhall@ (host manifest). Fails fast if

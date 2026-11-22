@@ -2037,7 +2037,7 @@ which a renderer that failed to load an instrument could not produce.
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R7's `apple-silicon` plus native `linux-cpu` full-suite results for the same frozen source. Sprints 7.30–7.33 have code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: retain Wave R7's `apple-silicon` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprints 7.30–7.33 have code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 
@@ -2047,5 +2047,5 @@ Cohort gate only: retain Wave R7's `apple-silicon` plus native `linux-cpu` full-
 - [Demo design](../documents/architecture/demo_app_design.md), [web UI architecture](../documents/architecture/web_ui_architecture.md), [web portal](../documents/reference/web_portal_surface.md), and [API surface](../documents/reference/api_surface.md): durable UI state, explicit render/load errors, self-hosted MIDI assets, and meaningful media rendering/playback.
 - [Keycloak](../documents/tools/keycloak.md), [access control](../documents/architecture/access_control_doctrine.md), and [frontend contracts](../documents/development/frontend_contracts.md): auth, user/admin boundaries, Haskell-owned snapshots and generated browser contracts.
 - [Kubernetes storage](../documents/engineering/k8s_storage.md), [cluster runbook](../documents/operations/cluster_bootstrap_runbook.md), and [Apple runbook](../documents/operations/apple_silicon_runbook.md): platform-service PVCs, no daemon PVCs, one process per role per machine, and explicit Apple host-engine startup.
-- [Testing strategy](../documents/development/testing_strategy.md), [demo test plan](../documents/development/demo_app_test_plan.md), and [testing doctrine](../documents/engineering/testing.md): source-bound positive and adversarial execution evidence, required-check accounting, real broker restart, history-dependent inference, cancellation, preview bounds, and media output.
+- [Testing strategy](../documents/development/testing_strategy.md), [demo test plan](../documents/development/demo_app_test_plan.md), and [testing doctrine](../documents/engineering/testing.md): positive and adversarial execution evidence, required-check accounting, real broker restart, history-dependent inference, cancellation, preview bounds, and media output.
 - [Root README](../README.md) summarizes and links to these contracts. [Plan README](README.md), [system components](system-components.md), [cohort waves](cohort-validation-waves.md), and [deletion ledger](legacy-tracking-for-deletion.md) hold actual scope, evidence obligations, and only still-existing removal surfaces.

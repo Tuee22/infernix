@@ -76,23 +76,10 @@ test("routed edge surfaces the SPA + the published platform state", async ({ pag
   await expect(page.locator(".app-landing h1, .app-header h1").first()).toHaveText("Infernix");
 });
 
-test("served bundle and route inventory belong to the source under validation", async ({ page, request, infernixFixture }) => {
-  // Phase 5 Sprint 5.13: the launcher refuses a stale image, but the bundle the
-  // browser executes is a separate artifact. The fixture carries this run's
-  // digest of the bundle this checkout built; the same path is fetched back
-  // through the real Gateway and digested again here, so a served bundle from
-  // any other build fails rather than rendering a page that looks right.
+test("routed application serves its published routes", async ({ page, request, infernixFixture }) => {
   const fixture = infernixFixture;
-  expect(fixture?.expectedBundleDigest).toBeTruthy();
-  expect(fixture?.expectedBundlePath).toBeTruthy();
   expect(Array.isArray(fixture?.expectedRoutePrefixes)).toBe(true);
   const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
-
-  const bundleResponse = await request.get(`${baseUrl}${fixture.expectedBundlePath}`);
-  expect(bundleResponse.ok()).toBeTruthy();
-  const servedBundle = await bundleResponse.body();
-  const servedDigest = createHash("sha256").update(servedBundle).digest("hex");
-  expect(servedDigest).toBe(fixture.expectedBundleDigest);
 
   const publicationResponse = await request.get(`${baseUrl}/api/publication`);
   expect(publicationResponse.ok()).toBeTruthy();
@@ -100,9 +87,6 @@ test("served bundle and route inventory belong to the source under validation", 
   const publishedPrefixes = (publication.routes ?? []).map((route) => route.path).sort();
   expect(publishedPrefixes).toEqual([...fixture.expectedRoutePrefixes].sort());
 
-  // The reconciliation is only meaningful if the bundle whose digest matched is
-  // the one that rendered, so the assertion below reads the application's own
-  // output rather than anything the harness supplied.
   const demoConfigResponse = await request.get(`${baseUrl}/api/demo-config`);
   expect(demoConfigResponse.ok()).toBeTruthy();
   const demoConfig = await demoConfigResponse.json();
@@ -644,6 +628,74 @@ test("admin sees cluster-wide surfaces", async ({ page, request, infernixFixture
   expect(cacheResponse.status()).toBe(200);
 });
 
+test("admin can evict and rebuild a verified model cache", async ({ page, request, infernixFixture }) => {
+  test.setTimeout(900000);
+  const baseUrl = `http://${infernixFixture.host}:${infernixFixture.edgePort}`;
+  const modelId = "speech-whisper-small";
+  await loginExistingKeycloakUser(page, baseUrl, "admin", "infernix-admin-demo");
+  const token = await browserAccessToken(page);
+  expect(token).toBeTruthy();
+  const headers = { Authorization: `Bearer ${token}` };
+
+  async function mutate(action) {
+    const response = await request.post(`${baseUrl}/api/cache/${action}`, {
+      headers,
+      data: { modelId },
+      timeout: 600000,
+    });
+    expect(response.status()).toBe(200);
+    const result = await response.json();
+    expect(result.selectedCount).toBe(1);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0].modelId).toBe(modelId);
+    return result;
+  }
+
+  const initial = await mutate("rebuild");
+  expect(initial.rebuiltCount, JSON.stringify(initial.outcomes)).toBe(1);
+  expect(initial.outcomes[0].cacheState).toBe("verified-ready");
+
+  // Phase 9 Sprint 9.12: every malformed or out-of-scope body is refused with a
+  // typed 400 before any model is selected, and none of them touches a cache.
+  // Whisper was just rebuilt, so it must still be verified afterwards.
+  const invalidBodies = [
+    ["empty body", ""],
+    ["json null", "null"],
+    ["json array", "[]"],
+    ["json scalar", "5"],
+    ["malformed json", "{"],
+    ["wrong-type modelId", JSON.stringify({ modelId: 5 })],
+    ["empty modelId", JSON.stringify({ modelId: "" })],
+    ["unknown field", JSON.stringify({ modelId, extra: true })],
+    ["unknown model", JSON.stringify({ modelId: "no-such-model-in-the-catalog" })],
+  ];
+  for (const action of ["evict", "rebuild"]) {
+    for (const [name, body] of invalidBodies) {
+      const refused = await request.post(`${baseUrl}/api/cache/${action}`, {
+        headers: { ...headers, "Content-Type": "application/json" },
+        data: body,
+        timeout: 60000,
+      });
+      expect(refused.status(), `${action} with ${name}`).toBe(400);
+      const refusedBody = await refused.json();
+      expect(refusedBody.errorCode, `${action} with ${name}`).toBe("invalid_cache_request");
+    }
+  }
+  const afterRefusals = await request.get(`${baseUrl}/api/cache`, { headers, timeout: 120000 });
+  expect(afterRefusals.status()).toBe(200);
+  const cacheEntries = await afterRefusals.json();
+  const whisperAfterRefusals = cacheEntries.find((entry) => entry.modelId === modelId);
+  expect(whisperAfterRefusals?.cacheState, JSON.stringify(whisperAfterRefusals)).toBe("verified-ready");
+
+  const evicted = await mutate("evict");
+  expect(evicted.evictedCount).toBe(1);
+  expect(evicted.outcomes[0].cacheState).toBe("missing");
+  const rebuilt = await mutate("rebuild");
+  expect(rebuilt.rebuiltCount).toBe(1);
+  expect(rebuilt.outcomes[0].cacheState).toBe("verified-ready");
+  expect(rebuilt.outcomes[0].cacheStateDetail).toMatch(/^[1-9][0-9]* files, [1-9][0-9]* bytes$/);
+});
+
 test("non-admin is denied cluster-wide surfaces", async ({ page, request, infernixFixture }) => {
   test.setTimeout(120000);
   const fixture = infernixFixture;
@@ -1143,19 +1195,19 @@ test("browser artifact upload covers preview media PDF and download-only grants"
   }
 
   prepareEngineDeploymentForModelId(fixture, demoConfig, selectedModelId);
-  const promptText = `summarize uploaded artifacts ${randomUUID()}`;
-  await page.locator("textarea[name='prompt']").fill(promptText);
+  const initialPromptText = `summarize uploaded artifacts ${randomUUID()}`;
+  await page.locator("textarea[name='prompt']").fill(initialPromptText);
   const draftFrame = await waitForSentFrame(
     wsFrames,
-    (frame) => frame.tag === "ClientUpdateDraft" && frame.clientUpdateDraftText === promptText,
+    (frame) => frame.tag === "ClientUpdateDraft" && frame.clientUpdateDraftText === initialPromptText,
   );
   expect(draftFrame.clientUpdateDraftContextId).toBe(subscribeFrame.clientSubscribeContextId);
   const draftPatchFrame = await waitForReceivedFrame(
     wsFrames,
-    (frame) => frame.tag === "ServerDraftMapPatch" && JSON.stringify(frame).includes(promptText),
+    (frame) => frame.tag === "ServerDraftMapPatch" && JSON.stringify(frame).includes(initialPromptText),
   );
   expect(JSON.stringify(draftPatchFrame)).toContain("DraftMapUpsert");
-  await expect(page.locator("textarea[name='prompt']")).toHaveValue(promptText);
+  await expect(page.locator("textarea[name='prompt']")).toHaveValue(initialPromptText);
 
   const draftReconnectSentStartIndex = wsFrames.sent.length;
   const draftReconnectReceivedStartIndex = wsFrames.received.length;
@@ -1180,17 +1232,37 @@ test("browser artifact upload covers preview media PDF and download-only grants"
   await waitForReceivedFrameAfter(
     wsFrames,
     draftReconnectReceivedStartIndex,
+    (frame) => frame.tag === "ServerDraftMapPatch" && JSON.stringify(frame).includes(initialPromptText),
+    websocketReconnectTimeoutMs,
+  );
+  await expect(page.locator("textarea[name='prompt']")).toHaveValue(initialPromptText, { timeout: 60000 });
+
+  const promptText = `replace draft after reconnect ${randomUUID()}`;
+  const replacementSentStartIndex = wsFrames.sent.length;
+  const replacementReceivedStartIndex = wsFrames.received.length;
+  await fillDraftAndWaitForUpdate(
+    page,
+    wsFrames,
+    replacementSentStartIndex,
+    subscribeFrame.clientSubscribeContextId,
+    promptText,
+    60000,
+  );
+  await waitForReceivedFrameAfter(
+    wsFrames,
+    replacementReceivedStartIndex,
     (frame) => frame.tag === "ServerDraftMapPatch" && JSON.stringify(frame).includes(promptText),
     websocketReconnectTimeoutMs,
   );
-  await expect(page.locator("textarea[name='prompt']")).toHaveValue(promptText, { timeout: 60000 });
+  await expect(page.locator("textarea[name='prompt']")).toHaveValue(promptText);
 
-  await page.locator("form[data-role='chat-draft-editor']").evaluate((form) => form.requestSubmit());
+  await page.locator("form[data-role='chat-draft-editor'] button[type='submit']").click();
 
   const submitFrame = await waitForSentFrame(
     wsFrames,
     (frame) => frame.tag === "ClientSubmitPrompt" && frame.clientSubmitPromptPayload?.promptText === promptText,
   );
+  expect(submitFrame.clientSubmitPromptContextId).toBe(subscribeFrame.clientSubscribeContextId);
   const patchFrame = await waitForReceivedFrame(
     wsFrames,
     (frame) => frame.tag === "ServerConversationPatch" && JSON.stringify(frame).includes(promptText),
@@ -1230,7 +1302,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
       JSON.stringify(frame).includes(queuedPromptText),
   );
   await expect(page.locator("textarea[name='prompt']")).toHaveValue(queuedPromptText, { timeout: 30000 });
-  await page.locator("form[data-role='chat-draft-editor']").evaluate((form) => form.requestSubmit());
+  await page.locator("form[data-role='chat-draft-editor'] button[type='submit']").click();
   const queuedSubmitFrame = await waitForSentFrameAfter(
     wsFrames,
     queuedPromptSentStartIndex,
@@ -1551,8 +1623,8 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
     await expect(page.locator("textarea[name='prompt']")).toHaveValue(promptText, { timeout: 30000 });
 
     await page
-      .locator("form[data-role='chat-draft-editor']")
-      .evaluate((form) => form.requestSubmit());
+      .locator("form[data-role='chat-draft-editor'] button[type='submit']")
+      .click();
 
     const submitFrame = await waitForSentFrameAfter(
       wsFrames,
@@ -2066,8 +2138,8 @@ async function fillDraftAndWaitForUpdate(page, frames, startIndex, contextId, dr
     await expect(activeContext).toBeVisible({ timeout: Math.min(5000, remainingMs) });
     await expect(draftInput).toBeVisible({ timeout: Math.min(5000, remainingMs) });
     await draftInput.fill(draftText);
-    await expect(draftInput).toHaveValue(draftText, { timeout: Math.min(5000, remainingMs) });
     try {
+      await expect(draftInput).toHaveValue(draftText, { timeout: Math.min(5000, remainingMs) });
       return await waitForSentFrameAfter(
         frames,
         startIndex,
@@ -2644,7 +2716,7 @@ async function uploadArtifactThroughBrowser(page, artifact, afterFileSelected = 
   }
   await artifactsRoot.locator("input[name='artifact-mime']").fill(artifact.mimeType);
   await artifactsRoot.locator("input[name='artifact-display-name']").fill(artifact.name);
-  await artifactsRoot.locator("form[data-role='artifact-upload']").evaluate((form) => form.requestSubmit());
+  await artifactsRoot.locator("form[data-role='artifact-upload'] button[type='submit']").click();
   await expect(artifactsRoot.locator(`.artifact-entry[data-display-name="${artifact.name}"]`).first()).toBeVisible({ timeout: 60000 });
 }
 

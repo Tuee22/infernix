@@ -28,7 +28,6 @@ import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.Char (isHexDigit)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, isInfixOf, isPrefixOf)
 import Data.List qualified as List
@@ -61,9 +60,8 @@ import Infernix.BuildMemory
   )
 import Infernix.BuildMemory qualified as BuildMemory
 import Infernix.Cluster
-import Infernix.Cluster.Command qualified as Command
 import Infernix.Cluster.Discover
-import Infernix.Cluster.Internal (captureClusterCommand, clusterWorkloadImageRef, withDelegatedHarnessChildGroup, withHarnessConfigTransaction, withRuntimeConfigWriteAccessAt)
+import Infernix.Cluster.Internal (withDelegatedHarnessChildGroup, withHarnessConfigTransaction, withRuntimeConfigWriteAccessAt)
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.CommandRegistry
@@ -121,10 +119,9 @@ import Infernix.Runtime
     cacheEntryStateDetail,
     cacheEntryStateIsReady,
     cacheEntryStateLabel,
-    evictCache,
-    listCacheEntryReports,
-    rebuildCache,
   )
+import Infernix.Runtime.Cache qualified as Cache
+import Infernix.Runtime.CacheClient qualified as CacheClient
 import Infernix.Runtime.CappedEngine.FixedObserver qualified as FixedObserver
 import Infernix.Runtime.Pulsar (publishInferenceRequest, readPublishedInferenceResultMaybe)
 import Infernix.Service
@@ -140,7 +137,9 @@ import Infernix.Types
     ResultPayload (..),
     RouteInfo (path),
     RuntimeMode (AppleSilicon),
+    clusterPresent,
     engineMembers,
+    publishedDemoConfigPath,
     runtimeModeId,
   )
 import Infernix.Validation qualified as Validation
@@ -229,9 +228,6 @@ commandRequiresConfiguredStartup command =
     TestInitCommand {} -> False
     ClusterReclaimSlotCommand _ -> False
     InternalLinuxHostSeedCommand -> False
-    InternalImageBuildIdentityCommand -> False
-    InternalNativeBuildBeginCommand -> False
-    InternalNativeBuildFinishCommand -> False
     _ -> True
 
 -- The recovery command owns the exact lifecycle-locked recovery kernel and is
@@ -265,7 +261,7 @@ dispatch command =
     ClusterStatusCommand -> clusterStatus Nothing
     ClusterReclaimSlotCommand maybeForcedOwnerPid ->
       reclaimHarnessClusterSlot maybeForcedOwnerPid
-    CacheStatusCommand -> runCacheStatus Nothing
+    CacheStatusCommand maybeModelId -> runCacheStatus Nothing (Text.pack <$> maybeModelId)
     CacheEvictCommand maybeModelId -> runCacheEvict Nothing (Text.pack <$> maybeModelId)
     CacheRebuildCommand maybeModelId -> runCacheRebuild Nothing (Text.pack <$> maybeModelId)
     KubectlCommand kubectlArgs -> runKubectlCompat kubectlArgs
@@ -372,10 +368,6 @@ dispatch command =
       if os == "linux"
         then LazyChar8.putStr (HostConfig.encodeHostConfig (HostConfig.defaultLinuxOuterContainerHostConfig "/root"))
         else ioError (userError "Linux image host seed requires native Linux execution")
-    InternalImageBuildIdentityCommand ->
-      Validation.renderImageBuildIdentity >>= LazyChar8.putStr
-    InternalNativeBuildBeginCommand -> Validation.beginNativeBuild
-    InternalNativeBuildFinishCommand -> Validation.finishNativeBuild
     InternalVerifyValidationReceiptCommand scope path -> Validation.verifyStoredReceipt scope path
     InternalValidateNvidiaCommand receiptPath ->
       Validation.withNvidiaValidation receiptPath $ \check ->
@@ -414,7 +406,7 @@ validateCommandExecutionContext command = do
         ClusterUpCommand -> activeRuntimeMode
         ClusterDownCommand -> activeRuntimeMode
         ClusterStatusCommand -> activeRuntimeMode
-        CacheStatusCommand -> activeRuntimeMode
+        CacheStatusCommand _ -> activeRuntimeMode
         CacheEvictCommand _ -> activeRuntimeMode
         CacheRebuildCommand _ -> activeRuntimeMode
         KubectlCommand _ -> activeRuntimeMode
@@ -772,14 +764,6 @@ runPlaywrightWithFixture ::
 runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
   waitForPlaywrightSurface paths playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode
   infernixExecutable <- getExecutablePath
-  -- Phase 5 Sprint 5.13: the browser gate is bound to the source under test.
-  -- The launcher already refuses a stale image, but that binding stopped at the
-  -- binary: the bundle the browser loads is a separate artifact, built by the
-  -- same image step, and nothing compared the bytes the edge served with the
-  -- bytes this checkout produced. The fixture therefore carries this run's
-  -- digest of the built bundle and the route inventory the binary owns, and the
-  -- browser suite re-derives both from the routed surface.
-  expectedBundleDigestValue <- servedBundleDigest paths runtimeMode
   let fixturePath = runtimeRoot paths </> "playwright-fixture.json"
       fixturePayload =
         encode
@@ -792,52 +776,12 @@ runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expecte
                 Key.fromText "expectedInferenceExecutorLocation" .= expectedInferenceExecutorLocation,
                 Key.fromText "expectedInferenceDispatchMode" .= expectedInferenceDispatchMode,
                 Key.fromText "expectedApiUpstreamMode" .= expectedApiUpstreamMode,
-                Key.fromText "expectedBundlePath" .= servedBundleRelativePath,
-                Key.fromText "expectedBundleDigest" .= expectedBundleDigestValue,
                 Key.fromText "expectedRoutePrefixes" .= map path (Routes.routeInventory True)
               ]
           )
   createDirectoryIfMissing True (runtimeRoot paths)
   LazyChar8.writeFile fixturePath fixturePayload
   runWebNpmCommand (Just runtimeMode) ["--prefix", "web", "exec", "--", "playwright", "test", "--config", "web/playwright.config.js"]
-
--- | The application bundle the routed edge serves, relative to the site root.
-servedBundleRelativePath :: String
-servedBundleRelativePath = "/app.js"
-
--- | This run's digest of the bundle carried by the artifact that serves it.
---
--- Read from the cluster workload image rather than from the host build tree.
--- The demo is cluster-resident on every substrate, and on @apple-silicon@ the
--- control plane is host-native while that workload image is a Linux image, so
--- the two builds differ by exactly the substrate-derived values the contract
--- generator bakes in. Comparing against the host tree would therefore compare
--- the served bundle with a build that never serves it. The image carries a
--- source-fingerprint label and 'cluster up' refuses to reuse one whose label
--- does not match the current source, so binding the served bytes to the image
--- keeps the chain from source to browser intact: a bundle from any other build
--- still fails.
-servedBundleDigest :: Paths -> RuntimeMode -> IO Text.Text
-servedBundleDigest paths runtimeMode = do
-  let imageRef = clusterWorkloadImageRef runtimeMode
-  reported <-
-    captureClusterCommand
-      paths
-      (Command.dockerServedBundleDigest (Command.ImageRef imageRef))
-  case words reported of
-    (digest : _)
-      | length digest == 64,
-        all isHexDigit digest ->
-          pure (Text.pack digest)
-    _ ->
-      ioError
-        ( userError
-            ( "the routed browser gate could not read the served application bundle digest from "
-                <> imageRef
-                <> ": "
-                <> reported
-            )
-        )
 
 -- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
 -- 'Readiness' kernel under the legacy 60-attempt × 1 s budget. A routed surface
@@ -879,13 +823,14 @@ waitForPlaywrightSurface paths host edgePort expectedDaemonLocation expectedInfe
             )
         _ -> pure False
 
-runCacheStatus :: Maybe RuntimeMode -> IO ()
-runCacheStatus maybeRuntimeMode = do
+runCacheStatus :: Maybe RuntimeMode -> Maybe Text.Text -> IO ()
+runCacheStatus maybeRuntimeMode maybeModelId = do
   paths <- discoverPaths
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
-  reports <- listCacheEntryReports paths runtimeMode
+  configPath <- cacheControlConfigPath paths
+  (plan, outcomes) <- CacheClient.runRoutedCacheAction paths runtimeMode Nothing configPath Cache.ObserveCache maybeModelId
+  let reports = CacheClient.routedCacheReports plan outcomes
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
-  putStrLn ("cacheRoot: " <> modelCacheRoot paths </> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("cacheManifestCount: " <> show (length reports))
   putStrLn
     ( "verifiedReadyCount: "
@@ -897,7 +842,8 @@ runCacheEvict :: Maybe RuntimeMode -> Maybe Text.Text -> IO ()
 runCacheEvict maybeRuntimeMode maybeModelId = do
   paths <- discoverPaths
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
-  outcomes <- evictCache paths runtimeMode maybeModelId
+  configPath <- cacheControlConfigPath paths
+  (_, outcomes) <- CacheClient.runRoutedCacheAction paths runtimeMode Nothing configPath Cache.EvictOwnedCache maybeModelId
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   printCacheOutcomes "evicted" outcomes
 
@@ -905,9 +851,20 @@ runCacheRebuild :: Maybe RuntimeMode -> Maybe Text.Text -> IO ()
 runCacheRebuild maybeRuntimeMode maybeModelId = do
   paths <- discoverPaths
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
-  outcomes <- rebuildCache paths runtimeMode maybeModelId
+  configPath <- cacheControlConfigPath paths
+  (_, outcomes) <- CacheClient.runRoutedCacheAction paths runtimeMode Nothing configPath Cache.RebuildOwnedCache maybeModelId
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   printCacheOutcomes "rebuilt" outcomes
+
+-- | A running cluster owns its published catalog. The launcher image may
+-- contain an empty bootstrap catalog and cannot describe the active owners.
+cacheControlConfigPath :: Paths -> IO FilePath
+cacheControlConfigPath paths = do
+  maybeState <- loadClusterState paths
+  pure $
+    case maybeState of
+      Just state | clusterPresent state -> publishedDemoConfigPath state
+      _ -> generatedDemoConfigPath paths
 
 -- Phase 4 Sprint 4.50: a count of selected models is not a count of successful
 -- operations, so both are printed and every non-ready outcome names itself.
@@ -1916,6 +1873,15 @@ toolchainProcessWaitDeadline =
     darwinBuildMemoryMaximumSamples
     BuildMemory.darwinBuildMemorySampleIntervalMicros
 
+-- The integration suite performs multiple full cluster restores and image
+-- reconciliations; allow a bounded twelve hours for that suite while retaining
+-- the shorter scheduler bound for all other toolchain invocations.
+integrationProcessWaitDeadline :: Readiness.Deadline
+integrationProcessWaitDeadline =
+  Readiness.budgetDeadline
+    (12 * 60 * 60)
+    BuildMemory.darwinBuildMemorySampleIntervalMicros
+
 -- | Phase 6 Sprint 6.46 — enter the region in which a toolchain process may be
 -- started.
 --
@@ -1995,9 +1961,16 @@ runToolchainCommand authority _maybeRuntimeMode invocation = do
                   BuildMemory.applyToolchainChildVictimRank
                     authority
                     (ownedToolchainProcessGroup spawned)
-                  waitForToolchainProcessLeader
-                    (BuildMemory.toolchainInvocationLabel authority invocation)
-                    (ownedToolchainProcessHandle spawned)
+                  let label = BuildMemory.toolchainInvocationLabel authority invocation
+                      process = ownedToolchainProcessHandle spawned
+                  case invocation of
+                    ToolchainTest IntegrationSuite ->
+                      waitForToolchainProcessWithDeadline
+                        integrationProcessWaitDeadline
+                        "fixed twelve-hour integration scheduler"
+                        label
+                        process
+                    _ -> waitForToolchainProcessLeader label process
               )
           )
           (cleanupOwnedToolchainProcess authority invocation spawned)

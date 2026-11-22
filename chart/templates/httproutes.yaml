@@ -2,6 +2,8 @@
 # Route registry summary generated from `src/Infernix/Routes.hs`.
 # - `/` -> `infernix-demo:80` (demo-only; no rewrite)
 # - `/api` -> `infernix-demo:80` (demo-only; no rewrite)
+# - `/api/cache` -> `infernix-demo:80` (demo-only; no rewrite)
+# - `/api/admin/overview` -> `infernix-demo:80` (demo-only; no rewrite)
 # - `/registry` -> `infernix-registry:5000` (always published; `/registry` -> `/v2`)
 # - `/pulsar/admin` -> `infernix-infernix-pulsar-proxy:80` (always published; `/pulsar/admin` -> `/`)
 # - `/pulsar/ws` -> `infernix-infernix-pulsar-proxy:80` (always published; `/pulsar/ws` -> `/ws`)
@@ -35,6 +37,11 @@ spec:
             path:
               type: ReplacePrefixMatch
               replacePrefixMatch: {{ $route.rewritePrefix }}
+{{- end }}
+{{- if ne $route.requestTimeout "" }}
+      timeouts:
+        request: {{ $route.requestTimeout }}
+        backendRequest: {{ $route.requestTimeout }}
 {{- end }}
       backendRefs:
         - name: {{ $route.serviceName }}

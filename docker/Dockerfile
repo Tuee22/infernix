@@ -351,8 +351,7 @@ RUN mkdir -p /workspace/tools/generated_proto \
          '--ghc-options=+RTS -M4096M -xr12288M -RTS' \
     && install /workspace/.build/infernix /usr/local/bin/infernix \
     && /usr/local/bin/infernix internal linux-host-seed > /opt/infernix/dhall/ImageHostSeed.dhall \
-    && cp /opt/infernix/dhall/ImageHostSeed.dhall /opt/infernix/dhall/InfernixHost.dhall \
-    && /usr/local/bin/infernix internal image-build-identity > /opt/infernix/build-identity.json
+    && cp /opt/infernix/dhall/ImageHostSeed.dhall /opt/infernix/dhall/InfernixHost.dhall
 
 # Phase 3 Sprint 3.10 — install Playwright's system dependencies before native
 # artifact observation. The installer legitimately regenerates

@@ -9,7 +9,7 @@
 ## Current Execution State
 
 [README.md](README.md#current-phase-overview) owns the single phase-status table.
-Code-side work continues at Sprint 3.18; [Waves R1–R9](cohort-validation-waves.md#wave-table)
+[Waves R6–R9](cohort-validation-waves.md#wave-table)
 hold the separate chosen-accelerator plus CPU sign-off obligations.
 Component existence is not proof that its target contract or new validation criteria are satisfied.
 
@@ -17,41 +17,41 @@ Component existence is not proof that its target contract or new validation crit
 
 The baseline CLI, cluster, runtime, browser, and access-control surfaces exist.
 Their scoped implementation and evidence gaps are recorded below by owning sprint, not by a
-second phase-status inventory. Sprints 1.44–1.46 and 2.18 have validated code-side closure; their source/image tuples and controls are recorded in Phases 1 and 2. No new cohort result is claimed. The [deletion ledger](legacy-tracking-for-deletion.md) records
+second phase-status inventory. Earlier phase attestations retain their original source and image identities. The [deletion ledger](legacy-tracking-for-deletion.md) records
 still-existing shortcuts; [governed documents](../documents/README.md) own the target contracts.
 
 ## Operator and Host Components
 
 | Component | Owner or location | Contract and remaining work |
 |---|---|---|
-| Apple host control plane | `bootstrap/apple-silicon.sh`; `./.build/infernix` | Native Apple build/lifecycle surface. Operator inference requires the separately started host engine; source-bound operator validation belongs to [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Apple host control plane | `bootstrap/apple-silicon.sh`; `./.build/infernix` | Native Apple build/lifecycle surface. Operator inference requires the separately started host engine; operator validation belongs to [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Apple headless Metal/Core ML materialization | `Infernix.Engines.AppleSilicon` and hidden provisioning modules | Materializes upstream engine payloads under `./.data/engines/<adapterId>/` through bounded candidate verification and activation. Domain lifetime proof precision belongs to [1.46](phase-1-repository-and-control-plane-foundation.md); no historical cohort statement substitutes for its new checks. |
 | Linux native engine materialization | `Infernix.Engines.LinuxNative`; `infernix internal materialize-linux-native-engines` | Image-owned targets under `/opt/infernix/engines/<adapterId>/`; hidden target catalog and manifests select direct upstream execution. Behavioral realness controls belong to [4.50](phase-4-inference-service-and-durable-runtime.md). |
-| Linux outer-container control plane | `compose.yaml`; `docker compose run --rm infernix infernix ...` | Baked launcher with Docker socket and `./.data/` mounts, plus an independent read-only checkout supplied by bootstrap. No Compose build definition. Source/image binding and validation belong to [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Linux outer-container control plane | `compose.yaml`; `docker compose run --rm infernix infernix ...` | Baked launcher with Docker socket and `./.data/` mounts, with no Compose build definition. Execution accounting and validation belong to [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Bootstrap shell entrypoints | `bootstrap/*.sh` | Prerequisite/build/launcher handoff only; binary owns lifecycle and validation. Explicit Linux build and binary-generated seed obligations belong to [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Command registry | Haskell command registry | Owns parsing/help and generated references. Explicit initialization may select a substrate; ordinary operations consume initialized config. `service --config PATH` selects a config for that daemon, not a second configuration language. |
 | Runtime configuration | Repo-root `./infernix.dhall`; `Infernix.ProjectInit`, `Infernix.DemoConfig`, `Infernix.Models` | System contract owns substrate and pool/model facts; roles and member identity belong to machine/process scope. Seed generation belongs to [1.44](phase-1-repository-and-control-plane-foundation.md); consumer validation to [8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md). |
 | Machine contract | `./infernix-host.dhall` | `machine` union carries role, member identities, cache quota and system-contract digest; `ImageDefault` grants no daemon authority. Live availability and lifetime checks belong to [1.45–1.46](phase-1-repository-and-control-plane-foundation.md). |
 | Lifecycle authority | `Infernix.Cluster`; private lifecycle interpreter and lease kernel | Closed linear program owns configured path discovery and held-lock interpretation; code-side validation belongs to [1.46](phase-1-repository-and-control-plane-foundation.md). |
-| Route registry | Haskell route inventory | Prefix/backend/rewrite authority; source-bound routed evidence belongs to [3.18](phase-3-platform-services-and-edge-routing.md), backend containment to [5.13](phase-5-web-ui-and-shared-types.md). |
+| Route registry | Haskell route inventory | Prefix/backend/rewrite authority; routed evidence belongs to [3.18](phase-3-platform-services-and-edge-routing.md), backend containment to [5.13](phase-5-web-ui-and-shared-types.md). |
 | Automation entry documents | `AGENTS.md`, `CLAUDE.md` | Link to the canonical assistant workflow; do not own parallel workflow rules. |
-| Frontend contract generator | `infernix internal generate-purs-contracts` | Emits presentation contracts from Haskell browser ADTs into `web/src/Generated/`; source/bundle binding belongs to [5.13](phase-5-web-ui-and-shared-types.md). |
+| Frontend contract generator | `infernix internal generate-purs-contracts` | Emits presentation contracts from Haskell browser ADTs into `web/src/Generated/`; browser bundle verification belongs to [5.13](phase-5-web-ui-and-shared-types.md). |
 | Repo-local state root | `./.data/` | Contains both authoritative lifecycle/local-result state and derived mirrors, caches and outputs; durability is classified below, not inferred from the root name. |
-| Build artifact root | `./.build/`; image-local `/workspace/.build/outer-container/` | Derived build products; bounded execution and source identity follow [Phase 1](phase-1-repository-and-control-plane-foundation.md). |
+| Build artifact root | `./.build/`; image-local `/workspace/.build/outer-container/` | Derived build products; bounded execution and validation follow [Phase 1](phase-1-repository-and-control-plane-foundation.md). |
 
 ## Repository Asset Components
 
 | Component | Current location | Purpose | Scoped remaining work |
 |---|---|---|---|
 | Linux substrate image definition | `docker/Dockerfile` | Shared launcher/coordinator image build, toolchain, web bundle, browser runtime and baked source inventory | Selected-cohort full-suite evidence: [1.44](phase-1-repository-and-control-plane-foundation.md). |
-| Playwright runtime | `docker/Dockerfile`; `web/playwright/` | In-image Linux browser execution; native Apple browser execution through the same typed fixture | Source-bound browser evidence: [5.13](phase-5-web-ui-and-shared-types.md); useful artifact rendering: [7.33](phase-7-demo-app-durable-context.md). |
-| Compose launcher | `compose.yaml` | One service, two mounts, explicit image selector; reuses a prebuilt image | Missing/stale image rejection and independent expected-source handoff: [1.44](phase-1-repository-and-control-plane-foundation.md). |
+| Playwright runtime | `docker/Dockerfile`; `web/playwright/` | In-image Linux browser execution; native Apple browser execution through the same typed fixture | browser evidence: [5.13](phase-5-web-ui-and-shared-types.md); useful artifact rendering: [7.33](phase-7-demo-app-durable-context.md). |
+| Compose launcher | `compose.yaml` | One service, two mounts, explicit image selector; reuses a prebuilt image | Launcher build and execution accounting: [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Shared Python adapter project | `python/pyproject.toml`; `python/adapters/` | Framework-free adapter quality/protobuf project | AST heuristics cannot prove semantic realness; behavioral controls: [4.50](phase-4-inference-service-and-durable-runtime.md). |
 | Per-engine framework environments | `python/engines/<engine>/`; `Infernix.Python` | Prepared isolated framework venvs with project-bound markers; no request-time installation | Real engine behavior is validated under [4.50](phase-4-inference-service-and-durable-runtime.md), independently of environment readiness. |
 | Per-engine images and routing | `docker/engine.Dockerfile`; `Infernix.Models`; `chart/templates/deployment-engine.yaml` | CUDA framework images selected by compiled pool/member routing; engine facts are projections, not parallel authored `engineMembers`/`engineDaemons` lists | Required device execution and cleanup evidence: [6.55](phase-6-validation-and-e2e-hardening.md); role-contract validation: [8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md). |
 | Apple prerequisite bootstrap | `bootstrap/apple-silicon.sh`; host-tool modules | Uses existing native arm64 Docker daemon; no Docker context/VM provisioning | Explicit manual engine workflow evidence: [1.44](phase-1-repository-and-control-plane-foundation.md). |
 | Testing doctrine docs | `documents/engineering/testing.md`; `documents/development/testing_strategy.md` | Canonical evidence rules and operator-facing validation detail | Implementation and new receipts remain in the owning sprints and [waves](cohort-validation-waves.md). |
-| Browser-contract source | `src/Infernix/Web/Contracts.hs`; `web/package.json` | Haskell ADTs generate browser wire/presentation types | Source binding [5.13](phase-5-web-ui-and-shared-types.md), bounded artifact contract [7.33](phase-7-demo-app-durable-context.md). |
+| Browser-contract source | `src/Infernix/Web/Contracts.hs`; `web/package.json` | Haskell ADTs generate browser wire/presentation types | Browser verification [5.13](phase-5-web-ui-and-shared-types.md), bounded artifact contract [7.33](phase-7-demo-app-durable-context.md). |
 | Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | Workloads, configuration, routes and third-party dependencies | Retained platform/publication evidence: [3.18](phase-3-platform-services-and-edge-routing.md). |
 | Kind topology references | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-gpu.yaml` | Reference inputs; binary renders active topology into `./.build/kind/` | Lifecycle evidence and containment: [2.18](phase-2-kind-cluster-storage-and-lifecycle.md). |
 | Protobuf assets | `proto/infernix/`; four tracked modules under `src/Proto/`; generated `tools/generated_proto/` | Canonical schemas, hash-pinned Haskell bindings and untracked Python bindings | Preserve generated ownership and validate changed wire consumers in their owning sprint. |
@@ -61,9 +61,9 @@ still-existing shortcuts; [governed documents](../documents/README.md) own the t
 | Component | Deployment or authority | State and contract | Scoped remaining work |
 |---|---|---|---|
 | Kind and Helm lifecycle | Binary on Apple host or Linux launcher | Manual retained storage, registry-first bring-up, owner-aware teardown and generated configuration | Domain-held mutation/cleanup and retained lifecycle proof: [2.18](phase-2-kind-cluster-storage-and-lifecycle.md). |
-| Registry image preparation | `registry:2` plus binary publication | Registry bootstrap content is rebuildable; blob-servability requires fresh authenticated content reads, not tag presence | Source-bound platform/publication evidence: [3.18](phase-3-platform-services-and-edge-routing.md). |
+| Registry image preparation | `registry:2` plus binary publication | Registry bootstrap content is rebuildable; blob-servability requires fresh authenticated content reads, not tag presence | platform/publication evidence: [3.18](phase-3-platform-services-and-edge-routing.md). |
 | PostgreSQL substrate | Percona operator, single-instance Patroni | Platform service PVCs under `./.data/kind/<runtime-mode>/...`; no database standby topology | Retained lifecycle/platform evidence: [2.18](phase-2-kind-cluster-storage-and-lifecycle.md), [3.18](phase-3-platform-services-and-edge-routing.md). |
-| Publication state | Binary lifecycle and `/api/publication` | Derived `./.data/runtime/publication.json` reports placement/configuration; placement alone is not a live engine observation | Source-bound publication evidence: [3.18](phase-3-platform-services-and-edge-routing.md). |
+| Publication state | Binary lifecycle and `/api/publication` | Derived `./.data/runtime/publication.json` reports placement/configuration; placement alone is not a live engine observation | publication evidence: [3.18](phase-3-platform-services-and-edge-routing.md). |
 | Edge Gateway controller | Envoy Gateway in Kind | Browser-facing routes; Apple internal data-plane access uses separate loopback NodePorts | Routed validation: [3.18](phase-3-platform-services-and-edge-routing.md). |
 | Cluster Gateway resource | `GatewayClass/infernix-gateway`; `Gateway/infernix-edge` | Single localhost-bound listener on the selected edge port | Backend and Gateway containment are independently tested by [5.13](phase-5-web-ui-and-shared-types.md). |
 | HTTPRoute rendering | `chart/templates/httproutes.yaml`; route registry | Demo, registry and Pulsar routes; no external MinIO route | [3.18](phase-3-platform-services-and-edge-routing.md), [5.13](phase-5-web-ui-and-shared-types.md). |
@@ -71,9 +71,9 @@ still-existing shortcuts; [governed documents](../documents/README.md) own the t
 | Service runtime daemons | `Infernix.Runtime.{Daemon,Pulsar,Worker}`, `Infernix.ExecutionPlan`, `Infernix.Runtime.Enforcer` | Coordinator routes/stages, Engine executes, Webapp serves HTTP/WS. Resource-indexed RAM/VRAM capability code exists; GPU device memory remains detection-only | Cgroup availability [1.45](phase-1-repository-and-control-plane-foundation.md), artifacts [4.50](phase-4-inference-service-and-durable-runtime.md), mandatory GPU proof [6.55](phase-6-validation-and-e2e-hardening.md), replay/KV/cancel [7.30–7.32](phase-7-demo-app-durable-context.md). |
 | Demo UI host | `infernix-demo` running `service --role webapp` | Demo-gated API/WS/static host; coordinator, not Webapp, batches/routes engine work | Static containment [5.13](phase-5-web-ui-and-shared-types.md), media [7.33](phase-7-demo-app-durable-context.md), cache API [9.12](phase-9-access-control-and-monitoring.md). |
 | Admin and personal dashboards | PureScript application renderer and Webapp APIs | Admin cluster overview is role-gated; personal data is scoped by verified `sub` | Actual cache effects and admin/tenant regressions [9.12](phase-9-access-control-and-monitoring.md). |
-| Web runtime executor | PureScript bundle; native Apple or in-image Linux Playwright | Same generated catalog and typed fixture; output artifacts are runner-local unless retained explicitly | Source/bundle binding [5.13](phase-5-web-ui-and-shared-types.md) and media proof [7.33](phase-7-demo-app-durable-context.md). |
+| Web runtime executor | PureScript bundle; native Apple or in-image Linux Playwright | Same generated catalog and typed fixture; output artifacts are runner-local unless retained explicitly | Browser bundle verification [5.13](phase-5-web-ui-and-shared-types.md) and media proof [7.33](phase-7-demo-app-durable-context.md). |
 | Engine adapter set | `python/adapters/`; hidden native target catalog | Typed one-request/one-response subprocesses; real outputs or failures, no request-time tool installation | Behavioral realness [4.50](phase-4-inference-service-and-durable-runtime.md), history-fed execution [7.31](phase-7-demo-app-durable-context.md). |
-| Per-engine Python environment producer | `Infernix.Python`; closed provisioning language | Locked environment preparation with post-install source-bound markers | Lifetime authority [1.46](phase-1-repository-and-control-plane-foundation.md); actual inference is a separate proof. |
+| Per-engine Python environment producer | `Infernix.Python`; closed provisioning language | Locked environment preparation with post-install markers | Lifetime authority [1.46](phase-1-repository-and-control-plane-foundation.md); actual inference is a separate proof. |
 | Python quality gate | `poetry run check-code` | mypy, Black, Ruff and limited AST checks | Semantic negative controls [4.50](phase-4-inference-service-and-durable-runtime.md). |
 | Keycloak identity | Demo-gated Keycloak release | One application instance; signup, PKCE, JWT role claims and logout | Admin/tenant regressions [9.12](phase-9-access-control-and-monitoring.md). |
 | Keycloak Patroni PostgreSQL | Demo-gated Percona-managed database | Single-instance database backing Keycloak; bootstrap-owned rebuild rules follow storage doctrine | Lifecycle/platform evidence [2.18](phase-2-kind-cluster-storage-and-lifecycle.md), [3.18](phase-3-platform-services-and-edge-routing.md). |
@@ -100,7 +100,7 @@ still-existing shortcuts; [governed documents](../documents/README.md) own the t
 | Demo UI runtime | `infernix service --role webapp` | Demo-only routed HTTP/WS/static host. |
 | Frontend contract generation | `infernix internal generate-purs-contracts` | Haskell-owned presentation ADTs generate PureScript. |
 | Unit validation | `infernix test unit` | Closed configured Haskell/PureScript suites; mandatory CUDA execution cannot be discharged by a skip ([6.55](phase-6-validation-and-e2e-hardening.md)). |
-| Integration validation | `infernix test integration` | Active-catalog real behavior, lifecycle and explicit refusals; source-bound and per-check evidence required. |
+| Integration validation | `infernix test integration` | Active-catalog real behavior, lifecycle and explicit refusals; and per-check evidence required. |
 | Routed E2E validation | `infernix test e2e` | Real Keycloak/Gateway/browser path; useful rendering, not just mounted containers. |
 | Single-accelerator phase closure | `infernix test all` on chosen accelerator plus native CPU | Scope-bound retained evidence in [waves](cohort-validation-waves.md); code-side closure is separate. |
 | Haskell style and manifest gates | `Infernix.Lint.HaskellStyle`; `test/haskell-style/`; `test/cabal-format/` | In-process Ormolu/HLint plus solver-isolated Cabal-format package; preserve exact generated-source exclusions. |
@@ -130,7 +130,7 @@ Monitoring is not a supported first-class surface.
 | Substrate | Execution placement | Remaining proof |
 |---|---|---|
 | `apple-silicon` | Native host CLI and separately started host engine; cluster coordinator/platform/Webapp | Manual workflow [1.44](phase-1-repository-and-control-plane-foundation.md), artifact behavior [4.50](phase-4-inference-service-and-durable-runtime.md), browser proof [5.13](phase-5-web-ui-and-shared-types.md). |
-| `linux-cpu` | Native amd64/arm64 Linux launcher and cluster engine, no emulation | Source binding and fail-closed observation [1.44–1.45](phase-1-repository-and-control-plane-foundation.md); paired lane for every open wave. |
+| `linux-cpu` | Native amd64/arm64 Linux launcher and cluster engine, no emulation | Execution accounting and fail-closed observation [1.44–1.45](phase-1-repository-and-control-plane-foundation.md); paired lane for every open wave. |
 | `linux-gpu` | Linux launcher/coordinator image plus selected CUDA engine image/workload | Mandatory device execution/cleanup [6.55](phase-6-validation-and-e2e-hardening.md); outer launcher needs no NVIDIA access. |
 
 ## Serialization Boundaries

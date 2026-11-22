@@ -81,6 +81,8 @@ library
         Infernix.Models
         Infernix.Models.Artifact
         Infernix.Models.Requirement
+        Infernix.Models.TorchPickle
+        Infernix.Models.TorchZip
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
         Infernix.Objects.Sts
@@ -89,6 +91,8 @@ library
         Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
+        Infernix.Runtime.CacheClient
+        Infernix.Runtime.CacheControl
         Infernix.Runtime.Cancellation
         Infernix.Runtime.Daemon
         Infernix.Runtime.Enforcer
@@ -108,6 +112,10 @@ library
 
     hs-source-dirs:   src
     other-modules:
+        Infernix.Objects.BoundedHttp
+        Infernix.Runtime.ModelCacheIdentity
+        Infernix.Runtime.ModelCacheLease
+        Infernix.Runtime.ModelCacheReplacement
         Infernix.Cluster.Internal
         Infernix.Cluster.LifecycleProgram.Internal
         Infernix.Evidence.Lease.Internal
@@ -204,7 +212,7 @@ executable infernix
     hs-source-dirs:   app
     default-language: GHC2021
     ghc-options:
-        -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-xr16384M
+        -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-xr8192M
 
     build-depends:
         base >=4.18 && <4.23,
@@ -309,6 +317,9 @@ test-suite infernix-unit
         Infernix.Models
         Infernix.Models.Artifact
         Infernix.Models.Requirement
+        Infernix.Models.TorchPickle
+        Infernix.Models.TorchZip
+        Infernix.Objects.BoundedHttp
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
         Infernix.Objects.Sts
@@ -322,8 +333,13 @@ test-suite infernix-unit
         Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
+        Infernix.Runtime.CacheClient
+        Infernix.Runtime.CacheControl
         Infernix.Runtime.Cancellation
         Infernix.Runtime.CappedEngine
+        Infernix.Runtime.ModelCacheIdentity
+        Infernix.Runtime.ModelCacheLease
+        Infernix.Runtime.ModelCacheReplacement
         Infernix.Runtime.CappedEngine.Cleanup
         Infernix.Runtime.CappedEngine.Ceiling
         Infernix.Runtime.CappedEngine.Projection
@@ -481,6 +497,8 @@ test-suite infernix-apple-materializer
         Infernix.Models
         Infernix.Models.Artifact
         Infernix.Models.Requirement
+        Infernix.Models.TorchPickle
+        Infernix.Models.TorchZip
         Infernix.DescriptorSpace
         Infernix.ProcessIdentity
         Infernix.ProcessIdentity.Internal
@@ -661,6 +679,9 @@ test-suite infernix-integration
         Infernix.Models
         Infernix.Models.Artifact
         Infernix.Models.Requirement
+        Infernix.Models.TorchPickle
+        Infernix.Models.TorchZip
+        Infernix.Objects.BoundedHttp
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
         Infernix.Objects.Sts
@@ -674,8 +695,13 @@ test-suite infernix-integration
         Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
+        Infernix.Runtime.CacheClient
+        Infernix.Runtime.CacheControl
         Infernix.Runtime.Cancellation
         Infernix.Runtime.CappedEngine
+        Infernix.Runtime.ModelCacheIdentity
+        Infernix.Runtime.ModelCacheLease
+        Infernix.Runtime.ModelCacheReplacement
         Infernix.Runtime.CappedEngine.Cleanup
         Infernix.Runtime.CappedEngine.Ceiling
         Infernix.Runtime.CappedEngine.Projection

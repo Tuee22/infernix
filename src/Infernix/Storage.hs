@@ -50,6 +50,7 @@ import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, openBinaryTempFile)
+import System.IO.Error (isDoesNotExistError)
 import Text.Read (readMaybe)
 
 edgePortPath :: Paths -> FilePath
@@ -188,8 +189,16 @@ readClusterStateFile filePath = do
     else do
       -- Read strictly so the file handle closes before the caller may rewrite
       -- the same path (a lazy read leaves the handle open until fully forced).
-      encoded <- ByteString.readFile filePath
-      pure (decodeClusterStateContents encoded)
+      --
+      -- Harness runtime cleanup may remove the file between the existence
+      -- check and the open. A file that vanished in that window is absent, the
+      -- same answer the check gives, not a decode failure or an I/O crash.
+      readResult <- try (ByteString.readFile filePath)
+      case readResult of
+        Right encoded -> pure (decodeClusterStateContents encoded)
+        Left err
+          | isDoesNotExistError err -> pure (Right Nothing)
+          | otherwise -> throwIO err
 
 decodeClusterStateContents :: ByteString.ByteString -> Either String (Maybe ClusterState)
 decodeClusterStateContents encoded =

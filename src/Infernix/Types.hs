@@ -4,7 +4,10 @@
 {-# LANGUAGE RoleAnnotations #-}
 
 module Infernix.Types
-  ( ApiUpstream (..),
+  ( cacheControlObservationTimeoutSeconds,
+    cacheControlMutationTimeoutSeconds,
+    cacheControlGatewayTimeoutSeconds,
+    ApiUpstream (..),
     ApiUpstreamMode (..),
     CacheManifest (..),
     ClusterLifecycle (..),
@@ -153,6 +156,11 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
+
+cacheControlObservationTimeoutSeconds, cacheControlMutationTimeoutSeconds, cacheControlGatewayTimeoutSeconds :: Int
+cacheControlObservationTimeoutSeconds = 30
+cacheControlMutationTimeoutSeconds = 540
+cacheControlGatewayTimeoutSeconds = cacheControlMutationTimeoutSeconds + cacheControlObservationTimeoutSeconds + 30
 
 data RuntimeMode
   = AppleSilicon

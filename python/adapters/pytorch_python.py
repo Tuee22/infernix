@@ -28,6 +28,17 @@ def _preferred_torch_device(torch_module: Any) -> str:
     return "cpu"
 
 
+def _demucs_inference_options(model: Any, device: str) -> dict[str, Any]:
+    if device != "cpu":
+        return {"device": device}
+    # HTDemucs pads to model.segment during inference. Set both the model's
+    # padding length and apply_model's overlapping split length so CPU execution
+    # stays within its bounded lane while covering the complete input.
+    segment = min(float(model.segment), 2.0)
+    model.segment = segment
+    return {"device": device, "segment": segment}
+
+
 def _install_mt3_transformers_checkpoint_compat() -> None:
     try:
         import torch
@@ -219,7 +230,9 @@ def _separate_sources(context: AdapterContext) -> ArtifactResult:
     model.eval()
     # Wave I real-output fix: run separation on the GPU/MPS accelerator; demucs
     # `apply_model` moves the model and per-chunk tensors to the named device.
-    stems = apply_model(model, waveform.unsqueeze(0), device=device)[0]
+    stems = apply_model(
+        model, waveform.unsqueeze(0), **_demucs_inference_options(model, device)
+    )[0]
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as bundle:
         for index, source_name in enumerate(model.sources):

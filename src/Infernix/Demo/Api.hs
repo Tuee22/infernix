@@ -9,6 +9,7 @@ module Infernix.Demo.Api
     StaticAssetRefusal (..),
     decodeCacheMutationScope,
     renderDispositionForMime,
+    readStaticAsset,
     resolveStaticAsset,
     runDemoApiServer,
     staticAssetRefusalText,
@@ -16,7 +17,7 @@ module Infernix.Demo.Api
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, fromException, try)
+import Control.Exception (SomeException, bracket, fromException, try)
 import Control.Monad (forM, unless)
 import Data.Aeson
   ( ToJSON,
@@ -59,7 +60,7 @@ import Infernix.Demo.Auth
 import Infernix.Demo.Bootstrap (requiredDemoBuckets)
 import Infernix.Demo.WebSocket qualified as DemoWebSocket
 import Infernix.DemoConfig.Internal (decodePresentationConfigFile)
-import Infernix.Models (engineBindingForSelectedEngine)
+import Infernix.Models (engineBindingForSelectedEngine, findModel)
 import Infernix.Objects.Layout
   ( DemoObjectsBucket (..),
     UserPrefix (..),
@@ -91,9 +92,10 @@ import Infernix.Runtime
     cacheEntryStateLabel,
     evictCache,
     listCacheEntryReports,
-    listCacheManifests,
     rebuildCache,
   )
+import Infernix.Runtime.Cache qualified as Cache
+import Infernix.Runtime.CacheClient qualified as CacheClient
 import Infernix.Runtime.Pulsar qualified as RuntimePulsar
 import Infernix.SecretsConfig qualified as SecretsConfig
 import Infernix.Types
@@ -157,10 +159,15 @@ import Network.Wai
     responseLBS,
     strictRequestBody,
   )
-import Network.Wai.Handler.Warp (HostPreference, defaultSettings, runSettings, setHost, setPort)
+import Network.Wai.Handler.Warp (HostPreference, defaultSettings, runSettings, setHost, setPort, setTimeout)
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath (splitDirectories, takeExtension, (</>))
 import System.IO (hPutStrLn, stderr)
+import System.IO.Error (catchIOError, isDoesNotExistError, isEOFError)
+import System.Posix.Files (fileSize, getFdStatus, isRegularFile)
+import System.Posix.IO (OpenFileFlags (cloexec, directory, nofollow, nonBlock), OpenMode (ReadOnly), closeFd, defaultFileFlags, openFd, openFdAt)
+import System.Posix.IO.ByteString qualified as PosixByteString
+import System.Posix.Types (Fd)
 
 data DemoApiOptions = DemoApiOptions
   { demoPaths :: Paths,
@@ -225,9 +232,17 @@ runDemoApiServer options = do
       then repairDemoBucketsAtStartup maybeClusterConfig
       else pure Nothing
   let realmConfig = loadRealmConfigFromCluster maybeClusterConfig
+      -- Warp kills a handler thread that sends no bytes within its timeout
+      -- (30 seconds by default). Owner-directed cache mutations are allowed to
+      -- run for 'cacheControlMutationTimeoutSeconds' and the gateway budget
+      -- adds to that, so the default killed a handler mid-request
+      -- ("Thread killed by timeout manager") before it published the request
+      -- or relayed its reply. The server timeout must outlast the longest
+      -- budget a handler is allowed.
       settings =
-        setHost (fromStringHost (demoBindHost options)) $
-          setPort (demoPort options) defaultSettings
+        setTimeout (cacheControlGatewayTimeoutSeconds + 30) $
+          setHost (fromStringHost (demoBindHost options)) $
+            setPort (demoPort options) defaultSettings
   runSettings settings (application options jwksCache realmConfig maybeClusterConfig maybeBucketsProvisioned)
 
 -- | Sprint 7.29 (managed-state-transition doctrine) — evidence that the demo
@@ -396,16 +411,16 @@ application options jwksCache realmConfig maybeClusterConfig maybeBucketsProvisi
           serveModel options modelIdValue respond
     ["api", "cache"]
       | requestMethod request == methodGet && demoEnabled ->
-          withAdminRequest jwksCache realmConfig request respond (serveCacheStatus options respond)
+          withAdminRequest jwksCache realmConfig request respond (serveCacheStatus options maybeClusterConfig respond)
     ["api", "cache", "evict"]
       | requestMethod request == methodPost && demoEnabled ->
-          withAdminRequest jwksCache realmConfig request respond (handleCacheMutation options request EvictCache respond)
+          withAdminRequest jwksCache realmConfig request respond (handleCacheMutation options maybeClusterConfig request EvictCache respond)
     ["api", "cache", "rebuild"]
       | requestMethod request == methodPost && demoEnabled ->
-          withAdminRequest jwksCache realmConfig request respond (handleCacheMutation options request RebuildCache respond)
+          withAdminRequest jwksCache realmConfig request respond (handleCacheMutation options maybeClusterConfig request RebuildCache respond)
     ["api", "admin", "overview"]
       | requestMethod request == methodGet && demoEnabled ->
-          handleAdminOverview options jwksCache realmConfig request respond
+          handleAdminOverview options maybeClusterConfig jwksCache realmConfig request respond
     ["api", "account"]
       | requestMethod request == methodDelete && demoEnabled ->
           handleAccountDeletion options jwksCache realmConfig maybeClusterConfig request respond
@@ -636,17 +651,19 @@ withAdminRequest jwksCache realmConfig request respond action = do
 -- string if MinIO cannot be listed. Non-admins never reach this endpoint.
 handleAdminOverview ::
   DemoApiOptions ->
+  Maybe ClusterConfig.ClusterConfig ->
   JwksCache ->
   KeycloakRealmConfig ->
   Request ->
   (Response -> IO responseReceived) ->
   IO responseReceived
-handleAdminOverview options jwksCache realmConfig request respond =
+handleAdminOverview options maybeClusterConfig jwksCache realmConfig request respond =
   withAdminRequest jwksCache realmConfig request respond $ do
     demoConfig <- decodePresentationConfigFile (demoConfigPath options)
     let activeRuntimeMode = presentationRuntimeMode demoConfig
         engineNames = nub (map selectedEngine (presentationModels demoConfig))
-    manifests <- listCacheManifests (demoPaths options) activeRuntimeMode
+    cacheReports <- buildOverviewCacheReports options maybeClusterConfig activeRuntimeMode
+    let cacheCount = length . filter id <$> traverse observedCachePresent cacheReports
     userCountResult <- countUsersWithObjects
     let usersWithObjectsMaybe = either (const Nothing) Just userCountResult
         usersWithObjectsErrorMaybe = either Just (const Nothing) userCountResult
@@ -663,7 +680,7 @@ handleAdminOverview options jwksCache realmConfig request respond =
                 "engineNames" .= engineNames,
                 "enginePoolCount" .= presentationEnginePoolCount demoConfig,
                 "engineMemberCount" .= presentationEngineMemberCount demoConfig,
-                "modelCacheEntryCount" .= length manifests,
+                "modelCacheEntryCount" .= (cacheCount :: Maybe Int),
                 "usersWithObjects" .= (usersWithObjectsMaybe :: Maybe Int),
                 "usersWithObjectsError" .= (usersWithObjectsErrorMaybe :: Maybe String)
               ]
@@ -1174,6 +1191,7 @@ handleAccountDeletion options jwksCache realmConfig maybeClusterConfig request r
                     <> show cleanupComplete
                     <> " remainingTopics="
                     <> show (length remainingTopics)
+                    <> (if null remainingTopics then "" else " " <> show remainingTopics)
                 )
               respond
                 ( jsonResponse
@@ -1188,8 +1206,13 @@ handleAccountDeletion options jwksCache realmConfig maybeClusterConfig request r
                     )
                 )
 
+-- | One cleanup request is bounded well inside the gateway's default route
+-- timeout (32 attempts at 250 ms is about 8 seconds plus admin latency). A
+-- cleanup that is not yet complete answers 202 with the remaining topics, and
+-- the browser repeats the request until a complete answer, so a stuck topic
+-- costs more requests rather than a gateway timeout that hides the 202.
 accountPulsarCleanupAttemptBudget :: Int
-accountPulsarCleanupAttemptBudget = 240
+accountPulsarCleanupAttemptBudget = 32
 
 deleteMinioUserObjects :: PresignedUrlConfig -> UserId -> IO Int
 deleteMinioUserObjects config userId = do
@@ -1589,6 +1612,7 @@ data CacheRequestRefusal
   | CacheRequestUnknownFields [Text.Text]
   | CacheRequestModelIdNotAString
   | CacheRequestModelIdEmpty
+  | CacheRequestModelIdUnknown Text.Text
   deriving (Eq, Show)
 
 cacheRequestRefusalText :: CacheRequestRefusal -> String
@@ -1604,6 +1628,8 @@ cacheRequestRefusalText refusal =
         <> Text.unpack (Text.intercalate ", " fields)
     CacheRequestModelIdNotAString -> "cache mutation modelId must be a nonempty string"
     CacheRequestModelIdEmpty -> "cache mutation modelId must not be empty"
+    CacheRequestModelIdUnknown modelIdValue ->
+      "cache mutation modelId is not in the active catalog: " <> Text.unpack modelIdValue
 
 -- | Decode a cache mutation body into its explicit scope.
 decodeCacheMutationScope :: LazyByteString.ByteString -> Either CacheRequestRefusal CacheMutationScope
@@ -1632,8 +1658,8 @@ cacheMutationModelId scope =
     AllConfiguredModels -> Nothing
     SingleModel modelIdValue -> Just modelIdValue
 
-handleCacheMutation :: DemoApiOptions -> Request -> CacheMutation -> (Response -> IO responseReceived) -> IO responseReceived
-handleCacheMutation options request mutation respond = do
+handleCacheMutation :: DemoApiOptions -> Maybe ClusterConfig.ClusterConfig -> Request -> CacheMutation -> (Response -> IO responseReceived) -> IO responseReceived
+handleCacheMutation options maybeClusterConfig request mutation respond = do
   body <- strictRequestBody request
   case decodeCacheMutationScope body of
     Left refusal ->
@@ -1646,20 +1672,32 @@ handleCacheMutation options request mutation respond = do
         )
     Right scope -> do
       activeRuntimeMode <- currentDemoRuntimeMode options
-      applyCacheMutation options mutation activeRuntimeMode (cacheMutationModelId scope) respond
+      case cacheMutationModelId scope of
+        Just selected
+          | Nothing <- findModel activeRuntimeMode selected ->
+              -- An identity outside the active catalog selects nothing, so it is
+              -- refused here rather than answered with an unobservable outcome.
+              respond
+                ( jsonResponse
+                    status400
+                    (ErrorResponse "invalid_cache_request" (Text.pack (cacheRequestRefusalText (CacheRequestModelIdUnknown selected))))
+                )
+        _ ->
+          applyCacheMutation options maybeClusterConfig mutation activeRuntimeMode (cacheMutationModelId scope) respond
 
 applyCacheMutation ::
   DemoApiOptions ->
+  Maybe ClusterConfig.ClusterConfig ->
   CacheMutation ->
   RuntimeMode ->
   Maybe Text.Text ->
   (Response -> IO responseReceived) ->
   IO responseReceived
-applyCacheMutation options mutation activeRuntimeMode maybeModelId respond =
+applyCacheMutation options maybeClusterConfig mutation activeRuntimeMode maybeModelId respond =
   case mutation of
     EvictCache -> do
-      outcomes <- evictCache (demoPaths options) activeRuntimeMode maybeModelId
-      cachePayload <- buildCachePayload options activeRuntimeMode
+      outcomes <- runCacheMutation options maybeClusterConfig activeRuntimeMode Cache.EvictOwnedCache maybeModelId
+      cachePayload <- buildCachePayload options maybeClusterConfig activeRuntimeMode
       respond
         ( jsonResponse
             status200
@@ -1672,8 +1710,8 @@ applyCacheMutation options mutation activeRuntimeMode maybeModelId respond =
             )
         )
     RebuildCache -> do
-      outcomes <- rebuildCache (demoPaths options) activeRuntimeMode maybeModelId
-      cachePayload <- buildCachePayload options activeRuntimeMode
+      outcomes <- runCacheMutation options maybeClusterConfig activeRuntimeMode Cache.RebuildOwnedCache maybeModelId
+      cachePayload <- buildCachePayload options maybeClusterConfig activeRuntimeMode
       respond
         ( jsonResponse
             status200
@@ -1722,20 +1760,63 @@ serveModel options requestedModelId respond = do
     modelDescriptor : _ -> respond (jsonResponse status200 modelDescriptor)
     [] -> respond (jsonResponse status404 (ErrorResponse "unknown_model" "The requested model is not registered."))
 
-serveCacheStatus :: DemoApiOptions -> (Response -> IO responseReceived) -> IO responseReceived
-serveCacheStatus options respond = do
+serveCacheStatus :: DemoApiOptions -> Maybe ClusterConfig.ClusterConfig -> (Response -> IO responseReceived) -> IO responseReceived
+serveCacheStatus options maybeClusterConfig respond = do
   activeRuntimeMode <- currentDemoRuntimeMode options
-  cachePayload <- buildCachePayload options activeRuntimeMode
+  cachePayload <- buildCachePayload options maybeClusterConfig activeRuntimeMode
   respond (jsonResponse status200 cachePayload)
 
 currentDemoRuntimeMode :: DemoApiOptions -> IO RuntimeMode
 currentDemoRuntimeMode options =
   presentationRuntimeMode <$> decodePresentationConfigFile (demoConfigPath options)
 
-buildCachePayload :: DemoApiOptions -> RuntimeMode -> IO [Value]
-buildCachePayload options runtimeMode = do
-  reports <- listCacheEntryReports (demoPaths options) runtimeMode
-  pure (map cacheEntryValue reports)
+runCacheMutation ::
+  DemoApiOptions ->
+  Maybe ClusterConfig.ClusterConfig ->
+  RuntimeMode ->
+  Cache.CacheAction ->
+  Maybe Text ->
+  IO [CacheOperationOutcome]
+runCacheMutation options maybeClusterConfig runtimeMode action maybeModelId =
+  case demoBridgeMode options of
+    DirectDemoInference ->
+      case action of
+        Cache.EvictOwnedCache -> evictCache (demoPaths options) runtimeMode maybeModelId
+        Cache.RebuildOwnedCache -> rebuildCache (demoPaths options) runtimeMode maybeModelId
+        Cache.ObserveCache -> ioError (userError "observation is not a cache mutation")
+    PulsarDaemonBridge ->
+      snd <$> CacheClient.runRoutedCacheAction (demoPaths options) runtimeMode maybeClusterConfig (demoConfigPath options) action maybeModelId
+
+buildCachePayload :: DemoApiOptions -> Maybe ClusterConfig.ClusterConfig -> RuntimeMode -> IO [Value]
+buildCachePayload options maybeClusterConfig runtimeMode =
+  map cacheEntryValue <$> buildCacheReports options maybeClusterConfig runtimeMode
+
+buildCacheReports :: DemoApiOptions -> Maybe ClusterConfig.ClusterConfig -> RuntimeMode -> IO [CacheEntryReport]
+buildCacheReports options maybeClusterConfig runtimeMode =
+  case demoBridgeMode options of
+    DirectDemoInference -> listCacheEntryReports (demoPaths options) runtimeMode
+    PulsarDaemonBridge -> do
+      (plan, outcomes) <- CacheClient.runRoutedCacheAction (demoPaths options) runtimeMode maybeClusterConfig (demoConfigPath options) Cache.ObserveCache Nothing
+      pure (CacheClient.routedCacheReports plan outcomes)
+
+buildOverviewCacheReports :: DemoApiOptions -> Maybe ClusterConfig.ClusterConfig -> RuntimeMode -> IO [CacheEntryReport]
+buildOverviewCacheReports options maybeClusterConfig runtimeMode =
+  case demoBridgeMode options of
+    DirectDemoInference -> buildCacheReports options maybeClusterConfig runtimeMode
+    PulsarDaemonBridge -> do
+      (plan, outcomes) <- CacheClient.runRoutedCacheOverview (demoPaths options) runtimeMode maybeClusterConfig (demoConfigPath options)
+      pure (CacheClient.routedCacheReports plan outcomes)
+
+-- An unavailable or busy owner cannot support a count of present caches.
+observedCachePresent :: CacheEntryReport -> Maybe Bool
+observedCachePresent report =
+  case cacheReportState report of
+    CacheMissing _ -> Just False
+    CacheVerifiedReady _ -> Just True
+    CacheIncomplete _ -> Just True
+    CacheCorrupt _ -> Just True
+    CacheUnobservable _ -> Nothing
+    CacheInUse _ -> Nothing
 
 -- Phase 4 Sprint 4.50: the payload reports the observed state of the cache the
 -- engine loads from, with its measured file and byte counts. The retired
@@ -1821,18 +1902,83 @@ sourceArtifactManifestUri manifest =
 -- second layer of this one.
 serveStaticSegments :: DemoApiOptions -> [Text.Text] -> (Response -> IO responseReceived) -> IO responseReceived
 serveStaticSegments options staticSegments respond = do
-  resolved <- resolveStaticAsset (webDistRoot (demoPaths options)) staticSegments
+  -- The bytes are read through descriptors opened component by component with
+  -- no symlink followed, so the file that is served is the file that was
+  -- checked. Canonicalizing a path and then reopening it by name leaves a
+  -- window in which a component can be swapped for a symlink.
+  resolved <- readStaticAsset (webDistRoot (demoPaths options)) staticSegments
   case resolved of
     Left refusal ->
       respond (textResponse status404 (Text.unpack (staticAssetRefusalText refusal)))
-    Right assetPath ->
+    Right assetBytes ->
       respond
-        ( responseFile
+        ( responseLBS
             status200
             [(hContentType, contentTypeForSegments staticSegments)]
-            assetPath
-            Nothing
+            (LazyByteString.fromStrict assetBytes)
         )
+
+-- | Read up to a known number of bytes from a descriptor, stopping at EOF.
+readDescriptor :: Fd -> Int -> IO ByteString.ByteString
+readDescriptor descriptor total = go total []
+  where
+    go remaining chunks
+      | remaining <= 0 = pure (ByteString.concat (reverse chunks))
+      | otherwise = do
+          chunk <-
+            catchIOError
+              (PosixByteString.fdRead descriptor (fromIntegral (min remaining 65536)))
+              (\failure -> if isEOFError failure then pure ByteString.empty else ioError failure)
+          if ByteString.null chunk
+            then pure (ByteString.concat (reverse chunks))
+            else go (remaining - ByteString.length chunk) (chunk : chunks)
+
+-- | The largest static asset this handler will read into memory.
+staticAssetByteLimit :: Integer
+staticAssetByteLimit = 64 * 1024 * 1024
+
+-- | Read one public asset below the served root without following any
+-- symbolic link. Every segment is validated, then each directory component is
+-- opened relative to its parent's descriptor with no-follow and the leaf is
+-- opened the same way and must be a regular file. A component swapped for a
+-- symlink between any two steps is refused by the kernel at the open, not
+-- observed afterwards; an absent component is a plain absence.
+readStaticAsset :: FilePath -> [Text.Text] -> IO (Either StaticAssetRefusal ByteString.ByteString)
+readStaticAsset staticRoot staticSegments =
+  case traverse validateStaticSegment staticSegments of
+    Left refusal -> pure (Left refusal)
+    Right [] -> pure (Left StaticAssetAbsent)
+    Right names -> do
+      outcome <-
+        try @IOError $
+          bracket
+            (openFd staticRoot ReadOnly defaultFileFlags {directory = True, cloexec = True})
+            closeFd
+            (\rootFd -> walk rootFd (map Text.unpack names))
+      pure $
+        case outcome of
+          Right result -> result
+          Left err
+            | isDoesNotExistError err -> Left StaticAssetAbsent
+            | otherwise -> Left StaticAssetOutsideRoot
+  where
+    walk :: Fd -> [FilePath] -> IO (Either StaticAssetRefusal ByteString.ByteString)
+    walk _ [] = pure (Left StaticAssetAbsent)
+    walk parent [leaf] =
+      bracket
+        (openFdAt (Just parent) leaf ReadOnly defaultFileFlags {nofollow = True, cloexec = True, nonBlock = True})
+        closeFd
+        ( \leafFd -> do
+            status <- getFdStatus leafFd
+            if not (isRegularFile status) || toInteger (fileSize status) > staticAssetByteLimit
+              then pure (Left StaticAssetOutsideRoot)
+              else Right <$> readDescriptor leafFd (fromIntegral (fileSize status))
+        )
+    walk parent (component : rest) =
+      bracket
+        (openFdAt (Just parent) component ReadOnly defaultFileFlags {nofollow = True, cloexec = True, directory = True})
+        closeFd
+        (`walk` rest)
 
 -- | Why a browser-supplied static path was not served. Every arm is a refusal;
 -- none of them reveals whether the target exists outside the root.

@@ -1,16 +1,19 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Infernix.Runtime.Cache
-  ( CacheEntryFacts (..),
+  ( CacheAction (..),
+    CacheEntryFacts (..),
     CacheEntryReport (..),
     CacheEntryState (..),
     CacheOperationOutcome (..),
     cacheEntryStateLabel,
     cacheEntryStateDetail,
     cacheEntryStateIsReady,
+    cacheEligibleOwnerMembers,
+    cacheOutcomeMatchesAction,
     evictCache,
+    executeOwnedCacheAction,
     inspectCacheEntry,
     listCacheEntryReports,
     listCacheManifests,
@@ -18,27 +21,33 @@ module Infernix.Runtime.Cache
     observeCacheEntry,
     modelCacheMutationLockPath,
     rebuildCache,
-    withModelCacheExecutionLease,
   )
 where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeAsyncException, SomeException, fromException, tryJust)
 import Control.Monad (filterM, foldM)
+import Data.Aeson (FromJSON (parseJSON), ToJSON (toJSON), object, withObject, withText, (.:), (.=))
+import Data.Aeson.Types qualified as Aeson
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Maybe (catMaybes)
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Cluster.LifecycleLock
   ( kernelFileLockIsHeld,
     withKernelFileLock,
-    withKernelSharedFileLock,
   )
 import Infernix.Config (Paths (..))
+import Infernix.ExecutionPlan qualified as ExecutionPlan
 import Infernix.Models (findModel)
 import Infernix.Models.Artifact
   ( ArtifactHeaderError (..),
     artifactHeaderErrorText,
     readArtifactHeader,
   )
+import Infernix.Runtime.ModelCacheIdentity qualified as Identity
+import Infernix.Runtime.ModelCacheLease (modelCacheMutationLockPath, prepareCacheRootLockPath, prepareMutationLockPath)
+import Infernix.Runtime.ModelCacheReplacement qualified as Replacement
 import Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (..),
     ensureNativeRunnerContractCacheReady,
@@ -85,6 +94,24 @@ import System.IO.Error (catchIOError, isDoesNotExistError)
 -- @<modelCacheRoot>/<runtimeMode>/<modelId>/manifest.pb@. They are bookkeeping
 -- about the durable source, not evidence that the cache is usable.
 
+-- | Closed engine-local operations supported by the owner control path.
+data CacheAction = ObserveCache | EvictOwnedCache | RebuildOwnedCache
+  deriving (Eq, Show)
+
+instance ToJSON CacheAction where
+  toJSON action =
+    toJSON $ case action of
+      ObserveCache -> ("observe" :: Text)
+      EvictOwnedCache -> "evict"
+      RebuildOwnedCache -> "rebuild"
+
+instance FromJSON CacheAction where
+  parseJSON = withText "CacheAction" $ \case
+    "observe" -> pure ObserveCache
+    "evict" -> pure EvictOwnedCache
+    "rebuild" -> pure RebuildOwnedCache
+    _ -> fail "unknown cache action"
+
 -- | What one model's derived cache is, as observed. Every arm other than
 -- 'CacheVerifiedReady' names what was wrong; none of them is a weaker success.
 data CacheEntryState
@@ -115,6 +142,36 @@ data CacheEntryFacts = CacheEntryFacts
   }
   deriving (Eq, Show)
 
+-- The wire representation carries observed facts, not a readiness assertion
+-- supplied by the caller. Invalid or incomplete ready facts are refused.
+instance ToJSON CacheEntryState where
+  toJSON state =
+    case state of
+      CacheVerifiedReady facts ->
+        object
+          [ "state" .= ("verified-ready" :: Text),
+            "fileCount" .= cacheEntryFileCount facts,
+            "bytes" .= cacheEntryBytes facts
+          ]
+      _ -> object ["state" .= cacheEntryStateLabel state, "detail" .= cacheEntryStateDetail state]
+
+instance FromJSON CacheEntryState where
+  parseJSON = withObject "CacheEntryState" $ \value -> do
+    label <- value .: "state" :: Aeson.Parser Text
+    case label of
+      "verified-ready" -> do
+        fileCount <- value .: "fileCount"
+        bytes <- value .: "bytes"
+        if fileCount > 0 && bytes > 0
+          then pure (CacheVerifiedReady (CacheEntryFacts fileCount bytes))
+          else fail "verified cache facts must be positive"
+      "missing" -> CacheMissing <$> value .: "detail"
+      "incomplete" -> CacheIncomplete <$> value .: "detail"
+      "corrupt" -> CacheCorrupt <$> value .: "detail"
+      "unobservable" -> CacheUnobservable <$> value .: "detail"
+      "in-use" -> CacheInUse <$> value .: "detail"
+      _ -> fail "unknown cache state"
+
 -- | One model's manifest paired with the observed state of its cache.
 data CacheEntryReport = CacheEntryReport
   { cacheReportManifest :: CacheManifest,
@@ -132,6 +189,35 @@ data CacheOperationOutcome = CacheOperationOutcome
     cacheOutcomeChanged :: Bool
   }
   deriving (Eq, Show)
+
+instance ToJSON CacheOperationOutcome where
+  toJSON outcome =
+    object
+      [ "modelId" .= cacheOutcomeModelId outcome,
+        "state" .= cacheOutcomeState outcome,
+        "changed" .= cacheOutcomeChanged outcome
+      ]
+
+instance FromJSON CacheOperationOutcome where
+  parseJSON = withObject "CacheOperationOutcome" $ \value ->
+    CacheOperationOutcome
+      <$> value .: "modelId"
+      <*> value .: "state"
+      <*> value .: "changed"
+
+-- | A remote response can count a mutation only when its observed state is
+-- consistent with the requested operation. Malformed replies fail closed.
+cacheOutcomeMatchesAction :: CacheAction -> CacheOperationOutcome -> Bool
+cacheOutcomeMatchesAction action outcome =
+  case action of
+    ObserveCache -> not changed
+    EvictOwnedCache -> not changed || isMissing state
+    RebuildOwnedCache -> changed == cacheEntryStateIsReady state
+  where
+    changed = cacheOutcomeChanged outcome
+    state = cacheOutcomeState outcome
+    isMissing (CacheMissing _) = True
+    isMissing _ = False
 
 cacheEntryStateLabel :: CacheEntryState -> Text
 cacheEntryStateLabel state =
@@ -190,6 +276,59 @@ listCacheEntryReports paths runtimeMode = do
       state <- inspectCacheEntry paths runtimeMode (cacheModelId manifest)
       pure (CacheEntryReport manifest state)
 
+-- | Resolve every engine member eligible to own a configured model's derived
+-- cache from the validated placement graph. A missing placement is not an
+-- empty cache: callers must report it as unobservable and must not mutate a
+-- different member's local filesystem. Multiple pool routes to one member name
+-- the same owner and are deliberately deduplicated.
+cacheEligibleOwnerMembers :: ExecutionPlan.CompiledRuntimePlan -> Text -> Either Text [Text]
+cacheEligibleOwnerMembers compiledPlan modelName =
+  case ExecutionPlan.lookupCompiledPlacement modelName compiledPlan of
+    Nothing -> Left ("no eligible engine cache owner is configured for " <> modelName)
+    Just placement ->
+      Right
+        ( Set.toAscList
+            ( Set.fromList
+                [ ExecutionPlan.engineRouteMemberId route
+                | route <- NonEmpty.toList (ExecutionPlan.compiledPlacementRoutes placement)
+                ]
+            )
+        )
+
+-- | Execute only against a model assigned to this member by the compiled
+-- placement graph. The cache configuration is discovered on the executing
+-- machine, and mutations retain the same per-model lease as inference. The
+-- broker-side member claim is held by the engine consumer that calls this
+-- operation; a remote caller cannot supply filesystem paths or a descriptor.
+executeOwnedCacheAction ::
+  Paths ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  Text ->
+  Text ->
+  CacheAction ->
+  IO CacheOperationOutcome
+executeOwnedCacheAction paths compiledPlan memberIdValue modelName action =
+  case (cacheEligibleOwnerMembers compiledPlan modelName, ExecutionPlan.lookupCompiledPlacement modelName compiledPlan) of
+    (Right owners, Just placement)
+      | memberIdValue `elem` owners -> do
+          let mode = ExecutionPlan.compiledPlanRuntimeMode compiledPlan
+              model = ExecutionPlan.compiledPlacementDescriptor placement
+          loaded <- trySynchronous (loadWorkerModelCacheConfig paths mode)
+          case loaded of
+            Left err -> pure (unobservable ("the engine cache configuration could not be read: " <> Text.pack (show err)))
+            Right Nothing -> pure (unobservable "the engine cache configuration is unavailable")
+            Right (Just cacheConfig) ->
+              case action of
+                ObserveCache ->
+                  withCacheMutationLease paths mode cacheConfig model $ do
+                    state <- observeCacheEntry cacheConfig model
+                    pure (CacheOperationOutcome modelName state False)
+                EvictOwnedCache -> evictOwnedModelCache paths mode cacheConfig model
+                RebuildOwnedCache -> rebuildOwnedModelCache paths mode cacheConfig model
+    _ -> pure (unobservable ("the model is not assigned to engine member " <> memberIdValue))
+  where
+    unobservable reason = CacheOperationOutcome modelName (CacheUnobservable reason) False
+
 -- | Observe one model's engine-consumed cache.
 inspectCacheEntry :: Paths -> RuntimeMode -> Text -> IO CacheEntryState
 inspectCacheEntry paths runtimeMode modelIdValue = do
@@ -207,7 +346,7 @@ cacheOwnerFor ::
   RuntimeMode ->
   IO (Either Text (WorkerModelCacheConfig, ModelDescriptor))
 cacheOwnerFor modelIdValue paths runtimeMode = do
-  loaded <- try @SomeException (loadWorkerModelCacheConfig paths runtimeMode)
+  loaded <- trySynchronous (loadWorkerModelCacheConfig paths runtimeMode)
   case loaded of
     Left err ->
       pure
@@ -237,7 +376,7 @@ cacheOwnerFor modelIdValue paths runtimeMode = do
 
 observeCacheEntry :: WorkerModelCacheConfig -> ModelDescriptor -> IO CacheEntryState
 observeCacheEntry cacheConfig model = do
-  observed <- try @SomeException observe
+  observed <- trySynchronous observe
   pure (either (CacheUnobservable . Text.pack . show) id observed)
   where
     modelDirectory = modelCacheDirectory cacheConfig (modelId model)
@@ -287,8 +426,15 @@ observeCacheEntry cacheConfig model = do
                   case corruption of
                     Just reason -> pure (CacheCorrupt reason)
                     Nothing -> do
-                      facts <- measureCacheEntry modelDirectory requiredKeys
-                      pure (CacheVerifiedReady facts)
+                      let artifactKeys = filter (/= ".infernix-native-snapshot-files") requiredKeys
+                      inventoryPresent <- doesFileExist (modelDirectory </> ".infernix-artifact-inventory.json")
+                      if null artifactKeys || not inventoryPresent
+                        then pure (CacheUnobservable "the cache has no artifact identity inventory to verify")
+                        else do
+                          verified <- Identity.verifyModelCacheIdentity modelDirectory artifactKeys
+                          case verified of
+                            Left reason -> pure (CacheCorrupt reason)
+                            Right () -> CacheVerifiedReady <$> measureCacheEntry modelDirectory requiredKeys
 
 -- | Compare each checkpoint the repository has a reader for against its own
 -- header. A truncated or overwritten weight file fails here; a container no
@@ -350,8 +496,15 @@ regularFileWithBytes path = do
   if not present
     then pure False
     else do
-      observed <- try @SomeException (getFileSize path)
-      pure (either (const False) (> 0) observed)
+      (> 0) <$> getFileSize path
+
+trySynchronous :: IO a -> IO (Either SomeException a)
+trySynchronous = tryJust selectSynchronous
+  where
+    selectSynchronous failure =
+      case fromException failure :: Maybe SomeAsyncException of
+        Just _ -> Nothing
+        Nothing -> Just failure
 
 -- | Record the model's cache manifest and report the observed state of the
 -- cache that manifest names. Publication of readiness belongs to the engine
@@ -379,49 +532,75 @@ materializeCache paths runtimeMode model = do
 -- deleted from under the engine reading it.
 evictCache :: Paths -> RuntimeMode -> Maybe Text -> IO [CacheOperationOutcome]
 evictCache paths runtimeMode maybeModelId =
-  forSelectedCacheTargets paths runtimeMode maybeModelId $ \cacheConfig model -> do
-    let modelDirectory = modelCacheDirectory cacheConfig (modelId model)
-    presentBefore <- doesDirectoryExist modelDirectory
-    removeIfPresent modelDirectory
-    state <- inspectCacheEntry paths runtimeMode (modelId model)
-    pure
-      CacheOperationOutcome
-        { cacheOutcomeModelId = modelId model,
-          cacheOutcomeState = state,
-          cacheOutcomeChanged = presentBefore
-        }
+  forSelectedCacheTargets paths runtimeMode maybeModelId (evictOwnedModelCache paths runtimeMode)
 
--- | Discard the selected generations and hydrate them again from the durable
--- MinIO artifacts, verifying the result before readiness is published. The
--- outcome reports what the cache is afterwards, including a hydration that
--- could not complete.
+-- | The caller supplies the engine owner's actual cache configuration and
+-- configured model. Selection does not depend on a webapp-local manifest.
+evictOwnedModelCache :: Paths -> RuntimeMode -> WorkerModelCacheConfig -> ModelDescriptor -> IO CacheOperationOutcome
+evictOwnedModelCache paths runtimeMode cacheConfig model =
+  withCacheMutationLease paths runtimeMode cacheConfig model (evictOwnedModelCacheLocked cacheConfig model)
+
+evictOwnedModelCacheLocked :: WorkerModelCacheConfig -> ModelDescriptor -> IO CacheOperationOutcome
+evictOwnedModelCacheLocked cacheConfig model = do
+  let cacheRoot = Text.unpack (workerModelCacheRoot cacheConfig)
+      modelDirectory = modelCacheDirectory cacheConfig (modelId model)
+  Replacement.recoverCacheReplacement cacheRoot (modelId model)
+  presentBefore <- doesDirectoryExist modelDirectory
+  removeIfPresent modelDirectory
+  state <- observeCacheEntry cacheConfig model
+  pure
+    CacheOperationOutcome
+      { cacheOutcomeModelId = modelId model,
+        cacheOutcomeState = state,
+        cacheOutcomeChanged = presentBefore
+      }
+
+-- | Hydrate a candidate from durable MinIO artifacts and retain the prior
+-- generation until the candidate passes the cache's readiness observation.
 rebuildCache :: Paths -> RuntimeMode -> Maybe Text -> IO [CacheOperationOutcome]
 rebuildCache paths runtimeMode maybeModelId =
-  forSelectedCacheTargets paths runtimeMode maybeModelId $ \cacheConfig model -> do
-    let modelDirectory = modelCacheDirectory cacheConfig (modelId model)
-    removeIfPresent modelDirectory
-    -- Staging siblings from an interrupted attempt are the only temporary
-    -- space this path holds; a fresh generation starts from none of them.
-    removeStagingResidue modelDirectory
-    hydrated <-
-      try @SomeException
-        (ensureNativeRunnerContractCacheReady model (Just cacheConfig))
-    state <-
-      case hydrated of
-        Left err ->
-          pure
-            ( CacheUnobservable
-                ( "hydration from the durable artifacts failed: "
-                    <> Text.pack (show err)
-                )
-            )
-        Right _ -> inspectCacheEntry paths runtimeMode (modelId model)
-    pure
-      CacheOperationOutcome
-        { cacheOutcomeModelId = modelId model,
-          cacheOutcomeState = state,
-          cacheOutcomeChanged = cacheEntryStateIsReady state
-        }
+  forSelectedCacheTargets paths runtimeMode maybeModelId (rebuildOwnedModelCache paths runtimeMode)
+
+rebuildOwnedModelCache :: Paths -> RuntimeMode -> WorkerModelCacheConfig -> ModelDescriptor -> IO CacheOperationOutcome
+rebuildOwnedModelCache paths runtimeMode cacheConfig model =
+  withCacheMutationLease paths runtimeMode cacheConfig model (rebuildOwnedModelCacheLocked cacheConfig model)
+
+rebuildOwnedModelCacheLocked :: WorkerModelCacheConfig -> ModelDescriptor -> IO CacheOperationOutcome
+rebuildOwnedModelCacheLocked cacheConfig model = do
+  let cacheRoot = Text.unpack (workerModelCacheRoot cacheConfig)
+  hydrated <-
+    trySynchronous
+      ( Replacement.replaceCacheGeneration
+          cacheRoot
+          (modelId model)
+          (toInteger (workerModelCacheQuotaBytes cacheConfig))
+          ( \candidateRoot -> do
+              let candidateConfig = cacheConfig {workerModelCacheRoot = Text.pack candidateRoot}
+              ready <- ensureNativeRunnerContractCacheReady model (Just candidateConfig)
+              case ready of
+                Left failure -> pure (Left (CacheUnobservable ("candidate hydration failed: " <> message failure)))
+                Right () -> do
+                  candidateState <- observeCacheEntry candidateConfig model
+                  pure (if cacheEntryStateIsReady candidateState then Right () else Left candidateState)
+          )
+      )
+  state <-
+    case hydrated of
+      Left err ->
+        pure
+          ( CacheUnobservable
+              ( "hydration from the durable artifacts failed: "
+                  <> Text.pack (show err)
+              )
+          )
+      Right (Left refusal) -> pure refusal
+      Right (Right ()) -> observeCacheEntry cacheConfig model
+  pure
+    CacheOperationOutcome
+      { cacheOutcomeModelId = modelId model,
+        cacheOutcomeState = state,
+        cacheOutcomeChanged = cacheEntryStateIsReady state
+      }
 
 -- | Run one mutation per selected model while holding that model's exclusive
 -- cache lease. A model whose lease an execution holds reports 'CacheInUse' and
@@ -436,7 +615,19 @@ forSelectedCacheTargets ::
 forSelectedCacheTargets paths runtimeMode maybeModelId mutate = do
   manifests <- listCacheManifests paths runtimeMode
   let targets = filter (matchesModel maybeModelId) manifests
-  mapM runOne targets
+  case (maybeModelId, targets) of
+    (Just wantedModelId, [])
+      | Just _ <- findModel runtimeMode wantedModelId ->
+          pure
+            [ CacheOperationOutcome
+                { cacheOutcomeModelId = wantedModelId,
+                  cacheOutcomeState =
+                    CacheUnobservable
+                      "the selected model has no cache manifest visible to this process",
+                  cacheOutcomeChanged = False
+                }
+            ]
+    _ -> mapM runOne targets
   where
     matchesModel Nothing _ = True
     matchesModel (Just wantedModelId) manifest = cacheModelId manifest == wantedModelId
@@ -450,64 +641,31 @@ forSelectedCacheTargets paths runtimeMode maybeModelId mutate = do
                 cacheOutcomeState = CacheUnobservable reason,
                 cacheOutcomeChanged = False
               }
-        Right (cacheConfig, model) -> do
-          lockPath <- prepareMutationLockPath paths runtimeMode (modelId model)
-          held <- kernelFileLockIsHeld lockPath
-          if held
-            then
-              pure
-                CacheOperationOutcome
-                  { cacheOutcomeModelId = modelId model,
-                    cacheOutcomeState =
-                      CacheInUse
-                        ( "an execution holds the cache lease for "
-                            <> modelId model
-                        ),
-                    cacheOutcomeChanged = False
-                  }
-            else
-              withKernelFileLock "model cache mutation" lockPath (mutate cacheConfig model)
+        Right (cacheConfig, model) -> mutate cacheConfig model
 
--- | Hold the shared cache lease for the duration of one execution, so an
--- eviction or rebuild cannot replace the bytes the engine is reading.
-withModelCacheExecutionLease :: Paths -> RuntimeMode -> Text -> IO a -> IO a
-withModelCacheExecutionLease paths runtimeMode modelIdValue action = do
-  lockPath <- prepareMutationLockPath paths runtimeMode modelIdValue
-  withKernelSharedFileLock "model cache execution" lockPath action
-
-modelCacheMutationLockPath :: Paths -> RuntimeMode -> Text -> FilePath
-modelCacheMutationLockPath paths runtimeMode modelIdValue =
-  runtimeRoot paths
-    </> "locks"
-    </> ( "model-cache-"
-            <> Text.unpack (runtimeModeId runtimeMode)
-            <> "-"
-            <> Text.unpack modelIdValue
-            <> ".held"
-        )
-
-prepareMutationLockPath :: Paths -> RuntimeMode -> Text -> IO FilePath
-prepareMutationLockPath paths runtimeMode modelIdValue = do
-  let lockPath = modelCacheMutationLockPath paths runtimeMode modelIdValue
-  createDirectoryIfMissing True (runtimeRoot paths </> "locks")
-  pure lockPath
+withCacheMutationLease :: Paths -> RuntimeMode -> WorkerModelCacheConfig -> ModelDescriptor -> IO CacheOperationOutcome -> IO CacheOperationOutcome
+withCacheMutationLease paths runtimeMode cacheConfig model action = do
+  lockPath <- prepareMutationLockPath paths runtimeMode (modelId model)
+  cacheLockPath <- prepareCacheRootLockPath (Text.unpack (workerModelCacheRoot cacheConfig)) (modelId model)
+  held <- kernelFileLockIsHeld lockPath
+  cacheHeld <- kernelFileLockIsHeld cacheLockPath
+  if held || cacheHeld
+    then
+      pure
+        CacheOperationOutcome
+          { cacheOutcomeModelId = modelId model,
+            cacheOutcomeState = CacheInUse ("an execution holds the cache lease for " <> modelId model),
+            cacheOutcomeChanged = False
+          }
+    else
+      withKernelFileLock "model cache mutation" lockPath $
+        withKernelFileLock "model cache root mutation" cacheLockPath action
 
 removeIfPresent :: FilePath -> IO ()
 removeIfPresent path =
   catchIOError
     (removePathForcibly path)
     (\err -> if isDoesNotExistError err then pure () else ioError err)
-
-removeStagingResidue :: FilePath -> IO ()
-removeStagingResidue modelDirectory = do
-  present <- doesDirectoryExist modelDirectory
-  if not present
-    then pure ()
-    else do
-      entries <- listDirectory modelDirectory
-      mapM_
-        (removeIfPresent . (modelDirectory </>))
-        [entry | entry <- entries, ".incoming" `Text.isSuffixOf` Text.pack entry]
 
 -- | The tree an engine actually loads from: @<modelCacheRoot>/<modelId>/@ on
 -- every substrate, populated from MinIO @infernix-models/<modelId>/@.

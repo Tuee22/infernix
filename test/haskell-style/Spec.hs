@@ -517,7 +517,7 @@ assertComponentRtsClosure = do
   assertComponentOption
     cabalSource
     "executable infernix"
-    "-rtsopts=ignoreAll -with-rtsopts=-xr16384M"
+    "-rtsopts=ignoreAll -with-rtsopts=-xr8192M"
   assertComponentOption
     cabalSource
     "test-suite infernix-unit"

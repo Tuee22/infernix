@@ -367,20 +367,32 @@ minimumProcessAddressMib = minimumProcessHeapMib * heapToAddressSpaceMultiplier
 -- | The address space the built @infernix@ executable reserves through
 -- @-with-rtsopts=-xr@, in MiB.
 --
--- 1 GiB. The reservation must stay below the smallest per-process ceiling this
+-- 8 GiB. The reservation must stay below the smallest per-process ceiling this
 -- module can mint, because a process cannot lower its own address-space limit
 -- below a reservation it has already taken — it succeeds, and then dies on its
--- next allocation. 'toolchainReservationFitsEveryPlan' is that invariant, and
--- the unit suite asserts it rather than trusting the two numbers to stay in
--- agreement.
+-- next allocation with @Unable to commit 1048576 bytes of memory@. The earlier
+-- 16 GiB value sat above the ceiling on every Linux pool below roughly 15.8 GiB
+-- (a 13 GiB pool derives a 13266 MiB ceiling) and crashed the long-lived
+-- runner intermittently at unit-gate boundaries. The 1 GiB value before that
+-- stopped the host inference daemon with @out of memory@, so the value is the
+-- largest round figure that still leaves the smallest ceiling
+-- ('minimumProcessAddressMib', 12288 MiB) a 4 GiB margin for the runner's
+-- other mappings. 'toolchainReservationFitsEveryPlan' is that invariant, and
+-- the unit suite asserts it, and that the Cabal manifest bakes this exact
+-- value, rather than trusting the numbers to stay in agreement.
 toolchainAddressSpaceReservationMib :: Int
-toolchainAddressSpaceReservationMib = 1024
+toolchainAddressSpaceReservationMib = 8192
 
 -- | Whether the executable's baked reservation fits under every ceiling
 -- 'deriveBuildMemoryPlan' can produce.
 toolchainReservationFitsEveryPlan :: Bool
 toolchainReservationFitsEveryPlan =
-  toolchainAddressSpaceReservationMib < minimumProcessAddressMib
+  toolchainAddressSpaceReservationMib + reservationMarginMib <= minimumProcessAddressMib
+
+-- | Address space the runner needs besides its runtime reservation (thread
+-- stacks, mapped libraries, the Cabal child's own bookkeeping).
+reservationMarginMib :: Int
+reservationMarginMib = 4096
 
 -- | The job count committed to @cabal.project@ and to the compile-fixture
 -- project for a fresh clone.
