@@ -1184,7 +1184,7 @@ configuration contract.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R8's selected `apple-silicon` plus native `linux-cpu` full-suite results
+Cohort gate only: record Wave R8's selected `apple-silicon` plus native `linux-cpu` full-suite results
 against one frozen implementation, including the clean launcher build and the deployed role mirrors.
 No new full-suite result is claimed.
 
@@ -1192,7 +1192,7 @@ No new full-suite result is claimed.
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R8's `apple-silicon` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprint 8.15 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: record Wave R8's `apple-silicon` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprint 8.15 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

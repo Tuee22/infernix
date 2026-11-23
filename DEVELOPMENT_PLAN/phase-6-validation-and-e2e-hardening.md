@@ -3643,8 +3643,8 @@ completed its owned cleanup.
 - Wave R6 executes actual CUDA allocation/readback and a measured device-memory breach with
   independent observation, clean typed failure, and a surviving daemon able to serve the next
   request. Admission refusal does not count as this post-launch breach.
-- Run required real inference successes with adequate resources and retain per-row artifact and
-  assertion evidence inherited from Sprint 4.50. Missing model output, a forged plausible constant,
+- Run required real inference successes with adequate resources and record per-row output and
+  assertion outcomes inherited from Sprint 4.50. Missing model output, a forged plausible constant,
   or a disabled engine invocation must fail its success gate.
 - Pass governed build, aggregate lint/unit, focused files/docs/chart/proto/plan checks, and the
   selected accelerator plus CPU full suites with appropriately rebuilt packages. Optional CPU probe
@@ -3652,7 +3652,7 @@ completed its owned cleanup.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R6's selected `linux-gpu` plus native `linux-cpu` full-suite results
+Cohort gate only: record Wave R6's selected `linux-gpu` plus native `linux-cpu` full-suite results
 against one frozen implementation, including the real CUDA allocation, device observation, ceiling
 readback, and measured device-memory breach. No new full-suite result is claimed.
 
@@ -3660,7 +3660,7 @@ readback, and measured device-memory breach. No new full-suite result is claimed
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R6's `linux-gpu` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprint 6.55 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: record Wave R6's `linux-gpu` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprint 6.55 has code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

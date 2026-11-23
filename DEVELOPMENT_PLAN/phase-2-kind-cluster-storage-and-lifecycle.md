@@ -1077,7 +1077,7 @@ Keep retained MinIO data owned by the pinned workload user during node claim rec
 
 ### Remaining Work
 
-None. Closure evidence is the Phase 2 row appended to the [Recorded Attestations](cohort-validation-waves.md#recorded-attestations): the Apple full suite [run-BI4ZTC](../.data/runtime/validation/run-BI4ZTC/receipt.json) (4 GiB Colima VM with in-VM swap, regenerated 4096 MiB build plan) and the `linux-cpu` full suite [run-WneyCm](../.data/runtime/validation/run-WneyCm/receipt.json) (15 GiB VM), each passing every required gate with a stable source.
+None. Closure evidence is the Phase 2 row appended to the [Recorded Attestations](cohort-validation-waves.md#recorded-attestations): the Apple full suite `run-BI4ZTC` (4 GiB Colima VM with in-VM swap, regenerated 4096 MiB build plan) and the `linux-cpu` full suite `run-WneyCm` (15 GiB VM), each passing every required gate with a stable source.
 
 ---
 

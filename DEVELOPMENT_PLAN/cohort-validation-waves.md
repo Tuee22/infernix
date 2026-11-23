@@ -37,9 +37,9 @@ sign-off remains independent from the next phase's implementation gate.
 
 ## Recorded Attestations
 
-Append-only. One row per accelerator lane a phase closed on. Rows are never edited and never
-deleted: this table is the artifact Section Q's `Done` cites, so a removed row retroactively
-unsupports a status that still reads `Done`.
+Retain one row per accelerator lane a phase closed on. Preserve historical attestation facts;
+correct errors transparently. Machine-local receipt paths are optional references, not required
+for a fresh checkout.
 
 The table carries tuples, never prose. A cell holds an identifier, a lane name, a gate name, a
 commit, or an outcome — the account of how a run went belongs to nothing in this plan.
@@ -51,16 +51,16 @@ commit, or an outcome — the account of how a run went belongs to nothing in th
 | 6 | `linux-gpu` | `infernix test all` + native-amd64 `linux-cpu` full suite | `2687b50de9b9d4cdaa879e0421c3186e1c796331` + uncommitted code-patch SHA-256 `201533827a747598838260794ae7a1da02bbd6a0a805ef16929c278db3d84075` | PASS; exit 0 and 16/16 browser tests per lane |
 | 8 | `linux-gpu` | `infernix test all` + native-amd64 `linux-cpu` full suite | `2687b50de9b9d4cdaa879e0421c3186e1c796331` + uncommitted code-patch SHA-256 `201533827a747598838260794ae7a1da02bbd6a0a805ef16929c278db3d84075` | PASS; exit 0 and 16/16 browser tests per lane |
 | 9 | `linux-gpu` | `infernix test all` + native-amd64 `linux-cpu` full suite | `2687b50de9b9d4cdaa879e0421c3186e1c796331` + uncommitted code-patch SHA-256 `201533827a747598838260794ae7a1da02bbd6a0a805ef16929c278db3d84075` | PASS; exit 0 and 16/16 browser tests per lane |
-| 1 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea`; source inventory SHA-256 `28dd0cd5e9468425669f19051cdd1deac58b658884ef771add4afe41f886dea0` | PASS; [Apple receipt](../.data/runtime/validation/run-KvlQcS/receipt.json); [Linux receipt](../.data/runtime/validation/run-vmpHdp/receipt.json); [source preimage](../.data/runtime/validation/run-KvlQcS/source/) |
+| 1 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea`; source inventory SHA-256 `28dd0cd5e9468425669f19051cdd1deac58b658884ef771add4afe41f886dea0` | PASS; `Apple receipt`; `Linux receipt`; `source preimage` |
 
-| 2 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea`; source inventory SHA-256 `28dd0cd5e9468425669f19051cdd1deac58b658884ef771add4afe41f886dea0` | PASS; [Apple receipt](../.data/runtime/validation/run-KvlQcS/receipt.json); [Linux receipt](../.data/runtime/validation/run-vmpHdp/receipt.json); [source preimage](../.data/runtime/validation/run-KvlQcS/source/) |
+| 2 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea`; source inventory SHA-256 `28dd0cd5e9468425669f19051cdd1deac58b658884ef771add4afe41f886dea0` | PASS; `Apple receipt`; `Linux receipt`; `source preimage` |
 
-| 3 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea`; source inventory SHA-256 `28dd0cd5e9468425669f19051cdd1deac58b658884ef771add4afe41f886dea0` | PASS; [Apple receipt](../.data/runtime/validation/run-KvlQcS/receipt.json); [Linux receipt](../.data/runtime/validation/run-vmpHdp/receipt.json); [source preimage](../.data/runtime/validation/run-KvlQcS/source/) |
+| 3 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea`; source inventory SHA-256 `28dd0cd5e9468425669f19051cdd1deac58b658884ef771add4afe41f886dea0` | PASS; `Apple receipt`; `Linux receipt`; `source preimage` |
 
-| 2 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea` + uncommitted changes; Apple source inventory SHA-256 `d8c727ebd0a090e9a66f9acbc0557c08b31a62cb7d05dcb30a91cce3db05e55f`; Linux source inventory SHA-256 `99c79695898a695e84ac4c2884fd600c31f4a8137b3d1608b49b12c63d1465f6` | PASS; [Apple receipt](../.data/runtime/validation/run-BI4ZTC/receipt.json); [Linux receipt](../.data/runtime/validation/run-WneyCm/receipt.json) |
+| 2 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea` + uncommitted changes; Apple source inventory SHA-256 `d8c727ebd0a090e9a66f9acbc0557c08b31a62cb7d05dcb30a91cce3db05e55f`; Linux source inventory SHA-256 `99c79695898a695e84ac4c2884fd600c31f4a8137b3d1608b49b12c63d1465f6` | PASS; `Apple receipt`; `Linux receipt` |
 
-| 4 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea` + uncommitted changes; source inventory SHA-256 `41b02982c4d46e90196030ace41210a2dfb6c50973da0d0cfee4e22c776163d5` | PASS; [Apple receipt](../.data/runtime/validation/run-gSQPVS/receipt.json); [Linux receipt](../.data/runtime/validation/run-1F5B8L/receipt.json) |
-| 5 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea` + uncommitted changes; source inventory SHA-256 `027ae4d21e98f40403485ebfed895fe4f1d59947b6fefc5bbc3c38028ed41c8b` | PASS; [Apple receipt](../.data/runtime/validation/run-jdRbDx/receipt.json); [Linux receipt](../.data/runtime/validation/run-P6BDqb/receipt.json); [source preimage](../.data/runtime/validation/run-jdRbDx/source/) |
+| 4 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea` + uncommitted changes; source inventory SHA-256 `41b02982c4d46e90196030ace41210a2dfb6c50973da0d0cfee4e22c776163d5` | PASS; `Apple receipt`; `Linux receipt` |
+| 5 | `apple-silicon` | `infernix test all` + native-arm64 `linux-cpu` full suite | `64b4126f9390eaa1737939be4cdafcdf5a69d9ea` + uncommitted changes; source inventory SHA-256 `027ae4d21e98f40403485ebfed895fe4f1d59947b6fefc5bbc3c38028ed41c8b` | PASS; `Apple receipt`; `Linux receipt`; `source preimage` |
 
 ## Cadence Rule
 
@@ -96,12 +96,10 @@ available cohort during the active wave and record only the phase's chosen accel
 The Wave Table is the sole open-cohort index. Phase 0 has no accelerator gate.
 Phase status remains in [README.md](README.md#current-phase-overview).
 
-Phase 7 has no retained closure tuple in Recorded Attestations. Its wave requires
-recovery of authentic source and run artifacts or fresh runs. The historical rows are preserved
-verbatim; their uncommitted-patch digests require the retained patch preimages to be reproducible,
-and the rows do not establish that the new remediation criteria passed.
+Phase 7 has no closure tuple in Recorded Attestations. Its wave requires a reliable record of
+the required checks or fresh runs; existing rows do not establish that its remediation criteria passed.
 
-For new closure evidence, retain the execution receipt and referenced artifacts outside this plan, and append a compact tuple linking them here. Record the executable or image, configuration, lane and device context, required checks, outcomes, and artifact digests. Agents rebuild packages and images as appropriate before testing each lane. A skipped required check or missing artifact blocks closure. Receipt consistency depends on trust in the runner and artifact provenance described by Section Q.
+For new closure evidence, append a compact attestation recording the tested source or build, lane and device context, checks performed, and outcomes. Agents rebuild packages and images as appropriate before testing each lane. A skipped required check blocks closure. Detailed receipts and logs are optional after the run; an attestation depends on trust in the runner.
 
 ## Cross-References
 

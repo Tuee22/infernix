@@ -665,7 +665,7 @@ Substrate-specific validation is explicit.
   coordinator-to-host Pulsar handoff. Operator instructions separately require an explicit host
   engine process after `cluster up`; harness-owned startup does not validate that manual flow.
 - Linux commands use the supported outer-container launcher. Lifecycle and recovery checks run
-  against the deployed single-instance substrate and retain execution artifacts.
+  against the deployed single-instance substrate and record their outcomes.
 - `infernix test all` aggregates lint, unit, integration, and E2E for the initialized substrate.
   Separate scoped reruns supply other-lane evidence; a zero aggregate exit does not imply coverage
   of a lane, source snapshot, or mandatory assertion that was not executed.
@@ -867,9 +867,9 @@ that a `Done` cites the attestation row its evidence produced.
 
 The frozen Markdown scans above remain unchanged. Behavioral validation and structured execution
 receipt checking belong to the binary's validation/test boundary, not an expanding prose lint set.
-Agents rebuild the relevant package or image as appropriate before testing. A closure receipt identifies the executable or image, configuration, architecture and device context, required checks and their outcomes, and retained logs and output artifacts with integrity digests. Store bulky artifacts outside the narrative plan and link the compact attestation to them.
+Agents rebuild the relevant package or image as appropriate before testing. The tracked closure attestation records the tested source or build, lane and device context, checks performed, and outcomes. Record failures and skips truthfully. Detailed receipts, logs, and output artifacts may be retained for debugging, but are not required for historical closure and must not be required for a fresh checkout to lint.
 
-Negative controls cover missing or altered receipt artifacts, changed required-check inventory, skipped mandatory fixtures, constant-output adapters, and success-shaped empty caches or renderers. Refusal tests are counted separately from real-output successes. Missing historical evidence is recovered from authentic retained artifacts or replaced by a fresh run. Integrity hashes do not prove honesty against an actor controlling the executor and evidence store; review the trusted runner and retained artifact provenance.
+Negative controls cover missing or altered receipt artifacts, changed required-check inventory, skipped mandatory fixtures, constant-output adapters, and success-shaped empty caches or renderers. Refusal tests are counted separately from real-output successes. A missing historical attestation cannot be invented: recover a reliable record or run the relevant gates. A tracked attestation records what was reported; it is not independent proof of execution. Integrity hashes do not prove honesty against an actor controlling the executor and evidence store.
 
 `poetry run check-code` stays in the machine-independent gate set only because adapters never
 declare or top-level-import substrate-specific inference wheels; the lazy-import invariant that

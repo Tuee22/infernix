@@ -173,7 +173,7 @@ Monitoring is not a supported first-class surface.
 | Tracked Haskell protobuf snapshot | Four `src/Proto/` modules; `proto/haskell-bindings.sha256` | Exact generated source exception, hash-checked; not handwritten implementation. |
 | Shared adapter quality venv | Provisioning; `python/.venv/` | Derived framework-free quality/protobuf environment, not inference fallback. |
 | Prepared per-engine venvs | Provisioning; `python/engines/<engine>/.venv/` | Derived or image-owned environment with fixed project-bound marker. |
-| Playwright/test outputs | Runner working directories such as `test-results/`, `playwright-report/` | Re-creatable output; retained closure evidence must be explicitly exported and preserved before ephemeral runner removal. |
+| Playwright/test outputs | Runner working directories such as `test-results/`, `playwright-report/` | Re-creatable output; export what is needed to assess the run before ephemeral runner removal; long-term retention is optional. |
 | Demo artifact prefixes | MinIO `infernix-demo-objects/users/<sub>/contexts/<ctx>/{uploads,generated}/` | Durable demo-gated user objects; browser access only through Webapp. |
 | Demo conversation history | Pulsar BookKeeper | Durable ordered events; existing cursor plus empty reducer loses queued state until [7.30](phase-7-demo-app-durable-context.md) is implemented. |
 | Demo metadata history | Pulsar BookKeeper | Durable compacted contexts/drafts keyed by context; no browser-local authority. |

@@ -3477,7 +3477,7 @@ None. Closure evidence is the newest Phase 4 row in the [Recorded Attestations](
 
 ## Remaining Work
 
-None. Closure evidence is the newest Phase 4 row in the [Recorded Attestations](cohort-validation-waves.md#recorded-attestations): the Apple full suite [run-gSQPVS](../.data/runtime/validation/run-gSQPVS/receipt.json) and the `linux-cpu` full suite [run-1F5B8L](../.data/runtime/validation/run-1F5B8L/receipt.json), each passing all 18 required gates and 21 of 21 browser tests on one source (inventory SHA-256 `41b02982c4d46e90196030ace41210a2dfb6c50973da0d0cfee4e22c776163d5`) with a stable source.
+None. Closure evidence is the newest Phase 4 row in the [Recorded Attestations](cohort-validation-waves.md#recorded-attestations): the Apple full suite `run-gSQPVS` and the `linux-cpu` full suite `run-1F5B8L`, each passing all 18 required gates and 21 of 21 browser tests on one source (inventory SHA-256 `41b02982c4d46e90196030ace41210a2dfb6c50973da0d0cfee4e22c776163d5`) with a stable source.
 
 ## Documentation Requirements
 

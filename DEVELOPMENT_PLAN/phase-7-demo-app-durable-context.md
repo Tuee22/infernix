@@ -1863,7 +1863,7 @@ subscription.
   rather than discarding pending work.
 - Preserve terminal-result-before-acknowledgement ordering and effectively-once visible outcomes;
   no exactly-once compute or transport guarantee is inferred.
-- Recover Phase 7's missing retained evidence or rerun it as part of Wave R7, retaining each
+- Record reliable evidence for Phase 7 or rerun its gates as part of Wave R7, including each
   follow-on sprint's required behavior.
 
 ### Validation
@@ -1880,7 +1880,7 @@ subscription.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R7's selected `apple-silicon` plus native `linux-cpu` full-suite results
+Cohort gate only: record Wave R7's selected `apple-silicon` plus native `linux-cpu` full-suite results
 against one frozen implementation, including the real-broker restart with queued work outstanding.
 No new full-suite result is claimed.
 
@@ -1936,7 +1936,7 @@ constructed engine state.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R7's selected pair, including the multi-turn request whose second
+Cohort gate only: record Wave R7's selected pair, including the multi-turn request whose second
 answer depends on a fact in the first. No engine binding in the supported set holds KV state across
 requests, so every backend is told to replay and reports replay; the reuse arm is exercised by the
 identity and publication assertions rather than by a backend that cannot honour it.
@@ -1982,7 +1982,7 @@ execution's verified cleanup before that successor starts.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R7's selected pair, including the routed browser cancel flow and the
+Cohort gate only: record Wave R7's selected pair, including the routed browser cancel flow and the
 completion-versus-cancellation race against a real engine. No new full-suite result is claimed.
 
 ## Sprint 7.33: Bound Artifact Preview and Verify MIDI and Media Rendering [Active]
@@ -2028,7 +2028,7 @@ produce observable rendering or playback.
 
 ### Remaining Work
 
-Cohort gate only: retain Wave R7's selected pair for the routed bounded preview and the MIDI
+Cohort gate only: record Wave R7's selected pair for the routed bounded preview and the MIDI
 render-and-playback assertions. The self-hosted sampled-instrument route is not taken: the retired
 renderer loaded a sampled piano from a path the bundle never carried and swallowed the failure, and
 scheduling audio from the decoded notes removes the missing asset rather than shipping tens of
@@ -2037,7 +2037,7 @@ which a renderer that failed to load an instrument could not produce.
 
 ## Remaining Work
 
-Cohort gate only: retain Wave R7's `apple-silicon` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprints 7.30–7.33 have code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
+Cohort gate only: record Wave R7's `apple-silicon` plus native `linux-cpu` full-suite results with appropriately rebuilt packages. Sprints 7.30–7.33 have code-side closure; no new cohort result is claimed. Closed sprint headings retain only their established scope; the follow-on criteria are the phase's outstanding work.
 
 ## Documentation Requirements
 

@@ -18,8 +18,7 @@ Phases 0–5 are `Done`. Phases 6–9 remain `Active` with their scoped cohort g
 `linux-cpu`. The [phase table](#current-phase-overview) is the sole phase-status summary.
 
 The retained attestation table has no closure tuple for Phase 7. This is an evidence
-gap, not proof that historical tests never ran. Recover the actual source preimage and run records
-or rerun the gates; do not reconstruct a PASS from prose. Existing tuples remain append-only and
+gap, not proof that historical tests never ran. Recover a reliable record of the required checks or rerun the gates; do not invent a PASS. Existing tuples retain their historical facts and
 do not certify the new remediation scopes.
 
 ## Document Index
@@ -29,7 +28,7 @@ do not certify the new remediation scopes.
 | [development_plan_standards.md](development_plan_standards.md) | Maintenance rules for the development plan |
 | [00-overview.md](00-overview.md) | Architecture baseline, hard constraints, substrate contract, and canonical repository shape |
 | [system-components.md](system-components.md) | Authoritative component inventory and state-location map |
-| [cohort-validation-waves.md](cohort-validation-waves.md) | Open cohort gates, plus the append-only Recorded Attestations table each closed gate leaves behind: one row per phase and accelerator lane under Section Q's single-accelerator-per-phase rule |
+| [cohort-validation-waves.md](cohort-validation-waves.md) | Open cohort gates, plus the Recorded Attestations table each closed gate leaves behind: one row per phase and accelerator lane under Section Q's single-accelerator-per-phase rule |
 | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite bootstrap plus the substrate-doctrine documentation reset |
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, CLI contract, build-root doctrine, launcher ownership, and substrate-selection closure |
 | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, registry-first image flow, substrate `.dhall` publication, Linux launcher closure, and lifecycle-progress hardening |
@@ -64,10 +63,10 @@ A phase or sprint can move to `Done` only when all of the following are true:
 4. No remaining cleanup or compatibility surface is left unstated.
 5. Cleanup promised by the sprint is reflected in
    [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-6. Retained execution evidence identifies the built
-   artifact, lane/device context, required checks, executed/skipped counts, outcomes, and log
-   artifacts. Missing evidence or a skipped mandatory check prevents closure. Section Q defines
-   the trust boundary; Markdown lint does not authenticate execution.
+6. The tracked attestation identifies the tested source or build, lane/device context, checks
+   performed, and outcomes. A skipped mandatory check prevents closure. Detailed logs and receipts
+   are optional after validation. Section Q defines the trust boundary; Markdown lint does not
+   authenticate execution.
 
 `Done` is the single-accelerator sign-off gate (item 2's one-accelerator-plus-`linux-cpu` evidence).
 It is distinct from *code-side closure* — the implementation plus the machine-independent gate set —

@@ -52,9 +52,9 @@
 
 ## Execution Evidence and Trust Boundary
 
-Agents rebuild the relevant package or image as appropriate before testing to keep the tested code synchronized with the intended changes. Retained evidence identifies the executable or image, configuration, lane and device context, required checks, outcomes, and logs or output artifacts with integrity digests. [Docker policy](docker_policy.md#source-and-image-identity) describes the launcher handoff.
+Agents rebuild the relevant package or image as appropriate before testing to keep the tested code synchronized with the intended changes. The development plan records the tested source or build, lane and device context, checks performed, and outcomes. Detailed receipts, logs, and output artifacts may be retained for debugging but are not required as historical records. [Docker policy](docker_policy.md#source-and-image-identity) describes the launcher handoff.
 
-Report executed successes, expected refusals or breaches, failures, skips, and not-applicable checks separately. Missing required interpreter/device/allocation prerequisites, timeouts, missing receipt artifacts, and skipped mandatory assertions fail closure even when a process returns zero. An all-refused catalog cannot prove inference support; designated real-output cases must execute successfully.
+Report executed successes, expected refusals or breaches, failures, skips, and not-applicable checks separately. Missing required interpreter/device/allocation prerequisites, timeouts, missing required results during the run, and skipped mandatory assertions fail closure even when a process returns zero. An all-refused catalog cannot prove inference support; designated real-output cases must execute successfully.
 
 GPU parser/arithmetic checks are machine-independent. Live GPU observations and CUDA allocation
 checks are mandatory for the selected GPU lane in an explicitly device-capable, binary-owned
@@ -71,8 +71,8 @@ does not prove all such programs impossible.
 
 This evidence model addresses success-shaped substitutes; it is not an absolute
 unspoofability claim. An actor controlling both executor and evidence storage can forge internally
-consistent records. Build/runner review and retained artifact provenance establish the trusted
-boundary. The development plan owns current implementation and attestation status.
+consistent records. Build and runner review establish the trusted
+boundary; a historical attestation is not independent proof of execution. The development plan owns current implementation and attestation status.
 
 ## Lifecycle Failure Classification
 

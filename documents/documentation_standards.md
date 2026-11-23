@@ -62,13 +62,13 @@ Rules:
 - State the boundary and assumptions of a guarantee. A type name, marker file, digest, or successful
   process exit proves only the property actually checked, not the behavior it is named after.
 - Separate compile-time exclusion, runtime resource ownership, static heuristics, behavioral tests,
-  and retained execution evidence. Ordinary rank-2 `IO` callbacks do not establish lifetime
+  and recorded validation outcomes. Ordinary rank-2 `IO` callbacks do not establish lifetime
   nonescape, and static output-pattern checks do not prove arbitrary model-output authenticity.
 - Specify negative cases and observable outcomes. Expected refusal tests can pass without proving
   successful inference; required checks cannot pass by being skipped or replaced with empty output.
 - Describe source/build provenance and the trusted executor boundary when asserting gate integrity.
   Do not call locally authored hashes or receipts absolutely unspoofable.
-- Put missing implementation and retained-evidence obligations in `DEVELOPMENT_PLAN/`, with an
+- Put missing implementation and validation obligations in `DEVELOPMENT_PLAN/`, with an
   owner and closure criteria. Keep the target contract here and link to its canonical testing home.
 - Mechanical documentation checks establish structure and declared consistency, not theoretical
   soundness or execution truth. This precision rule does not add members to the plan's frozen

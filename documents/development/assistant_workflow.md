@@ -20,7 +20,7 @@ aligned with this canonical authority.
 
 - make requested file changes directly in the working tree; use read-only Git inspection when needed
 - never run `git add`, `git commit`, or `git push`
-- keep implementation status and validation receipts truthful in `DEVELOPMENT_PLAN/`
+- keep implementation status and validation attestations truthful in `DEVELOPMENT_PLAN/`
 - use `documents/` as the canonical home for architecture, development, engineering, operations, and
   reference guidance; the root entry docs summarize and link here
 - update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance or the
@@ -231,7 +231,7 @@ aligned with this canonical authority.
   prerequisites; from an Apple host, exercise the GPU container lane through the `docker compose`
   reference path against that same daemon
 - keep governed documents prescriptive and record implementation status, sequencing, and validation
-  receipts only in `DEVELOPMENT_PLAN/`
+  attestations only in `DEVELOPMENT_PLAN/`
 
 ## Platform Doctrine To Preserve
 
@@ -283,8 +283,7 @@ aligned with this canonical authority.
 
 - run `infernix lint docs` and `infernix docs check` for documentation changes, plus
   `infernix lint plan` when the plan changes, through the supported execution context
-- rebuild packages and images as appropriate before testing, and retain required-check results and
-  referenced artifacts under [the testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary)
+- rebuild packages and images as appropriate before testing, and record required-check results in the plan under [the testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary)
 - report unavailable gates and skipped mandatory checks explicitly; do not substitute static
   inspection, an older image, a status heading, or an aggregate zero exit for missing execution
 - keep documentation-only changes distinct from implementation closure and new hardware evidence

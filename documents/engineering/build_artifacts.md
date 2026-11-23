@@ -30,7 +30,7 @@
 
 ## Artifact Layout
 
-The Linux image retains the binary-generated default seed at `/opt/infernix/dhall/ImageHostSeed.dhall`. Validation retains configuration inputs, check outcomes, logs, and integrity metadata under `./.data/runtime/validation/`. Agents rebuild the relevant package or image as appropriate before testing.
+The Linux image retains the binary-generated default seed at `/opt/infernix/dhall/ImageHostSeed.dhall`. Validation writes configuration inputs, check outcomes, logs, and integrity metadata under `./.data/runtime/validation/`; long-term retention is optional. Agents rebuild the relevant package or image as appropriate before testing.
 
 The host path stages
 `./.build/infernix`, the Linux substrate images own
@@ -101,8 +101,9 @@ of the supported artifact contract.
 
 Agents ensure the relevant package or image is rebuilt as appropriate before validation. Record the executable or image identity, configuration and device context, required checks, results, and skips. Validation does not automatically compare a package with the current checkout.
 
-Required results survive an ephemeral launcher under the durable validation artifact location
-described by [Testing Strategy](../development/testing_strategy.md). Reports distinguish successful
+The runner writes results to the validation artifact location described by
+[Testing Strategy](../development/testing_strategy.md); detailed artifacts are optional after the
+run. Reports distinguish successful
 inference, expected refusal, skipped optional checks, and unmet mandatory checks. Local source
 hashes bind content; they do not authenticate an execution by an actor able to rewrite both code
 and validators. Such a claim needs an independently controlled execution and attestation boundary.
@@ -231,9 +232,8 @@ that consume the file link the same library through the in-cluster `infernix` bi
   flows do not read legacy `*.state` compatibility files
 - generated web build output lives under `web/dist/`; Playwright validation artifacts use
   Playwright default output directories such as `test-results/` and `playwright-report/` under the
-  active runner working tree when emitted. Required reports and supporting results are retained
-  under the binary-owned durable validation artifact location before an ephemeral launcher exits;
-  an unexported container-local report is not retained evidence
+  active runner working tree when emitted. The runner exports required results to the binary-owned
+  validation artifact location before an ephemeral launcher exits; long-term retention is optional
 - engine-adapter quality/protobuf builds use Poetry against the framework-free shared `python/`
   project and materialize `python/.venv/`. Python-stdio execution uses the canonical prepared
   project under `python/engines/<engine>/.venv/`; Apple and Linux CPU call the same bounded Haskell
@@ -247,7 +247,7 @@ that consume the file link the same library through the in-cluster `infernix` bi
 
 ## Validation
 
-- Rebuild the relevant package or image as appropriate before testing changed source, tests, generated contracts, or assets. Verify actual behavior and retain execution evidence.
+- Rebuild the relevant package or image as appropriate before testing changed source, tests, generated contracts, or assets. Verify actual behavior and record validation outcomes in the development plan.
 
 - `infernix docs check` fails if this governed artifact document loses its required structure or
   metadata contract.

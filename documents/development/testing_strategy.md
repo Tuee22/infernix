@@ -135,7 +135,7 @@ doctrine in [../engineering/testing.md](../engineering/testing.md); it does not 
 
 Every lane records build identity and actual check execution under
 [the testing doctrine](../engineering/testing.md#execution-evidence-and-trust-boundary).
-Agents rebuild packages and images as appropriate before testing. A missing retained artifact, skipped required fixture, directory marker, or DOM mount node does not demonstrate the requested behavior. Memory probes fail closed when required
+Agents rebuild packages and images as appropriate before testing. A missing required result during the run, skipped required fixture, directory marker, or DOM mount node does not demonstrate the requested behavior. Memory probes fail closed when required
 usage observations are unavailable. Local and remote artifact accounting exercise the same complete
 supported layout and explicitly refuse unsupported shards.
 
