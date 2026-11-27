@@ -3,5 +3,6 @@ services:
     image: ${LAUNCHER_IMAGE:-infernix-linux-cpu:local}
     pull_policy: never
     volumes:
+      - .:/opt/infernix/checkout:ro
       - ./.data:/workspace/.data
       - /var/run/docker.sock:/var/run/docker.sock

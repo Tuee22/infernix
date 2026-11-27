@@ -9,7 +9,7 @@
 ## Current Execution State
 
 [README.md](README.md#current-phase-overview) owns the single phase-status table.
-[Waves R6–R9](cohort-validation-waves.md#wave-table)
+[Waves R7–R9](cohort-validation-waves.md#wave-table)
 hold the separate chosen-accelerator plus CPU sign-off obligations.
 Component existence is not proof that its target contract or new validation criteria are satisfied.
 

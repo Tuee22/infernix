@@ -8038,8 +8038,8 @@ main = do
       )
       "Sprint 8.4: final Helm values set clusterConfig.keycloak.baseUrl to the routed edge URL so the operator-route SecurityPolicy issuer matches Keycloak token iss"
     assert
-      ("      memory: 5120Mi" `isInfixOf` linuxCpuFinalValues)
-      "linux-cpu final Helm values keep a 1 GiB daemon/watchdog envelope above the 4 GiB child-execution budget"
+      ("      memory: 6144Mi" `isInfixOf` linuxCpuFinalValues)
+      "linux-cpu final Helm values keep a 2 GiB daemon/watchdog envelope above the 4 GiB child-execution budget"
     -- Phase 6 Sprint 6.44 regression guard. Runtime refinement compares the
     -- observed pod cgroup limit with `childBudget + linuxOuterEnvelopeHeadroomMib`
     -- for **exact** equality, so the generated engine memory limit and the
@@ -8056,9 +8056,9 @@ main = do
       "linux-gpu child-execution budget plus the daemon/watchdog headroom equals the engine pod memory limit exactly, as runtime refinement requires"
     assert
       ( linuxEngineInferenceRamBudgetMib + ExecutionPlan.linuxOuterEnvelopeHeadroomMib
-          == 5120
+          == 6144
       )
-      "linux-cpu child-execution budget plus the daemon/watchdog headroom equals its 5 GiB engine pod memory limit exactly"
+      "linux-cpu child-execution budget plus the daemon/watchdog headroom equals its 6 GiB engine pod memory limit exactly"
     assert
       ("      PULSAR_GC: \"-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem\"" `isInfixOf` linuxCpuFinalValues)
       "linux-cpu final Helm values override local Pulsar JVM GC away from the default pre-touch profile"

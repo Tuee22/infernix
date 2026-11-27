@@ -45,3 +45,8 @@ tests need its memory; preserve running workloads and retained data through the 
 before stopping it, and restart the VM when Docker-backed work resumes. A change in VM allocation
 may require regenerating the host build-memory plan before governed host tests; preserve existing
 configuration when doing so.
+
+Monitor disk headroom during Docker-backed work. As builds and validation runs proceed, remove
+obsolete images and build-cache entries created by the current work, including after failures,
+so they do not accumulate and exhaust the host. Keep images needed by active work and preserve
+unrelated workloads, images, volumes, and retained data.

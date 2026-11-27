@@ -7904,7 +7904,7 @@ renderHelmValues paths controlPlane state demoConfigPayload fleetMachineContract
             "      memory: 768Mi",
             "    limits:",
             "      cpu: \"2\"",
-            "      memory: 5120Mi"
+            "      memory: 6144Mi"
           ]
       | clusterRuntimeMode state == LinuxGpu =
           [ "  resources:",

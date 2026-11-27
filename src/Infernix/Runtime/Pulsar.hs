@@ -218,6 +218,7 @@ import Infernix.Runtime.CappedEngine
   ( EngineExecutionPlan,
     engineExecutionCancellations,
     engineExecutionRuntimePlan,
+    engineExecutionTraceToken,
     withIdentifiedEngineExecution,
   )
 import Infernix.Runtime.KVCache qualified as KVCache
@@ -5826,6 +5827,14 @@ publishedResultFromRequest maybeTransport paths runtimeMode executionPlan maybeE
   -- conversation projection, and the authority this holds is not released until
   -- its cleanup has run.
   withIdentifiedEngineExecution executionPlan (executionIdentityFromProto protoRequest) $ do
+    traceToken <- engineExecutionTraceToken
+    putStrLn
+      ( "engineExecutionRegistered: prompt="
+          <> Text.unpack (view ProtoInferenceFields.userPromptMessageId protoRequest)
+          <> " thread="
+          <> traceToken
+      )
+    hFlush stdout
     let runtimePlan = engineExecutionRuntimePlan executionPlan
     domainResult <-
       executeInferenceWithModelBootstrapRetry

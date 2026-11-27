@@ -90,7 +90,7 @@ RUN apt-get update \
 RUN python3 -m venv --copies ${POETRY_HOME} \
     && cp -aL /usr/lib/python3.12/. ${POETRY_HOME}/lib/python3.12/ \
     && ${POETRY_HOME}/bin/python -m pip install --upgrade pip \
-    && ${POETRY_HOME}/bin/pip install poetry \
+    && ${POETRY_HOME}/bin/pip install poetry 'virtualenv<21' \
     && ln -sfn ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry \
     && poetry config keyring.enabled false
 

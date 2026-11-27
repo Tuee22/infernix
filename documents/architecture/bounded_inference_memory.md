@@ -198,6 +198,9 @@ derived rather than authored, so the related unmanaged states are also unbuildab
   `ModelMemoryLimitExceeded` for pod RAM with the exact required and available MiB and source
   `cgroup-memory-headroom`; no engine starts. Unreadable, invalid, or contradictory operands carry no
   capacity measurement and return the distinct terminal `engine_memory_enforcer_unavailable` result.
+  The Linux pod envelope reserves 2048 MiB beyond the child grant for the daemon and sampler. This
+  allowance does not bound their live usage; the pre-launch observation refuses when the actual
+  remainder cannot fund the grant.
   Classification matches the typed observation constructor, never its rendered text. Both outcomes
   use the normal result publication path, and the request is acknowledged only after publication;
   unrelated exceptions and result-publication failure still cross the transport retry boundary.
@@ -310,8 +313,10 @@ contract, not a gap in it.
 No kernel mechanism bounds device memory on any supported lane, so the device half of a dual-resource
 placement is admission plus arena sizing plus detection. A device runtime that is handed a fraction of
 the card it happens to find is sized by the hardware rather than by the model, which is why the arena
-is set from the admitted quantity directly and the fraction, where one exists, is an admission check
-rather than a ceiling.
+is derived from the admitted quantity and the fraction, where one exists, is an admission check
+rather than a ceiling. The vLLM adapter reserves 1024 MiB of the admitted quantity for allocations
+outside its requested arena and refuses a grant that cannot cover the reserve. This allowance is not
+a bound on that residue; the device sampler checks the whole process against the complete grant.
 
 The device sampler is the same shape as the Apple footprint observer: a fixed, bounded public-tool
 kernel in `Infernix.Runtime.CappedEngine.FixedObserver` whose request vocabulary is a closed enum and

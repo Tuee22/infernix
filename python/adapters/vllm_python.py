@@ -6,6 +6,11 @@ from contextlib import suppress
 from adapters.common import AdapterContext, run_context_adapter, run_setup_from_argv
 from adapters.model_cache import get_model_path
 
+# vLLM's requested arena does not include every allocation observed for the
+# device process. Reserve space inside the grant for that residue; the sampler
+# remains responsible for detecting any breach of the complete grant.
+_DEVICE_RESIDUE_RESERVE_MIB = 1024
+
 
 def _release_vllm_engine(engine: object | None) -> None:
     if engine is not None:
@@ -82,7 +87,13 @@ def _device_arena_fraction(context: AdapterContext) -> float:
             f"the admitted device quantity of {admitted_mib} MiB exceeds the "
             f"observed device envelope of {envelope_mib} MiB"
         )
-    return admitted_mib / envelope_mib
+    arena_mib = admitted_mib - _DEVICE_RESIDUE_RESERVE_MIB
+    if arena_mib <= 0:
+        raise RuntimeError(
+            f"the admitted device quantity of {admitted_mib} MiB does not "
+            f"cover the {_DEVICE_RESIDUE_RESERVE_MIB} MiB device residue reserve"
+        )
+    return arena_mib / envelope_mib
 
 
 def transform(context: AdapterContext) -> str:
@@ -110,8 +121,8 @@ def transform(context: AdapterContext) -> str:
         "model": str(weights_dir),
         "enforce_eager": True,
         "max_model_len": context.context_length,
-        # Phase 6 Sprint 6.51: the arena is the admitted device quantity over the
-        # observed device envelope, so it tracks the model rather than the card.
+        # Size the arena from the admitted device quantity after reserving room
+        # for allocations outside it, over the observed device envelope.
         # A larger card now yields a *smaller* fraction for the same model, and
         # that inversion is the observable sign that the number has stopped
         # belonging to the hardware.

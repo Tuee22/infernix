@@ -195,7 +195,7 @@ engine:
       cpu: "2"
       # The execution budget remains 4 GiB. The larger pod envelope keeps the
       # Haskell daemon and watchdog polling headroom outside the child grant.
-      memory: 5Gi
+      memory: 6Gi
   perEngine:
     enabled: false
     replicaCount: 0

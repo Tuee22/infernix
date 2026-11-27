@@ -1093,6 +1093,7 @@ def run_check_code() -> int:
             "adapters.test_model_bootstrap_inventory",
             "adapters.test_transformers_prompt",
             "adapters.test_demucs_segment",
+            "adapters.test_vllm_device_arena",
         ],
     ]
     for command in commands:

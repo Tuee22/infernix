@@ -189,10 +189,12 @@ runDeviceValidationContext receiptRoot check = do
   lane <- targetRuntimeModeForExecutionContext paths
   when (selectSuiteContext lane == NvidiaDeviceContext) $
     check NvidiaValidation $ do
-      (identity, checkout) <- observeImageIdentity paths
+      (identity, _) <- observeImageIdentity paths
       image <- maybe (ioError (userError "NVIDIA validation requires an immutable outer image")) pure identity
       container <- filter (`notElem` ['\n', '\r']) <$> readFile "/etc/hostname"
       mountResult <- Invoke.tryClusterCommand paths (Command.dockerInspectContainerField (Command.ContainerName container) (Command.MountSourceAt "/workspace/.data"))
+      checkoutResult <- Invoke.tryClusterCommand paths (Command.dockerInspectContainerField (Command.ContainerName container) (Command.MountSourceAt "/opt/infernix/checkout"))
+      checkout <- filter (`notElem` ['\n', '\r']) <$> either (ioError . userError) pure checkoutResult
       dataMount <- filter (`notElem` ['\n', '\r']) <$> either (ioError . userError) pure mountResult
       createDirectoryIfMissing True (runtimeRoot paths </> "validation")
       reservation <- mkdtemp (runtimeRoot paths </> "validation" </> "device-")

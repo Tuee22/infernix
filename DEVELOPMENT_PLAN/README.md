@@ -13,8 +13,8 @@ govern this plan.
 
 ## Current execution gate
 
-Phases 0–5 are `Done`. Phases 6–9 remain `Active` with their scoped cohort gates.
-[Open waves R6–R9](cohort-validation-waves.md#wave-table) each require one selected accelerator plus
+Phases 0–6 are `Done`. Phases 7–9 remain `Active` with their scoped cohort gates.
+[Open waves R7–R9](cohort-validation-waves.md#wave-table) each require one selected accelerator plus
 `linux-cpu`. The [phase table](#current-phase-overview) is the sole phase-status summary.
 
 The retained attestation table has no closure tuple for Phase 7. This is an evidence
@@ -84,8 +84,9 @@ The worktree contains substantial implementations for the one-binary CLI, platfo
 Pulsar routing, engine adapters, browser application, and role-based access control. The governing
 architecture describes the target contract; it is not evidence that every contract is enforced.
 
-What each open sprint owns is stated in its own phase document. Every one of them has passed the
-machine-independent gate set; none has passed its current accelerator cohort.
+What each open sprint owns is stated in its own phase document. Phase 6 is closed on
+`linux-gpu` plus `linux-cpu`; Phases 7–9 have passed their machine-independent gates, and none has
+passed its current accelerator cohort.
 
 Four limits on what that closure establishes, because each is a claim the code deliberately does
 not make. The static-file boundary is enforced at the canonicalized read, which does not close the
@@ -181,7 +182,7 @@ trust the phase document.
 | 3 | Done | [Sprint 3.18](phase-3-platform-services-and-edge-routing.md) and the [Phase 3 attestation](cohort-validation-waves.md#recorded-attestations): platform, routes, and registry publication. |
 | 4 | Done | [Sprint 4.50](phase-4-inference-service-and-durable-runtime.md) and the [Phase 4 attestation](cohort-validation-waves.md#recorded-attestations): real cache lifecycle, complete accounting, and behavioral realness for required inference successes. |
 | 5 | Done | [Sprint 5.13](phase-5-web-ui-and-shared-types.md) and the [Phase 5 attestation](cohort-validation-waves.md#recorded-attestations): backend static-file containment, Gateway negative tests, and routed browser evidence. |
-| 6 | Active | Sprint 6.55 has native Linux amd64 code-side closure; Wave R6 is validation-only. [Sprints 6.55](phase-6-validation-and-e2e-hardening.md) and [Wave R6](cohort-validation-waves.md#wave-table): Required device checks cannot silently skip; bounded fixture-process cleanup and structured execution evidence. |
+| 6 | Done | [Sprint 6.55](phase-6-validation-and-e2e-hardening.md) and the [Phase 6 attestation](cohort-validation-waves.md#recorded-attestations): Required device checks cannot silently skip; bounded fixture-process cleanup and structured execution evidence. |
 | 7 | Active | Sprints 7.30–7.33 have native Linux amd64 code-side closure; Wave R7 is validation-only. [Sprints 7.30–7.33](phase-7-demo-app-durable-context.md) and [Wave R7](cohort-validation-waves.md#wave-table): Dispatcher replay, genuine conversation/KV reconstruction, engine cancellation, bounded previews, and rendered audio/playback evidence. |
 | 8 | Active | Sprint 8.15 has native Linux amd64 code-side closure; Wave R8 is validation-only. [Sprints 8.15](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md) and [Wave R8](cohort-validation-waves.md#wave-table): Validate sole-binary configuration generation through every consumer, using the Phase 1 bootstrap boundary. |
 | 9 | Active | Sprint 9.12 has native Linux amd64 code-side closure; Wave R9 is validation-only. [Sprints 9.12](phase-9-access-control-and-monitoring.md) and [Wave R9](cohort-validation-waves.md#wave-table): Reject malformed cache requests before effects; validate real cache operations and admin/tenant isolation. |

@@ -26,7 +26,6 @@
 
 | Wave | Phase | Chosen accelerator | Paired lane | Gate | State |
 |------|-------|--------------------|-------------|------|-------|
-| R6 | 6 | `linux-gpu` | `linux-cpu` | Sprints 6.55; `infernix test all` on both lanes | Code-side gates passed; full suites pending |
 | R7 | 7 | `apple-silicon` | `linux-cpu` | Sprints 7.30–7.33; `infernix test all` on both lanes | Code-side gates passed; full suites pending |
 | R8 | 8 | `apple-silicon` | `linux-cpu` | Sprints 8.15; `infernix test all` on both lanes | Code-side gates passed; full suites pending |
 | R9 | 9 | `apple-silicon` | `linux-cpu` | Sprints 9.12; `infernix test all` on both lanes | Code-side gates passed; full suites pending |
@@ -107,3 +106,4 @@ For new closure evidence, append a compact attestation recording the tested sour
 - [00-overview.md](00-overview.md)
 - [development_plan_standards.md](development_plan_standards.md)
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+| 6 | `linux-gpu` | `infernix test all` + native-amd64 `linux-cpu` full suite | `97c560d1d83fa6ff75a68eb004e47c51ff0e092f` + uncommitted changes; code-patch SHA-256 `ff1374ea88b3edb4e47794aa2c9bf5e00083fb48532366235fa8bb52eccbd155` | PASS; exit 0 per lane; GPU run `run-9xWddG` (Integration, Browser, NvidiaValidation passed); CPU run `run-lxzVpV` (Integration, Browser passed); code-side gates `lint files/docs/chart/proto`, `docs check`, `test lint`, `test unit` exit 0 |

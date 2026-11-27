@@ -12,6 +12,7 @@ module Infernix.Runtime.CappedEngine.Internal
     EngineOutcome (..),
     EngineExecutionPlan,
     engineExecutionCancellations,
+    engineExecutionTraceToken,
     newEngineExecutionPlan,
     withIdentifiedEngineExecution,
     engineExecutionRuntimePlan,
@@ -53,7 +54,7 @@ module Infernix.Runtime.CappedEngine.Internal
   )
 where
 
-import Control.Concurrent (ThreadId, forkFinally, forkIO, killThread, threadDelay)
+import Control.Concurrent (ThreadId, forkFinally, forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, putMVar, readMVar, withMVar)
 import Control.Exception
   ( IOException,
@@ -143,12 +144,13 @@ import Infernix.Types
 import System.Directory qualified as Directory
 import System.Exit (ExitCode (..))
 import System.FilePath (isAbsolute, takeDirectory, takeExtension, (</>))
-import System.IO (Handle, hClose, hPutStr)
+import System.IO (Handle, hClose, hFlush, hPutStr, stdout)
 import System.IO.Error (isDoesNotExistError)
 import System.Info (os)
-import System.Posix.Process (getProcessGroupID)
+import System.Posix.Process (getProcessGroupID, getProcessID)
 import System.Posix.Signals (sigKILL, signalProcessGroup)
 import System.Posix.Types (CPid)
+import System.Posix.Unistd (SystemID (nodeName), getSystemID)
 import System.Process
   ( CreateProcess (close_fds, create_group, cwd, env, std_err, std_in, std_out),
     ProcessHandle,
@@ -573,7 +575,8 @@ runExecutableProcess executableModel projection command input = do
     (_, Left reason) -> pure (unavailableTextResult reason)
     (Right (), Right watchdogs) ->
       withEngineCeilingInstalled installed command $ \launch ->
-        withCappedEngine watchdogs launch $ \handle ->
+        withCappedEngine watchdogs launch $ \handle -> do
+          reportEngineProcessStarted
           case (engineStdin handle, engineStdout handle, engineStderr handle) of
             (Just stdinHandle, Just stdoutHandle, Just stderrHandle) -> do
               withEngineOutputCaptures handle stdoutHandle stderrHandle $
@@ -1525,7 +1528,8 @@ runExecutableStdioEngine executableModel command input = do
     (_, Left reason) -> pure (unavailableBinaryResult reason)
     (Right (), Right watchdogs) ->
       withEngineCeilingInstalled installed command $ \launch ->
-        withCappedEngine watchdogs launch $ \handle ->
+        withCappedEngine watchdogs launch $ \handle -> do
+          reportEngineProcessStarted
           case (engineStdin handle, engineStdout handle, engineStderr handle) of
             (Just stdinHandle, Just stdoutHandle, Just stderrHandle) -> do
               withEngineOutputCaptures handle stdoutHandle stderrHandle $
@@ -1536,6 +1540,22 @@ runExecutableStdioEngine executableModel command input = do
                   outcome <- awaitEngineOutcome handle
                   pure (outcome, engineOutcomeExitCode outcome, stdoutOutput, stderrOutput)
             _ -> failMissingPipes
+
+-- Projection probes do not use either production execution path above.
+reportEngineProcessStarted :: IO ()
+reportEngineProcessStarted = do
+  token <- engineExecutionTraceToken
+  putStrLn ("engineProcessStarted: " <> token)
+  hFlush stdout
+
+-- The pod hostname and process identity disambiguate thread ids in logs from
+-- different members, while both observations are made by the execution thread.
+engineExecutionTraceToken :: IO String
+engineExecutionTraceToken = do
+  system <- getSystemID
+  process <- getProcessID
+  executionThread <- myThreadId
+  pure (nodeName system <> "/" <> show process <> "/" <> show executionThread)
 
 unavailableTextResult :: Text -> (EngineOutcome, ExitCode, String, String)
 unavailableTextResult reason =

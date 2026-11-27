@@ -232,10 +232,10 @@ data ResourceWitness resource where
   PodRamWitness :: ResourceWitness 'PodRam
   NvidiaVramWitness :: ResourceWitness 'NvidiaVram
 
--- | Memory retained outside a Linux child execution grant for the Haskell
--- daemon and worst-case sampler overshoot.
+-- | Memory reserved outside a Linux child execution grant for the Haskell
+-- daemon and sampled overshoot. Live cgroup headroom is checked separately.
 linuxOuterEnvelopeHeadroomMib :: Int
-linuxOuterEnvelopeHeadroomMib = 1024
+linuxOuterEnvelopeHeadroomMib = 2048
 
 maxEnforceableMemoryMib :: Integer
 maxEnforceableMemoryMib =

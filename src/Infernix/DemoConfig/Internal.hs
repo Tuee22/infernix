@@ -479,7 +479,7 @@ defaultDaemonRoleForMaterializedFile paths runtimeMode =
 --   computed value becomes an enforced @0 MiB@ budget, never an implicit
 --   disabled guard.
 -- * @linux-cpu@: admission uses the 4 GiB child-execution budget. The pod
---   limit is a larger 5 GiB daemon + child + watchdog envelope.
+--   limit is a larger 6 GiB daemon + child + watchdog envelope.
 -- * @linux-gpu@: admission uses the configured GPU VRAM budget.
 resolveInferenceMemoryBudget :: Paths -> RuntimeMode -> IO InferenceMemoryBudget
 resolveInferenceMemoryBudget paths runtimeMode =

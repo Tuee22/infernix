@@ -18,7 +18,7 @@ import Data.ByteString.Lazy qualified as LazyByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper, isSpace)
 import Data.FileEmbed (embedFile)
-import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, partition, sort, sortOn)
+import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, partition, sort, sortOn, tails)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing, mapMaybe)
@@ -413,9 +413,10 @@ validateEngineCacheLifecycle ::
   IO ()
 validateEngineCacheLifecycle paths state runtimeMode compiledPlan = do
   let modelName = requiredSpeechCohortModelId
-      -- A second required model whose cache the per-model step has just filled:
-      -- evicting and rebuilding the first must leave it verified.
-      untouchedModelName = "audio-demucs-htdemucs"
+      -- Both models use the native engine on Linux GPU. GPU catalog validation
+      -- serially scales engine Deployments, so their emptyDir caches may have
+      -- disappeared by the time this check starts.
+      untouchedModelName = "llm-tinyllama-gguf"
       untouchedLine =
         captureInfernixOutput ["cache", "status", "--model", untouchedModelName] >>= \output ->
           case [line | line <- lines output, ("cacheEntry: " <> untouchedModelName <> " -> ") `isPrefixOf` line] of
@@ -426,6 +427,8 @@ validateEngineCacheLifecycle paths state runtimeMode compiledPlan = do
           [single] -> pure single
           found -> fail ("expected exactly one cache entry line for " <> modelName <> " but found " <> show found <> " in:\n" <> output)
   reportStep ("engine cache lifecycle: " <> modelName)
+  validateCatalogModelInference paths state runtimeMode compiledPlan modelName
+  validateCatalogModelInference paths state runtimeMode compiledPlan untouchedModelName
   durableBefore <- durableModelObjectInventory paths state modelName
   assert (not (null durableBefore)) ("durable MinIO holds source objects for " <> modelName)
   initial <- captureInfernixOutput ["cache", "status", "--model", modelName] >>= entryLine
@@ -799,7 +802,7 @@ readEngineLogText paths state runtimeMode
             "platform",
             "logs",
             "-l",
-            "app.kubernetes.io/name=infernix-engine",
+            "app.kubernetes.io/component=engine",
             "--all-containers=true",
             "--tail=-1"
           ]
@@ -866,8 +869,8 @@ validateMultiTurnConversationReachesEngine paths state runtimeMode modelIdText =
 -- | Phase 7 Sprint 7.32 — cancelling a running inference stops the execution
 -- and releases its authority.
 --
--- A long generation is submitted and cancelled a few seconds in, after the
--- engine has registered the execution. The harness reads the engine's own
+-- A long generation is submitted and cancelled after the engine records both
+-- the identified execution and its started child. The harness reads the engine's own
 -- cancellation record, which must say the running execution was cancelled
 -- (not that nothing was running), and a prompt submitted afterwards must
 -- complete, which it cannot do if the cancelled execution still held its
@@ -883,16 +886,36 @@ validateRunningInferenceCancellation paths state runtimeMode modelIdText = do
       runtimeMode
       context
       "cancelrun-long"
-      "Write a very long and detailed essay of several thousand words about the history of mathematics. Validation token: "
-  threadDelay 4000000
+      ( Text.replicate 48 "Describe the history of mathematics and its discoveries in detail. "
+          <> "Continue this account. Validation token: "
+      )
+  let promptIdText = Contracts.unMessageId (durablePromptRefMessageId longPrompt)
+      registeredPrefix = "engineExecutionRegistered: prompt=" <> promptIdText <> " thread="
+      startedIn logText =
+        any
+          (\(thread, following) -> ("engineProcessStarted: " <> thread) `elem` following)
+          [ (Text.drop (Text.length registeredPrefix) line, following)
+          | (line, following) <- zip logLines (drop 1 (tails logLines)),
+            registeredPrefix `Text.isPrefixOf` line
+          ]
+        where
+          logLines = Text.lines logText
+      awaitStarted attemptsRemaining = do
+        engineLog <- readEngineLogText paths state runtimeMode
+        if startedIn engineLog
+          then pure ()
+          else
+            if attemptsRemaining <= (0 :: Int)
+              then fail "the named inference never recorded a started engine child"
+              else threadDelay 200000 >> awaitStarted (attemptsRemaining - 1)
+  awaitStarted 300
   publishDemoClientMessage
     paths
     runtimeMode
     Nothing
     (durablePromptUserId context)
     (Contracts.ClientCancelPrompt (durablePromptContextId context) (durablePromptRefMessageId longPrompt))
-  let promptIdText = Contracts.unMessageId (durablePromptRefMessageId longPrompt)
-      wanted = "engineCancellation: " <> promptIdText <> " -> "
+  let wanted = "engineCancellation: " <> promptIdText <> " -> "
       outcomeOf logText =
         case [Text.takeWhile (/= ' ') (Text.drop (Text.length wanted) line) | line <- Text.lines logText, wanted `Text.isPrefixOf` line] of
           outcome : _ -> Just outcome

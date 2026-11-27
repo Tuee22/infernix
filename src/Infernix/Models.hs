@@ -737,7 +737,7 @@ rowGeometry row =
     _ -> Nothing
 
 -- | The Linux per-execution resident-memory budget (MiB). The engine pod's
--- outer limit is intentionally larger (5 GiB) so the Haskell daemon and RSS
+-- outer limit is intentionally larger (6 GiB) so the Haskell daemon and RSS
 -- watchdog remain outside the 4 GiB child grant.
 linuxEngineInferenceRamBudgetMib :: Int
 linuxEngineInferenceRamBudgetMib = 4096
@@ -745,7 +745,7 @@ linuxEngineInferenceRamBudgetMib = 4096
 -- | Phase 6 Sprint 6.44 — the @linux-gpu@ per-execution __resident-set__ budget
 -- (MiB). It is deliberately *not* 'linuxEngineInferenceRamBudgetMib': the GPU
 -- engine pod is provisioned with a 16 GiB limit (framework host RAM for CUDA
--- contexts and model loading) where the CPU engine pod gets 5 GiB, and runtime
+-- contexts and model loading) where the CPU engine pod gets 6 GiB, and runtime
 -- refinement requires the observed outer envelope to equal the child budget plus
 -- 'linuxOuterEnvelopeHeadroomMib' __exactly__. Reusing the 4 GiB CPU budget here
 -- produced @OuterEnvelopeTooLarge 5120 16384@ on every GPU placement, so no
@@ -765,9 +765,11 @@ linuxGpuEnginePodMemoryLimitMib = 16384
 -- | Phase 6 Sprint 6.44 — the @linux-gpu@ per-execution device-memory budget
 -- (MiB). Unlike the resident-set half this is a device quantity, and the
 -- supported single-GPU lane holds the whole device; the value is a conservative
--- admission ceiling, not a measurement, and the cohort is what calibrates it.
+-- admission ceiling, not a measurement. It leaves room for the observed vLLM
+-- framework footprint as well as the model; placement still checks the live
+-- device before minting a grant.
 linuxEngineInferenceVramBudgetMib :: Int
-linuxEngineInferenceVramBudgetMib = 4096
+linuxEngineInferenceVramBudgetMib = 12288
 
 -- | Phase 4 Sprint 4.26 — the assumed @apple-silicon@ inference-RAM
 -- budget (MiB) used only when the host-native resolver cannot read host

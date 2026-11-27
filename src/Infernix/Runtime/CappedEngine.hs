@@ -26,6 +26,7 @@ module Infernix.Runtime.CappedEngine
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
     engineExecutionCancellations,
+    engineExecutionTraceToken,
     withEngineExecutionPlan,
     withIdentifiedEngineExecution,
   )
@@ -41,6 +42,7 @@ import Infernix.Runtime.CappedEngine.Internal
     PythonWorkerLaunchOutcome (..),
     engineExecutionCancellations,
     engineExecutionRuntimePlan,
+    engineExecutionTraceToken,
     executableEngineCeiling,
     executableWatchdogCeilingsForTest,
     nativeArtifactCache,
